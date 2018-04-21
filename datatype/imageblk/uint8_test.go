@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"sync"
 	"testing"
@@ -276,23 +274,13 @@ func TestForegroundROI(t *testing.T) {
 		t.Fatalf("Error running foreground ROI command: %v\n", err)
 	}
 
-	// Check results, making sure it's valid (200).
-	var roiJSON string
-	for {
-		roiRequest := fmt.Sprintf("%snode/%s/foreground/roi", server.WebAPIPath, uuid)
-		req, err := http.NewRequest("GET", roiRequest, nil)
-		if err != nil {
-			t.Fatalf("Unsuccessful GET on foreground ROI: %v", err)
-		}
-		w := httptest.NewRecorder()
-		server.ServeSingleHTTP(w, req)
-		roiJSON = string(w.Body.Bytes())
-		if w.Code == http.StatusOK {
-			break
-		} else if w.Code != http.StatusPartialContent {
-			t.Fatalf("Unknown reponse for GET foreground ROI (%d): %s\n", w.Code, roiJSON)
-		}
+	if err := datastore.BlockOnUpdating(uuid, "foreground"); err != nil {
+		t.Fatalf("Error blocking on foreground roi updating: %v\n", err)
 	}
+
+	// Check results, making sure it's valid (200).
+	roiRequest := fmt.Sprintf("%snode/%s/foreground/roi", server.WebAPIPath, uuid)
+	resp := server.TestHTTP(t, "GET", roiRequest, nil)
 
 	// Check results
 	// We have block-aligned 2^3 block foreground
@@ -300,8 +288,8 @@ func TestForegroundROI(t *testing.T) {
 	//   from y = 32 -> 95, offset in y by 2 blocks = 3, 4
 	//   from x = 32 -> 95, offset in x by 5 blocks = 6, 7
 	expected := "[[5,3,6,7],[5,4,6,7],[6,3,6,7],[6,4,6,7]]"
-	if roiJSON != expected {
-		t.Errorf("Expected the following foreground ROI:\n%s\nGot instead:\n%s\n", expected, roiJSON)
+	if string(resp) != expected {
+		t.Errorf("Expected the following foreground ROI:\n%s\nGot instead:\n%s\n", expected, string(resp))
 	}
 }
 

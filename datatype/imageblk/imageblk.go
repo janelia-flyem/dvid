@@ -1523,9 +1523,6 @@ func (d *Data) ForegroundROI(req datastore.Request, reply *datastore.Response) e
 }
 
 func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.PointNd) {
-	dest.Lock()
-	defer dest.Unlock()
-
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		dvid.Criticalf("Data type imageblk had error initializing store: %v\n", err)
@@ -1534,6 +1531,8 @@ func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.P
 
 	timedLog := dvid.NewTimeLog()
 	timedLog.Infof("Starting foreground ROI %q for %s", dest.DataName(), d.DataName())
+	dest.StartUpdate()
+	defer dest.StopUpdate()
 
 	// Iterate through all voxel blocks, loading and then checking blocks
 	// for any foreground voxels.

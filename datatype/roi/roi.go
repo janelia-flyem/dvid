@@ -299,6 +299,7 @@ func ImmutableBySpec(spec string) (*Immutable, error) {
 // Data embeds the datastore's Data and extends it with keyvalue properties (none for now).
 type Data struct {
 	*datastore.Data
+	datastore.Updater
 	Properties
 
 	sync.RWMutex
@@ -597,6 +598,9 @@ func (d *Data) PutSpans(versionID dvid.VersionID, spans []dvid.Span, init bool) 
 	if err != nil {
 		return err
 	}
+	d.StartUpdate()
+	defer d.StopUpdate()
+
 	d.Lock()
 	defer d.Unlock()
 
