@@ -1503,19 +1503,20 @@ func repoCommitHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		BadRequest(w, r, err)
-		return
-	}
-
 	jsonData := struct {
 		Note string   `json:"note"`
 		Log  []string `json:"log"`
 	}{}
-	if err := json.Unmarshal(data, &jsonData); err != nil {
-		BadRequest(w, r, fmt.Sprintf("Malformed JSON request in body: %v", err))
-		return
+	if r.Body != nil {
+		data, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			BadRequest(w, r, err)
+			return
+		}
+		if err := json.Unmarshal(data, &jsonData); err != nil {
+			BadRequest(w, r, fmt.Sprintf("Malformed JSON request in body: %v", err))
+			return
+		}
 	}
 
 	err = datastore.Commit(uuid, jsonData.Note, jsonData.Log)
