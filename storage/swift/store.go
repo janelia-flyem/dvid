@@ -20,7 +20,7 @@ const (
 	initialDelay = 50 * time.Millisecond
 
 	// The maximum delay after which we give up and an error is returned.
-	maximumDelay = 5 * time.Minute
+	maximumDelay = 20 * time.Minute
 )
 
 // rateLimit is a buffered channel used to limit the number of concurrent
@@ -53,9 +53,10 @@ func (s *Store) Close() {
 // Equal returns true if this store matches the given store configuration.
 func (s *Store) Equal(config dvid.StoreConfig) bool {
 	for param, value := range map[string]string{
-		"user": s.conn.UserName,
-		"key":  s.conn.ApiKey,
-		"auth": s.conn.AuthUrl,
+		"user":      s.conn.UserName,
+		"key":       s.conn.ApiKey,
+		"auth":      s.conn.AuthUrl,
+		"container": s.container,
 	} {
 		v, ok, err := config.GetString(param)
 		if !ok || err != nil || v != value {
@@ -84,7 +85,7 @@ func NewStore(config dvid.StoreConfig) (*Store, bool, error) {
 			return "", fmt.Errorf(`Error retrieving configuration parameter "%s" (may not be a string): %s`, e)
 		}
 		if value == "" {
-			return "", errors.New(`Configuration parameter "%s" may not be empty`)
+			return "", errors.New(`Configuration parameter "%s" must not be empty`)
 		}
 		return value, nil
 	}
@@ -186,7 +187,9 @@ func (s *Store) getObject(key storage.Key) ([]byte, error) {
 
 	for {
 		// Attempt to get the object.
+		rateLimit <- struct{}{}
 		contents, err := s.conn.ObjectGetBytes(s.container, encodeKey(key))
+		<-rateLimit
 		storage.StoreValueBytesRead <- len(contents)
 		if err == swift.ObjectNotFound {
 			return nil, nil
@@ -258,28 +261,50 @@ func (s *Store) Get(context storage.Context, key storage.TKey) ([]byte, error) {
 // RawPut is a low-level function that puts a key-value pair using full keys.
 // This can be used in conjunction with RawRangeQuery.
 func (s *Store) RawPut(key storage.Key, value []byte) error {
-	defer func() {
-		storage.StoreValueBytesWritten <- len(value)
-	}()
-	rateLimit <- struct{}{}
-	defer func() {
+	delay := initialDelay
+
+	for {
+		rateLimit <- struct{}{}
+		err := s.conn.ObjectPutBytes(s.container, encodeKey(key), value, "application/octet-stream")
 		<-rateLimit
-	}()
-	return s.conn.ObjectPutBytes(s.container, encodeKey(key), value, "application/octet-stream")
+		if err == nil {
+			storage.StoreValueBytesWritten <- len(value)
+			return nil
+		}
+
+		// There was an error. Retry with increasing delays.
+		if delay > maximumDelay {
+			return fmt.Errorf(`Maximum object deletion retries exceeded: %s`, err)
+		}
+		time.Sleep(delay)
+		delay *= 2
+	}
+
+	return nil
 }
 
 // RawDelete is a low-level function.  It deletes a key-value pair using full
 // keys without any context. This can be used in conjunction with RawRangeQuery.
 func (s *Store) RawDelete(key storage.Key) error {
-	rateLimit <- struct{}{}
-	defer func() {
+	delay := initialDelay
+
+	for {
+		rateLimit <- struct{}{}
+		err := s.conn.ObjectDelete(s.container, encodeKey(key))
 		<-rateLimit
-	}()
-	err := s.conn.ObjectDelete(s.container, encodeKey(key))
-	if err == swift.ObjectNotFound {
-		return nil
+		if err == nil || err == swift.ObjectNotFound {
+			return nil
+		}
+
+		// There was an error. Retry with increasing delays.
+		if delay > maximumDelay {
+			return fmt.Errorf(`Maximum object deletion retries exceeded: %s`, err)
+		}
+		time.Sleep(delay)
+		delay *= 2
 	}
-	return err
+
+	return nil
 }
 
 // Put writes a value with given key in a possibly versioned context.
@@ -609,50 +634,10 @@ func (s *Store) PutRange(context storage.Context, typeKeyValues []storage.TKeyVa
 
 // DeleteRange removes all key-value pairs with keys in the given range.
 func (s *Store) DeleteRange(context storage.Context, kStart, kEnd storage.TKey) (e error) {
-	// Find all type keys for this range.
-
-	// What's the key range to look for?
-	var from, to storage.Key
-	if !context.Versioned() {
-		from = context.ConstructKey(kStart)
-		to = context.ConstructKey(kEnd)
-	} else {
-		versionedContext, ok := context.(storage.VersionedCtx)
-		if !ok {
-			return errors.New("Context is marked as versioned but isn't actually versioned")
-		}
-		var err error
-		from, err = versionedContext.MinVersionKey(kStart)
-		if err != nil {
-			return err
-		}
-		to, err = versionedContext.MaxVersionKey(kEnd)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Find existing keys in this range.
-	keys, err := s.objectNames(from, to)
+	// Find all keys for this range.
+	keys, err := s.keyRange(context, kStart, kEnd)
 	if err != nil {
-		return fmt.Errorf(`Unable to list Swift object names: %s`, err)
-	}
-
-	// We only want the type keys found.
-	var typeKeys []storage.TKey
-NameLoop:
-	for _, key := range keys {
-		typeKey, err := storage.TKeyFromKey(key)
-		if err != nil {
-			return fmt.Errorf("Unable to extract type key from key: %s", err)
-		}
-		for _, tk := range typeKeys {
-			// This is O(n^2) but it shouldn't matter in the big picture.
-			if bytes.Compare(tk, typeKey) == 0 {
-				continue NameLoop // We alrady have this type key.
-			}
-		}
-		typeKeys = append(typeKeys, typeKey)
+		return fmt.Errorf(`Unable to determine deletion key range: %s`, err)
 	}
 
 	// Parallelize deleting these keys.
@@ -661,13 +646,13 @@ NameLoop:
 		mutex sync.RWMutex
 	)
 
-	jobs := make(chan storage.TKey)
+	jobs := make(chan storage.Key)
 	for i := 0; i < maxConcurrentOperations; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for typeKey := range jobs {
-				if err := s.Delete(context, typeKey); err != nil {
+			for key := range jobs {
+				if err := s.RawDelete(key); err != nil {
 					mutex.Lock()
 					e = err
 					mutex.Unlock()
@@ -676,8 +661,8 @@ NameLoop:
 		}()
 	}
 
-	for _, typeKey := range typeKeys {
-		jobs <- typeKey
+	for _, key := range keys {
+		jobs <- key
 		mutex.RLock()
 		err := e
 		mutex.RUnlock()
@@ -710,7 +695,7 @@ func (s *Store) DeleteAll(context storage.Context, allVersions bool) error {
 				defer wg.Done()
 				for name := range jobs {
 					rateLimit <- struct{}{}
-					if err := s.conn.ObjectDelete(s.container, name); err != nil {
+					if err := s.RawDelete(decodeKey(name)); err != nil {
 						mutex.Lock()
 						e = err
 						mutex.Unlock()
@@ -775,10 +760,22 @@ func (s *Store) DeleteAll(context storage.Context, allVersions bool) error {
 
 	// Process all objects in chunks.
 	return s.conn.ObjectsWalk(s.container, nil, func(opts *swift.ObjectsOpts) (interface{}, error) {
-		// Get the names for this batch.
-		names, err := s.conn.ObjectNames(s.container, opts)
-		if err != nil {
-			return names, fmt.Errorf("Unable to retrieve Swift object names: %s", err)
+		// Get the names for this batch. Retry in case of failures.
+		var names []string
+		delay := initialDelay
+		for {
+			var err error
+			rateLimit <- struct{}{}
+			names, err = s.conn.ObjectNames(s.container, opts)
+			<-rateLimit
+			if err == nil {
+				break // We have the names.
+			}
+			if delay > maximumDelay {
+				return nil, fmt.Errorf(`Maximum object list requests exceeded: %s`, err)
+			}
+			time.Sleep(delay)
+			delay *= 2
 		}
 
 		// If we delete all versions, we delete everything.
@@ -801,7 +798,7 @@ func (s *Store) DeleteAll(context storage.Context, allVersions bool) error {
 			for _, tk := range typeKeys {
 				// This is O(n^2) but it shouldn't matter in the big picture.
 				if bytes.Compare(tk, typeKey) == 0 {
-					continue NameLoop // We alrady have this type key.
+					continue NameLoop // We already have this type key.
 				}
 			}
 			typeKeys = append(typeKeys, typeKey)
@@ -819,7 +816,7 @@ func (s *Store) NewBatch(ctx storage.Context) storage.Batch {
 
 // lockBatch locks the keys of the operations contained in the provided batch.
 // If a lock is already held on one of the keys, this function returns as soon
-// as it was able to secure a lock (after the other lock is released).
+// as it was able to secure a lock (i.e. after the other lock is released).
 func (s *Store) lockBatch(batch *Batch) {
 	// This helper function checks if a lock is held on the keys of this batch.
 	locked := func() bool {
