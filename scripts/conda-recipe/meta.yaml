@@ -19,8 +19,6 @@ about:
 
 build:
   number: 0
-  script_env:
-    - DVID_SKIP_TESTS
 
 requirements:
   build:
