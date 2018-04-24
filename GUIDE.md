@@ -40,7 +40,7 @@ Setup
 
 [miniconda]: https://conda.io/miniconda.html
 
-2. Install `conda-build`:
+2. Install `conda-build` and `anaconda-client`:
 
     ```
     $ source activate root
@@ -142,7 +142,7 @@ For each platform (Mac and Linux):
    $ docker attach dvid-build
    
    [conda@0709a0f996e7 ~]$ cd dvid
-   [conda@0709a0f996e7 dvid]$
+   [conda@0709a0f996e7 dvid]$ git fetch --tags origin
    [conda@0709a0f996e7 dvid]$ git pull origin master
    [conda@0709a0f996e7 dvid]$ conda build scripts/conda-recipe
    ...
@@ -155,6 +155,7 @@ For each platform (Mac and Linux):
 
     ```
     $ ./scripts/make-release-distribution.sh
+    $ ls dvid-0.8.20-dist-mac.tar.bz2 # <--- Distribution tarball includes dvid and all dependencies
     ```
 
 4. [Draft a GitHub release.][creating-releases]
