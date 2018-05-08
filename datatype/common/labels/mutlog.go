@@ -11,6 +11,7 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
+// LogSplit logs the split of a set of voxels from the underlying label.
 func LogSplit(d dvid.Data, v dvid.VersionID, mutID uint64, op SplitOp) error {
 	uuid, err := datastore.UUIDFromVersion(v)
 	if err != nil {
@@ -29,6 +30,35 @@ func LogSplit(d dvid.Data, v dvid.VersionID, mutID uint64, op SplitOp) error {
 		return err
 	}
 	msg := storage.LogMessage{EntryType: proto.SplitOpType, Data: data}
+	return log.Append(d.DataUUID(), uuid, msg)
+}
+
+// LogSupervoxelSplit logs the split of a supervoxel into two separate supervoxels.
+func LogSupervoxelSplit(d dvid.Data, v dvid.VersionID, mutID uint64, op SplitSupervoxelOp) error {
+	uuid, err := datastore.UUIDFromVersion(v)
+	if err != nil {
+		return err
+	}
+	logable, ok := d.(storage.LogWritable)
+	if !ok {
+		return nil // skip logging
+	}
+	log := logable.GetWriteLog()
+	if log == nil {
+		return nil
+	}
+	pop := proto.SupervoxelSplitOp{
+		Mutid:       mutID,
+		Supervoxel:  op.Supervoxel,
+		Splitlabel:  op.SplitSupervoxel,
+		Remainlabel: op.RemainSupervoxel,
+	}
+	serialization, err := pop.Marshal()
+	if err != nil {
+		return err
+	}
+
+	msg := storage.LogMessage{EntryType: proto.SupervoxelSplitType, Data: serialization}
 	return log.Append(d.DataUUID(), uuid, msg)
 }
 

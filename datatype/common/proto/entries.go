@@ -10,4 +10,5 @@ const (
 	MutationCompleteType
 	AffinityType
 	MappingOpType
+	SupervoxelSplitType
 )

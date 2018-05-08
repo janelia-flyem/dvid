@@ -938,18 +938,31 @@ func TestSplitLabel(t *testing.T) {
 	if err := json.Unmarshal(r, &jsonVal2); err != nil {
 		t.Fatalf("unable to get size: %v", err)
 	}
+	voxelsIn4 := body4.voxelSpans.Count()
 	expectedVoxels := bodysplit.voxelSpans.Count()
 	if jsonVal2.Voxels != expectedVoxels {
 		t.Errorf("thought split body would have %d voxels, got %d\n", expectedVoxels, jsonVal2.Voxels)
 	}
+
 	reqStr = fmt.Sprintf("%snode/%s/labels/size/4?supervoxels=true", server.WebAPIPath, uuid)
+	server.TestBadHTTP(t, "GET", reqStr, nil)
+
+	reqStr = fmt.Sprintf("%snode/%s/labels/size/6?supervoxels=true", server.WebAPIPath, uuid)
 	r = server.TestHTTP(t, "GET", reqStr, nil)
 	if err := json.Unmarshal(r, &jsonVal2); err != nil {
-		t.Fatalf("unable to get size for supervoxel 4: %v", err)
+		t.Fatalf("unable to get size for supervoxel 6: %v", err)
 	}
-	voxelsIn4 := body4.voxelSpans.Count()
+	if jsonVal2.Voxels != expectedVoxels {
+		t.Errorf("expected split supervoxel to be %d voxels, got %d voxels\n", expectedVoxels, jsonVal2.Voxels)
+	}
+
+	reqStr = fmt.Sprintf("%snode/%s/labels/size/7?supervoxels=true", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
+	if err := json.Unmarshal(r, &jsonVal2); err != nil {
+		t.Fatalf("unable to get size for supervoxel 7: %v", err)
+	}
 	if jsonVal2.Voxels != voxelsIn4-expectedVoxels {
-		t.Errorf("thought supervoxel 4 would have %d voxels remaining, got %d\n", voxelsIn4-expectedVoxels, jsonVal2.Voxels)
+		t.Errorf("thought remnant supervoxel would have %d voxels remaining, got %d\n", voxelsIn4-expectedVoxels, jsonVal2.Voxels)
 	}
 
 	// Make sure sparsevol for original body 4 is correct

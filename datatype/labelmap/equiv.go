@@ -368,6 +368,35 @@ func addMergeToMapping(d dvid.Data, v dvid.VersionID, mutID, toLabel uint64, mer
 	return labels.LogMapping(d, v, op)
 }
 
+// adds new arbitrary split into the equivalence map for a given instance version.
+func addSplitToMapping(d dvid.Data, v dvid.VersionID, remainLabel, splitLabel uint64, splitmap *labels.SVSplitMap) error {
+	m, err := getMapping(d, v)
+	if err != nil {
+		return err
+	}
+	m.Lock()
+	vid, err := m.createShortVersion(v)
+	if err != nil {
+		return err
+	}
+	splitmap.RLock()
+	for _, svsplit := range splitmap.Splits {
+		vm := m.fm[svsplit.Split]
+		newvm, changed := vm.modify(vid, splitLabel)
+		if changed {
+			m.fm[svsplit.Split] = newvm
+		}
+		vm = m.fm[svsplit.Remain]
+		newvm, changed = vm.modify(vid, remainLabel)
+		if changed {
+			m.fm[svsplit.Remain] = newvm
+		}
+	}
+	splitmap.RUnlock()
+	m.Unlock()
+	return nil
+}
+
 // adds new cleave into the equivalence map for a given instance version and also
 // records the mappings into the log.
 func addCleaveToMapping(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {

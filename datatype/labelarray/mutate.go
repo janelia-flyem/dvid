@@ -666,7 +666,6 @@ func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
 			dvid.Errorf("can't store label %d RLEs into block %s: %v\n", op.NewLabel, op.bcoord, err)
 			return
 		}
-		dvid.Infof("Split block %s, label %d -> %d: kept %d voxels, split %d voxels\n", pb.BCoord, op.Target, op.NewLabel, keptSize, toLabelSize)
 		if splitBlock == nil {
 			dvid.Infof("Attempt to split missing label %d in block %s!\n", op.SplitOp.Target, pb)
 			return

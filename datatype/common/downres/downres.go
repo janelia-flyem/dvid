@@ -78,6 +78,14 @@ func NewMutation(d Downreser, v dvid.VersionID, mutID uint64) *Mutation {
 	return &m
 }
 
+// MutationID returns the mutation ID associated with this mutation.
+func (m *Mutation) MutationID() uint64 {
+	if m == nil {
+		return 0
+	}
+	return m.mutID
+}
+
 // BlockMutated caches mutations at the highest resolution (scale 0)
 func (m *Mutation) BlockMutated(bcoord dvid.IZYXString, block interface{}) error {
 	if m.hiresCache == nil {

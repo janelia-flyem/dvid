@@ -91,7 +91,7 @@ var testData = Elements{
 	},
 	{
 		ElementNR{
-			Pos:  dvid.Point3d{20, 30, 40}, // Label 2
+			Pos:  dvid.Point3d{20, 30, 40}, // Label 2, but can be split off
 			Kind: PostSyn,
 			Tags: []Tag{"Synapse1"},
 		},
@@ -1094,14 +1094,22 @@ func testMappedLabels(t *testing.T, uuid dvid.UUID, labelblkName, labelvolName d
 		t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
 	}
 	splitLabel := jsonVal.Label
+	dvid.Infof("after split/2, split label = %d\n", splitLabel)
+
+	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
+		t.Fatalf("Error blocking on sync of synapses: %v\n", err)
+	}
+
+	reqStr = fmt.Sprintf("%snode/%s/%s/supervoxels/%d", server.WebAPIPath, uuid, labelvolName, splitLabel)
+	splitSupervoxelsJSON := server.TestHTTP(t, "GET", reqStr, nil)
 
 	// Verify that the annotations are correct.
 	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
 		t.Fatalf("Error blocking on sync of split->annotations: %v\n", err)
 	}
-	testResponseLabel(t, expectedLabel2c.setSupervoxels([]uint64{3}), "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel2c.setSupervoxels([]uint64{9}), "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
 	url2 := fmt.Sprintf("%snode/%s/mysynapses/label/%d?relationships=true", server.WebAPIPath, uuid, splitLabel)
-	testResponseLabel(t, expectedLabel7.setSupervoxels([]uint64{5}), url2)
+	testResponseLabel(t, expectedLabel7.setSupervoxels([]uint64{6, 8}), url2)
 
 	// Change the name of the annotations.
 	if err = datastore.RenameData(uuid, "mysynapses", labelvolName, "foobar"); err == nil {
@@ -1113,7 +1121,7 @@ func testMappedLabels(t *testing.T, uuid dvid.UUID, labelblkName, labelvolName d
 
 	// Make sure the old name is no longer there and the new one is.
 	server.TestBadHTTP(t, "GET", url2, nil)
-	testResponseLabel(t, expectedLabel2c.setSupervoxels([]uint64{3}), "%snode/%s/renamedData/label/2?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel2c.setSupervoxels([]uint64{9}), "%snode/%s/renamedData/label/2?relationships=true", server.WebAPIPath, uuid)
 
 	testMerge = mergeJSON(fmt.Sprintf(`[2, %d]`, splitLabel))
 	testMerge.send(t, uuid, string(labelvolName))
@@ -1123,29 +1131,37 @@ func testMappedLabels(t *testing.T, uuid dvid.UUID, labelblkName, labelvolName d
 	if err := datastore.BlockOnUpdating(uuid, "renamedData"); err != nil {
 		t.Fatalf("Error blocking on sync of synapses: %v\n", err)
 	}
+	testResponseLabel(t, expectedLabel2b.setSupervoxels([]uint64{6, 8, 9}), "%snode/%s/renamedData/label/2?relationships=true", server.WebAPIPath, uuid)
 
 	// Try a cleave
 	reqStr = fmt.Sprintf("%snode/%s/%s/cleave/2", server.WebAPIPath, uuid, labelvolName)
-	splitSupervoxelStr := fmt.Sprintf("[%d]", splitLabel)
-	r = server.TestHTTP(t, "POST", reqStr, bytes.NewBufferString(splitSupervoxelStr))
+	r = server.TestHTTP(t, "POST", reqStr, bytes.NewBuffer(splitSupervoxelsJSON))
+	dvid.Infof("Sending supervoxels: %s\n", string(splitSupervoxelsJSON))
 	var cleaveVal struct {
 		CleavedLabel uint64
 	}
 	if err := json.Unmarshal(r, &cleaveVal); err != nil {
 		t.Errorf("Unable to get new label from cleave.  Instead got: %v\n", cleaveVal)
 	}
+	dvid.Infof("after cleave/2, cleaved off label = %d\n", cleaveVal.CleavedLabel)
 
 	// Verify that the annotations are correct.
+	for label := uint64(1); label < 14; label++ {
+		reqStr = fmt.Sprintf("%snode/%s/renamedData/label/%d", server.WebAPIPath, uuid, label)
+		r = server.TestHTTP(t, "GET", reqStr, nil)
+		dvid.Infof("Label %d elements: %s\n", label, string(r))
+	}
+
 	if err := datastore.BlockOnUpdating(uuid, "renamedData"); err != nil {
 		t.Fatalf("Error blocking on sync of split->annotations: %v\n", err)
 	}
-	testResponseLabel(t, expectedLabel7.setSupervoxels([]uint64{5}), "%snode/%s/renamedData/label/%d?relationships=true", server.WebAPIPath, uuid, cleaveVal.CleavedLabel)
-	testResponseLabel(t, expectedLabel2c.setSupervoxels([]uint64{3}), "%snode/%s/renamedData/label/2?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel7.setSupervoxels([]uint64{6, 8}), "%snode/%s/renamedData/label/%d?relationships=true", server.WebAPIPath, uuid, cleaveVal.CleavedLabel)
+	testResponseLabel(t, expectedLabel2c.setSupervoxels([]uint64{9}), "%snode/%s/renamedData/label/2?relationships=true", server.WebAPIPath, uuid)
 
 	// Delete a labeled annotation and make sure it's not in label
 	delurl := fmt.Sprintf("%snode/%s/%s/element/20_30_40", server.WebAPIPath, uuid, "renamedData")
 	server.TestHTTP(t, "DELETE", delurl, nil)
-	testResponseLabel(t, afterDeleteOn7.setSupervoxels([]uint64{5}), "%snode/%s/%s/label/%d?relationships=true", server.WebAPIPath, uuid, "renamedData", cleaveVal.CleavedLabel)
+	testResponseLabel(t, afterDeleteOn7.setSupervoxels([]uint64{6}), "%snode/%s/%s/label/%d?relationships=true", server.WebAPIPath, uuid, "renamedData", cleaveVal.CleavedLabel)
 }
 
 func TestOldLabels(t *testing.T) {
@@ -1252,6 +1268,79 @@ func TestMappedLabels(t *testing.T) {
 	}
 
 	testMappedLabels(t, uuid, "mylabelmap", "mylabelmap")
+}
+
+func TestSupervoxelSplit(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	config.Set("BlockSize", "32,32,32")
+
+	labelName := "mylabelmap"
+	server.CreateTestInstance(t, uuid, "labelmap", labelName, config)
+
+	_ = createLabelTestVolume(t, uuid, labelName)
+
+	// Add annotations syncing with "labels" instance checking for deduplication.
+	server.CreateTestInstance(t, uuid, "annotation", "mysynapses", config)
+	server.CreateTestSync(t, uuid, "mysynapses", "mylabelmap,mylabelmap,mylabelmap")
+	dataservice, err := datastore.GetDataByUUIDName(uuid, "mysynapses")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("Can't convert dataservice %v into datastore.Data\n", dataservice)
+	}
+	if len(data.SyncedData()) != 1 {
+		t.Fatalf("Expected 1 sync (uuid for labels), got %v\n", data.SyncedData())
+	}
+
+	testJSON, err := json.Marshal(testData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	url1 := fmt.Sprintf("%snode/%s/mysynapses/elements", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", url1, strings.NewReader(string(testJSON)))
+
+	testResponseLabel(t, expectedLabel1.setSupervoxels([]uint64{1}), "%snode/%s/mysynapses/label/1?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel2.setSupervoxels([]uint64{2}), "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel3.setSupervoxels([]uint64{3}), "%snode/%s/mysynapses/label/3?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel3NoRel.setSupervoxels([]uint64{3}), "%snode/%s/mysynapses/label/3", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel4.setSupervoxels([]uint64{4}), "%snode/%s/mysynapses/label/4?relationships=true", server.WebAPIPath, uuid)
+
+	// Create the sparsevol encoding for split area
+	numspans := len(bodysplit.voxelSpans)
+	rles := make(dvid.RLEs, numspans, numspans)
+	for i, span := range bodysplit.voxelSpans {
+		start := dvid.Point3d{span[2], span[1], span[0]}
+		length := span[3] - span[2] + 1
+		rles[i] = dvid.NewRLE(start, length)
+	}
+	buf := getBytesRLE(t, rles)
+
+	// Submit the supervoxel split
+	reqStr := fmt.Sprintf("%snode/%s/%s/split-supervoxel/3", server.WebAPIPath, uuid, labelName)
+	r := server.TestHTTP(t, "POST", reqStr, buf)
+	var jsonVal struct {
+		SplitSupervoxel  uint64
+		RemainSupervoxel uint64
+	}
+	if err := json.Unmarshal(r, &jsonVal); err != nil {
+		t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
+	}
+	dvid.Infof("after supervoxel split on supervoxel 3 -> split %d, remain %d\n", jsonVal.SplitSupervoxel, jsonVal.RemainSupervoxel)
+
+	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
+		t.Fatalf("Error blocking on sync of synapses: %v\n", err)
+	}
+
+	testResponseLabel(t, expectedLabel3.setSupervoxels([]uint64{jsonVal.SplitSupervoxel, jsonVal.RemainSupervoxel}), "%snode/%s/mysynapses/label/3?relationships=true", server.WebAPIPath, uuid)
 }
 
 func testLabelsReload(t *testing.T, uuid dvid.UUID, labelblkName, labelvolName dvid.InstanceName) {
@@ -1536,7 +1625,7 @@ var (
 			size:   dvid.Point3d{12, 7, 5},
 			blockSpans: []dvid.Span{
 				{0, 0, 0, 0},
-				{0, 0, 0, 0},
+				{1, 0, 0, 0},
 			},
 			voxelSpans: []dvid.Span{
 				{12, 8, 4, 8},

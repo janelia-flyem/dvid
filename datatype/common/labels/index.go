@@ -110,7 +110,8 @@ func (idx *Index) GetSupervoxels() Set {
 		return Set{}
 	}
 	lbls := make(Set, 2*len(idx.Blocks)) // guess 2 supervoxel per block
-	for _, svc := range idx.Blocks {
+	for zyx, svc := range idx.Blocks {
+		dvid.Infof("Block %s, counts: %v\n", BlockIndexToIZYXString(zyx), svc)
 		if svc != nil && svc.Counts != nil {
 			for sv := range svc.Counts {
 				lbls[sv] = struct{}{}

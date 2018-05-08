@@ -35,9 +35,9 @@ func (pb PositionedBlock) OffsetDVID() (dvid.Point3d, error) {
 	return pb.BCoord.VoxelOffset(pb.Size)
 }
 
-// SplitWithStats writes a new label into the RLEs defined by the split and returns how many of
-// each label was overwritten.  This is done by doing full expansion of block into uint64 array.
-func (pb PositionedBlock) SplitWithStats(op SplitOp) (split *Block, counts map[uint64]uint32, err error) {
+// SplitWithStats writes a new label into the RLEs defined by the split and returns how each supervoxel
+// (counts key) was split.  This is done by doing full expansion of block into uint64 array.
+func (pb PositionedBlock) SplitWithStats(op SplitOp, m *SVSplitMap, newLabelFunc func() (uint64, error)) (split *Block, counts map[uint64]SVSplitCount, err error) {
 	var offset dvid.Point3d
 	if offset, err = pb.OffsetDVID(); err != nil {
 		return
@@ -47,21 +47,40 @@ func (pb PositionedBlock) SplitWithStats(op SplitOp) (split *Block, counts map[u
 	if err != nil {
 		return
 	}
-	counts = make(map[uint64]uint32)
+	counts = make(map[uint64]SVSplitCount)
 
+	replacements := make(map[uint64]uint64)
 	rles := op.RLEs.Offset(offset)
 	for _, rle := range rles {
 		pt := rle.StartPt()
 		i := pt[2]*pb.Size[1]*pb.Size[0] + pt[1]*pb.Size[0] + pt[0]
 		for x := int32(0); x < rle.Length(); x++ {
 			lbl := lblarray[i]
-			counts[lbl]++
-			lblarray[i] = op.NewLabel
+			if lbl != 0 {
+				svc := counts[lbl]
+
+				var relabel SVSplit
+				relabel, _, err = m.getMapping(lbl, newLabelFunc)
+				if err != nil {
+					return
+				}
+				lblarray[i] = relabel.Split
+				dvid.Infof("Split %s supervoxel %d -> split supervoxel %d, remaining supervoxel %d\n", pb.BCoord, lbl, relabel.Split, relabel.Remain)
+				replacements[lbl] = relabel.Remain
+				svc.SVSplit = relabel
+				svc.Voxels++
+				counts[lbl] = svc
+			}
 			i++
 		}
 	}
 
-	split, err = MakeBlock(lblarrayBytes, pb.Size)
+	if split, err = MakeBlock(lblarrayBytes, pb.Size); err != nil {
+		return
+	}
+	if len(replacements) > 0 {
+		split, _, err = split.ReplaceLabels(replacements)
+	}
 	return
 }
 
@@ -337,9 +356,7 @@ func (pb PositionedBlock) splitFast(op SplitOp) (split *Block, keptSize, splitSi
 	return
 }
 
-// SplitSupervoxel splits a target supervoxel using RLEs within a block by doing full expansion of block
-// into uint64 array.  The voxels of the RLEs get the SplitSupervoxel id while all other voxels of the
-// target supervoxel get assigned the RemainSupervoxel id by simply changing the label header.
+// SplitSupervoxel splits a target supervoxel using RLEs within a block.
 func (pb PositionedBlock) SplitSupervoxel(op SplitSupervoxelOp) (split *Block, keptSize, splitSize uint64, err error) {
 	var offset dvid.Point3d
 	if offset, err = pb.OffsetDVID(); err != nil {
@@ -757,6 +774,26 @@ func (b *Block) ReplaceLabel(target, newLabel uint64) (replace *Block, replaceSi
 
 	replace.Labels[targetIndex] = newLabel
 	replaceSize = replace.getNumVoxels(targetIndex)
+	return
+}
+
+// ReplaceLabels replaces labels according to mapping and doesn't compute sizes.
+func (b *Block) ReplaceLabels(mapping map[uint64]uint64) (replace *Block, replaced bool, err error) {
+	replace = new(Block)
+	replace.data = dvid.New8ByteAlignBytes(uint32(len(b.data)))
+	copy(replace.data, b.data)
+	if err = replace.setExportedVars(); err != nil {
+		replace = nil
+		return
+	}
+
+	for i, label := range replace.Labels {
+		replacement, found := mapping[label]
+		if found {
+			replaced = true
+			replace.Labels[i] = replacement
+		}
+	}
 	return
 }
 

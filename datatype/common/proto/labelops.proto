@@ -25,6 +25,13 @@ message SplitOp {
     bytes rles = 5;
 }
 
+message SupervoxelSplitOp {
+	uint64 mutid = 1;
+	uint64 supervoxel = 2;
+	uint64 splitlabel = 3;
+	uint64 remainlabel = 4;
+}
+
 message OpCompleted {
     uint64 mutid = 1;
     string stage = 2;

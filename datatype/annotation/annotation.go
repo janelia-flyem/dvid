@@ -494,6 +494,12 @@ type ElementNR struct {
 	Supervoxel uint64            // only used when synced with supervoxel-aware datatypes like labelmap
 }
 
+func (e ElementNR) String() string {
+	s := fmt.Sprintf("Pos %s; Kind: %s; ", e.Pos, e.Kind)
+	s += fmt.Sprintf("Tags: %v; Prop: %v; Supervoxel %d", e.Tags, e.Prop, e.Supervoxel)
+	return s
+}
+
 func (e ElementNR) Copy() *ElementNR {
 	c := new(ElementNR)
 	c.Pos = e.Pos
@@ -995,6 +1001,12 @@ type labelType interface {
 	DataName() dvid.InstanceName
 }
 
+type supervoxelType interface {
+	GetSupervoxelAtPoint(dvid.VersionID, dvid.Point) (uint64, error)
+	BlockSize() dvid.Point
+	DataName() dvid.InstanceName
+}
+
 type mappedLabelType interface {
 	GetMappedLabels(dvid.VersionID, []uint64) ([]uint64, error)
 	DataName() dvid.InstanceName
@@ -1016,6 +1028,27 @@ func (d *Data) getSyncedLabels() labelType {
 		}
 	}
 	return nil
+}
+
+func (d *Data) getSyncedSupervoxels() supervoxelType {
+	for dataUUID := range d.SyncedData() {
+		source0, err := labelmap.GetByDataUUID(dataUUID)
+		if err == nil {
+			return source0
+		}
+	}
+	return nil
+}
+
+// get supervoxel associated with a 3d point via synced label data.  This is not most efficient if
+// there are multiple elements per block, but is ok for infrequent use.
+func (d *Data) getSupervoxelAtPoint(v dvid.VersionID, pt dvid.Point3d) (label uint64, err error) {
+	labelData := d.getSyncedSupervoxels()
+	if labelData == nil {
+		err = fmt.Errorf("no synced supervoxels for annotation %q", d.DataName())
+		return
+	}
+	return labelData.GetSupervoxelAtPoint(v, pt)
 }
 
 // returns Elements with Relationships added by querying the block-indexed elements.
@@ -1362,7 +1395,6 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 
 	// Compute the strides (in bytes)
 	blockSize := d.blockSize()
-	dvid.Infof("Arranging elements by label using synced labels %q with block size %s\n", labelData.DataName(), labelData.BlockSize())
 	bX := blockSize[0] * 8
 	bY := blockSize[1] * bX
 	blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * 8)

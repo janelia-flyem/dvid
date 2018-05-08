@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/downres"
@@ -46,7 +47,6 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 	defer d.StopUpdate()
 
 	timedLog := dvid.NewTimeLog()
-
 	mutID := d.NewMutationID()
 
 	// send kafka merge event to instance-uuid topic
@@ -111,6 +111,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 	}
 
 	dvid.Infof("merged label %d: supervoxels %v\n", op.Target, mergeIdx.GetSupervoxels())
+	dvid.Infof("merged label %d: blocks %v\n", op.Target, mergeIdx.Blocks)
 
 	delta.Blocks = targetIdx.GetBlockIndices()
 	evt = datastore.SyncEvent{d.DataUUID(), labels.MergeBlockEvent}
@@ -273,6 +274,17 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
 		dvid.Errorf("error on sending split op to kafka: %v", err)
 	}
+	op := labels.SplitOp{
+		MutID:    mutID,
+		Target:   fromLabel,
+		NewLabel: toLabel,
+		RLEs:     split,
+	}
+	go func() {
+		if err := labels.LogSplit(d, v, mutID, op); err != nil {
+			dvid.Errorf("logging split %q: %v\n", d.DataName(), err)
+		}
+	}()
 
 	d.StartUpdate()
 	defer d.StopUpdate()
@@ -292,25 +304,14 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 	// Get a sorted list of blocks that cover split.
 	splitblks := splitmap.SortedKeys()
 
-	deltaSplit := labels.DeltaSplit{
-		OldLabel:     fromLabel,
-		NewLabel:     toLabel,
-		Split:        splitmap,
-		SortedBlocks: splitblks,
-		SplitVoxels:  toLabelSize,
-	}
-	evt := datastore.SyncEvent{d.DataUUID(), labels.SplitLabelEvent}
-	msg := datastore.SyncMessage{labels.SplitLabelEvent, v, deltaSplit}
-	if err := datastore.NotifySubscribers(evt, msg); err != nil {
-		dvid.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
-	}
-
-	// Do the split
 	downresMut := downres.NewMutation(d, v, mutID)
-
 	doneCh := make(chan struct{})
 	blockCh := make(chan blockSplitCounts)
-	go modifySplitIndex(d, v, fromLabel, toLabel, blockCh, doneCh)
+	svsplit := new(labels.SVSplitMap)
+
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+	go d.splitIndexAndBlocks(v, fromLabel, toLabel, downresMut, blockCh, doneCh, wg)
 
 	for izyx, blockRLEs := range splitmap {
 		n := izyx.Hash(numMutateHandlers)
@@ -325,19 +326,37 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 			bcoord:     izyx,
 			downresMut: downresMut,
 			deltaCh:    blockCh,
+			mapping:    svsplit,
 		}
 		d.mutateCh[n] <- procMsg{op: op, v: v}
 	}
 
-	// Wait for all blocks to be split then modify label indices and mark end of split op.
+	// Wait for all blocks to be split then modify mapping and label indices.
 	d.MutWait(mutID)
 	d.MutDelete(mutID)
 	if doneCh != nil {
 		close(doneCh)
 	}
-	timedLog.Debugf("completed labelmap split (%d blocks) of %d -> %d", len(splitmap), fromLabel, toLabel)
+	wg.Wait()
+	if err = addSplitToMapping(d, v, fromLabel, toLabel, svsplit); err != nil {
+		return
+	}
 
+	timedLog.Debugf("completed labelmap split (%d blocks) of %d -> %d", len(splitmap), fromLabel, toLabel)
 	downresMut.Done()
+
+	deltaSplit := labels.DeltaSplit{
+		OldLabel:     fromLabel,
+		NewLabel:     toLabel,
+		Split:        splitmap,
+		SortedBlocks: splitblks,
+		SplitVoxels:  toLabelSize,
+	}
+	evt := datastore.SyncEvent{d.DataUUID(), labels.SplitLabelEvent}
+	msg := datastore.SyncMessage{labels.SplitLabelEvent, v, deltaSplit}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
+	}
 
 	msginfo = map[string]interface{}{
 		"Action":     "split-complete",
@@ -433,7 +452,7 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser
 		return
 	}
 	timedLog := dvid.NewTimeLog()
-	downresMut := downres.NewMutation(d, v, op.MutID)
+	downresMut := downres.NewMutation(d, v, mutID)
 
 	svblocks, err := SplitSupervoxelIndex(d, v, op)
 	if err != nil {
@@ -456,9 +475,15 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser
 	d.MutWait(op.MutID)
 	d.MutDelete(op.MutID)
 
+	downresMut.Done()
+
 	timedLog.Debugf("labelmap supervoxel %d split complete (%d blocks split)", op.Supervoxel, len(op.Split))
 
-	downresMut.Done()
+	evt := datastore.SyncEvent{d.DataUUID(), labels.SupervoxelSplitEvent}
+	msg := datastore.SyncMessage{labels.SupervoxelSplitEvent, v, op}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
+	}
 
 	msginfo = map[string]interface{}{
 		"Action":     "split-supervoxel-complete",
@@ -493,13 +518,6 @@ func (d *Data) mutateBlock(ch <-chan procMsg) {
 		case splitSupervoxelOp:
 			d.splitSupervoxelBlock(ctx, op)
 
-		// TODO
-		// case ingestOp:
-		// 	d.ingestBlock(ctx, op)
-
-		// case mutateOp:
-		// 	d.mutateBlock(ctx, op)
-
 		default:
 			dvid.Criticalf("Received unknown processing msg in mutateBlock: %v\n", msg)
 		}
@@ -520,19 +538,21 @@ func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
 		dvid.Infof("split on block %s attempted but block doesn't exist\n", op.bcoord)
 		return
 	}
-
-	splitBlock, counts, err := pb.SplitWithStats(op.SplitOp)
+	f := func() (uint64, error) {
+		return d.NewLabel(ctx.VersionID())
+	}
+	splitBlock, counts, err := pb.SplitWithStats(op.SplitOp, op.mapping, f)
 	if err != nil {
 		dvid.Errorf("issue with creating split in block %s: %v\n", op.Target, op.bcoord, err)
 		return
 	}
+	dvid.Infof("return from pb.SplitWithStats counts: %v\n", counts)
 	op.deltaCh <- blockSplitCounts{
-		bcoord:  op.bcoord,
-		deleted: counts,
+		bcoord: op.bcoord,
+		counts: counts,
 	}
-	dvid.Infof("Split block %s, label %d -> %d: affected %d supervoxels\n", pb.BCoord, op.Target, op.NewLabel, len(counts))
 
-	splitpb := labels.PositionedBlock{*splitBlock, op.bcoord}
+	splitpb := labels.PositionedBlock{Block: *splitBlock, BCoord: op.bcoord}
 	if err := d.putLabelBlock(ctx, scale, &splitpb); err != nil {
 		dvid.Errorf("unable to put block %s in split of label %d, data %q: %v\n", op.bcoord, op.Target, d.DataName(), err)
 		return

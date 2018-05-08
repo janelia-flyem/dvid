@@ -203,6 +203,45 @@ func (mc *mergeCache) DeleteMap(iv dvid.InstanceVersion) {
 	}
 }
 
+// SVSplit provides labels after a supervoxel split
+type SVSplit struct {
+	Split  uint64 // label corresponding to split sparse volume
+	Remain uint64 // relabeling of supervoxel that remains after split
+}
+
+// SVSplitCount provides both labels and the # voxels after a supervoxel split.
+type SVSplitCount struct {
+	SVSplit
+	Voxels uint32 // number of voxels split
+}
+
+// SVSplitMap is a thread-safe mapping of supervoxels labels to their new split labels.
+type SVSplitMap struct {
+	sync.RWMutex
+	Splits map[uint64]SVSplit
+}
+
+// returns a new mapped label or the previously mapped one.
+func (m *SVSplitMap) getMapping(label uint64, newLabelFunc func() (uint64, error)) (relabel SVSplit, found bool, err error) {
+	m.Lock()
+	defer m.Unlock()
+	if m.Splits == nil {
+		m.Splits = make(map[uint64]SVSplit)
+	} else {
+		relabel, found = m.Splits[label]
+	}
+	if !found {
+		if relabel.Split, err = newLabelFunc(); err != nil {
+			return
+		}
+		if relabel.Remain, err = newLabelFunc(); err != nil {
+			return
+		}
+		m.Splits[label] = relabel
+	}
+	return
+}
+
 // Mapping is a thread-safe, mapping of labels to labels in both forward and backward direction.
 // Mutation of a Mapping instance can only be done through labels.MergeCache.
 type Mapping struct {

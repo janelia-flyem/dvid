@@ -610,6 +610,45 @@ func TestBlockReplaceLabel(t *testing.T) {
 	}
 }
 
+func TestBlockReplaceLabels(t *testing.T) {
+	numVoxels := 64 * 64 * 64
+	testvol := make([]uint64, numVoxels)
+	for i := 0; i < numVoxels; i++ {
+		testvol[i] = uint64(i) % 4
+	}
+	block, err := MakeBlock(dvid.Uint64ToByte(testvol), dvid.Point3d{64, 64, 64})
+	if err != nil {
+		t.Fatalf("error making block: %v\n", err)
+	}
+	mapping := map[uint64]uint64{
+		0: 5,
+		1: 6,
+		2: 7,
+		3: 8,
+	}
+	replaceBlock, replaced, err := block.ReplaceLabels(mapping)
+	if err != nil {
+		t.Fatalf("error replacing block: %v\n", err)
+	}
+	if !replaced {
+		t.Errorf("expected replacement and got none\n")
+	}
+	volbytes, size := replaceBlock.MakeLabelVolume()
+	if size[0] != 64 || size[1] != 64 || size[2] != 64 {
+		t.Fatalf("bad replaced block size returned: %s\n", size)
+	}
+	uint64arr, err := dvid.ByteToUint64(volbytes)
+	if err != nil {
+		t.Fatalf("error converting label byte array: %v\n", err)
+	}
+	for i, label := range uint64arr {
+		if label != uint64(i%4)+5 {
+			t.Errorf("expected label %d after replacement in voxel %d, got %d\n", (i%4)+5, i, label)
+			break
+		}
+	}
+}
+
 func TestBlockSplitAndRLEs(t *testing.T) {
 	numVoxels := 32 * 32 * 32
 	testvol := make([]uint64, numVoxels)
