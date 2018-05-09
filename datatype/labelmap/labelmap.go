@@ -115,16 +115,16 @@ $ dvid node <UUID> <data name> composite <uint8 data name> <new rgba8 data name>
 	
 $ dvid node <UUID> <data name> dump <dump type> <file path>
 
-	Dumps the internal state of the specified version of labelmap data into a CSV file.
-	The format of the CSV files are as follows depending on the <dump type>:
+	Dumps the internal state of the specified version of labelmap data into a space-delimted file.
+	The format of the space-delimted files are as follows depending on the <dump type>:
 
-	"svcount": Supervoxel counts in a CSV file where each block in a supervoxel has a row:
+	"svcount": Supervoxel counts in a space-delimted file where each block in a supervoxel has a row:
 		<supervoxel id> <block z> <block y> <block x> <# voxels>
 	
-	"mappings": Supervoxel to agglomerated label mappings in a CSV file where each supervoxel has a row:
+	"mappings": Supervoxel to agglomerated label mappings in a space-delimted file where each supervoxel has a row:
 		<supervoxel id> <label>
 	
-	"indices": Label indices in a CSV file where each supervoxel has a row with its agglomerated label:
+	"indices": Label indices in a space-delimted file where each supervoxel has a row with its agglomerated label:
 		<label> <supervoxel id> <block z> <block y> <block x> <# voxels>
 	
 	Note that the last two dumps can be used by a program to ingest all but the actual voxel labels,
@@ -1107,6 +1107,18 @@ POST <api URL>/node/<UUID>/<data name>/indices
 	where LabelIndex is defined by the protobuf above in the POST /index documentation.
 	A label index can be deleted as per the POST /index documentation by having an empty
 	blocks map.
+
+GET <api URL>/node/<UUID>/<data name>/mappings
+
+	Streams space-delimited mappings for the given UUID, one mapping per line:
+
+		supervoxel0 mappedTo0
+		supervoxel1 mappedTo1
+		supervoxel2 mappedTo2
+		...
+		supervoxelN mappedToN
+	
+	Note that only non-identity mappings are transmitted.
 
 POST <api URL>/node/<UUID>/<data name>/mappings
 
@@ -2462,7 +2474,7 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 			go d.writeSVCounts(f, outPath, v)
 			reply.Text = fmt.Sprintf("Asynchronously writing supervoxel counts for data %q, uuid %s to file: %s\n", d.DataName(), uuid, outPath)
 		case "mappings":
-			go d.writeMappings(f, outPath, v)
+			go d.writeFileMappings(f, outPath, v)
 			reply.Text = fmt.Sprintf("Asynchronously writing mappings for data %q, uuid %s to file: %s\n", d.DataName(), uuid, outPath)
 		case "indices":
 			go d.writeIndices(f, outPath, v)
@@ -2764,10 +2776,7 @@ func (d *Data) SetResolution(uuid dvid.UUID, jsonBytes []byte) error {
 		return err
 	}
 	d.Properties.VoxelSize = config
-	if err := datastore.SaveDataByUUID(uuid, d); err != nil {
-		return err
-	}
-	return nil
+	return datastore.SaveDataByUUID(uuid, d)
 }
 
 // if hash is not empty, make sure it is hash of data.
@@ -2975,7 +2984,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		d.handleIngestIndices(ctx, w, r)
 
 	case "mappings":
-		d.handleIngestMappings(ctx, w, r)
+		d.handleMappings(ctx, w, r)
 
 	default:
 		server.BadAPIRequest(w, r, d)
@@ -3294,7 +3303,7 @@ func (d *Data) handleIngestIndices(ctx *datastore.VersionedCtx, w http.ResponseW
 	timedLog.Infof("HTTP POST indices for %d labels (%s)", len(indices.Indices), r.URL)
 }
 
-func (d *Data) handleIngestMappings(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+func (d *Data) handleMappings(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	// POST <api URL>/node/<UUID>/<data name>/mappings
 	timedLog := dvid.NewTimeLog()
 
@@ -3306,26 +3315,34 @@ func (d *Data) handleIngestMappings(ctx *datastore.VersionedCtx, w http.Response
 		defer server.ThrottledOpDone()
 	}
 
-	if strings.ToLower(r.Method) != "post" {
+	switch strings.ToLower(r.Method) {
+	case "post":
+		if r.Body == nil {
+			server.BadRequest(w, r, fmt.Errorf("no data POSTed"))
+			return
+		}
+		serialization, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			server.BadRequest(w, r, err)
+		}
+		var mappings proto.MappingOps
+		if err := mappings.Unmarshal(serialization); err != nil {
+			server.BadRequest(w, r, err)
+		}
+		if err := d.ingestMappings(ctx, mappings); err != nil {
+			server.BadRequest(w, r, err)
+		}
+		timedLog.Infof("HTTP POST %d merges (%s)", len(mappings.Mappings), r.URL)
+
+	case "get":
+		if err := d.writeMappings(w, ctx.VersionID()); err != nil {
+			server.BadRequest(w, r, "unable to write mappings: %v", err)
+		}
+		timedLog.Infof("HTTP GET mappings (%s)", r.URL)
+
+	default:
 		server.BadRequest(w, r, "only POST action allowed for /mappings endpoint")
-		return
 	}
-	if r.Body == nil {
-		server.BadRequest(w, r, fmt.Errorf("no data POSTed"))
-		return
-	}
-	serialization, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		server.BadRequest(w, r, err)
-	}
-	var mappings proto.MappingOps
-	if err := mappings.Unmarshal(serialization); err != nil {
-		server.BadRequest(w, r, err)
-	}
-	if err := d.ingestMappings(ctx, mappings); err != nil {
-		server.BadRequest(w, r, err)
-	}
-	timedLog.Infof("HTTP POST %d merges (%s)", len(mappings.Mappings), r.URL)
 }
 
 func (d *Data) handlePseudocolor(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {

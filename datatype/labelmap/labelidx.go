@@ -1375,24 +1375,32 @@ func (d *Data) writeSVCounts(f *os.File, outPath string, v dvid.VersionID) {
 	timedLog.Infof("Finished counting supervoxels in %d blocks and sent to output file %q", numBlocks, outPath)
 }
 
-func (d *Data) writeMappings(f *os.File, outPath string, v dvid.VersionID) {
+func (d *Data) writeFileMappings(f *os.File, outPath string, v dvid.VersionID) {
+	if err := d.writeMappings(f, v); err != nil {
+		dvid.Errorf("error writing mapping to file %q: %v\n", outPath, err)
+		return
+	}
+	if err := f.Close(); err != nil {
+		dvid.Errorf("problem closing file %q: %v\n", outPath, err)
+	}
+}
+
+func (d *Data) writeMappings(w io.Writer, v dvid.VersionID) error {
 	timedLog := dvid.NewTimeLog()
 
 	svm, err := getMapping(d, v)
 	if err != nil {
-		dvid.Errorf("unable to retrieve mappings for data %q, version %d: %v\n", d.DataName(), v, err)
-		return
+		return fmt.Errorf("unable to retrieve mappings for data %q, version %d: %v", d.DataName(), v, err)
 	}
 	ancestry, err := svm.getLockedAncestry(v)
 	if err != nil {
-		dvid.Errorf("unable to get ancestry for data %q, version %d: %v\n", d.DataName(), v, err)
-		return
+		return fmt.Errorf("unable to get ancestry for data %q, version %d: %v", d.DataName(), v, err)
 	}
 	svm.RLock()
 	defer svm.RUnlock()
 	if len(svm.fm) == 0 {
 		dvid.Infof("no mappings found for data %q\n", d.DataName())
-		return
+		return nil
 	}
 	var numMappings, numErrors uint64
 	for supervoxel, vm := range svm.fm {
@@ -1401,19 +1409,17 @@ func (d *Data) writeMappings(f *os.File, outPath string, v dvid.VersionID) {
 			numMappings++
 			if supervoxel != label {
 				line := fmt.Sprintf("%d %d\n", supervoxel, label)
-				if _, err := f.WriteString(line); err != nil {
+				if _, err := w.Write([]byte(line)); err != nil {
 					numErrors++
 					if numErrors < 100 {
-						dvid.Errorf("Unable to write data for mapping of supervoxel %d -> %d, data %q: %v\n", supervoxel, label, d.DataName(), err)
+						return fmt.Errorf("unable to write data for mapping of supervoxel %d -> %d, data %q: %v", supervoxel, label, d.DataName(), err)
 					}
 				}
 			}
 		}
 	}
-	if err = f.Close(); err != nil {
-		dvid.Errorf("problem closing file %q: %v\n", outPath, err)
-	}
-	timedLog.Infof("Finished writing %d mappings (%d errors) for data %q, version %d to output file %q", numMappings, numErrors, d.DataName(), v, outPath)
+	timedLog.Infof("Finished writing %d mappings (%d errors) for data %q, version %d", numMappings, numErrors, d.DataName(), v)
+	return nil
 }
 
 func (d *Data) indexThread(f *os.File, mu *sync.Mutex, wg *sync.WaitGroup, chunkCh chan *storage.Chunk) {

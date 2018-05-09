@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -74,6 +75,24 @@ func TestIngest(t *testing.T) {
 	}
 	mappingReq := fmt.Sprintf("%snode/%s/labels/mappings", server.WebAPIPath, child1)
 	server.TestHTTP(t, "POST", mappingReq, bytes.NewBuffer(serialization))
+
+	mappingData := server.TestHTTP(t, "GET", mappingReq, nil)
+	lines := strings.Split(strings.TrimSpace(string(mappingData)), "\n")
+	if len(lines) != 3 {
+		t.Errorf("expected 3 lines for mapping, got %d lines\n", len(lines))
+	} else {
+		expected := map[uint64]uint64{1: 7, 2: 7, 3: 8}
+		for i, line := range lines {
+			var supervoxel, label uint64
+			fmt.Sscanf(line, "%d %d", &supervoxel, &label)
+			expectedLabel, found := expected[supervoxel]
+			if !found {
+				t.Errorf("got unknown mapping in line %d: %d -> %d\n", i, supervoxel, label)
+			} else if expectedLabel != label {
+				t.Errorf("expected supervoxel %d -> label %d, got %d\n", supervoxel, expectedLabel, label)
+			}
+		}
+	}
 
 	idx1 := body1.getIndex(t)
 	idx2 := body2.getIndex(t)
