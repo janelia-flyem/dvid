@@ -174,7 +174,7 @@ func (idx *Index) LimitToSupervoxel(supervoxel uint64) (*Index, error) {
 	}
 	sidx := new(Index)
 	sidx.Label = idx.Label
-	sidx.LastMutid = idx.LastMutid
+	sidx.LastMutId = idx.LastMutId
 	sidx.LastModTime = idx.LastModTime
 	sidx.LastModUser = idx.LastModUser
 	sidx.Blocks = make(map[uint64]*proto.SVCount)

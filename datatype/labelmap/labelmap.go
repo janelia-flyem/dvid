@@ -645,6 +645,20 @@ GET <api URL>/node/<UUID>/<data name>/maxlabel
 --- The following endpoints require the labelmap data instance to have IndexedLabels set to true. ---
 -------------------------------------------------------------------------------------------------------
 
+GET <api URL>/node/<UUID>/<data name>/lastmod/<label>
+
+	Returns modification metadata for a label in JSON:
+
+	{ "mutation id": 2314, "last mod user": "johndoe", "last mod time": "2000-02-01 12:13:14 +0000 UTC", "last mod app": "Neu3" }
+	
+	Time is returned in RFC3339 string format. Returns a status code 404 (Not Found)
+    if label does not exist.
+	
+    Arguments:
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of labelmap instance.
+    label     	  A 64-bit integer label id
+
 GET <api URL>/node/<UUID>/<data name>/supervoxels/<label>
 
 	Returns JSON for the supervoxels that have been agglomerated into the given label:
@@ -2938,6 +2952,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 	// endpoints after this must have data instance IndexedLabels = true
 
+	case "lastmod":
+		d.handleLabelmod(ctx, w, r, parts)
+
 	case "supervoxels":
 		d.handleSupervoxels(ctx, w, r, parts)
 
@@ -3596,6 +3613,45 @@ func (d *Data) handleSupervoxels(ctx *datastore.VersionedCtx, w http.ResponseWri
 	timedLog.Infof("HTTP GET supervoxels for label %d (%s)", label, r.URL)
 }
 
+func (d *Data) handleLabelmod(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
+	// GET <api URL>/node/<UUID>/<data name>/lastmod/<label>
+	if len(parts) < 5 {
+		server.BadRequest(w, r, "DVID requires label to follow 'lastmod' command")
+		return
+	}
+	timedLog := dvid.NewTimeLog()
+
+	label, err := strconv.ParseUint(parts[4], 10, 64)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	if label == 0 {
+		server.BadRequest(w, r, "Label 0 is protected background value and cannot be queried as body.\n")
+		return
+	}
+
+	idx, err := GetLabelIndex(d, ctx.VersionID(), label, false)
+	if err != nil {
+		server.BadRequest(w, r, "unable to get label %d index: %v", label, err)
+		return
+	}
+	if idx == nil || len(idx.Blocks) == 0 {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-type", "application/json")
+	fmt.Fprintf(w, `{`)
+	fmt.Fprintf(w, `"mutation id": %d, `, idx.LastMutId)
+	fmt.Fprintf(w, `"last mod user": %q, `, idx.LastModUser)
+	fmt.Fprintf(w, `"last mod app": %q, `, idx.LastModApp)
+	fmt.Fprintf(w, `"last mod time": %q `, idx.LastModTime)
+	fmt.Fprintf(w, `}`)
+
+	timedLog.Infof("HTTP GET lastmod for label %d (%s)", label, r.URL)
+}
+
 func (d *Data) handleSize(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
 	// GET <api URL>/node/<UUID>/<data name>/size/<label>[?supervoxels=true]
 	if len(parts) < 5 {
@@ -3984,7 +4040,8 @@ func (d *Data) handleSplitSupervoxel(ctx *datastore.VersionedCtx, w http.Respons
 		server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as split target\n")
 		return
 	}
-	splitSupervoxel, remainSupervoxel, err := d.SplitSupervoxel(ctx.VersionID(), supervoxel, r.Body)
+	info := dvid.GetModInfo(r)
+	splitSupervoxel, remainSupervoxel, err := d.SplitSupervoxel(ctx.VersionID(), supervoxel, r.Body, info)
 	if err != nil {
 		server.BadRequest(w, r, fmt.Sprintf("split supervoxel %d -> %d, %d: %v", supervoxel, splitSupervoxel, remainSupervoxel, err))
 		return
@@ -4016,7 +4073,8 @@ func (d *Data) handleCleave(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 		server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as cleave target\n")
 		return
 	}
-	cleaveLabel, err := d.CleaveLabel(ctx.VersionID(), label, r.Body)
+	modInfo := dvid.GetModInfo(r)
+	cleaveLabel, err := d.CleaveLabel(ctx.VersionID(), label, modInfo, r.Body)
 	if err != nil {
 		server.BadRequest(w, r, err)
 		return
@@ -4048,7 +4106,8 @@ func (d *Data) handleSplit(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 		server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
 		return
 	}
-	toLabel, err := d.SplitLabels(ctx.VersionID(), fromLabel, r.Body)
+	info := dvid.GetModInfo(r)
+	toLabel, err := d.SplitLabels(ctx.VersionID(), fromLabel, r.Body, info)
 	if err != nil {
 		server.BadRequest(w, r, fmt.Sprintf("split label %d: %v", fromLabel, err))
 		return
@@ -4082,7 +4141,8 @@ func (d *Data) handleMerge(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 		server.BadRequest(w, r, err)
 		return
 	}
-	if err := d.MergeLabels(ctx.VersionID(), mergeOp); err != nil {
+	info := dvid.GetModInfo(r)
+	if err := d.MergeLabels(ctx.VersionID(), mergeOp, info); err != nil {
 		server.BadRequest(w, r, fmt.Sprintf("Error on merge: %v", err))
 		return
 	}

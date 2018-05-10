@@ -59,9 +59,10 @@ message SVCount {
 message LabelIndex {
 	map<uint64, SVCount> blocks = 1;  // key is encoded block coord ZYX (packed little-endian 21-bit numbers where MSB is sign flag)
 	uint64 label = 2;
-	uint64 last_mutid = 3;
+	uint64 last_mut_id = 3;
 	string last_mod_time = 4;  // string is time in RFC 3339 format
 	string last_mod_user = 5;
+	string last_mod_app = 6;
 }
 
 message LabelIndices {

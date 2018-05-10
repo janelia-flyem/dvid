@@ -213,21 +213,21 @@ func deleteCachedLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) error {
 // should be launched as goroutine; locks the index of the split label for duration and
 // splits both the index as well as relabels supervoxels that were split but not in
 // split blocks.
-func (d *Data) splitIndexAndBlocks(v dvid.VersionID, fromLabel, toLabel uint64, downresMut *downres.Mutation, blockCh chan blockSplitCounts, doneCh chan struct{}, wg *sync.WaitGroup) {
-	shard := fromLabel % numIndexShards
+func (d *Data) splitIndexAndBlocks(v dvid.VersionID, op labels.SplitOp, info dvid.ModInfo, downresMut *downres.Mutation, blockCh chan blockSplitCounts, doneCh chan struct{}, wg *sync.WaitGroup) {
+	shard := op.Target % numIndexShards
 	indexMu[shard].Lock()
 	defer func() {
 		indexMu[shard].Unlock()
 		wg.Done()
 	}()
 
-	idx, err := getCachedLabelIndex(d, v, fromLabel)
+	idx, err := getCachedLabelIndex(d, v, op.Target)
 	if err != nil {
 		dvid.Errorf("modify split index for data %q, label %d: %v\n", err)
 		return
 	}
 	if idx == nil {
-		dvid.Errorf("unable to modify split index for data %q: missing label %d\n", d.DataName(), fromLabel)
+		dvid.Errorf("unable to modify split index for data %q: missing label %d\n", d.DataName(), op.Target)
 		return
 	}
 
@@ -256,9 +256,17 @@ func (d *Data) splitIndexAndBlocks(v dvid.VersionID, fromLabel, toLabel uint64, 
 			getFromChannel = false
 		}
 	}
+	idx.LastMutId = op.MutID
+	idx.LastModUser = info.User
+	idx.LastModTime = info.Time
+	idx.LastModApp = info.App
 
 	sidx := new(labels.Index)
-	sidx.Label = toLabel
+	sidx.LastMutId = op.MutID
+	sidx.LastModUser = info.User
+	sidx.LastModTime = info.Time
+	sidx.LastModApp = info.App
+	sidx.Label = op.NewLabel
 	sidx.Blocks = make(map[uint64]*proto.SVCount, len(splitsPerBlock))
 
 	relabeling := make(map[uint64]uint64)
@@ -276,11 +284,11 @@ func (d *Data) splitIndexAndBlocks(v dvid.VersionID, fromLabel, toLabel uint64, 
 			splitVoxels += svsplit.Voxels
 			numVoxels, found := cursvc.Counts[supervoxel]
 			if !found {
-				dvid.Errorf("block %s had %d voxels written over supervoxel %d in label %d split yet this supervoxel was not in the index!\n", labels.BlockIndexToIZYXString(zyx), svsplit, supervoxel, fromLabel)
+				dvid.Errorf("block %s had %d voxels written over supervoxel %d in label %d split yet this supervoxel was not in the index!\n", labels.BlockIndexToIZYXString(zyx), svsplit, supervoxel, op.Target)
 				continue
 			}
 			if numVoxels < svsplit.Voxels {
-				dvid.Errorf("block %s had %d voxels written over supervoxel %d in label %d split yet this supervoxel only had %d voxels from index!\n", labels.BlockIndexToIZYXString(zyx), svsplit.Voxels, supervoxel, fromLabel, numVoxels)
+				dvid.Errorf("block %s had %d voxels written over supervoxel %d in label %d split yet this supervoxel only had %d voxels from index!\n", labels.BlockIndexToIZYXString(zyx), svsplit.Voxels, supervoxel, op.Target, numVoxels)
 				continue
 			}
 			numVoxels -= svsplit.Voxels
@@ -332,7 +340,7 @@ func (d *Data) splitIndexAndBlocks(v dvid.VersionID, fromLabel, toLabel uint64, 
 		if replaced {
 			splitpb := labels.PositionedBlock{Block: *replacedBlock, BCoord: zyxStr}
 			if err := d.putLabelBlock(ctx, 0, &splitpb); err != nil {
-				dvid.Errorf("unable to put block %s in split of label %d, data %q: %v\n", zyxStr, fromLabel, d.DataName(), err)
+				dvid.Errorf("unable to put block %s in split of label %d, data %q: %v\n", zyxStr, op.Target, d.DataName(), err)
 				continue
 			}
 
@@ -344,13 +352,13 @@ func (d *Data) splitIndexAndBlocks(v dvid.VersionID, fromLabel, toLabel uint64, 
 
 	// store the modified label index that remains after the split
 	if err := putCachedLabelIndex(d, v, idx); err != nil {
-		dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), fromLabel, err)
+		dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), op.Target, err)
 		return
 	}
 
 	// store the new label index corresponding to the split
 	if err := putCachedLabelIndex(d, v, sidx); err != nil {
-		dvid.Errorf("create new split index for data %q, label %d: %v\n", d.DataName(), toLabel, err)
+		dvid.Errorf("create new split index for data %q, label %d: %v\n", d.DataName(), op.NewLabel, err)
 		return
 	}
 }
@@ -488,7 +496,7 @@ func PutLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, idx *labels.Inde
 // SplitSupervoxelIndex modifies the label index for a given supervoxel, returning the slice of blocks
 // that were modified.  NOTE: This assumes the split RLEs are accurate because they are not tested
 // at the voxel level as being a subset of the supervoxel.
-func SplitSupervoxelIndex(d dvid.Data, v dvid.VersionID, op labels.SplitSupervoxelOp) (dvid.IZYXSlice, error) {
+func SplitSupervoxelIndex(d dvid.Data, v dvid.VersionID, op labels.SplitSupervoxelOp, info dvid.ModInfo) (dvid.IZYXSlice, error) {
 	mapping, err := getMapping(d, v)
 	if err != nil {
 		return nil, err
@@ -510,6 +518,10 @@ func SplitSupervoxelIndex(d dvid.Data, v dvid.VersionID, op labels.SplitSupervox
 	if idx == nil {
 		return nil, fmt.Errorf("unable to split supervoxel %d for data %q: missing label index %d", op.Supervoxel, d.DataName(), label)
 	}
+	idx.LastMutId = op.MutID
+	idx.LastModUser = info.User
+	idx.LastModTime = info.Time
+	idx.LastModApp = info.App
 
 	// modify the index to reflect old supervoxel -> two new supervoxels.
 	var svblocks dvid.IZYXSlice
@@ -539,7 +551,7 @@ func SplitSupervoxelIndex(d dvid.Data, v dvid.VersionID, op labels.SplitSupervox
 
 // CleaveIndex modifies the label index to remove specified supervoxels and create another
 // label index for this cleaved body.
-func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
+func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp, info dvid.ModInfo) error {
 	shard := op.Target % numIndexShards
 	indexMu[shard].Lock()
 	defer indexMu[shard].Unlock()
@@ -551,6 +563,10 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
 	if idx == nil {
 		return fmt.Errorf("cannot cleave non-existent label %d", op.Target)
 	}
+	idx.LastMutId = op.MutID
+	idx.LastModUser = info.User
+	idx.LastModTime = info.Time
+	idx.LastModApp = info.App
 
 	supervoxels := idx.GetSupervoxels()
 	for _, supervoxel := range op.CleavedSupervoxels {

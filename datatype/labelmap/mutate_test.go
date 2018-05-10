@@ -1151,9 +1151,24 @@ func TestMergeCleave(t *testing.T) {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
+	reqStr = fmt.Sprintf("%snode/%s/labels/lastmod/4", server.WebAPIPath, uuid)
+	r := server.TestHTTP(t, "GET", reqStr, nil)
+	var infoVal struct {
+		MutID uint64 `json:"mutation id"`
+		User  string `json:"last mod user"`
+		App   string `json:"last mod app"`
+		Time  string `json:"last mod time"`
+	}
+	if err := json.Unmarshal(r, &infoVal); err != nil {
+		t.Fatalf("unable to get mod info for label 4: %v", err)
+	}
+	if infoVal.MutID != 2 {
+		t.Errorf("expected mutation id %d, got %d\n", 2, infoVal.MutID)
+	}
+
 	// Check sizes
 	reqStr = fmt.Sprintf("%snode/%s/labels/size/4", server.WebAPIPath, uuid)
-	r := server.TestHTTP(t, "GET", reqStr, nil)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
 	var jsonVal struct {
 		Voxels uint64 `json:"voxels"`
 	}
@@ -1215,13 +1230,22 @@ func TestMergeCleave(t *testing.T) {
 	}
 
 	// Cleave supervoxel 3 out of label 4.
-	reqStr = fmt.Sprintf("%snode/%s/labels/cleave/4", server.WebAPIPath, uuid)
+	reqStr = fmt.Sprintf("%snode/%s/labels/cleave/4?u=mrsmith&app=myapp", server.WebAPIPath, uuid)
 	r = server.TestHTTP(t, "POST", reqStr, bytes.NewBufferString("[3]"))
 	var jsonVal2 struct {
 		CleavedLabel uint64
 	}
 	if err := json.Unmarshal(r, &jsonVal2); err != nil {
 		t.Errorf("Unable to get new label from cleave.  Instead got: %v\n", jsonVal2)
+	}
+
+	reqStr = fmt.Sprintf("%snode/%s/labels/lastmod/4", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
+	if err := json.Unmarshal(r, &infoVal); err != nil {
+		t.Fatalf("unable to get mod info for label 4: %v", err)
+	}
+	if infoVal.MutID != 3 || infoVal.App != "myapp" || infoVal.User != "mrsmith" {
+		t.Errorf("unexpected last mod info: %v\n", infoVal)
 	}
 
 	reqStr = fmt.Sprintf("%snode/%s/labels/maxlabel", server.WebAPIPath, uuid)
