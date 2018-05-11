@@ -20,10 +20,10 @@ type KafkaConfig struct {
 }
 
 // InitKafka intializes kafka connection.
-func (c *KafkaConfig) Initialize() {
+func (c *KafkaConfig) Initialize() error {
 	if c == nil || len(c.Servers) == 0 {
 		Infof("No Kafka server specified.\n")
-		return
+		return nil
 	}
 
 	// create kafka connection
@@ -37,8 +37,9 @@ func (c *KafkaConfig) Initialize() {
 	var err error
 	broker, err = kafka.Dial(c.Servers, conf)
 	if err != nil {
-		Criticalf("cannot connect to kafka cluster: %s", err)
+		return fmt.Errorf("cannot connect to kafka cluster: %s", err)
 	}
+	return nil
 }
 
 // KafkaProduceMsg sends a message to kafka

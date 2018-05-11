@@ -269,16 +269,18 @@ func DoServe(cmd dvid.Command) error {
 	}
 	instanceConfig, logConfig, backend, kafka, err := server.LoadConfig(configPath)
 	if err != nil {
-		return fmt.Errorf("Error loading configuration file %q: %v\n", configPath, err)
+		return fmt.Errorf("error loading configuration file %q: %v", configPath, err)
 	}
 	logConfig.SetLogger()
 
-	kafka.Initialize()
+	if err := kafka.Initialize(); err != nil {
+		return err
+	}
 
 	// Initialize storage and datastore layer
 	initMetadata, err := storage.Initialize(cmd.Settings(), backend)
 	if err != nil {
-		return fmt.Errorf("Unable to initialize storage: %v\n", err)
+		return fmt.Errorf("unable to initialize storage: %v", err)
 	}
 
 	// lock metadata
@@ -296,7 +298,7 @@ func DoServe(cmd dvid.Command) error {
 			key := ctx.ConstructKey(storage.NewTKey(datastore.ServerLockKey, nil))
 			transdb.UnlockKey(key)
 		}
-		return fmt.Errorf("Unable to initialize datastore: %v\n", err)
+		return fmt.Errorf("unable to initialize datastore: %v", err)
 	}
 	if hastrans {
 		var ctx storage.MetadataContext

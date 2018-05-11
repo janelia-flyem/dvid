@@ -712,7 +712,7 @@ func recoverHandler(c *web.C, h http.Handler) http.Handler {
 				os.Stderr.WriteString(message)
 				dvid.LogImmediately(message) // bypass log channels.
 
-				if err := SendNotification(message, nil); err != nil {
+				if err := tc.Email.SendEmail("DVID panic report", message, nil); err != nil {
 					dvid.LogImmediately(fmt.Sprintf("Couldn't send email notifcation: %v\n", err))
 				}
 

@@ -647,7 +647,7 @@ GET <api URL>/node/<UUID>/<data name>/maxlabel
 
 GET <api URL>/node/<UUID>/<data name>/lastmod/<label>
 
-	Returns modification metadata for a label in JSON:
+	Returns last modification metadata for a label in JSON:
 
 	{ "mutation id": 2314, "last mod user": "johndoe", "last mod time": "2000-02-01 12:13:14 +0000 UTC", "last mod app": "Neu3" }
 	

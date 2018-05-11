@@ -11,13 +11,10 @@ package server
 import (
 	"bytes"
 	"fmt"
-	"net/smtp"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"text/template"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -94,7 +91,7 @@ func CloseTest() {
 
 type tomlConfig struct {
 	Server     serverConfig
-	Email      emailConfig
+	Email      dvid.EmailConfig
 	Logging    dvid.LogConfig
 	Kafka      dvid.KafkaConfig
 	Store      map[storage.Alias]storeConfig
@@ -225,18 +222,6 @@ type backendConfig struct {
 	Log   storage.Alias
 }
 
-type emailConfig struct {
-	Notify   []string
-	Username string
-	Password string
-	Server   string
-	Port     int
-}
-
-func (e emailConfig) Host() string {
-	return fmt.Sprintf("%s:%d", e.Server, e.Port)
-}
-
 // LoadConfig loads DVID server configuration from a TOML file.
 func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *storage.Backend, *dvid.KafkaConfig, error) {
 	if filename == "" {
@@ -312,68 +297,6 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 		Start: dvid.InstanceID(tc.Server.IIDStart),
 	}
 	return &ic, &(tc.Logging), backend, &(tc.Kafka), nil
-}
-
-type emailData struct {
-	From    string
-	To      string
-	Subject string
-	Body    string
-	Host    string
-}
-
-// Go template
-const emailTemplate = `From: {{.From}}
-To: {{.To}}
-Subject: {{.Subject}}
-
-{{.Body}}
-
-Sincerely,
-
-DVID at {{.Host}}
-`
-
-// SendNotification sends e-mail to the given recipients or the default emails loaded
-// during configuration.
-func SendNotification(message string, recipients []string) error {
-	e := tc.Email
-	var auth smtp.Auth
-	if e.Password != "" {
-		auth = smtp.PlainAuth("", e.Username, e.Password, e.Server)
-	}
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostname = "Unknown host"
-	}
-
-	for _, recipient := range e.Notify {
-		context := &emailData{
-			From:    e.Username,
-			To:      recipient,
-			Subject: "DVID panic report",
-			Body:    message,
-			Host:    hostname,
-		}
-
-		t := template.New("emailTemplate")
-		if t, err = t.Parse(emailTemplate); err != nil {
-			return fmt.Errorf("error trying to parse mail template: %v", err)
-		}
-
-		// Apply the values we have initialized in our struct context to the template.
-		var doc bytes.Buffer
-		if err = t.Execute(&doc, context); err != nil {
-			return fmt.Errorf("error trying to execute mail template: %v", err)
-		}
-
-		// Send notification
-		err = smtp.SendMail(e.Host(), auth, e.Username, []string{recipient}, doc.Bytes())
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // Serve starts HTTP and RPC servers.

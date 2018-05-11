@@ -117,7 +117,7 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 		}
 		vid, err = svm.createShortVersion(ancestor)
 		if err != nil {
-			return fmt.Errorf("problem creating mapping version for id %d: %v\n", ancestor, err)
+			return fmt.Errorf("problem creating mapping version for id %d: %v", ancestor, err)
 		}
 		timedLog := dvid.NewTimeLog()
 		ch := make(chan storage.LogMessage, 100)
