@@ -97,7 +97,8 @@ max_log_age = 30   # days
     path = "/data/mutationlogs"  # directory that holds mutation log per instance-UUID.
 
 # Kafka support can be specified.  This allows mutations to be logged and facilitates
-# syncing, etc.
+# syncing, etc.  If a "filelog" store is available as default, then any failed kafka
+# messages will be stored in a file named for the topic.
 
 [kafka]
 servers = ["http://foo.bar.com:1234", "http://foo2.bar.com:1234"]

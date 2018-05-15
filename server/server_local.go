@@ -90,10 +90,10 @@ func CloseTest() {
 }
 
 type tomlConfig struct {
-	Server     serverConfig
+	Server     ServerConfig
 	Email      dvid.EmailConfig
 	Logging    dvid.LogConfig
-	Kafka      dvid.KafkaConfig
+	Kafka      storage.KafkaConfig
 	Store      map[storage.Alias]storeConfig
 	Backend    map[dvid.DataSpecifier]backendConfig
 	Cache      map[string]sizeConfig
@@ -199,7 +199,8 @@ func CacheSize(id string) int {
 	return setting.Size * dvid.Mega
 }
 
-type serverConfig struct {
+// ServerConfig holds ports, host name, and other properties of this dvid server.
+type ServerConfig struct {
 	Host        string
 	HTTPAddress string
 	RPCAddress  string
@@ -209,6 +210,15 @@ type serverConfig struct {
 
 	IIDGen   string `toml:"instance_id_gen"`
 	IIDStart uint32 `toml:"instance_id_start"`
+}
+
+// DatastoreInstanceConfig returns data instance configuration necessary to
+// handle id generation.
+func (sc ServerConfig) DatastoreInstanceConfig() datastore.InstanceConfig {
+	return datastore.InstanceConfig{
+		Gen:   sc.IIDGen,
+		Start: dvid.InstanceID(sc.IIDStart),
+	}
 }
 
 type sizeConfig struct {
@@ -223,17 +233,21 @@ type backendConfig struct {
 }
 
 // LoadConfig loads DVID server configuration from a TOML file.
-func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *storage.Backend, *dvid.KafkaConfig, error) {
+func LoadConfig(filename string) (*tomlConfig, *storage.Backend, error) {
 	if filename == "" {
-		return nil, nil, nil, nil, fmt.Errorf("No server TOML configuration file provided")
+		return &tc, nil, fmt.Errorf("No server TOML configuration file provided")
 	}
 	if _, err := toml.DecodeFile(filename, &tc); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("could not decode TOML config: %v", err)
+		return &tc, nil, fmt.Errorf("could not decode TOML config: %v", err)
 	}
 	var err error
 	err = tc.ConvertPathsToAbsolute(filename)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("could not convert relative paths to absolute paths in TOML config: %v", err)
+		return &tc, nil, fmt.Errorf("could not convert relative paths to absolute paths in TOML config: %v", err)
+	}
+
+	if tc.Email.IsAvailable() {
+		dvid.SetEmailServer(tc.Email)
 	}
 
 	// Get all defined stores.
@@ -241,7 +255,7 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 	backend.Groupcache = tc.Groupcache
 	backend.Stores, err = tc.Stores()
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return &tc, nil, err
 	}
 
 	// Get default store if there's only one store defined.
@@ -258,7 +272,7 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 		// lookup store config
 		_, found := backend.Stores[v.Store]
 		if !found {
-			return nil, nil, nil, nil, fmt.Errorf("Backend for %q specifies unknown store %q", k, v.Store)
+			return &tc, nil, fmt.Errorf("Backend for %q specifies unknown store %q", k, v.Store)
 		}
 		spec := dvid.DataSpecifier(strings.Trim(string(k), "\""))
 		backend.KVStore[spec] = v.Store
@@ -272,7 +286,7 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 		backend.DefaultKVDB = defaultStore
 	} else {
 		if backend.DefaultKVDB == "" {
-			return nil, nil, nil, nil, fmt.Errorf("if no default backend specified, must have exactly one store defined in config file")
+			return &tc, nil, fmt.Errorf("if no default backend specified, must have exactly one store defined in config file")
 		}
 	}
 	defaultLog, found := backend.LogStore["default"]
@@ -285,18 +299,14 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 		backend.Metadata = defaultMetadataName
 	} else {
 		if backend.DefaultKVDB == "" {
-			return nil, nil, nil, nil, fmt.Errorf("can't set metadata if no default backend specified, must have exactly one store defined in config file")
+			return &tc, nil, fmt.Errorf("can't set metadata if no default backend specified, must have exactly one store defined in config file")
 		}
 		backend.Metadata = backend.DefaultKVDB
 	}
 
 	// The server config could be local, cluster, gcloud-specific config.  Here it is local.
 	config = &tc
-	ic := datastore.InstanceConfig{
-		Gen:   tc.Server.IIDGen,
-		Start: dvid.InstanceID(tc.Server.IIDStart),
-	}
-	return &ic, &(tc.Logging), backend, &(tc.Kafka), nil
+	return &tc, backend, nil
 }
 
 // Serve starts HTTP and RPC servers.

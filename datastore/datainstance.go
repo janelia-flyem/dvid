@@ -1046,5 +1046,5 @@ func (d *Data) ProduceKafkaMsg(b []byte) error {
 	topic := "dvidrepo-" + string(rootuuid) + "-data-" + string(datauuid)
 
 	// send message if kafka initialized
-	return dvid.KafkaProduceMsg(b, topic)
+	return storage.KafkaProduceMsg(b, topic)
 }

@@ -49,7 +49,7 @@ type InstanceConfig struct {
 }
 
 // Initialize creates a repositories manager that is handled through package functions.
-func Initialize(initMetadata bool, iconfig *InstanceConfig) error {
+func Initialize(initMetadata bool, iconfig InstanceConfig) error {
 	m := &repoManager{
 		repoToUUID:      make(map[dvid.RepoID]dvid.UUID),
 		versionToUUID:   make(map[dvid.VersionID]dvid.UUID),

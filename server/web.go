@@ -712,7 +712,7 @@ func recoverHandler(c *web.C, h http.Handler) http.Handler {
 				os.Stderr.WriteString(message)
 				dvid.LogImmediately(message) // bypass log channels.
 
-				if err := tc.Email.SendEmail("DVID panic report", message, nil); err != nil {
+				if err := dvid.SendEmail("DVID panic report", message, nil, ""); err != nil {
 					dvid.LogImmediately(fmt.Sprintf("Couldn't send email notifcation: %v\n", err))
 				}
 
@@ -1324,7 +1324,7 @@ func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		"Dataname": dataname,
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
-	if err := datastore.ProduceKafkaMsg(uuid, jsonmsg); err != nil {
+	if err := datastore.LogRepoOpToKafka(uuid, jsonmsg); err != nil {
 		BadRequest(w, r, fmt.Sprintf("Error on sending new instance op to kafka: %v\n", err))
 		return
 	}
@@ -1431,7 +1431,7 @@ func postNodeNoteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		"Note":   note,
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
-	if err := datastore.ProduceKafkaMsg(uuid, jsonmsg); err != nil {
+	if err := datastore.LogRepoOpToKafka(uuid, jsonmsg); err != nil {
 		BadRequest(w, r, fmt.Sprintf("Error on sending node note op to kafka: %v\n", err))
 		return
 	}
@@ -1460,7 +1460,7 @@ func postNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		"Log":    logdata,
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
-	if err := datastore.ProduceKafkaMsg(uuid, jsonmsg); err != nil {
+	if err := datastore.LogRepoOpToKafka(uuid, jsonmsg); err != nil {
 		BadRequest(w, r, fmt.Sprintf("Error on sending node log op to kafka: %v\n", err))
 		return
 	}
@@ -1535,7 +1535,7 @@ func repoCommitHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		"Log":    jsonData.Log,
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
-	if err := datastore.ProduceKafkaMsg(uuid, jsonmsg); err != nil {
+	if err := datastore.LogRepoOpToKafka(uuid, jsonmsg); err != nil {
 		BadRequest(w, r, fmt.Sprintf("Error on sending commit op to kafka: %v\n", err))
 		return
 	}
@@ -1598,7 +1598,7 @@ func repoNewVersionHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		"Note":   jsonData.Note,
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
-	if err := datastore.ProduceKafkaMsg(uuid, jsonmsg); err != nil {
+	if err := datastore.LogRepoOpToKafka(uuid, jsonmsg); err != nil {
 		BadRequest(w, r, fmt.Sprintf("Error on sending newversion op to kafka: %v\n", err))
 		return
 	}
@@ -1671,7 +1671,7 @@ func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		"Note":   jsonData.Note,
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
-	if err := datastore.ProduceKafkaMsg(uuid, jsonmsg); err != nil {
+	if err := datastore.LogRepoOpToKafka(uuid, jsonmsg); err != nil {
 		BadRequest(w, r, fmt.Sprintf("Error on sending branch op to kafka: %v\n", err))
 		return
 	}

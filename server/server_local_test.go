@@ -22,7 +22,7 @@ func loadConfigFile(t *testing.T, filename string) string {
 }
 
 func TestParseConfig(t *testing.T) {
-	instanceCfg, logCfg, backendCfg, kafkaCfg, err := LoadConfig("../scripts/distro-files/config-full.toml")
+	tomlCfg, backendCfg, err := LoadConfig("../scripts/distro-files/config-full.toml")
 	if err != nil {
 		t.Fatalf("bad TOML configuration: %v\n", err)
 	}
@@ -32,10 +32,12 @@ func TestParseConfig(t *testing.T) {
 		t.Errorf("Expected labelarray cache to be set to 10 (MB), got %d bytes instead\n", sz)
 	}
 
+	instanceCfg := tomlCfg.Server.DatastoreInstanceConfig()
 	if instanceCfg.Gen != "sequential" || instanceCfg.Start != 100 {
-		t.Errorf("Bad instance id retrieval of configuration: %v\n", *instanceCfg)
+		t.Errorf("Bad instance id retrieval of configuration: %v\n", instanceCfg)
 	}
 
+	logCfg := tomlCfg.Logging
 	if logCfg.Logfile != "/demo/logs/dvid.log" || logCfg.MaxSize != 500 || logCfg.MaxAge != 30 {
 		t.Errorf("Bad logging configuration retrieval: %v\n", logCfg)
 	}
@@ -43,6 +45,7 @@ func TestParseConfig(t *testing.T) {
 		t.Errorf("Bad backend configuration retrieval: %v\n", backendCfg)
 	}
 
+	kafkaCfg := tomlCfg.Kafka
 	if len(kafkaCfg.Servers) != 2 || kafkaCfg.Servers[0] != "http://foo.bar.com:1234" || kafkaCfg.Servers[1] != "http://foo2.bar.com:1234" {
 		t.Errorf("Bad Kafka config: %v\n", kafkaCfg)
 	}

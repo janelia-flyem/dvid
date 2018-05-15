@@ -267,13 +267,13 @@ func DoServe(cmd dvid.Command) error {
 	if configPath == "" {
 		return fmt.Errorf("serve command must be followed by the path to the TOML configuration file")
 	}
-	instanceConfig, logConfig, backend, kafka, err := server.LoadConfig(configPath)
+	tc, backend, err := server.LoadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("error loading configuration file %q: %v", configPath, err)
 	}
-	logConfig.SetLogger()
+	tc.Logging.SetLogger()
 
-	if err := kafka.Initialize(); err != nil {
+	if err := tc.Kafka.Initialize(); err != nil {
 		return err
 	}
 
@@ -292,7 +292,7 @@ func DoServe(cmd dvid.Command) error {
 		transdb.LockKey(key)
 	}
 
-	if err := datastore.Initialize(initMetadata, instanceConfig); err != nil {
+	if err := datastore.Initialize(initMetadata, tc.Server.DatastoreInstanceConfig()); err != nil {
 		if hastrans {
 			var ctx storage.MetadataContext
 			key := ctx.ConstructKey(storage.NewTKey(datastore.ServerLockKey, nil))

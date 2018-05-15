@@ -52,7 +52,7 @@ func openStore(create bool) {
 	if err != nil {
 		log.Fatalf("Can't initialize test datastore: %v\n", err)
 	}
-	if err := Initialize(initMetadata, &InstanceConfig{}); err != nil {
+	if err := Initialize(initMetadata, InstanceConfig{}); err != nil {
 		log.Fatalf("Can't initialize datastore management: %v\n", err)
 	}
 	dvid.Infof("Storage initialized.  initMetadata = %v\n", initMetadata)
