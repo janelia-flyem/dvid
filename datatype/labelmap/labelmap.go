@@ -1875,6 +1875,35 @@ func (d *Data) convertTo64bit(geom dvid.Geometry, data []uint8, bytesPerVoxel, s
 	return data64, nil
 }
 
+type blockSend struct {
+	bcoord dvid.ChunkPoint3d
+	value  []byte
+	err    error
+}
+
+func writeBlock(w http.ResponseWriter, bcoord dvid.ChunkPoint3d, out []byte) error {
+	if err := binary.Write(w, binary.LittleEndian, bcoord[0]); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, bcoord[1]); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, bcoord[2]); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, uint32(len(out))); err != nil {
+		return err
+	}
+	if written, err := w.Write(out); err != nil || written != int(len(out)) {
+		if err != nil {
+			dvid.Errorf("error writing value: %v\n", err)
+			return err
+		}
+		return fmt.Errorf("could not write %d bytes of block %s: only %d bytes written", len(out), bcoord, written)
+	}
+	return nil
+}
+
 // sendBlocksSpecific writes data to the blocks specified -- best for non-ordered backend
 func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWriter, supervoxels bool, compression, blockstring string, scale uint8) error {
 	switch compression {
@@ -1896,17 +1925,34 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 		return fmt.Errorf("block query string should be three coordinates per block")
 	}
 
-	// make a finished queue
-	finishedRequests := make(chan error, len(coordarray)/3)
-	var mutex sync.Mutex
-
-	// get store
 	store, err := datastore.GetKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("Data type labelblk had error initializing store: %v", err)
 	}
 
-	// iterate through each block and query
+	// launch goroutine that will stream blocks to client
+	numBlocks := len(coordarray) / 3
+	wg := new(sync.WaitGroup)
+	wg.Add(numBlocks)
+
+	ch := make(chan blockSend, numBlocks)
+	var sendErr error
+	go func() {
+		for i := 0; i < numBlocks; i++ {
+			data := <-ch
+			if data.err != nil && sendErr == nil {
+				sendErr = data.err
+			} else {
+				err := writeBlock(w, data.bcoord, data.value)
+				if err != nil && sendErr == nil {
+					sendErr = err
+				}
+			}
+			wg.Done()
+		}
+	}()
+
+	// iterate through each block, get data from store, and transcode based on request parameters
 	for i := 0; i < len(coordarray); i += 3 {
 		xloc, err := strconv.Atoi(coordarray[i])
 		if err != nil {
@@ -1920,44 +1966,35 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 		if err != nil {
 			return err
 		}
+		bcoord := dvid.ChunkPoint3d{int32(xloc), int32(yloc), int32(zloc)}
 
-		go func(xloc, yloc, zloc int32, finishedRequests chan error, store storage.KeyValueDB) {
-			var err error
-			defer func() {
-				finishedRequests <- err
-			}()
-			indexBeg := dvid.IndexZYX(dvid.ChunkPoint3d{xloc, yloc, zloc})
+		go func(bcoord dvid.ChunkPoint3d) {
+			indexBeg := dvid.IndexZYX(bcoord)
 			keyBeg := NewBlockTKey(scale, &indexBeg)
 
 			value, err := store.Get(ctx, keyBeg)
 			if err != nil {
+				ch <- blockSend{err: err}
 				return
 			}
 			if len(value) > 0 {
-				// lock shared resource
-				mutex.Lock()
-				defer mutex.Unlock()
 				b := blockData{
-					x: xloc, y: yloc, z: zloc,
+					bcoord:      bcoord,
 					v:           ctx.VersionID(),
 					data:        value,
 					compression: compression,
 					supervoxels: supervoxels,
 				}
-				d.sendBlock(w, b)
+				out, err := d.transcodeBlock(b)
+				ch <- blockSend{bcoord: bcoord, value: out, err: err}
+				return
 			}
-		}(int32(xloc), int32(yloc), int32(zloc), finishedRequests, store)
+			ch <- blockSend{value: nil}
+		}(bcoord)
 	}
 
-	// wait for everything to finish
-	for i := 0; i < len(coordarray); i += 3 {
-		errjob := <-finishedRequests
-		if errjob != nil {
-			err = errjob
-		}
-	}
-
-	return err
+	wg.Wait()
+	return sendErr
 }
 
 // returns nil block if no block is at the given block coordinate
@@ -2005,17 +2042,16 @@ func (d *Data) putLabelBlock(ctx *datastore.VersionedCtx, scale uint8, pb *label
 }
 
 type blockData struct {
-	x, y, z     int32
+	bcoord      dvid.ChunkPoint3d
 	compression string
 	supervoxels bool
 	v           dvid.VersionID
 	data        []byte
 }
 
-// sends a block of data through http.ResponseWriter while handling any data modifications
-// necessary to meet requested compression compared to stored compression as well as raw
-// supervoxels versus mapped labels.
-func (d *Data) sendBlock(w http.ResponseWriter, b blockData) error {
+// transcodes a block of data by doing any data modifications necessary to meet requested
+// compression compared to stored compression as well as raw supervoxels versus mapped labels.
+func (d *Data) transcodeBlock(b blockData) (out []byte, err error) {
 	formatIn, checksum := dvid.DecodeSerializationFormat(dvid.SerializationFormat(b.data[0]))
 
 	var start int
@@ -2026,20 +2062,21 @@ func (d *Data) sendBlock(w http.ResponseWriter, b blockData) error {
 	}
 
 	var outsize uint32
-	var out []byte
 
 	switch formatIn {
 	case dvid.LZ4:
 		outsize = binary.LittleEndian.Uint32(b.data[start : start+4])
 		out = b.data[start+4:]
 		if len(out) != int(outsize) {
-			return fmt.Errorf("block (%d,%d,%d) was corrupted lz4: supposed size %d but had %d bytes", b.x, b.y, b.z, outsize, len(out))
+			err = fmt.Errorf("block %s was corrupted lz4: supposed size %d but had %d bytes", b.bcoord, outsize, len(out))
+			return
 		}
 	case dvid.Uncompressed, dvid.Gzip:
 		outsize = uint32(len(b.data[start:]))
 		out = b.data[start:]
 	default:
-		return fmt.Errorf("labelmap data was stored in unknown compressed format: %s", formatIn)
+		err = fmt.Errorf("labelmap data was stored in unknown compressed format: %s", formatIn)
+		return
 	}
 
 	var formatOut dvid.CompressionFormat
@@ -2053,15 +2090,15 @@ func (d *Data) sendBlock(w http.ResponseWriter, b blockData) error {
 	case "uncompressed":
 		formatOut = dvid.Uncompressed
 	default:
-		return fmt.Errorf("unknown compression %q requested for blocks", b.compression)
+		err = fmt.Errorf("unknown compression %q requested for blocks", b.compression)
+		return
 	}
 
 	var doMapping bool
 	var mapping *SVMap
 	if !b.supervoxels {
-		var err error
 		if mapping, err = getMapping(d, b.v); err != nil {
-			return err
+			return
 		}
 		if mapping != nil && mapping.exists(b.v) {
 			doMapping = true
@@ -2069,33 +2106,34 @@ func (d *Data) sendBlock(w http.ResponseWriter, b blockData) error {
 	}
 
 	// Need to do uncompression/recompression if we are changing compression or mapping
-	var err error
 	var uncompressed, recompressed []byte
 	if formatIn != formatOut || b.compression == "gzip" || doMapping {
 		switch formatIn {
 		case dvid.LZ4:
 			uncompressed = make([]byte, outsize)
 			if err = lz4.Uncompress(out, uncompressed); err != nil {
-				return err
+				return
 			}
 		case dvid.Uncompressed:
 			uncompressed = out
 		case dvid.Gzip:
 			gzipIn := bytes.NewBuffer(out)
-			zr, err := gzip.NewReader(gzipIn)
+			var zr *gzip.Reader
+			zr, err = gzip.NewReader(gzipIn)
 			if err != nil {
-				return err
+				return
 			}
 			uncompressed, err = ioutil.ReadAll(zr)
 			if err != nil {
-				return err
+				return
 			}
 			zr.Close()
 		}
 
 		var block labels.Block
 		if err = block.UnmarshalBinary(uncompressed); err != nil {
-			return fmt.Errorf("unable to deserialize label block (%d, %d, %d): %v", b.x, b.y, b.z, err)
+			err = fmt.Errorf("unable to deserialize label block %s: %v", b.bcoord, err)
+			return
 		}
 
 		if doMapping {
@@ -2105,14 +2143,15 @@ func (d *Data) sendBlock(w http.ResponseWriter, b blockData) error {
 		if b.compression == "blocks" { // send native DVID block compression with gzip
 			out, err = block.CompressGZIP()
 			if err != nil {
-				return err
+				return nil, err
 			}
 			outsize = uint32(len(out))
 		} else { // we are sending raw block data
 			uint64array, size := block.MakeLabelVolume()
 			expectedSize := d.BlockSize().(dvid.Point3d)
 			if !size.Equals(expectedSize) {
-				return fmt.Errorf("deserialized label block size %s does not equal data %q block size %s", size, d.DataName(), expectedSize)
+				err = fmt.Errorf("deserialized label block size %s does not equal data %q block size %s", size, d.DataName(), expectedSize)
+				return
 			}
 
 			switch formatOut {
@@ -2120,47 +2159,36 @@ func (d *Data) sendBlock(w http.ResponseWriter, b blockData) error {
 				recompressed = make([]byte, lz4.CompressBound(uint64array))
 				var size int
 				if size, err = lz4.Compress(uint64array, recompressed); err != nil {
-					return err
+					return nil, err
 				}
 				outsize = uint32(size)
 				out = recompressed[:outsize]
 			case dvid.Uncompressed:
 				out = uint64array
-				outsize = uint32(len(uint64array))
 			case dvid.Gzip:
 				var gzipOut bytes.Buffer
 				zw := gzip.NewWriter(&gzipOut)
 				if _, err = zw.Write(uint64array); err != nil {
-					return err
+					return nil, err
 				}
 				zw.Flush()
 				zw.Close()
 				out = gzipOut.Bytes()
-				outsize = uint32(len(out))
 			}
 		}
 	}
+	return
+}
 
-	// Send block coordinate, size of data, then data
-	if err := binary.Write(w, binary.LittleEndian, b.x); err != nil {
+// sends a block of data through http.ResponseWriter while handling any data modifications
+// necessary to meet requested compression compared to stored compression as well as raw
+// supervoxels versus mapped labels.
+func (d *Data) sendBlock(w http.ResponseWriter, b blockData) error {
+	out, err := d.transcodeBlock(b)
+	if err != nil {
 		return err
 	}
-	if err := binary.Write(w, binary.LittleEndian, b.y); err != nil {
-		return err
-	}
-	if err := binary.Write(w, binary.LittleEndian, b.z); err != nil {
-		return err
-	}
-	if err := binary.Write(w, binary.LittleEndian, outsize); err != nil {
-		return err
-	}
-	if written, err := w.Write(out); err != nil || written != int(outsize) {
-		if err != nil {
-			return err
-		}
-		return fmt.Errorf("could not write %d bytes of block (%d,%d,%d): only %d bytes written", outsize, b.x, b.y, b.z, written)
-	}
-	return nil
+	return writeBlock(w, b.bcoord, out)
 }
 
 // SendBlocks returns a series of blocks covering the given block-aligned subvolume.
@@ -2223,7 +2251,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 					return nil
 				}
 				b := blockData{
-					x: x, y: y, z: z,
+					bcoord:      dvid.ChunkPoint3d{x, y, z},
 					compression: compression,
 					supervoxels: supervoxels,
 					v:           ctx.VersionID(),
@@ -2910,11 +2938,11 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		if action == "get" {
+			timedLog := dvid.NewTimeLog()
 			if err := d.sendBlocksSpecific(ctx, w, supervoxels, compression, blocklist, scale); err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
-			timedLog := dvid.NewTimeLog()
 			timedLog.Infof("HTTP %s: %s", r.Method, r.URL)
 		} else {
 			server.BadRequest(w, r, "DVID does not accept the %s action on the 'specificblocks' endpoint", action)

@@ -185,7 +185,7 @@ func TestIngest(t *testing.T) {
 	}
 }
 
-func writeBlock(t *testing.T, buf *bytes.Buffer, serialization []byte, blockCoord dvid.Point3d) {
+func writeTestBlock(t *testing.T, buf *bytes.Buffer, serialization []byte, blockCoord dvid.Point3d) {
 	var gzipOut bytes.Buffer
 	zw := gzip.NewWriter(&gzipOut)
 	if _, err := zw.Write(serialization); err != nil {
@@ -194,7 +194,7 @@ func writeBlock(t *testing.T, buf *bytes.Buffer, serialization []byte, blockCoor
 	zw.Flush()
 	zw.Close()
 	gzipped := gzipOut.Bytes()
-	writeInt32(t, buf, int32(len(gzipped)))
+	writeTestInt32(t, buf, int32(len(gzipped)))
 	fmt.Printf("Wrote %d gzipped block bytes (down from %d bytes) for block %s\n", len(gzipped), len(serialization), blockCoord)
 	n, err := buf.Write(gzipped)
 	if err != nil {
@@ -240,9 +240,9 @@ func TestIngest2(t *testing.T) {
 	var data [6]testData
 	var buf bytes.Buffer
 	for i, blockCoord := range blockCoords {
-		writeInt32(t, &buf, blockCoord[0])
-		writeInt32(t, &buf, blockCoord[1])
-		writeInt32(t, &buf, blockCoord[2])
+		writeTestInt32(t, &buf, blockCoord[0])
+		writeTestInt32(t, &buf, blockCoord[1])
+		writeTestInt32(t, &buf, blockCoord[2])
 		if i < len(testFiles) {
 			data[i] = loadTestData(t, testFiles[i])
 		} else {
@@ -261,7 +261,7 @@ func TestIngest2(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unable to MarshalBinary block: %v\n", err)
 		}
-		writeBlock(t, &buf, serialization, blockCoord)
+		writeTestBlock(t, &buf, serialization, blockCoord)
 	}
 
 	apiStr := fmt.Sprintf("%snode/%s/labels/blocks?noindexing=true", server.WebAPIPath, uuid)
@@ -277,18 +277,18 @@ func TestIngest2(t *testing.T) {
 	buf.Reset()
 	prevRecs := len(testFiles) + 2
 	for i, blockCoord := range blockCoords {
-		writeInt32(t, &buf, blockCoord[0])
-		writeInt32(t, &buf, blockCoord[1])
-		writeInt32(t, &buf, blockCoord[2])
+		writeTestInt32(t, &buf, blockCoord[0])
+		writeTestInt32(t, &buf, blockCoord[1])
+		writeTestInt32(t, &buf, blockCoord[2])
 		if i < prevRecs {
 			serialization, err := data[i].b.MarshalBinary()
 			if err != nil {
 				t.Fatalf("unable to MarshalBinary block: %v\n", err)
 			}
-			writeBlock(t, &buf, serialization, blockCoord)
+			writeTestBlock(t, &buf, serialization, blockCoord)
 		} else {
 			emptySlice := []byte{38, 247} // random bytes
-			writeBlock(t, &buf, emptySlice, blockCoord)
+			writeTestBlock(t, &buf, emptySlice, blockCoord)
 		}
 	}
 	apiStr = fmt.Sprintf("%snode/%s/labels/blocks?noindexing=true", server.WebAPIPath, uuid)
@@ -297,10 +297,10 @@ func TestIngest2(t *testing.T) {
 	buf.Reset()
 	for i := int32(0); i < 3; i++ {
 		bcoord := dvid.Point3d{i * 10, i * 11, i * 12}
-		writeInt32(t, &buf, bcoord[0])
-		writeInt32(t, &buf, bcoord[1])
-		writeInt32(t, &buf, bcoord[2])
-		writeBlock(t, &buf, []byte{}, bcoord)
+		writeTestInt32(t, &buf, bcoord[0])
+		writeTestInt32(t, &buf, bcoord[1])
+		writeTestInt32(t, &buf, bcoord[2])
+		writeTestBlock(t, &buf, []byte{}, bcoord)
 	}
 	apiStr = fmt.Sprintf("%snode/%s/labels/blocks?noindexing=true", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "POST", apiStr, &buf)
@@ -308,10 +308,10 @@ func TestIngest2(t *testing.T) {
 	buf.Reset()
 	for i := int32(0); i < 3; i++ {
 		bcoord := dvid.Point3d{i * 10, i * 11, i * 12}
-		writeInt32(t, &buf, bcoord[0])
-		writeInt32(t, &buf, bcoord[1])
-		writeInt32(t, &buf, bcoord[2])
-		writeInt32(t, &buf, 0)
+		writeTestInt32(t, &buf, bcoord[0])
+		writeTestInt32(t, &buf, bcoord[1])
+		writeTestInt32(t, &buf, bcoord[2])
+		writeTestInt32(t, &buf, 0)
 	}
 	apiStr = fmt.Sprintf("%snode/%s/labels/blocks?noindexing=true", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "POST", apiStr, &buf)

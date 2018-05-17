@@ -1188,7 +1188,7 @@ func loadTestData(t *testing.T, filename string) (td testData) {
 	return
 }
 
-func writeInt32(t *testing.T, buf *bytes.Buffer, i int32) {
+func writeTestInt32(t *testing.T, buf *bytes.Buffer, i int32) {
 	b := make([]byte, 4)
 	binary.LittleEndian.PutUint32(b, uint32(i))
 	n, err := buf.Write(b)
@@ -1269,15 +1269,15 @@ func TestPostBlocks(t *testing.T) {
 	var data [4]testData
 	var buf bytes.Buffer
 	for i, fname := range testFiles {
-		writeInt32(t, &buf, blockCoords[i][0])
-		writeInt32(t, &buf, blockCoords[i][1])
-		writeInt32(t, &buf, blockCoords[i][2])
+		writeTestInt32(t, &buf, blockCoords[i][0])
+		writeTestInt32(t, &buf, blockCoords[i][1])
+		writeTestInt32(t, &buf, blockCoords[i][2])
 		data[i] = loadTestData(t, fname)
 		gzipped, err := data[i].b.CompressGZIP()
 		if err != nil {
 			t.Fatalf("unable to gzip compress block: %v\n", err)
 		}
-		writeInt32(t, &buf, int32(len(gzipped)))
+		writeTestInt32(t, &buf, int32(len(gzipped)))
 		fmt.Printf("Wrote %d gzipped block bytes for block %s\n", len(gzipped), blockCoords[i])
 		n, err := buf.Write(gzipped)
 		if err != nil {
@@ -1399,10 +1399,10 @@ func TestPostBlock(t *testing.T) {
 		t.Fatalf("Couldn't read compressed block test data: %v\n", err)
 	}
 	var buf bytes.Buffer
-	writeInt32(t, &buf, 0)
-	writeInt32(t, &buf, 0)
-	writeInt32(t, &buf, 0)
-	writeInt32(t, &buf, int32(len(data)))
+	writeTestInt32(t, &buf, 0)
+	writeTestInt32(t, &buf, 0)
+	writeTestInt32(t, &buf, 0)
+	writeTestInt32(t, &buf, int32(len(data)))
 	fmt.Printf("Writing %d bytes of compressed block\n", len(data))
 	n, err := buf.Write(data)
 	if err != nil {
@@ -1507,10 +1507,10 @@ func TestBlocksWithMerge(t *testing.T) {
 		t.Fatalf("error making block 0: %v\n", err)
 	}
 	var buf bytes.Buffer
-	writeInt32(t, &buf, 2)
-	writeInt32(t, &buf, 3)
-	writeInt32(t, &buf, 4)
-	writeInt32(t, &buf, int32(len(block0data)))
+	writeTestInt32(t, &buf, 2)
+	writeTestInt32(t, &buf, 3)
+	writeTestInt32(t, &buf, 4)
+	writeTestInt32(t, &buf, int32(len(block0data)))
 	n, err := buf.Write(block0data)
 	if err != nil {
 		t.Fatalf("unable to write gzip block: %v\n", err)
@@ -1518,10 +1518,10 @@ func TestBlocksWithMerge(t *testing.T) {
 	if n != len(block0data) {
 		t.Fatalf("unable to write %d bytes to buffer, only wrote %d bytes\n", len(block0data), n)
 	}
-	writeInt32(t, &buf, 3)
-	writeInt32(t, &buf, 3)
-	writeInt32(t, &buf, 4)
-	writeInt32(t, &buf, int32(len(block1data)))
+	writeTestInt32(t, &buf, 3)
+	writeTestInt32(t, &buf, 3)
+	writeTestInt32(t, &buf, 4)
+	writeTestInt32(t, &buf, int32(len(block1data)))
 	n, err = buf.Write(block1data)
 	if err != nil {
 		t.Fatalf("unable to write gzip block: %v\n", err)
