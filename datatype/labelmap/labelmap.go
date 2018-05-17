@@ -2208,6 +2208,28 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 	timedLog := dvid.NewTimeLog()
 	defer timedLog.Infof("SendBlocks %s, span x %d, span y %d, span z %d", blocksoff, blocksdims.Value(0), blocksdims.Value(1), blocksdims.Value(2))
 
+	numBlocks := int(blocksdims.Prod())
+	wg := new(sync.WaitGroup)
+	wg.Add(numBlocks)
+
+	// launch goroutine that will stream blocks to client
+	ch := make(chan blockSend, numBlocks)
+	var sendErr error
+	go func() {
+		for i := 0; i < numBlocks; i++ {
+			data := <-ch
+			if data.err != nil && sendErr == nil {
+				sendErr = data.err
+			} else {
+				err := writeBlock(w, data.bcoord, data.value)
+				if err != nil && sendErr == nil {
+					sendErr = err
+				}
+			}
+			wg.Done()
+		}
+	}()
+
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("Data type labelmap had error initializing store: %v", err)
@@ -2257,7 +2279,11 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 					v:           ctx.VersionID(),
 					data:        kv.V,
 				}
-				return d.sendBlock(w, b)
+				go func(b blockData) {
+					out, err := d.transcodeBlock(b)
+					ch <- blockSend{bcoord: b.bcoord, value: out, err: err}
+				}(b)
+				return nil
 			})
 
 			if err != nil {
@@ -2266,17 +2292,17 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 		}
 	}
 
+	wg.Wait()
+
 	if hasbuffer {
 		// submit the entire buffer to the DB
 		err = okv.(storage.RequestBuffer).Flush()
-
 		if err != nil {
 			return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
-
 		}
 	}
 
-	return err
+	return sendErr
 }
 
 func (d *Data) blockChangesExtents(extents *dvid.Extents, bx, by, bz int32) bool {
@@ -3211,7 +3237,7 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 
 		// Make sure subvolume gets align with blocks
 		if !dvid.BlockAligned(subvol, d.BlockSize()) {
-			server.BadRequest(w, r, "cannot use labels via 'block' endpoint in non-block aligned geometry %s -> %s", subvol.StartPoint(), subvol.EndPoint())
+			server.BadRequest(w, r, "cannot use labels via 'blocks' endpoint in non-block aligned geometry %s -> %s", subvol.StartPoint(), subvol.EndPoint())
 			return
 		}
 

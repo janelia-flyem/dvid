@@ -584,9 +584,6 @@ func (vol *labelVol) testBlocks(t *testing.T, context string, uuid dvid.UUID, co
 	blockBytes := int(vol.blockSize.Prod() * 8)
 
 	// Check if values are what we expect
-	bx := vol.offset[0] / vol.blockSize[0]
-	by := vol.offset[1] / vol.blockSize[1]
-	bz := vol.offset[2] / vol.blockSize[2]
 	b := 0
 	for i := 0; i < span; i++ {
 		// Get block coord + block size
@@ -601,9 +598,6 @@ func (vol *labelVol) testBlocks(t *testing.T, context string, uuid dvid.UUID, co
 		b += 4
 		n := int(binary.LittleEndian.Uint32(data[b : b+4]))
 		b += 4
-		if x != bx || y != by || z != bz {
-			t.Fatalf("Bad block coordinate: expected (%d,%d,%d), got (%d,%d,%d)\n", bx, by, bz, x, y, z)
-		}
 
 		// Read in the block data as assumed LZ4 and check it.
 		var uncompressed []byte
@@ -641,7 +635,6 @@ func (vol *labelVol) testBlocks(t *testing.T, context string, uuid dvid.UUID, co
 		}
 		vol.testBlock(t, context, x, y, z, uncompressed)
 		b += n
-		bx++
 	}
 }
 
@@ -1506,6 +1499,21 @@ func TestBlocksWithMerge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error making block 0: %v\n", err)
 	}
+
+	testBlockData := [2]struct {
+		bcoord dvid.ChunkPoint3d
+		labels []uint64
+	}{
+		{
+			bcoord: dvid.ChunkPoint3d{2, 3, 4},
+			labels: blockVol0,
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{3, 3, 4},
+			labels: blockVol1,
+		},
+	}
+
 	var buf bytes.Buffer
 	writeTestInt32(t, &buf, 2)
 	writeTestInt32(t, &buf, 3)
@@ -1533,41 +1541,79 @@ func TestBlocksWithMerge(t *testing.T) {
 	apiStr := fmt.Sprintf("%snode/%s/labels/blocks", server.WebAPIPath, uuid)
 	server.TestHTTP(t, "POST", apiStr, &buf)
 
+	apiStr = fmt.Sprintf("%snode/%s/labels/blocks/128_64_64/128_192_256?compression=blocks", server.WebAPIPath, uuid)
+	respRec := server.TestHTTPResponse(t, "GET", apiStr, nil)
+	for bnum := 0; bnum < 2; bnum++ {
+		gotBlock, _, bx, by, bz, err := readStreamedBlock(respRec.Body, 0)
+		if err != nil {
+			t.Fatalf("problem reading block %d from stream: %v\n", bnum, err)
+		}
+		for _, label := range gotBlock.Labels {
+			if label != 1 && label != 2 {
+				t.Errorf("got bad block with label %d when only 1 or 2 should have been present\n", label)
+			}
+		}
+		bcoord := dvid.ChunkPoint3d{bx, by, bz}
+		var found bool
+		for i := 0; i < 2; i++ {
+			if bcoord == testBlockData[i].bcoord {
+				found = true
+				labelBytes, _ := gotBlock.MakeLabelVolume()
+				labelVol, err := dvid.ByteToUint64(labelBytes)
+				if err != nil {
+					t.Fatalf("problem inflating block %s labels to []uint64: %v\n", bcoord, err)
+				}
+				for v, val := range labelVol {
+					if testBlockData[i].labels[v] != val {
+						t.Fatalf("label mismatch found at index %d, expected %d, got %d\n", v, testBlockData[i].labels[v], val)
+					}
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("got block %s but wasn't an expected block!\n", bcoord)
+		}
+	}
+
 	testMerge := mergeJSON(`[1, 2]`)
 	testMerge.send(t, uuid, "labels")
 
-	apiStr = fmt.Sprintf("%snode/%s/labels/blocks/128_64_64/128_192_256?compression=blocks", server.WebAPIPath, uuid)
-	respRec := server.TestHTTPResponse(t, "GET", apiStr, nil)
-	gotBlock0, _, bx, by, bz, err := readStreamedBlock(respRec.Body, 0)
-	if err != nil {
-		t.Fatalf("problem reading block 0 from stream: %v\n", err)
-	}
-	if bx != 2 || by != 3 || bz != 4 {
-		t.Errorf("got bad block coord on GET /blocks: (%d,%d,%d) when expected (2,3,4)\n", bx, by, bz)
-	}
-	for _, label := range gotBlock0.Labels {
-		if label != 1 {
-			t.Errorf("got bad block with label %d when only 1 should have been present\n", label)
+	respRec = server.TestHTTPResponse(t, "GET", apiStr, nil)
+	for bnum := 0; bnum < 2; bnum++ {
+		gotBlock, _, bx, by, bz, err := readStreamedBlock(respRec.Body, 0)
+		if err != nil {
+			t.Fatalf("problem reading block %d from stream: %v\n", bnum, err)
+		}
+		for _, label := range gotBlock.Labels {
+			if label != 1 {
+				t.Errorf("got bad block with label %d when only 1 should have been present\n", label)
+			}
+		}
+		bcoord := dvid.ChunkPoint3d{bx, by, bz}
+		var found bool
+		for i := 0; i < 2; i++ {
+			if bcoord == testBlockData[i].bcoord {
+				found = true
+				labelBytes, _ := gotBlock.MakeLabelVolume()
+				labelVol, err := dvid.ByteToUint64(labelBytes)
+				if err != nil {
+					t.Fatalf("problem inflating block %s labels to []uint64: %v\n", bcoord, err)
+				}
+				for v, val := range labelVol {
+					if testBlockData[i].labels[v] != 0 && val != 1 {
+						t.Fatalf("label mismatch found at index %d, expected 1, got %d\n", v, val)
+					}
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("got block %s but wasn't an expected block!\n", bcoord)
 		}
 	}
-	gotBlock1, _, bx, by, bz, err := readStreamedBlock(respRec.Body, 0)
-	if err != nil {
-		t.Fatalf("problem reading block 1 from stream: %v\n", err)
-	}
-	if bx != 3 || by != 3 || bz != 4 {
-		t.Errorf("got bad block coord on GET /blocks: (%d,%d,%d) when expected (3,3,4)\n", bx, by, bz)
-	}
-	for _, label := range gotBlock1.Labels {
-		if label != 1 {
-			t.Errorf("got bad block with label %d when only 1 should have been present\n", label)
-		}
-	}
+
 	apiStr = fmt.Sprintf("%snode/%s/labels/blocks/128_64_64/128_192_256?compression=blocks&supervoxels=true", server.WebAPIPath, uuid)
 	respRec = server.TestHTTPResponse(t, "GET", apiStr, nil)
-	gotBlock0, _, bx, by, bz, err = readStreamedBlock(respRec.Body, 0)
-	if bx != 2 || by != 3 || bz != 4 {
-		t.Errorf("got bad block coord on GET /blocks: (%d,%d,%d) when expected (2,3,4)\n", bx, by, bz)
-	}
+	gotBlock0, _, _, _, _, err := readStreamedBlock(respRec.Body, 0)
 	gotLabels := make(labels.Set)
 	for _, label := range gotBlock0.Labels {
 		gotLabels[label] = struct{}{}
@@ -1579,12 +1625,9 @@ func TestBlocksWithMerge(t *testing.T) {
 		t.Errorf("expected label 1 but found none\n")
 	}
 	if _, found := gotLabels[2]; !found {
-		t.Errorf("expected label 1 but found none\n")
+		t.Errorf("expected label 2 but found none\n")
 	}
-	gotBlock1, _, bx, by, bz, err = readStreamedBlock(respRec.Body, 0)
-	if bx != 3 || by != 3 || bz != 4 {
-		t.Errorf("got bad block coord on GET /blocks: (%d,%d,%d) when expected (3,3,4)\n", bx, by, bz)
-	}
+	gotBlock1, _, _, _, _, err := readStreamedBlock(respRec.Body, 0)
 	gotLabels = make(labels.Set)
 	for _, label := range gotBlock1.Labels {
 		gotLabels[label] = struct{}{}
@@ -1596,7 +1639,7 @@ func TestBlocksWithMerge(t *testing.T) {
 		t.Errorf("expected label 1 but found none\n")
 	}
 	if _, found := gotLabels[2]; !found {
-		t.Errorf("expected label 1 but found none\n")
+		t.Errorf("expected label 2 but found none\n")
 	}
 }
 
