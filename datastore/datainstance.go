@@ -951,7 +951,7 @@ func GetOrderedKeyValueDB(d dvid.Data) (db storage.OrderedKeyValueDB, err error)
 	var ok bool
 	db, ok = store.(storage.OrderedKeyValueDB)
 	if !ok {
-		return nil, fmt.Errorf("Store assigned to data %q (%s) is not an ordered key-value db", d.DataName(), store)
+		return nil, fmt.Errorf("Store assigned to data %q (%s) is not an ordered key-value db: %v", d.DataName(), store, store)
 	}
 	return
 }

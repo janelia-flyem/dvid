@@ -1000,7 +1000,10 @@ func (d *Data) SetExtents(ctx *datastore.VersionedCtx, uuid dvid.UUID, jsonBytes
 	}
 
 	// put (last one wins)
-	store, _ := datastore.GetOrderedKeyValueDB(d)
+	store, err := datastore.GetKeyValueDB(d)
+	if err != nil {
+		return err
+	}
 	return store.Put(ctx, MetaTKey(), data)
 }
 
@@ -1255,22 +1258,24 @@ func (d *Data) BlockSize() dvid.Point {
 
 // GetExtents retrieves current extent (and updates extents cache)
 // TODO -- refactor return since MinIndex / MaxIndex not used so should use extents3d.
-func (d *Data) GetExtents(ctx *datastore.VersionedCtx) (dvid.Extents, error) {
+func (d *Data) GetExtents(ctx *datastore.VersionedCtx) (dvidextents dvid.Extents, err error) {
 	// actually fetch extents from datatype storage
-	store, _ := datastore.GetOrderedKeyValueDB(d)
-	ser_extents, err := store.Get(ctx, MetaTKey())
-	var dvidextents dvid.Extents
-	if err != nil {
-		return dvidextents, err
+	var store storage.KeyValueDB
+	if store, err = datastore.GetKeyValueDB(d); err != nil {
+		return
 	}
-	extents, err := d.deserializeExtents(ser_extents)
-	if err != nil {
-		return dvidextents, err
+	var serialization []byte
+	if serialization, err = store.Get(ctx, MetaTKey()); err != nil {
+		return
+	}
+	var extents ExtentsJSON
+	if extents, err = d.deserializeExtents(serialization); err != nil {
+		return
 	}
 	if extents.MinPoint == nil || extents.MaxPoint == nil {
 		// assume this is old dataset and try to use values under Properties.
 		if d.Properties.MinPoint == nil || d.Properties.MaxPoint == nil {
-			return dvidextents, nil
+			return
 		}
 		dvidextents.MinPoint = d.Properties.MinPoint
 		dvidextents.MaxPoint = d.Properties.MaxPoint
@@ -1284,22 +1289,25 @@ func (d *Data) GetExtents(ctx *datastore.VersionedCtx) (dvid.Extents, error) {
 	// derive corresponding block coordinate
 	blockSize, ok := d.BlockSize().(dvid.Point3d)
 	if !ok {
-		return dvidextents, fmt.Errorf("can't get extents for data instance %q when block size %s isn't 3d", d.DataName(), d.BlockSize())
+		err = fmt.Errorf("can't get extents for data instance %q when block size %s isn't 3d", d.DataName(), d.BlockSize())
+		return
 	}
 	minPoint, ok := extents.MinPoint.(dvid.Point3d)
 	if !ok {
-		return dvidextents, fmt.Errorf("can't get 3d point %s for data %q", extents.MinPoint, d.DataName())
+		err = fmt.Errorf("can't get 3d point %s for data %q", extents.MinPoint, d.DataName())
+		return
 	}
 	maxPoint, ok := extents.MaxPoint.(dvid.Point3d)
 	if !ok {
-		return dvidextents, fmt.Errorf("can't get 3d point %s for data %q", extents.MaxPoint, d.DataName())
+		err = fmt.Errorf("can't get 3d point %s for data %q", extents.MaxPoint, d.DataName())
+		return
 	}
 	dvidextents.MinIndex = minPoint.ChunkIndexer(blockSize)
 	dvidextents.MaxIndex = maxPoint.ChunkIndexer(blockSize)
-	return dvidextents, nil
+	return
 }
 
-// special error for patch failure
+// ExtentsUnchanged is an error for patch failure
 var ExtentsUnchanged = errors.New("extents does not change")
 
 // PostExtents updates extents with the new points (always growing)
