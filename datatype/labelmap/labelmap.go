@@ -689,6 +689,27 @@ GET <api URL>/node/<UUID>/<data name>/size/<label>[?supervoxels=true]
 
 	supervoxels   If "true", interprets the given label as a supervoxel id, not a possibly merged label.
 
+GET <api URL>/node/<UUID>/<data name>/sizes[?supervoxels=true]
+
+	Returns the sizes in voxels for a list of labels (or supervoxels) in JSON.  Expects JSON
+	for the list of labels (or supervoxels) in the body of the request:
+
+	[ 1, 2, 3, ... ]
+
+	Returns JSON of the sizes for each of the above labels:
+
+	[ 19381, 308, 586, ... ]
+	
+	Returns a status code 404 (Not Found) if label does not exist.
+	
+    Arguments:
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of labelmap instance.
+
+    Query-string Options:
+
+	supervoxels   If "true", interprets the given labels as a supervoxel ids.
+
 GET  <api URL>/node/<UUID>/<data name>/sparsevol-size/<label>[?supervoxels=true]
 
 	Returns JSON giving the number of voxels, number of native blocks and the coarse bounding box in DVID
@@ -3015,6 +3036,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "size":
 		d.handleSize(ctx, w, r, parts)
 
+	case "sizes":
+		d.handleSizes(ctx, w, r)
+
 	case "sparsevol-size":
 		d.handleSparsevolSize(ctx, w, r, parts)
 
@@ -3738,6 +3762,52 @@ func (d *Data) handleSize(ctx *datastore.VersionedCtx, w http.ResponseWriter, r 
 	}
 
 	timedLog.Infof("HTTP GET size for label %d, supervoxels=%t (%s)", label, isSupervoxel, r.URL)
+}
+
+func (d *Data) handleSizes(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+	// GET <api URL>/node/<UUID>/<data name>/sizes
+	timedLog := dvid.NewTimeLog()
+
+	if strings.ToLower(r.Method) != "get" {
+		server.BadRequest(w, r, "Batch sizes query must be a GET request")
+		return
+	}
+	data, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		server.BadRequest(w, r, "Bad GET request body for batch sizes query: %v", err)
+		return
+	}
+	queryStrings := r.URL.Query()
+	hash := queryStrings.Get("hash")
+	if err := checkContentHash(hash, data); err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	var labelList []uint64
+	if err := json.Unmarshal(data, &labelList); err != nil {
+		server.BadRequest(w, r, fmt.Sprintf("Bad mapping request JSON: %v", err))
+		return
+	}
+	isSupervoxel := queryStrings.Get("supervoxels") == "true"
+	sizes, err := GetLabelSizes(d, ctx.VersionID(), labelList, isSupervoxel)
+	if err != nil {
+		server.BadRequest(w, r, "unable to get label sizes: %v", err)
+		return
+	}
+
+	w.Header().Set("Content-type", "application/json")
+	fmt.Fprintf(w, "[")
+	sep := false
+	for _, size := range sizes {
+		if sep {
+			fmt.Fprintf(w, ",")
+		}
+		fmt.Fprintf(w, "%d", size)
+		sep = true
+	}
+	fmt.Fprintf(w, "]")
+
+	timedLog.Infof("HTTP GET batch sizes query (%s)", r.URL)
 }
 
 func (d *Data) handleSparsevolSize(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {

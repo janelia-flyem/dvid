@@ -955,6 +955,12 @@ func TestSplitLabel(t *testing.T) {
 	if jsonVal2.Voxels != expectedVoxels {
 		t.Errorf("expected split supervoxel to be %d voxels, got %d voxels\n", expectedVoxels, jsonVal2.Voxels)
 	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/sizes?supervoxels=true", server.WebAPIPath, uuid)
+	bodystr := "[4, 6]"
+	r = server.TestHTTP(t, "GET", reqStr, bytes.NewBufferString(bodystr))
+	if string(r) != fmt.Sprintf("[%d,%d]", 0, expectedVoxels) {
+		t.Errorf("bad batch sizes result.  got: %s\n", string(r))
+	}
 
 	reqStr = fmt.Sprintf("%snode/%s/labels/size/7?supervoxels=true", server.WebAPIPath, uuid)
 	r = server.TestHTTP(t, "GET", reqStr, nil)

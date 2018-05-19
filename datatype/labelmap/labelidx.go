@@ -428,6 +428,46 @@ func GetLabelSize(d dvid.Data, v dvid.VersionID, label uint64, isSupervoxel bool
 	return idx.NumVoxels(), nil
 }
 
+// GetLabelSizes returns the # of voxels in the given labels.  If isSupervoxel = true, the given
+// labels are interpreted as supervoxel ids and the sizes are of a supervoxel.  If a label doesn't
+// exist, a zero (not error) is returned.
+func GetLabelSizes(d dvid.Data, v dvid.VersionID, labels []uint64, isSupervoxel bool) ([]uint64, error) {
+	var supervoxels []uint64
+	if isSupervoxel {
+		svmap, err := getMapping(d, v)
+		if err != nil {
+			return nil, fmt.Errorf("couldn't get mapping for data %q, version %d: %v", d.DataName(), v, err)
+		}
+		supervoxels = make([]uint64, len(labels))
+		copy(supervoxels, labels)
+
+		labels, err = svmap.MappedLabels(v, labels)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// TODO -- could optimize by doing unique set of labels if supervoxels, since multiple supervoxels
+	// may be in same label.  However, caching might simply remove this optimization issue since label
+	// index will already be cached.
+	sizes := make([]uint64, len(labels))
+	for i, label := range labels {
+		idx, err := GetLabelIndex(d, v, label, false)
+		if err != nil {
+			return nil, err
+		}
+		if idx == nil {
+			sizes[i] = 0
+			continue
+		}
+		if isSupervoxel {
+			sizes[i] = idx.GetSupervoxelCount(supervoxels[i])
+		} else {
+			sizes[i] = idx.NumVoxels()
+		}
+	}
+	return sizes, nil
+}
+
 // GetBoundedIndex gets bounded label index data from storage for a given data instance.
 func GetBoundedIndex(d dvid.Data, v dvid.VersionID, label uint64, bounds dvid.Bounds, isSupervoxel bool) (*labels.Index, error) {
 	idx, err := GetLabelIndex(d, v, label, isSupervoxel)

@@ -1062,6 +1062,13 @@ func TestMultiscaleIngest(t *testing.T) {
 	reqStr := fmt.Sprintf("%snode/%s/labels/size/3", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "GET", reqStr, nil)
 
+	reqStr = fmt.Sprintf("%snode/%s/labels/sizes", server.WebAPIPath, uuid)
+	bodystr := "[1, 2, 3, 13, 209, 311]"
+	r := server.TestHTTP(t, "GET", reqStr, bytes.NewBufferString(bodystr))
+	if string(r) != "[64000,64000,0,64000,64000,64000]" {
+		t.Errorf("bad batch sizes result.  got: %s\n", string(r))
+	}
+
 	// Check the first downres: 64^3
 	downres1 := newTestVolume(64, 64, 64)
 	downres1.getScale(t, uuid, "labels", 1, false)
