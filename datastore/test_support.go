@@ -10,12 +10,6 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-const (
-	WebAddress   = "localhost:8657"
-	RPCAddress   = "localhost:8658"
-	WebClientDir = ""
-)
-
 type testStoreT struct {
 	sync.Mutex
 	backend *storage.Backend

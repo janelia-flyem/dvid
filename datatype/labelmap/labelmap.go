@@ -700,7 +700,7 @@ GET <api URL>/node/<UUID>/<data name>/sizes[?supervoxels=true]
 
 	[ 19381, 308, 586, ... ]
 	
-	Returns a status code 404 (Not Found) if label does not exist.
+	Returns a size of 0 if label does not exist.
 	
     Arguments:
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
@@ -709,6 +709,7 @@ GET <api URL>/node/<UUID>/<data name>/sizes[?supervoxels=true]
     Query-string Options:
 
 	supervoxels   If "true", interprets the given labels as a supervoxel ids.
+    hash          MD5 hash of request body content in hexidecimal string format.
 
 GET  <api URL>/node/<UUID>/<data name>/sparsevol-size/<label>[?supervoxels=true]
 

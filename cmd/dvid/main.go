@@ -277,6 +277,10 @@ func DoServe(cmd dvid.Command) error {
 		return err
 	}
 
+	if err := tc.Server.Initialize(); err != nil {
+		return err
+	}
+
 	// Initialize storage and datastore layer
 	initMetadata, err := storage.Initialize(cmd.Settings(), backend)
 	if err != nil {

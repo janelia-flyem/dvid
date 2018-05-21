@@ -10,7 +10,9 @@ package server
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -205,8 +207,10 @@ type ServerConfig struct {
 	HTTPAddress string
 	RPCAddress  string
 	WebClient   string
-	AllowTiming bool
 	Note        string
+
+	AllowTiming  bool   // If true, returns * for Timing-Allow-Origin in response headers.
+	StartWebhook string // http address that should be called when server is started up.
 
 	IIDGen   string `toml:"instance_id_gen"`
 	IIDStart uint32 `toml:"instance_id_start"`
@@ -219,6 +223,38 @@ func (sc ServerConfig) DatastoreInstanceConfig() datastore.InstanceConfig {
 		Gen:   sc.IIDGen,
 		Start: dvid.InstanceID(sc.IIDStart),
 	}
+}
+
+// Initialize POSTs data to any set webhook indicating the server configuration.
+func (sc ServerConfig) Initialize() error {
+	if sc.StartWebhook == "" {
+		return nil
+	}
+	data := map[string]string{
+		"Host":         sc.Host,
+		"Note":         sc.Note,
+		"HTTP Address": sc.HTTPAddress,
+		"RPC Address":  sc.RPCAddress,
+	}
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("POST", sc.StartWebhook, bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("called webhook specified in TOML (%q) and received bad status code: %d", sc.StartWebhook, resp.StatusCode)
+	}
+	return nil
 }
 
 type sizeConfig struct {

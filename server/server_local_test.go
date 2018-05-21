@@ -2,6 +2,8 @@ package server
 
 import (
 	"io/ioutil"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 
@@ -19,6 +21,37 @@ func loadConfigFile(t *testing.T, filename string) string {
 		t.Fatalf("couldn't read TOML file %q: %v\n", filename, err)
 	}
 	return string(data)
+}
+
+func TestStartWebhook(t *testing.T) {
+	tomlCfg, _, err := LoadConfig("../scripts/distro-files/config-full.toml")
+	if err != nil {
+		t.Fatalf("bad TOML configuration: %v\n", err)
+	}
+
+	var sent []byte
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		sent, err = ioutil.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("couldn't read all of POSTed body: %v\n", err)
+		}
+	}))
+	defer ts.Close()
+	tomlCfg.Server.StartWebhook = ts.URL
+
+	if err := tc.Server.Initialize(); err != nil {
+		t.Fatalf("couldn't initialize server: %v\n", err)
+	}
+	if string(sent) != `{"HTTP Address":"localhost:8000","Host":"mygreatserver.test.com","Note":"You can put anything you want in here and have it available via /api/server/note.\nMultiple lines!\n","RPC Address":"localhost:8001"}` {
+		t.Fatalf("Expected server info to be sent to webhook, but received this instead:\n%s\n", string(sent))
+	}
+
+	// check if there's no recipient for webhook.
+	tomlCfg.Server.StartWebhook = "http://mybadurl:2718"
+	if err := tc.Server.Initialize(); err == nil {
+		t.Fatalf("expected error in supplying bad webhook, but got no error!\n")
+	}
 }
 
 func TestParseConfig(t *testing.T) {

@@ -2,18 +2,22 @@
 # per data type and data instance.
 
 [server]
-# host = "mygreatserver.test.com"  # Lets you specify a user-friendly alias for help messages.
+host = "mygreatserver.test.com"  # Lets you specify a user-friendly alias for help messages.
 httpAddress = "localhost:8000"
 rpcAddress = "localhost:8001"
 webClient = "/path/to/webclient"
-
-# to return Timing-Allow-Origin headers in response
-# allowTiming = true
 
 note = """
 You can put anything you want in here and have it available via /api/server/note.
 Multiple lines!
 """
+
+# if a start-up webhook is provided, DVID will do a POST on the webhook address and send JSON
+# with the server attributes including the values for "host", "note", and other server properties.
+# startWebhook = "http://dvidmonitor.hhmi.org"
+
+# to return Timing-Allow-Origin headers in response
+# allowTiming = true
 
 # How new data instance ids are generated.
 # Is one of "random" or "sequential".  If "sequential" can set "start_instance_id" property.
