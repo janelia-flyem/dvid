@@ -45,7 +45,7 @@ source:
     folder: src/github.com/janelia-flyem/go
     # Includes many:
     #   basholeveldb cron freetype-go go-humanize go-nanomsg go-uuid
-    #   go.image gocheck goexif goji golz4 gomdb hyperleveldb
+    #   go.image gocheck goexif goji golz4-updated gomdb hyperleveldb
     #   levigo lru lumberjack msgp murmur3 nrsc profiler resize semver
     #   toml uuid
 

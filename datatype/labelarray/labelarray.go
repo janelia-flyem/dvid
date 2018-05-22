@@ -31,7 +31,7 @@ import (
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 
-	lz4 "github.com/janelia-flyem/go/golz4"
+	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
 
 const (

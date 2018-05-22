@@ -16,7 +16,7 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 
-	lz4 "github.com/janelia-flyem/go/golz4"
+	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
 
 var (

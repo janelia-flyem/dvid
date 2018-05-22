@@ -14,7 +14,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/dvid"
 
-	lz4 "github.com/janelia-flyem/go/golz4"
+	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
 
 type testData struct {

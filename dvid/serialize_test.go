@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"testing"
 
-	lz4 "github.com/janelia-flyem/go/golz4"
+	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
 
 func TestLocalID(t *testing.T) {

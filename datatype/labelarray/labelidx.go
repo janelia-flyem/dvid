@@ -18,7 +18,7 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 
 	"github.com/coocood/freecache"
-	lz4 "github.com/janelia-flyem/go/golz4"
+	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
 
 const (

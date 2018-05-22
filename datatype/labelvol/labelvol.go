@@ -30,7 +30,7 @@ import (
 
 	"github.com/janelia-flyem/go/go-humanize"
 
-	lz4 "github.com/janelia-flyem/go/golz4"
+	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
 
 const (
