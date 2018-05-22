@@ -374,9 +374,22 @@ type Data struct {
 	// multiple sync deltas.
 	mutID uint64
 
+	// true if deleted (or in processing of deleting)
+	deleted bool
+
 	// handle waiting based on operation ID.
 	opWG    map[uint64]*sync.WaitGroup
 	opWG_mu sync.RWMutex
+}
+
+// IsDeleted returns true if data has been deleted or is deleting.
+func (d *Data) IsDeleted() bool {
+	return d.deleted
+}
+
+// SetDeleted is used to indicate whether data has been deleted or is deleting.
+func (d *Data) SetDeleted(deleted bool) {
+	d.deleted = deleted
 }
 
 // ---------------------------------------

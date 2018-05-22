@@ -30,6 +30,7 @@ type testData struct {
 	syncData   dvid.UUIDSet
 	mutID      uint64
 	tags       map[string]string
+	deleted    bool
 }
 
 func (d *testData) DataName() dvid.InstanceName {
@@ -113,6 +114,14 @@ func (d *testData) SetKVStore(kvStore dvid.Store) {
 
 func (d *testData) SetLogStore(logStore WriteLog) {
 	d.logStore = logStore
+}
+
+func (d *testData) IsDeleted() bool {
+	return d.deleted
+}
+
+func (d *testData) SetDeleted(deleted bool) {
+	d.deleted = deleted
 }
 
 func GetTestDataContext(uuid dvid.UUID, name string, instanceID dvid.InstanceID) *DataContext {
