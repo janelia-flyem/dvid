@@ -369,7 +369,7 @@ func addMergeToMapping(d dvid.Data, v dvid.VersionID, mutID, toLabel uint64, mer
 }
 
 // adds new arbitrary split into the equivalence map for a given instance version.
-func addSplitToMapping(d dvid.Data, v dvid.VersionID, remainLabel, splitLabel uint64, splitmap *labels.SVSplitMap) error {
+func addSplitToMapping(d dvid.Data, v dvid.VersionID, mutID, remainLabel, splitLabel uint64, splitmap *labels.SVSplitMap) error {
 	m, err := getMapping(d, v)
 	if err != nil {
 		return err
@@ -379,6 +379,9 @@ func addSplitToMapping(d dvid.Data, v dvid.VersionID, remainLabel, splitLabel ui
 	if err != nil {
 		return err
 	}
+	splitSupervoxels := make(labels.Set)
+	remainSupervoxels := make(labels.Set)
+
 	splitmap.RLock()
 	for _, svsplit := range splitmap.Splits {
 		vm := m.fm[svsplit.Split]
@@ -386,15 +389,32 @@ func addSplitToMapping(d dvid.Data, v dvid.VersionID, remainLabel, splitLabel ui
 		if changed {
 			m.fm[svsplit.Split] = newvm
 		}
+		splitSupervoxels[svsplit.Split] = struct{}{}
+
 		vm = m.fm[svsplit.Remain]
 		newvm, changed = vm.modify(vid, remainLabel)
 		if changed {
 			m.fm[svsplit.Remain] = newvm
 		}
+		remainSupervoxels[svsplit.Remain] = struct{}{}
 	}
 	splitmap.RUnlock()
 	m.Unlock()
-	return nil
+	op := labels.MappingOp{
+		MutID:    mutID,
+		Mapped:   splitLabel,
+		Original: splitSupervoxels,
+	}
+	if err := labels.LogMapping(d, v, op); err != nil {
+		dvid.Criticalf("unable to log the mapping of split supervoxels %s to split body label %d: %v\n", splitSupervoxels, splitLabel, err)
+		return err
+	}
+	op = labels.MappingOp{
+		MutID:    mutID,
+		Mapped:   remainLabel,
+		Original: remainSupervoxels,
+	}
+	return labels.LogMapping(d, v, op)
 }
 
 // adds new cleave into the equivalence map for a given instance version and also

@@ -342,7 +342,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 		close(doneCh)
 	}
 	wg.Wait()
-	if err = addSplitToMapping(d, v, fromLabel, toLabel, svsplit); err != nil {
+	if err = addSplitToMapping(d, v, mutID, fromLabel, toLabel, svsplit); err != nil {
 		return
 	}
 
