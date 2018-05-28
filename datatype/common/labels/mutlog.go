@@ -175,7 +175,7 @@ func ReadMappingLog(d dvid.Data, v dvid.VersionID) ([]MappingOp, error) {
 	return mappingOps, nil
 }
 
-func StreamMappingLog(d dvid.Data, v dvid.VersionID, ch chan storage.LogMessage, wg *sync.WaitGroup) error {
+func StreamLog(d dvid.Data, v dvid.VersionID, ch chan storage.LogMessage, wg *sync.WaitGroup) error {
 	uuid, err := datastore.UUIDFromVersion(v)
 	if err != nil {
 		return err

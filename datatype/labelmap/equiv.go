@@ -127,7 +127,6 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 			for msg := range ch { // expects channel to be closed on completion
 				numMsgs++
 				if msg.EntryType != proto.MappingOpType {
-					dvid.Errorf("received odd log message not of type Mapping for version %d\n", ancestor)
 					wg.Done()
 					continue
 				}
@@ -148,7 +147,7 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 				wg.Done()
 			}
 		}(vid, ch, wg)
-		if err = labels.StreamMappingLog(d, ancestor, ch, wg); err != nil {
+		if err = labels.StreamLog(d, ancestor, ch, wg); err != nil {
 			return fmt.Errorf("problem loading mapping logs: %v", err)
 		}
 		wg.Wait()
