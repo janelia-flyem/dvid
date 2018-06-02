@@ -581,11 +581,9 @@ func (d *Data) splitSupervoxelBlock(ctx *datastore.VersionedCtx, op splitSupervo
 		return
 	}
 
-	var toLabelSize uint64
 	var splitBlock *labels.Block
 	if op.Split != nil {
-		var keptSize uint64
-		splitBlock, keptSize, toLabelSize, err = pb.SplitSupervoxel(op.SplitSupervoxelOp)
+		splitBlock, _, _, err = pb.SplitSupervoxel(op.SplitSupervoxelOp)
 		if err != nil {
 			dvid.Errorf("can't store split supervoxel %d RLEs into block %s: %v\n", op.Supervoxel, op.bcoord, err)
 			return
