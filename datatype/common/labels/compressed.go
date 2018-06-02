@@ -65,7 +65,6 @@ func (pb PositionedBlock) SplitWithStats(op SplitOp, m *SVSplitMap, newLabelFunc
 					return
 				}
 				lblarray[i] = relabel.Split
-				dvid.Infof("Split %s supervoxel %d -> split supervoxel %d, remaining supervoxel %d\n", pb.BCoord, lbl, relabel.Split, relabel.Remain)
 				replacements[lbl] = relabel.Remain
 				svc.SVSplit = relabel
 				svc.Voxels++

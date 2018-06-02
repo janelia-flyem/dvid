@@ -550,7 +550,6 @@ func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
 		dvid.Errorf("issue with creating split in block %s: %v\n", op.Target, op.bcoord, err)
 		return
 	}
-	dvid.Infof("return from pb.SplitWithStats counts: %v\n", counts)
 	op.deltaCh <- blockSplitCounts{
 		bcoord: op.bcoord,
 		counts: counts,
@@ -591,7 +590,6 @@ func (d *Data) splitSupervoxelBlock(ctx *datastore.VersionedCtx, op splitSupervo
 			dvid.Errorf("can't store split supervoxel %d RLEs into block %s: %v\n", op.Supervoxel, op.bcoord, err)
 			return
 		}
-		dvid.Infof("Split block %s, label %d -> %d, %d: kept %d voxels, split %d voxels\n", pb.BCoord, op.Supervoxel, op.SplitSupervoxel, op.RemainSupervoxel, keptSize, toLabelSize)
 	}
 
 	splitpb := labels.PositionedBlock{*splitBlock, op.bcoord}
