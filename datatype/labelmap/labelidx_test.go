@@ -34,6 +34,26 @@ func TestIngest(t *testing.T) {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
+	for label := uint64(1); label <= 4; label++ {
+		indexURL := fmt.Sprintf("%snode/%s/labels/index/%d", server.WebAPIPath, root, label)
+		serialization := server.TestHTTP(t, "GET", indexURL, nil)
+		idx := new(labels.Index)
+		if err := idx.Unmarshal(serialization); err != nil {
+			t.Fatalf("Unable to GET index/%d: %v\n", label, err)
+		}
+		if idx.Label != label {
+			t.Fatalf("Expected index for label %d, got label %d index\n", label, idx.Label)
+		}
+		supervoxels := idx.GetSupervoxels()
+		if len(supervoxels) != 1 {
+			t.Fatalf("Expected index for label %d to have 1 supervoxel, got %d\n", label, len(supervoxels))
+		}
+		_, ok := supervoxels[label]
+		if !ok {
+			t.Errorf("Expeced index for label %d to have supervoxel %d, but wasn't present", label, label)
+		}
+	}
+
 	// commit and create child version
 	payload := bytes.NewBufferString(`{"note": "Base Supervoxels"}`)
 	commitReq := fmt.Sprintf("%snode/%s/commit", server.WebAPIPath, root)

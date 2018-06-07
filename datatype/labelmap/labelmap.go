@@ -1101,16 +1101,18 @@ POST <api URL>/node/<UUID>/<data name>/split/<label>
 			"MutationID": <unique id for mutation>
 			"UUID": <UUID on which split was done>
 		}
-	
+
+
+GET  <api URL>/node/<UUID>/<data name>/index/<label>
 POST <api URL>/node/<UUID>/<data name>/index/<label>
 
-	Allows direct storing of an index (blocks per supervoxel and their voxel count) for any
-	particular label.  Typically, these indices are computed on-the-fly during ingestion of
+	Allows direct retrieval or storing of an index (blocks per supervoxel and their voxel count) 
+	for a label.  Typically, these indices are computed on-the-fly during ingestion of
 	of blocks of label voxels.  If there are cluster systems capable of computing label
-	blocks, indices, and affinities directly, though, it's more efficient to simply load
+	blocks, indices, and affinities directly, though, it's more efficient to simply POST
 	them into dvid.
 
-	The POST expects a protobuf serialization of a LabelIndex message defined by:
+	The returned (GET) or sent (POST) protobuf serialization of a LabelIndex message is defined by:
 
 	message SVCount {
 		map<uint64, uint32> counts = 1;
@@ -1124,7 +1126,7 @@ POST <api URL>/node/<UUID>/<data name>/index/<label>
 		string last_mod_user = 5;
 	}
 
-	If the blocks map is empty, the label index is deleted.
+	If the blocks map is empty on a POST, the label index is deleted.
 	
 POST <api URL>/node/<UUID>/<data name>/indices
 
@@ -3074,7 +3076,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		d.handleMerge(ctx, w, r, parts)
 
 	case "index":
-		d.handleIngestIndex(ctx, w, r, parts)
+		d.handleIndex(ctx, w, r, parts)
 
 	case "indices":
 		d.handleIngestIndices(ctx, w, r)
@@ -3282,7 +3284,8 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 	}
 }
 
-func (d *Data) handleIngestIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
+func (d *Data) handleIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
+	// GET  <api URL>/node/<UUID>/<data name>/index/<label>
 	// POST <api URL>/node/<UUID>/<data name>/index/<label>
 	timedLog := dvid.NewTimeLog()
 
@@ -3294,49 +3297,76 @@ func (d *Data) handleIngestIndex(ctx *datastore.VersionedCtx, w http.ResponseWri
 		defer server.ThrottledOpDone()
 	}
 
-	if strings.ToLower(r.Method) != "post" {
-		server.BadRequest(w, r, "only POST action allowed for /index endpoint")
-		return
-	}
 	label, err := strconv.ParseUint(parts[4], 10, 64)
 	if err != nil {
 		server.BadRequest(w, r, err)
 		return
 	}
 	if label == 0 {
-		server.BadRequest(w, r, "cannot ingest protected label 0")
+		server.BadRequest(w, r, "there is no index for protected label 0")
 		return
 	}
-	if r.Body == nil {
-		server.BadRequest(w, r, fmt.Errorf("no data POSTed"))
-		return
-	}
-	serialization, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		server.BadRequest(w, r, err)
-		return
-	}
-	idx := new(labels.Index)
-	if err := idx.Unmarshal(serialization); err != nil {
-		server.BadRequest(w, r, err)
-	}
-	if idx.Label != label {
-		server.BadRequest(w, r, "serialized Index was for label %d yet was POSTed to label %d", idx.Label, label)
-		return
-	}
-	if len(idx.Blocks) == 0 {
-		if err := deleteLabelIndex(ctx, label); err != nil {
+
+	switch strings.ToLower(r.Method) {
+	case "post":
+		if r.Body == nil {
+			server.BadRequest(w, r, fmt.Errorf("no data POSTed"))
+			return
+		}
+		serialization, err := ioutil.ReadAll(r.Body)
+		if err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
-		timedLog.Infof("HTTP POST index for label %d (%s) -- empty index so deleted index", label, r.URL)
+		idx := new(labels.Index)
+		if err := idx.Unmarshal(serialization); err != nil {
+			server.BadRequest(w, r, err)
+		}
+		if idx.Label != label {
+			server.BadRequest(w, r, "serialized Index was for label %d yet was POSTed to label %d", idx.Label, label)
+			return
+		}
+		if len(idx.Blocks) == 0 {
+			if err := deleteLabelIndex(ctx, label); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			timedLog.Infof("HTTP POST index for label %d (%s) -- empty index so deleted index", label, r.URL)
+			return
+		}
+		if err := putLabelIndex(ctx, idx); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+
+	case "get":
+		idx, err := getLabelIndex(ctx, label)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		serialization, err := idx.Marshal()
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		w.Header().Set("Content-type", "application/octet-stream")
+		n, err := w.Write(serialization)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if n != len(serialization) {
+			server.BadRequest(w, r, "unable to write all %d bytes of serialized label %d index: only %d bytes written", len(serialization), label, n)
+			return
+		}
+
+	default:
+		server.BadRequest(w, r, "only POST or GET action allowed for /index endpoint")
 		return
 	}
-	if err := putLabelIndex(ctx, idx); err != nil {
-		server.BadRequest(w, r, err)
-		return
-	}
-	timedLog.Infof("HTTP POST index for label %d (%s)", label, r.URL)
+
+	timedLog.Infof("HTTP %s index for label %d (%s)", r.Method, label, r.URL)
 }
 
 func (d *Data) handleIngestIndices(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
