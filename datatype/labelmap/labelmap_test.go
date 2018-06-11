@@ -271,7 +271,7 @@ func (v *testVolume) testBlock(t *testing.T, context string, bx, by, bz int32, d
 }
 
 func (v *testVolume) testGetBlocks(t *testing.T, context string, uuid dvid.UUID, name, compression string, scale uint8) {
-	apiStr := fmt.Sprintf("%snode/%s/%s/blocks/%d_%d_%d/0_0_0", server.WebAPIPath, uuid, name, v.size[0], v.size[1], v.size[2])
+	apiStr := fmt.Sprintf("%snode/%s/%s/blocks/%d_%d_%d/0_0_0", server.WebAPIPath, uuid, name, v.size[0]+64, v.size[1]+64, v.size[2]+64)
 	var qstrs []string
 	if compression != "" {
 		qstrs = append(qstrs, "compression="+compression)

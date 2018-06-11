@@ -2234,14 +2234,12 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 
 	numBlocks := int(blocksdims.Prod())
 	wg := new(sync.WaitGroup)
-	wg.Add(numBlocks)
 
 	// launch goroutine that will stream blocks to client
 	ch := make(chan blockSend, numBlocks)
 	var sendErr error
 	go func() {
-		for i := 0; i < numBlocks; i++ {
-			data := <-ch
+		for data := range ch {
 			if data.err != nil && sendErr == nil {
 				sendErr = data.err
 			} else {
@@ -2303,6 +2301,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 					v:           ctx.VersionID(),
 					data:        kv.V,
 				}
+				wg.Add(1)
 				go func(b blockData) {
 					out, err := d.transcodeBlock(b)
 					ch <- blockSend{bcoord: b.bcoord, value: out, err: err}
@@ -2317,6 +2316,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 	}
 
 	wg.Wait()
+	close(ch)
 
 	if hasbuffer {
 		// submit the entire buffer to the DB
