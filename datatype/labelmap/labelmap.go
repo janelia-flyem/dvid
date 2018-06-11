@@ -1957,13 +1957,11 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 	// launch goroutine that will stream blocks to client
 	numBlocks := len(coordarray) / 3
 	wg := new(sync.WaitGroup)
-	wg.Add(numBlocks)
 
 	ch := make(chan blockSend, numBlocks)
 	var sendErr error
 	go func() {
-		for i := 0; i < numBlocks; i++ {
-			data := <-ch
+		for data := range ch {
 			if data.err != nil && sendErr == nil {
 				sendErr = data.err
 			} else {
@@ -1997,6 +1995,7 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 			keyBeg := NewBlockTKey(scale, &indexBeg)
 
 			value, err := store.Get(ctx, keyBeg)
+			wg.Add(1)
 			if err != nil {
 				ch <- blockSend{err: err}
 				return
