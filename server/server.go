@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,6 +40,7 @@ import (
 // Config provides server configuration parameters.  Should be set by platform-specific implementations.
 type Config interface {
 	Host() string // Abbreviated host identifier + port.
+	Note() string
 
 	HTTPAddress() string
 	RPCAddress() string
@@ -48,6 +50,9 @@ type Config interface {
 
 	// Set timing in HTTP header
 	AllowTiming() bool
+
+	// Kafka servers, nil if not configured
+	KafkaServers() []string
 }
 
 // GetConfig returns configuration settings for the server, which is set by each platform-specific server code.
@@ -242,12 +247,19 @@ func AboutJSON() (jsonStr string, err error) {
 		"Storage backend":   storage.EnginesAvailable(),
 		"Server time":       time.Now().String(),
 		"Server uptime":     time.Since(startupTime).String(),
+		"RPC Address":       config.RPCAddress(),
+		"Host":              config.Host(),
+		"Note":              config.Note(),
 	}
 	if readonly {
 		data["Mode"] = "read only"
 	}
 	if fullwrite {
 		data["Mode"] = "allow writes on committed nodes"
+	}
+	kservers := config.KafkaServers()
+	if len(kservers) > 0 {
+		data["Kafka Servers"] = strings.Join(kservers, ",")
 	}
 	m, err := json.Marshal(data)
 	if err != nil {

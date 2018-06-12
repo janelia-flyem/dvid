@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
@@ -51,6 +52,30 @@ func TestStartWebhook(t *testing.T) {
 	tomlCfg.Server.StartWebhook = "http://mybadurl:2718"
 	if err := tc.Server.Initialize(); err == nil {
 		t.Fatalf("expected error in supplying bad webhook, but got no error!\n")
+	}
+}
+
+func TestServerInfo(t *testing.T) {
+	_, _, err := LoadConfig("../scripts/distro-files/config-full.toml")
+	if err != nil {
+		t.Fatalf("bad TOML configuration: %v\n", err)
+	}
+	jsonStr, err := AboutJSON()
+	if err != nil {
+		t.Fatalf("bad AboutJSON: %v\n", err)
+	}
+	var jsonVal struct {
+		Host         string
+		KafkaServers string `json:"Kafka Servers"`
+	}
+	if err := json.Unmarshal([]byte(jsonStr), &jsonVal); err != nil {
+		t.Fatalf("unable to unmarshal JSON (%s): %v\n", jsonStr, err)
+	}
+	if jsonVal.Host != "mygreatserver.test.com:8000" {
+		t.Errorf("expected %q, got %q for host\n", "mygreatserver.test.com:8000", jsonVal.Host)
+	}
+	if jsonVal.KafkaServers != "http://foo.bar.com:1234,http://foo2.bar.com:1234" {
+		t.Errorf("expected %q, got %q for kafka servers\n", "http://foo.bar.com:1234,http://foo2.bar.com:1234", jsonVal.KafkaServers)
 	}
 }
 

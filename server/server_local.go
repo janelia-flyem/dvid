@@ -172,6 +172,10 @@ func (c *tomlConfig) Host() string {
 	return host
 }
 
+func (c *tomlConfig) Note() string {
+	return c.Server.Note
+}
+
 func (c *tomlConfig) HTTPAddress() string {
 	return c.Server.HTTPAddress
 }
@@ -186,6 +190,13 @@ func (c *tomlConfig) WebClient() string {
 
 func (c *tomlConfig) AllowTiming() bool {
 	return c.Server.AllowTiming
+}
+
+func (c *tomlConfig) KafkaServers() []string {
+	if len(c.Kafka.Servers) != 0 {
+		return c.Kafka.Servers
+	}
+	return nil
 }
 
 // CacheSize returns the number oF bytes reserved for the given identifier.
