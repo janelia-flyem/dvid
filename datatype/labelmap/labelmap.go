@@ -2017,6 +2017,7 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 	}
 
 	wg.Wait()
+	close(ch)
 	return sendErr
 }
 
