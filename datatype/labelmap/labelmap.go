@@ -1990,12 +1990,12 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 		}
 		bcoord := dvid.ChunkPoint3d{int32(xloc), int32(yloc), int32(zloc)}
 
+		wg.Add(1)
 		go func(bcoord dvid.ChunkPoint3d) {
 			indexBeg := dvid.IndexZYX(bcoord)
 			keyBeg := NewBlockTKey(scale, &indexBeg)
 
 			value, err := store.Get(ctx, keyBeg)
-			wg.Add(1)
 			if err != nil {
 				ch <- blockSend{err: err}
 				return
