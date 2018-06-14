@@ -14,5 +14,8 @@ ${DVID_REPO}/scripts/get-go-dependencies.sh
 # Build
 make dvid
 
+# Test
+make test
+
 # Install
 make install
