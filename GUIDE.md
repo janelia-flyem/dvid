@@ -43,8 +43,14 @@ Setup
 2. Install `conda-build` and `anaconda-client`:
 
     ```
-    $ source activate root
+    $ source activate base
     $ conda install conda-build anaconda-client
+    ```
+    
+    If you already had those installed, be sure to update to the latest versions:
+    
+    ```
+    $ conda update -n base conda conda-build anaconda-client
     ```
 
 3. Add `flyem-forge` and `conda-forge` to your `.condarc` file:
