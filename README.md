@@ -5,7 +5,7 @@ DVID       [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/janelia-flyem/dvid)](https://goreportcard.com/report/github.com/janelia-flyem/dvid)
 [![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) 
-[![CircleCI](https://circleci.com/gh/janelia-flyem/dvid/tree/master.svg?&style=shield)](https://circleci.com/gh/janelia-flyem/dvid/tree/master)
+[![Travis CI Status](https://travis-ci.org/janelia-flyem/dvid.svg?branch=master)](https://travis-ci.org/janelia-flyem/dvid)
 
 See the [DVID Wiki](https://github.com/janelia-flyem/dvid/wiki) for more information including installation and examples of use.
 

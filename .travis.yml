@@ -1,0 +1,37 @@
+language: go
+
+cache:
+  directories: /home/travis/miniconda
+
+before_cache:
+  # Don't cache build artifacts, or any metadata files that changed in the conda prefix
+  - rm -rf /home/travis/miniconda/conda-bld
+  - conda clean --lock --index-cache
+  - rm -rf /home/travis/miniconda/pkgs/dvid*
+  - rm -rf /home/travis/miniconda/pkgs/urls.txt
+  - rm -rf /home/travis/miniconda/locks
+
+git:
+  # By default, travis uses git clone --depth=50,
+  # which may not be deep enough to capture the most recent tag,
+  # and the tags are necessary for our conda build.
+  # Force a full clone.
+  depth: false
+  
+install:
+  - if [ ! -e $HOME/miniconda/bin/conda ]; then
+      rm -rf $HOME/miniconda;
+      wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh;
+      bash miniconda.sh -b -p $HOME/miniconda;
+    fi
+  - export PATH="$HOME/miniconda/bin:$PATH"
+  - hash -r
+  - conda config --set always_yes yes --set changeps1 no
+  - conda config --add channels conda-forge
+  - conda config --add channels flyem-forge
+  - conda update -q conda
+  - conda install -y conda-build
+  - conda info -a
+
+script:
+  conda build scripts/conda-recipe
