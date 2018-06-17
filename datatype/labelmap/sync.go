@@ -54,20 +54,6 @@ type mergeOp struct {
 	downresMut *downres.Mutation
 }
 
-type splitOp struct {
-	labels.SplitOp
-	mutID      uint64
-	bcoord     dvid.IZYXString
-	downresMut *downres.Mutation
-	mapping    *labels.SVSplitMap
-	deltaCh    chan blockSplitCounts
-}
-
-type blockSplitCounts struct {
-	bcoord dvid.IZYXString
-	counts map[uint64]labels.SVSplitCount
-}
-
 type splitSupervoxelOp struct {
 	labels.SplitSupervoxelOp
 	mutID      uint64

@@ -475,7 +475,8 @@ GET <api URL>/node/<UUID>/<data name>/mapping[?queryopts]
 
 	[ supervoxel1, supervoxel2, ...]
 
-	Returns for each POSTed supervoxel the corresponding mapped label:
+	Returns for each POSTed supervoxel the corresponding mapped label, which may be 0 if the
+	supervoxel no longer exists, e.g., has been split:
 
 	[ 23, 911, ...]
 	
@@ -1358,6 +1359,8 @@ type Data struct {
 	updateMu sync.RWMutex
 
 	mlMu sync.RWMutex // For atomic access of MaxLabel and MaxRepoLabel
+
+	voxelMu sync.Mutex // Only allow voxel-level label mutation ops sequentially.
 
 	// unpersisted data: channels for mutations
 	mutateCh [numMutateHandlers]chan procMsg // channels into mutate (merge/split) ops.

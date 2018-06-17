@@ -245,6 +245,28 @@ func (v *testVolume) equals(v2 *testVolume) error {
 	return nil
 }
 
+func (v *testVolume) equalsDownres(v2 *testVolume) error {
+	lores, err := labels.DownresLabels(v2.data, v2.size)
+	if err != nil {
+		return err
+	}
+	var i uint64
+	var x, y, z int32
+	for z = 0; z < v.size[2]; z++ {
+		for y = 0; y < v.size[1]; y++ {
+			for x = 0; x < v.size[0]; x++ {
+				val1 := binary.LittleEndian.Uint64(v.data[i : i+8])
+				val2 := binary.LittleEndian.Uint64(lores[i : i+8])
+				i += 8
+				if val1 != val2 {
+					return fmt.Errorf("voxel (%d,%d,%d), expected downres label %d, got %d", x, y, z, val2, val1)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func (v *testVolume) testBlock(t *testing.T, context string, bx, by, bz int32, data []byte) {
 	if len(data) < int(DefaultBlockSize*DefaultBlockSize*DefaultBlockSize*8) {
 		t.Fatalf("[%s] got bad uint64 array of len %d for block (%d, %d, %d)\n", context, len(data), bx, by, bz)

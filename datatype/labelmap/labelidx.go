@@ -13,7 +13,6 @@ import (
 	"sync/atomic"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/common/downres"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -210,159 +209,6 @@ func deleteCachedLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) error {
 ////////////////////////
 //
 
-// should be launched as goroutine; locks the index of the split label for duration and
-// splits both the index as well as relabels supervoxels that were split but not in
-// split blocks.
-func (d *Data) splitIndexAndBlocks(v dvid.VersionID, op labels.SplitOp, info dvid.ModInfo, downresMut *downres.Mutation, blockCh chan blockSplitCounts, doneCh chan struct{}, wg *sync.WaitGroup) {
-	shard := op.Target % numIndexShards
-	indexMu[shard].Lock()
-	defer func() {
-		indexMu[shard].Unlock()
-		wg.Done()
-	}()
-
-	idx, err := getCachedLabelIndex(d, v, op.Target)
-	if err != nil {
-		dvid.Errorf("modify split index for data %q, label %d: %v\n", err)
-		return
-	}
-	if idx == nil {
-		dvid.Errorf("unable to modify split index for data %q: missing label %d\n", d.DataName(), op.Target)
-		return
-	}
-
-	splitsPerBlock := make(map[uint64]map[uint64]labels.SVSplitCount)
-	getFromChannel := true
-	for getFromChannel {
-		select {
-		case blockSplit := <-blockCh:
-			for supervoxel, counts := range blockSplit.counts {
-				if supervoxel == 0 {
-					continue
-				}
-				zyx, err := labels.IZYXStringToBlockIndex(blockSplit.bcoord)
-				if err != nil {
-					dvid.Errorf("unable to convert block %s to block index: %v\n", blockSplit.bcoord, err)
-					continue
-				}
-				svc, found := splitsPerBlock[zyx]
-				if !found {
-					svc = make(map[uint64]labels.SVSplitCount)
-				}
-				svc[supervoxel] = counts
-				splitsPerBlock[zyx] = svc
-			}
-		case <-doneCh:
-			getFromChannel = false
-		}
-	}
-	idx.LastMutId = op.MutID
-	idx.LastModUser = info.User
-	idx.LastModTime = info.Time
-	idx.LastModApp = info.App
-
-	sidx := new(labels.Index)
-	sidx.LastMutId = op.MutID
-	sidx.LastModUser = info.User
-	sidx.LastModTime = info.Time
-	sidx.LastModApp = info.App
-	sidx.Label = op.NewLabel
-	sidx.Blocks = make(map[uint64]*proto.SVCount, len(splitsPerBlock))
-
-	relabeling := make(map[uint64]uint64)
-	for zyx, counts := range splitsPerBlock {
-		cursvc, found := idx.Blocks[zyx]
-		if !found || cursvc == nil || len(cursvc.Counts) == 0 {
-			dvid.Errorf("block %s was overwritten in split of label %d yet this block was not in the index!\n", labels.BlockIndexToIZYXString(zyx))
-			continue
-		}
-		splitsvc := new(proto.SVCount)
-		splitsvc.Counts = make(map[uint64]uint32, len(counts))
-		var splitVoxels uint32
-		for supervoxel, svsplit := range counts {
-			relabeling[supervoxel] = svsplit.Remain
-			splitVoxels += svsplit.Voxels
-			numVoxels, found := cursvc.Counts[supervoxel]
-			if !found {
-				dvid.Errorf("block %s had %d voxels written over supervoxel %d in label %d split yet this supervoxel was not in the index!\n", labels.BlockIndexToIZYXString(zyx), svsplit, supervoxel, op.Target)
-				continue
-			}
-			if numVoxels < svsplit.Voxels {
-				dvid.Errorf("block %s had %d voxels written over supervoxel %d in label %d split yet this supervoxel only had %d voxels from index!\n", labels.BlockIndexToIZYXString(zyx), svsplit.Voxels, supervoxel, op.Target, numVoxels)
-				continue
-			}
-			numVoxels -= svsplit.Voxels
-			if numVoxels > 0 {
-				cursvc.Counts[svsplit.Remain] = numVoxels
-			}
-			splitsvc.Counts[svsplit.Split] = svsplit.Voxels
-			delete(cursvc.Counts, supervoxel)
-		}
-		sidx.Blocks[zyx] = splitsvc
-	}
-
-	// for all non-split blocks in this label, see if split supervoxels exist and relabel them.
-	ctx := datastore.NewVersionedCtx(d, v)
-	for zyx, svc := range idx.Blocks {
-		if _, found := splitsPerBlock[zyx]; found {
-			continue
-		}
-		var replacements map[uint64]uint64
-		for supervoxel, size := range svc.Counts {
-			remainLabel, found := relabeling[supervoxel]
-			if found {
-				if replacements == nil {
-					replacements = make(map[uint64]uint64)
-				}
-				replacements[supervoxel] = remainLabel
-				delete(svc.Counts, supervoxel)
-				svc.Counts[remainLabel] = size
-			}
-		}
-		if len(replacements) == 0 {
-			continue
-		}
-		zyxStr := labels.BlockIndexToIZYXString(zyx)
-		pb, err := d.getLabelBlock(ctx, 0, zyxStr)
-		if err != nil {
-			dvid.Errorf("error in getting block %s for relabeling during split: %v\n", zyxStr, err)
-			continue
-		}
-		if pb == nil {
-			dvid.Errorf("split on block %s attempted but block doesn't exist\n", zyxStr)
-			continue
-		}
-		replacedBlock, replaced, err := pb.ReplaceLabels(replacements)
-		if err != nil {
-			dvid.Errorf("error replacing supervoxel labels in split on block %s: %v\n", zyxStr, err)
-			continue
-		}
-		if replaced {
-			splitpb := labels.PositionedBlock{Block: *replacedBlock, BCoord: zyxStr}
-			if err := d.putLabelBlock(ctx, 0, &splitpb); err != nil {
-				dvid.Errorf("unable to put block %s in split of label %d, data %q: %v\n", zyxStr, op.Target, d.DataName(), err)
-				continue
-			}
-
-			if err := downresMut.BlockMutated(zyxStr, replacedBlock); err != nil {
-				dvid.Errorf("data %q publishing downres: %v\n", d.DataName(), err)
-			}
-		}
-	}
-
-	// store the modified label index that remains after the split
-	if err := putCachedLabelIndex(d, v, idx); err != nil {
-		dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), op.Target, err)
-		return
-	}
-
-	// store the new label index corresponding to the split
-	if err := putCachedLabelIndex(d, v, sidx); err != nil {
-		dvid.Errorf("create new split index for data %q, label %d: %v\n", d.DataName(), op.NewLabel, err)
-		return
-	}
-}
-
 ///////////////////////////////////////////////////////////////////////////
 // The following public functions are concurrency-safe and support caching.
 
@@ -378,6 +224,9 @@ func GetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, isSupervoxel boo
 		}
 		if mapping != nil {
 			if mapped, found := mapping.MappedLabel(v, label); found {
+				if mapped == 0 {
+					return nil, fmt.Errorf("cannot get label for supervoxel %d, which has been split and doesn't exist anymore", label)
+				}
 				label = mapped
 			}
 		}
@@ -535,16 +384,16 @@ func PutLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, idx *labels.Inde
 
 // SplitSupervoxelIndex modifies the label index for a given supervoxel, returning the slice of blocks
 // that were modified.  NOTE: This assumes the split RLEs are accurate because they are not tested
-// at the voxel level as being a subset of the supervoxel.
+// at the voxel level as being a subset of the supervoxel.  Also, this assumes that mapping has already
+// been done.
 func SplitSupervoxelIndex(d dvid.Data, v dvid.VersionID, op labels.SplitSupervoxelOp, info dvid.ModInfo) (dvid.IZYXSlice, error) {
 	mapping, err := getMapping(d, v)
 	if err != nil {
 		return nil, err
 	}
-	label := op.Supervoxel
-	mapped, found := mapping.MappedLabel(v, op.Supervoxel)
-	if found {
-		label = mapped
+	label, found := mapping.MappedLabel(v, op.SplitSupervoxel)
+	if !found {
+		return nil, fmt.Errorf("SplitSupervoxelIndex must be called after a split supervoxel is mapped to new label")
 	}
 
 	shard := label % numIndexShards
@@ -653,6 +502,66 @@ func ChangeLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, delta labels.
 		return deleteCachedLabelIndex(d, v, label)
 	}
 	return putCachedLabelIndex(d, v, idx)
+}
+
+// SplitIndex modifies the split label's index and creates a new index for the split portion.
+func (d *Data) splitIndex(v dvid.VersionID, info dvid.ModInfo, op labels.SplitOp, idx *labels.Index, splitMap dvid.BlockRLEs, blockSplits blockSplitsMap) error {
+	idx.LastMutId = op.MutID
+	idx.LastModUser = info.User
+	idx.LastModTime = info.Time
+	idx.LastModApp = info.App
+
+	sidx := new(labels.Index)
+	sidx.LastMutId = op.MutID
+	sidx.LastModUser = info.User
+	sidx.LastModTime = info.Time
+	sidx.LastModApp = info.App
+	sidx.Label = op.NewLabel
+	sidx.Blocks = make(map[uint64]*proto.SVCount, len(blockSplits))
+
+	for zyx, splitCounts := range blockSplits {
+		indexsvc, found := idx.Blocks[zyx]
+		if !found || indexsvc == nil || len(indexsvc.Counts) == 0 {
+			return fmt.Errorf("block %s was overwritten in split of label %d yet this block was not in the index", labels.BlockIndexToIZYXString(zyx), op.Target)
+		}
+		splitsvc := new(proto.SVCount)
+		splitsvc.Counts = make(map[uint64]uint32, len(splitCounts))
+		for supervoxel, svsplit := range splitCounts {
+			splitsvc.Counts[svsplit.Split] = svsplit.Voxels
+			numVoxels, found := indexsvc.Counts[supervoxel]
+			if !found {
+				return fmt.Errorf("block %s had %d voxels written over supervoxel %d in label %d split yet this supervoxel was not in the index", labels.BlockIndexToIZYXString(zyx), svsplit.Voxels, supervoxel, op.Target)
+			}
+			if numVoxels < svsplit.Voxels {
+				return fmt.Errorf("block %s had %d voxels written over supervoxel %d in label %d split yet this supervoxel only had %d voxels from index", labels.BlockIndexToIZYXString(zyx), svsplit.Voxels, supervoxel, op.Target, numVoxels)
+			}
+			numVoxels -= svsplit.Voxels
+			if numVoxels > 0 {
+				indexsvc.Counts[svsplit.Remain] = numVoxels
+			}
+			delete(indexsvc.Counts, supervoxel)
+		}
+		sidx.Blocks[zyx] = splitsvc
+	}
+	for zyx, indexsvc := range idx.Blocks {
+		if _, found := blockSplits[zyx]; found {
+			continue
+		}
+		for supervoxel, count := range indexsvc.Counts {
+			svsplit, found := op.SplitMap[supervoxel]
+			if found {
+				indexsvc.Counts[svsplit.Remain] = count
+				delete(indexsvc.Counts, supervoxel)
+			}
+		}
+	}
+	if err := putCachedLabelIndex(d, v, idx); err != nil {
+		return fmt.Errorf("modify split index for data %q, label %d: %v", d.DataName(), op.Target, err)
+	}
+	if err := putCachedLabelIndex(d, v, sidx); err != nil {
+		return fmt.Errorf("create new split index for data %q, label %d: %v", d.DataName(), op.NewLabel, err)
+	}
+	return nil
 }
 
 ///////////////////////////////////////
@@ -1463,7 +1372,7 @@ func (d *Data) writeMappings(w io.Writer, v dvid.VersionID) error {
 		label, present := vm.value(ancestry)
 		if present {
 			numMappings++
-			if supervoxel != label {
+			if supervoxel != label && label != 0 {
 				line := fmt.Sprintf("%d %d\n", supervoxel, label)
 				if _, err := w.Write([]byte(line)); err != nil {
 					numErrors++

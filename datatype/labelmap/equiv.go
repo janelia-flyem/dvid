@@ -368,7 +368,7 @@ func addMergeToMapping(d dvid.Data, v dvid.VersionID, mutID, toLabel uint64, mer
 }
 
 // adds new arbitrary split into the equivalence map for a given instance version.
-func addSplitToMapping(d dvid.Data, v dvid.VersionID, mutID, remainLabel, splitLabel uint64, splitmap *labels.SVSplitMap) error {
+func addSplitToMapping(d dvid.Data, v dvid.VersionID, op labels.SplitOp) error {
 	m, err := getMapping(d, v)
 	if err != nil {
 		return err
@@ -381,39 +381,43 @@ func addSplitToMapping(d dvid.Data, v dvid.VersionID, mutID, remainLabel, splitL
 	splitSupervoxels := make(labels.Set)
 	remainSupervoxels := make(labels.Set)
 
-	splitmap.RLock()
-	for _, svsplit := range splitmap.Splits {
+	for supervoxel, svsplit := range op.SplitMap {
 		vm := m.fm[svsplit.Split]
-		newvm, changed := vm.modify(vid, splitLabel)
+		newvm, changed := vm.modify(vid, op.NewLabel)
 		if changed {
 			m.fm[svsplit.Split] = newvm
 		}
 		splitSupervoxels[svsplit.Split] = struct{}{}
 
 		vm = m.fm[svsplit.Remain]
-		newvm, changed = vm.modify(vid, remainLabel)
+		newvm, changed = vm.modify(vid, op.Target)
 		if changed {
 			m.fm[svsplit.Remain] = newvm
 		}
 		remainSupervoxels[svsplit.Remain] = struct{}{}
+
+		vm = m.fm[supervoxel] // puts in tombstone for old supervoxel using label 0
+		newvm, changed = vm.modify(vid, 0)
+		if changed {
+			m.fm[supervoxel] = newvm
+		}
 	}
-	splitmap.RUnlock()
 	m.Unlock()
-	op := labels.MappingOp{
-		MutID:    mutID,
-		Mapped:   splitLabel,
+	mapOp := labels.MappingOp{
+		MutID:    op.MutID,
+		Mapped:   op.NewLabel,
 		Original: splitSupervoxels,
 	}
-	if err := labels.LogMapping(d, v, op); err != nil {
-		dvid.Criticalf("unable to log the mapping of split supervoxels %s to split body label %d: %v\n", splitSupervoxels, splitLabel, err)
+	if err := labels.LogMapping(d, v, mapOp); err != nil {
+		dvid.Criticalf("unable to log the mapping of split supervoxels %s to split body label %d: %v\n", splitSupervoxels, op.NewLabel, err)
 		return err
 	}
-	op = labels.MappingOp{
-		MutID:    mutID,
-		Mapped:   remainLabel,
+	mapOp = labels.MappingOp{
+		MutID:    op.MutID,
+		Mapped:   op.Target,
 		Original: remainSupervoxels,
 	}
-	return labels.LogMapping(d, v, op)
+	return labels.LogMapping(d, v, mapOp)
 }
 
 // adds new cleave into the equivalence map for a given instance version and also
@@ -476,6 +480,11 @@ func addSupervoxelSplitToMapping(d dvid.Data, v dvid.VersionID, op labels.SplitS
 	newvm, changed = vm.modify(vid, label)
 	if changed {
 		m.fm[op.RemainSupervoxel] = newvm
+	}
+	vm = m.fm[op.Supervoxel]
+	newvm, changed = vm.modify(vid, 0)
+	if changed {
+		m.fm[op.Supervoxel] = newvm
 	}
 	m.Unlock()
 	original := labels.Set{

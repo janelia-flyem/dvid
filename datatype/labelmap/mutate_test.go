@@ -849,6 +849,7 @@ func TestSplitLabel(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
+	config.Set("MaxDownresLevel", "2")
 	config.Set("BlockSize", "32,32,32") // Previous test data was on 32^3 blocks
 	server.CreateTestInstance(t, uuid, "labelmap", "labels", config)
 
@@ -924,6 +925,26 @@ func TestSplitLabel(t *testing.T) {
 	if err := retrieved.equals(expected); err != nil {
 		t.Errorf("Split label volume not equal to expected volume: %v\n", err)
 	}
+	downres1 := newTestVolume(64, 64, 64)
+	downres1.getScale(t, uuid, "labels", 1, false)
+	if err := downres1.equalsDownres(expected); err != nil {
+		t.Errorf("Split label volume failed level 1 down-scale: %v\n", err)
+	}
+	downres2 := newTestVolume(32, 32, 32)
+	downres2.getScale(t, uuid, "labels", 2, false)
+	if err := downres2.equalsDownres(downres1); err != nil {
+		t.Errorf("Split label volume failed level 2 down-scale: %v\n", err)
+	}
+
+	retrieved.get(t, uuid, "labels", true)
+	downres1.getScale(t, uuid, "labels", 1, true)
+	if err := downres1.equalsDownres(retrieved); err != nil {
+		t.Errorf("Split label supervoxel volume failed level 1 down-scale: %v\n", err)
+	}
+	downres2.getScale(t, uuid, "labels", 2, true)
+	if err := downres2.equalsDownres(downres1); err != nil {
+		t.Errorf("Split label supervoxel volume failed level 2 down-scale: %v\n", err)
+	}
 
 	// Check split body 5 usine legacy RLEs
 	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 5)
@@ -943,6 +964,7 @@ func TestSplitLabel(t *testing.T) {
 	if jsonVal2.Voxels != expectedVoxels {
 		t.Errorf("thought split body would have %d voxels, got %d\n", expectedVoxels, jsonVal2.Voxels)
 	}
+	dvid.Infof("body split had %d voxels\n", expectedVoxels)
 
 	reqStr = fmt.Sprintf("%snode/%s/labels/size/4?supervoxels=true", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "GET", reqStr, nil)
@@ -968,7 +990,7 @@ func TestSplitLabel(t *testing.T) {
 		t.Fatalf("unable to get size for supervoxel 7: %v", err)
 	}
 	if jsonVal2.Voxels != voxelsIn4-expectedVoxels {
-		t.Errorf("thought remnant supervoxel would have %d voxels remaining, got %d\n", voxelsIn4-expectedVoxels, jsonVal2.Voxels)
+		t.Errorf("thought remnant supervoxel 7 would have %d voxels remaining, got %d\n", voxelsIn4-expectedVoxels, jsonVal2.Voxels)
 	}
 
 	// Make sure sparsevol for original body 4 is correct
@@ -999,6 +1021,7 @@ func testSplitSupervoxel(t *testing.T, testEnclosing bool) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
+	config.Set("MaxDownresLevel", "2")
 	config.Set("BlockSize", "32,32,32") // Previous test data was on 32^3 blocks
 	server.CreateTestInstance(t, uuid, "labelmap", "labels", config)
 
@@ -1093,6 +1116,16 @@ func testSplitSupervoxel(t *testing.T, testEnclosing bool) {
 	}
 	if err := original.equals(retrieved); err != nil {
 		t.Errorf("Post-supervoxel split label volume not equal to expected volume: %v\n", err)
+	}
+	downres1 := newTestVolume(64, 64, 64)
+	downres1.getScale(t, uuid, "labels", 1, false)
+	if err := downres1.equalsDownres(original); err != nil {
+		t.Errorf("split supervoxel volume failed level 1 down-scale: %v\n", err)
+	}
+	downres2 := newTestVolume(32, 32, 32)
+	downres2.getScale(t, uuid, "labels", 2, false)
+	if err := downres2.equalsDownres(downres1); err != nil {
+		t.Errorf("split supervoxel volume failed level 2 down-scale: %v\n", err)
 	}
 
 	// Make sure retrieved supervoxels are correct

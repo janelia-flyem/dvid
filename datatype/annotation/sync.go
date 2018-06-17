@@ -1007,12 +1007,19 @@ func (d *Data) supervoxelSplit(batcher storage.KeyValueBatcher, v dvid.VersionID
 	if !ok {
 		lmapData = nil
 	}
-	supervoxels := []uint64{op.Supervoxel}
+	supervoxels := []uint64{op.Supervoxel, op.SplitSupervoxel, op.RemainSupervoxel}
 	mapped, err := lmapData.GetMappedLabels(v, supervoxels)
 	if err != nil {
 		return fmt.Errorf("unable to get label for supervoxel %d, skipping supervoxel split sync for annotation %q", op.Supervoxel, d.DataName())
 	}
-	label := mapped[0]
+	// no matter if this is reached before or after mapping is altered, one of these should be mapped.
+	var label uint64
+	for _, supervoxel := range mapped {
+		if supervoxel != 0 {
+			label = supervoxel
+			break
+		}
+	}
 
 	d.Lock()
 	defer d.Unlock()

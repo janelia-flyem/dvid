@@ -45,6 +45,7 @@ type SplitOp struct {
 	NewLabel uint64
 	RLEs     dvid.RLEs
 	Coarse   bool // true if the RLEs are block coords (coarse split), not voxels.
+	SplitMap map[uint64]SVSplit
 }
 
 // CleaveOp represents a cleave of a label using supervoxels.
