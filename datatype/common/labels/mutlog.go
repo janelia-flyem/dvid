@@ -219,12 +219,20 @@ func serializeSplit(mutID uint64, op SplitOp) (serialization []byte, err error) 
 	if err != nil {
 		return nil, err
 	}
+	svsplits := make(map[uint64]*proto.SVSplit, len(op.SplitMap))
+	for supervoxel, split := range op.SplitMap {
+		svsplit := new(proto.SVSplit)
+		svsplit.Splitlabel = split.Split
+		svsplit.Remainlabel = split.Remain
+		svsplits[supervoxel] = svsplit
+	}
 	pop := proto.SplitOp{
 		Mutid:    mutID,
 		Target:   op.Target,
 		Newlabel: op.NewLabel,
 		Coarse:   op.Coarse,
 		Rles:     rlesBytes,
+		Svsplits: svsplits,
 	}
 	return pop.Marshal()
 }

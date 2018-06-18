@@ -23,6 +23,12 @@ message SplitOp {
     uint64 newlabel = 3;
     bool coarse = 4;  // true if rles are block coords (coarse split), not voxels
     bytes rles = 5;
+	map<uint64, SVSplit> svsplits = 6;
+}
+
+message SVSplit {
+	uint64 splitlabel = 1;
+	uint64 remainlabel = 2;
 }
 
 message SupervoxelSplitOp {

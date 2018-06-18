@@ -488,6 +488,30 @@ GET <api URL>/node/<UUID>/<data name>/mapping[?queryopts]
 
     hash          MD5 hash of request body content in hexidecimal string format.
 
+GET <api URL>/node/<UUID>/<data name>/supervoxel-splits
+
+	Returns JSON for all supervoxel splits that have occured up to this version of the
+	labelmap instance.  The returned JSON is of format:
+
+		[
+			"abc123",
+			[[<mutid>, <old>, <remain>, <split>],
+			[<mutid>, <old>, <remain>, <split>],
+			[<mutid>, <old>, <remain>, <split>]],
+			"bcd234",
+			[[<mutid>, <old>, <remain>, <split>],
+			[<mutid>, <old>, <remain>, <split>],
+			[<mutid>, <old>, <remain>, <split>]]
+		]
+	
+	The UUID examples above, "abc123" and "bcd234", would be full UUID strings and are in order
+	of proximity to the given UUID.  So the first UUID would be the version of interest, then
+	its parent, and so on.
+		  
+    Arguments:
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of label data.
+
 
 GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
 
@@ -3022,6 +3046,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "mapping":
 		d.handleMapping(ctx, w, r)
 
+	case "supervoxel-splits":
+		d.handleSupervoxelSplits(ctx, w, r)
+
 	case "blocks":
 		d.handleBlocks(ctx, w, r, parts)
 
@@ -3225,6 +3252,31 @@ func (d *Data) handleMapping(ctx *datastore.VersionedCtx, w http.ResponseWriter,
 	fmt.Fprintf(w, "]")
 
 	timedLog.Infof("HTTP GET batch mapping query (%s)", r.URL)
+}
+
+func (d *Data) handleSupervoxelSplits(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+	// GET <api URL>/node/<UUID>/<data name>/supervoxel-splits
+	timedLog := dvid.NewTimeLog()
+
+	if strings.ToLower(r.Method) != "get" {
+		server.BadRequest(w, r, "The /supervoxel-splits endpoint is GET only")
+		return
+	}
+	svmap, err := getMapping(d, ctx.VersionID())
+	if err != nil {
+		server.BadRequest(w, r, "couldn't get mapping for data %q, version %d: %v", d.DataName(), ctx.VersionID(), err)
+		return
+	}
+	splitsJSON, err := svmap.SupervoxelSplitsJSON(ctx.VersionID())
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+
+	w.Header().Set("Content-type", "application/json")
+	fmt.Fprintf(w, splitsJSON)
+
+	timedLog.Infof("HTTP GET supervoxel splits query (%s)", r.URL)
 }
 
 func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {

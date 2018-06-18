@@ -993,6 +993,12 @@ func TestSplitLabel(t *testing.T) {
 		t.Errorf("thought remnant supervoxel 7 would have %d voxels remaining, got %d\n", voxelsIn4-expectedVoxels, jsonVal2.Voxels)
 	}
 
+	reqStr = fmt.Sprintf("%snode/%s/labels/supervoxel-splits", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
+	if string(r) != fmt.Sprintf(`["%s",[[2,4,7,6]]]`, uuid) {
+		t.Fatalf("bad supervoxel-splits JSON return: %s\n", string(r))
+	}
+
 	// Make sure sparsevol for original body 4 is correct
 	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 4)
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
