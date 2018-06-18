@@ -11,4 +11,5 @@ const (
 	AffinityType
 	MappingOpType
 	SupervoxelSplitType
+	CleaveOpType
 )

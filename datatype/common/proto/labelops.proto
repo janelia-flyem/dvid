@@ -7,6 +7,13 @@ message MergeOp {
 	repeated uint64 merged = 3;
 }
 
+message CleaveOp {
+	uint64 mutid = 1;
+	uint64 target = 2;
+	uint64 cleavedlabel = 3;
+	repeated uint64 cleaved = 4;
+}
+
 message MappingOp {
     uint64 mutid = 1;
     uint64 mapped = 2;

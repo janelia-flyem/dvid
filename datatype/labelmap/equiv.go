@@ -559,6 +559,10 @@ func addSupervoxelSplitToMapping(d dvid.Data, v dvid.VersionID, op labels.SplitS
 	m.splits[vid] = append(m.splits[vid], rec)
 	m.Unlock()
 
+	if err := labels.LogSupervoxelSplit(d, v, op); err != nil {
+		return err
+	}
+
 	mapOp := labels.MappingOp{
 		MutID:  op.MutID,
 		Mapped: 0,

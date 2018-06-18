@@ -113,6 +113,9 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 	for merged := range delta.Merged {
 		DeleteLabelIndex(d, v, merged)
 	}
+	if err := labels.LogMerge(d, v, op); err != nil {
+		return err
+	}
 
 	dvid.Infof("merged label %d: supervoxels %v, %d blocks\n", op.Target, mergeIdx.GetSupervoxels(), len(mergeIdx.Blocks))
 
@@ -208,6 +211,9 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 		return
 	}
 	if err = addCleaveToMapping(d, v, op); err != nil {
+		return
+	}
+	if err = labels.LogCleave(d, v, op); err != nil {
 		return
 	}
 
@@ -545,15 +551,12 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 	if err = addSplitToMapping(d, v, op); err != nil {
 		return
 	}
+	if err = labels.LogSplit(d, v, op); err != nil {
+		return
+	}
 
 	timedLog.Debugf("completed labelmap split (%d blocks) of %d -> %d", len(splitmap), fromLabel, toLabel)
 	downresMut.Done()
-
-	go func() {
-		if err := labels.LogSplit(d, v, mutID, op); err != nil {
-			dvid.Errorf("logging split %q: %v\n", d.DataName(), err)
-		}
-	}()
 
 	deltaSplit := labels.DeltaSplit{
 		OldLabel:     fromLabel,
@@ -659,6 +662,9 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser
 		Split:            splitmap,
 	}
 	if err = addSupervoxelSplitToMapping(d, v, op); err != nil {
+		return
+	}
+	if err = labels.LogSupervoxelSplit(d, v, op); err != nil {
 		return
 	}
 	timedLog := dvid.NewTimeLog()

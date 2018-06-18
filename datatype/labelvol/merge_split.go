@@ -54,9 +54,8 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 	}
 	d.StartUpdate()
 
-	mutID := d.NewMutationID()
 	go func() {
-		if err := labels.LogMerge(d, v, mutID, m); err != nil {
+		if err := labels.LogMerge(d, v, m); err != nil {
 			dvid.Errorf("logging merge %q: %v\n", d.DataName(), err)
 		}
 	}()
@@ -270,12 +269,13 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 
 	mutID := d.NewMutationID()
 	splitOp := labels.SplitOp{
+		MutID:    mutID,
 		Target:   fromLabel,
 		NewLabel: toLabel,
 		RLEs:     split,
 	}
 	go func() {
-		if err := labels.LogSplit(d, v, mutID, splitOp); err != nil {
+		if err := labels.LogSplit(d, v, splitOp); err != nil {
 			dvid.Errorf("logging split %q: %v\n", d.DataName(), err)
 		}
 	}()
@@ -449,13 +449,14 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 
 	mutID := d.NewMutationID()
 	splitOp := labels.SplitOp{
+		MutID:    mutID,
 		Target:   fromLabel,
 		NewLabel: toLabel,
 		RLEs:     splits,
 		Coarse:   true,
 	}
 	go func() {
-		if err := labels.LogSplit(d, v, mutID, splitOp); err != nil {
+		if err := labels.LogSplit(d, v, splitOp); err != nil {
 			dvid.Errorf("logging split %q: %v\n", d.DataName(), err)
 		}
 	}()
