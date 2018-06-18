@@ -1004,6 +1004,14 @@ func TestSplitLabel(t *testing.T) {
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
 	bodyleft.checkSparseVol(t, encoding, dvid.OptionalBounds{})
 
+	// make sure we verified supervoxel list works in /mapping.
+	reqStr = fmt.Sprintf("%snode/%s/labels/mapping", server.WebAPIPath, uuid)
+	svlist := "[1, 2, 3, 4, 5, 6, 7, 8, 1000]"
+	r = server.TestHTTP(t, "GET", reqStr, bytes.NewBufferString(svlist))
+	if string(r) != "[1,2,3,0,0,5,4,0,0]" {
+		t.Errorf("bad verified /mapping result after split.  got: %s\n", string(r))
+	}
+
 	// Do a merge of two after the split
 	testMerge := mergeJSON(`[4, 5]`)
 	testMerge.send(t, uuid, "labels")
@@ -1016,6 +1024,13 @@ func TestSplitLabel(t *testing.T) {
 	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/4", server.WebAPIPath, uuid)
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
 	body4.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+
+	// make sure we verified supervoxel list works in /mapping.
+	reqStr = fmt.Sprintf("%snode/%s/labels/mapping", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, bytes.NewBufferString(svlist))
+	if string(r) != "[1,2,3,0,0,4,4,0,0]" {
+		t.Errorf("bad verified /mapping result after split and merge.  got: %s\n", string(r))
+	}
 }
 
 func testSplitSupervoxel(t *testing.T, testEnclosing bool) {

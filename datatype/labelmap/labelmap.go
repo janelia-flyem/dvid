@@ -473,12 +473,14 @@ GET <api URL>/node/<UUID>/<data name>/mapping[?queryopts]
 
 	Returns JSON for mapped labels given a list of supervoxels.  Expects JSON in GET body:
 
-	[ supervoxel1, supervoxel2, ...]
+	[ supervoxel1, supervoxel2, supervoxel3, ...]
 
 	Returns for each POSTed supervoxel the corresponding mapped label, which may be 0 if the
 	supervoxel no longer exists, e.g., has been split:
 
-	[ 23, 911, ...]
+	[ 23, 0, 911, ...]
+
+	In the example above, supervoxel2 had been split and no longer exists.
 	
     Arguments:
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
@@ -486,6 +488,8 @@ GET <api URL>/node/<UUID>/<data name>/mapping[?queryopts]
 
     Query-string Options:
 
+	nolookup      if "true", dvid won't verify that a supervoxel actually exists by looking up
+	                the label indices.  Only use this if supervoxels were known to exist at some time.
     hash          MD5 hash of request body content in hexidecimal string format.
 
 GET <api URL>/node/<UUID>/<data name>/supervoxel-splits
@@ -3237,6 +3241,13 @@ func (d *Data) handleMapping(ctx *datastore.VersionedCtx, w http.ResponseWriter,
 	if err != nil {
 		server.BadRequest(w, r, err)
 		return
+	}
+	if queryStrings.Get("nolookup") != "true" {
+		labels, err = d.verifyMappings(ctx, supervoxels, labels)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
 	}
 
 	w.Header().Set("Content-type", "application/json")

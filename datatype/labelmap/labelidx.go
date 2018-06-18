@@ -504,6 +504,55 @@ func ChangeLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, delta labels.
 	return putCachedLabelIndex(d, v, idx)
 }
 
+func (d *Data) verifyMappings(ctx *datastore.VersionedCtx, supervoxels, mapped []uint64) (verified []uint64, err error) {
+	if len(supervoxels) != len(mapped) {
+		return nil, fmt.Errorf("length of supervoxels list (%d) not equal to length of provided mappings (%d)", len(supervoxels), len(mapped))
+	}
+	curMapping := make(map[uint64]uint64)
+	wasVerified := make(map[uint64]bool)
+	for i, supervoxel := range supervoxels {
+		curMapping[supervoxel] = mapped[i]
+		if supervoxel != 0 {
+			wasVerified[supervoxel] = false
+		}
+	}
+	bodyids := make(labels.Set)
+	for _, label := range mapped {
+		if label != 0 {
+			bodyids[label] = struct{}{}
+		}
+	}
+
+	for label := range bodyids {
+		shard := label % numIndexShards
+		indexMu[shard].RLock()
+		idx, err := getCachedLabelIndex(d, ctx.VersionID(), label)
+		indexMu[shard].RUnlock()
+		if err != nil {
+			return nil, err
+		}
+		bodySupervoxels := idx.GetSupervoxels()
+		for supervoxel := range wasVerified {
+			if _, found := bodySupervoxels[supervoxel]; found {
+				if curMapping[supervoxel] != label {
+					return nil, fmt.Errorf("found supervoxel %d with supposed mapping to %d in label %d index", supervoxel, curMapping[supervoxel], label)
+				}
+				wasVerified[supervoxel] = true
+			}
+		}
+	}
+
+	verified = make([]uint64, len(supervoxels))
+	for i := range mapped {
+		if wasVerified[supervoxels[i]] {
+			verified[i] = mapped[i]
+		} else {
+			verified[i] = 0
+		}
+	}
+	return
+}
+
 // SplitIndex modifies the split label's index and creates a new index for the split portion.
 func (d *Data) splitIndex(v dvid.VersionID, info dvid.ModInfo, op labels.SplitOp, idx *labels.Index, splitMap dvid.BlockRLEs, blockSplits blockSplitsMap) error {
 	idx.LastMutId = op.MutID
