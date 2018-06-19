@@ -2389,9 +2389,9 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		return fmt.Errorf("Data type labelmap had error initializing store: %v", err)
 	}
 
-	// only do one request at a time, although each request can start many goroutines.
-	server.LargeMutationMutex.Lock()
-	defer server.LargeMutationMutex.Unlock()
+	// Only do voxel-based mutations one at a time.  This lets us remove handling for block-level concurrency.
+	d.voxelMu.Lock()
+	defer d.voxelMu.Unlock()
 
 	// extract buffer interface if it exists
 	var putbuffer storage.RequestBuffer
@@ -2508,7 +2508,9 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		putbuffer.Flush()
 	}
 	if downscale {
-		downresMut.Done()
+		if err := downresMut.Execute(); err != nil {
+			return err
+		}
 	}
 	processWG.Wait()
 	timedLog.Infof("Received and stored %d blocks for labelmap %q", numBlocks, d.DataName())

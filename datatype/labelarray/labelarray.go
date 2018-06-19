@@ -2145,7 +2145,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		if n != 0 {
 			pos += n
 			if n != 16 {
-				return fmt.Errorf("error reading header bytes at byte %d: %v\n", pos, err)
+				return fmt.Errorf("error reading header bytes at byte %d: %v", pos, err)
 			}
 			bx := int32(binary.LittleEndian.Uint32(hdrBytes[0:4]))
 			by := int32(binary.LittleEndian.Uint32(hdrBytes[4:8]))
@@ -2156,7 +2156,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 			compressed := make([]byte, numBytes)
 			n, readErr = io.ReadFull(r, compressed)
 			if n != numBytes || (readErr != nil && readErr != io.EOF) {
-				return fmt.Errorf("error reading %d bytes for block %s: %d read (%v)\n", numBytes, bcoord, n, readErr)
+				return fmt.Errorf("error reading %d bytes for block %s: %d read (%v)", numBytes, bcoord, n, readErr)
 			}
 
 			if scale == 0 {
@@ -2167,33 +2167,33 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 
 			serialization, err := dvid.SerializePrecompressedData(compressed, d.Compression(), d.Checksum())
 			if err != nil {
-				return fmt.Errorf("can't serialize received block %s data: %v\n", bcoord, err)
+				return fmt.Errorf("can't serialize received block %s data: %v", bcoord, err)
 			}
 			pos += n
 
 			gzipIn := bytes.NewBuffer(compressed)
 			zr, err := gzip.NewReader(gzipIn)
 			if err != nil {
-				return fmt.Errorf("can't initiate gzip reader: %v\n", err)
+				return fmt.Errorf("can't initiate gzip reader: %v", err)
 			}
 			uncompressed, err := ioutil.ReadAll(zr)
 			if err != nil {
-				return fmt.Errorf("can't read all %d bytes from gzipped block %s: %v\n", numBytes, bcoord, err)
+				return fmt.Errorf("can't read all %d bytes from gzipped block %s: %v", numBytes, bcoord, err)
 			}
 			if err := zr.Close(); err != nil {
-				return fmt.Errorf("error on closing gzip on block read of data %q: %v\n", d.DataName(), err)
+				return fmt.Errorf("error on closing gzip on block read of data %q: %v", d.DataName(), err)
 			}
 
 			var block labels.Block
 			if err = block.UnmarshalBinary(uncompressed); err != nil {
-				return fmt.Errorf("unable to deserialize label block %s: %v\n", bcoord, err)
+				return fmt.Errorf("unable to deserialize label block %s: %v", bcoord, err)
 			}
 			if scale == 0 {
 				go d.updateBlockMaxLabel(ctx.VersionID(), &block)
 			}
 
 			if err != nil {
-				return fmt.Errorf("Unable to deserialize %d bytes corresponding to block %s: %v\n", n, bcoord, err)
+				return fmt.Errorf("Unable to deserialize %d bytes corresponding to block %s: %v", n, bcoord, err)
 			}
 			wg.Add(1)
 			if putbuffer != nil {
@@ -2202,7 +2202,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 				putbuffer.PutCallback(ctx, tk, serialization, ready)
 			} else {
 				if err := store.Put(ctx, tk, serialization); err != nil {
-					return fmt.Errorf("Unable to PUT voxel data for block %s: %v\n", bcoord, err)
+					return fmt.Errorf("Unable to PUT voxel data for block %s: %v", bcoord, err)
 				}
 				go callback(bcoord, &block, nil)
 			}
@@ -2227,7 +2227,9 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		putbuffer.Flush()
 	}
 	if downscale {
-		downresMut.Done()
+		if err := downresMut.Execute(); err != nil {
+			return err
+		}
 	}
 	timedLog.Infof("Received and stored %d blocks for labelarray %q", numBlocks, d.DataName())
 	return nil

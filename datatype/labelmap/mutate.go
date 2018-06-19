@@ -554,9 +554,11 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 	if err = labels.LogSplit(d, v, op); err != nil {
 		return
 	}
+	if err = downresMut.Execute(); err != nil {
+		return
+	}
 
 	timedLog.Debugf("completed labelmap split (%d blocks) of %d -> %d", len(splitmap), fromLabel, toLabel)
-	downresMut.Done()
 
 	deltaSplit := labels.DeltaSplit{
 		OldLabel:     fromLabel,
@@ -691,7 +693,9 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser
 	d.MutWait(op.MutID)
 	d.MutDelete(op.MutID)
 
-	downresMut.Done()
+	if err = downresMut.Execute(); err != nil {
+		return
+	}
 
 	timedLog.Debugf("labelmap supervoxel %d split complete (%d blocks split)", op.Supervoxel, len(op.Split))
 

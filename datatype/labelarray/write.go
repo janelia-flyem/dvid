@@ -145,8 +145,7 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 		putbuffer.Flush()
 	}
 
-	downresMut.Done()
-	return nil
+	return downresMut.Execute()
 }
 
 // Puts a chunk of data as part of a mapped operation.

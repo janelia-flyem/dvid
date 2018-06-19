@@ -49,9 +49,9 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 		return err
 	}
 
-	// Only do one large mutation at a time, although each request can start many goroutines.
-	server.LargeMutationMutex.Lock()
-	defer server.LargeMutationMutex.Unlock()
+	// Only do voxel-based mutations one at a time.  This lets us remove handling for block-level concurrency.
+	d.voxelMu.Lock()
+	defer d.voxelMu.Unlock()
 
 	// Keep track of changing extents, labels and mark repo as dirty if changed.
 	var extentChanged bool
@@ -149,8 +149,7 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 		putbuffer.Flush()
 	}
 
-	downresMut.Done()
-	return nil
+	return downresMut.Execute()
 }
 
 // Puts a chunk of data as part of a mapped operation.

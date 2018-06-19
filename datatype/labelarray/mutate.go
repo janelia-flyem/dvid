@@ -165,7 +165,10 @@ func (d *Data) processMerge(v dvid.VersionID, mutID uint64, delta labels.DeltaMe
 		dvid.Criticalf("can't notify subscribers for event %v: %v\n", evt, err)
 	}
 
-	downresMut.Done()
+	if err := downresMut.Execute(); err != nil {
+		return err
+	}
+
 	dvid.Infof("Merged %s -> %d, data %q, resulting in %d blocks\n", delta.Merged, delta.Target, d.DataName(), len(delta.Blocks))
 
 	// send kafka merge complete event to instance-uuid topic
@@ -544,8 +547,7 @@ func (d *Data) processSplit(v dvid.VersionID, mutID uint64, delta labels.DeltaSp
 		return fmt.Errorf("Unable to notify subscribers to data %q for evt %v\n", d.DataName(), evt)
 	}
 
-	downresMut.Done()
-	return nil
+	return downresMut.Execute()
 }
 
 // handles modification of the old and new label's block indices on split.

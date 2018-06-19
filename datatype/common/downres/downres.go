@@ -97,22 +97,20 @@ func (m *Mutation) BlockMutated(bcoord dvid.IZYXString, block interface{}) error
 	return nil
 }
 
-// Done asynchronously computes lower-res scales for all altered blocks in a mutation.
-func (m *Mutation) Done() {
-	go func() {
-		m.Lock()
-		bm := m.hiresCache
-		var err error
-		for scale := uint8(0); scale < m.d.GetMaxDownresLevel(); scale++ {
-			bm, err = m.d.StoreDownres(m.v, scale, bm)
-			if err != nil {
-				dvid.Errorf("Mutation %d for data %q: %v\n", m.mutID, m.d.DataName(), err)
-				break
-			}
-			dvid.Infof("Finished down-resolution processing for data %q at scale %d.\n", m.d.DataName(), scale+1)
-			m.d.StopScaleUpdate(scale + 1)
+// Execute computes lower-res scales for all altered blocks in a mutation.
+func (m *Mutation) Execute() error {
+	m.Lock()
+	bm := m.hiresCache
+	var err error
+	for scale := uint8(0); scale < m.d.GetMaxDownresLevel(); scale++ {
+		bm, err = m.d.StoreDownres(m.v, scale, bm)
+		if err != nil {
+			return fmt.Errorf("mutation %d for data %q: %v", m.mutID, m.d.DataName(), err)
 		}
-		m.hiresCache = nil
-		m.Unlock()
-	}()
+		dvid.Infof("Finished down-resolution processing for data %q at scale %d.\n", m.d.DataName(), scale+1)
+		m.d.StopScaleUpdate(scale + 1)
+	}
+	m.hiresCache = nil
+	m.Unlock()
+	return nil
 }
