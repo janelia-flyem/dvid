@@ -391,7 +391,7 @@ func (d *Data) splitPass2(ctx *datastore.VersionedCtx, downresMut *downres.Mutat
 
 	defer close(modCh)
 
-	numHandlers := 8
+	numHandlers := 16
 	for i := 0; i < numHandlers; i++ {
 		go d.modifyBlocks(ctx, downresMut, modCh, errCh)
 	}
@@ -439,7 +439,7 @@ func (d *Data) splitPass2(ctx *datastore.VersionedCtx, downresMut *downres.Mutat
 			maxQueue = curQueue
 		}
 	}
-	getLog.Debugf("split pass 2: got %d out of %d affected blocks\n", numHeaderMod+numVoxelMod, affectedBlocks)
+	getLog.Debugf("split pass 2: got %d out of %d affected blocks\n", numHeaderMod+numVoxelMod, len(affectedBlocks))
 	var numErr int
 	var err error
 	for i := 0; i < numHeaderMod+numVoxelMod; i++ {
@@ -777,7 +777,7 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser
 	errCh := make(chan error, len(splitblks))
 	ctx := datastore.NewVersionedCtx(d, v)
 
-	numHandlers := 8
+	numHandlers := 16
 	for i := 0; i < numHandlers; i++ {
 		go d.splitSupervoxelThread(ctx, downresMut, op, idx.Blocks, blockCh, errCh)
 	}
@@ -802,7 +802,7 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser
 	}
 
 	// Wait for all blocks in supervoxel to be relabeled before returning.
-	getLog.Debugf("supervoxel split of %d: got %d blocks\n", svlabel, numBlocks)
+	getLog.Debugf("supervoxel split of %d: got %d blocks", svlabel, numBlocks)
 	var numErr int
 	for i := 0; i < numBlocks; i++ {
 		processErr := <-errCh

@@ -1352,7 +1352,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			}
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, string(jsonBytes))
-			comment = fmt.Sprintf("HTTP GET ROI %q: %d bytes\n", d.DataName(), len(jsonBytes))
+			comment = fmt.Sprintf("HTTP GET ROI %q: %d bytes", d.DataName(), len(jsonBytes))
 		case "post":
 			data, err := ioutil.ReadAll(r.Body)
 			if err != nil {
@@ -1364,13 +1364,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				server.BadRequest(w, r, err)
 				return
 			}
-			comment = fmt.Sprintf("HTTP POST ROI %q: %d bytes\n", d.DataName(), len(data))
+			comment = fmt.Sprintf("HTTP POST ROI %q: %d bytes", d.DataName(), len(data))
 		case "delete":
 			if err := d.Delete(ctx); err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
-			comment = fmt.Sprintf("HTTP DELETE ROI %q\n", d.DataName())
+			comment = fmt.Sprintf("HTTP DELETE ROI %q", d.DataName())
 		}
 	case "mask":
 		if method != "get" {
@@ -1428,7 +1428,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			}
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, string(jsonBytes))
-			comment = fmt.Sprintf("HTTP POST ptquery '%s'\n", d.DataName())
+			comment = fmt.Sprintf("HTTP POST ptquery '%s'", d.DataName())
 		}
 	case "partition":
 		if method != "get" {
@@ -1459,8 +1459,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, string(jsonBytes))
-		comment = fmt.Sprintf("HTTP partition '%s' with batch size %d\n",
-			d.DataName(), batchsize)
+		comment = fmt.Sprintf("HTTP partition '%s' with batch size %d", d.DataName(), batchsize)
 	default:
 		server.BadAPIRequest(w, r, d)
 		return
