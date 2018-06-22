@@ -382,62 +382,6 @@ func PutLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, idx *labels.Inde
 	return err
 }
 
-// SplitSupervoxelIndex modifies the label index for a given supervoxel, returning the slice of blocks
-// that were modified.  NOTE: This assumes the split RLEs are accurate because they are not tested
-// at the voxel level as being a subset of the supervoxel.  Also, this assumes that mapping has already
-// been done.
-func SplitSupervoxelIndex(d dvid.Data, v dvid.VersionID, op labels.SplitSupervoxelOp, info dvid.ModInfo) (dvid.IZYXSlice, error) {
-	mapping, err := getMapping(d, v)
-	if err != nil {
-		return nil, err
-	}
-	label, found := mapping.MappedLabel(v, op.SplitSupervoxel)
-	if !found {
-		return nil, fmt.Errorf("SplitSupervoxelIndex must be called after a split supervoxel is mapped to new label")
-	}
-
-	shard := label % numIndexShards
-	indexMu[shard].Lock()
-	defer indexMu[shard].Unlock()
-
-	idx, err := getCachedLabelIndex(d, v, label)
-	if err != nil {
-		return nil, fmt.Errorf("split supervoxel index for data %q, supervoxel %d: %v", d.DataName(), op.Supervoxel, err)
-	}
-	if idx == nil {
-		return nil, fmt.Errorf("unable to split supervoxel %d for data %q: missing label index %d", op.Supervoxel, d.DataName(), label)
-	}
-	idx.LastMutId = op.MutID
-	idx.LastModUser = info.User
-	idx.LastModTime = info.Time
-	idx.LastModApp = info.App
-
-	// modify the index to reflect old supervoxel -> two new supervoxels.
-	var svblocks dvid.IZYXSlice
-	for zyx, svc := range idx.Blocks {
-		origNumVoxels, found := svc.Counts[op.Supervoxel]
-		if found { // split supervoxel is in this block
-			delete(svc.Counts, op.Supervoxel)
-			izyx := labels.BlockIndexToIZYXString(zyx)
-			svblocks = append(svblocks, izyx)
-			rles, found := op.Split[izyx]
-			if found { // part of split
-				splitNumVoxels, _ := rles.Stats()
-				svc.Counts[op.SplitSupervoxel] = uint32(splitNumVoxels)
-				svc.Counts[op.RemainSupervoxel] = origNumVoxels - uint32(splitNumVoxels)
-			} else { // part of remainder
-				svc.Counts[op.RemainSupervoxel] = origNumVoxels
-			}
-		}
-	}
-
-	// store the modified index
-	if err := putCachedLabelIndex(d, v, idx); err != nil {
-		return nil, fmt.Errorf("split supervoxel index for data %q, supervoxel %d: %v", d.DataName(), op.Supervoxel, err)
-	}
-	return svblocks, nil
-}
-
 // CleaveIndex modifies the label index to remove specified supervoxels and create another
 // label index for this cleaved body.
 func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp, info dvid.ModInfo) error {
@@ -551,6 +495,40 @@ func (d *Data) verifyMappings(ctx *datastore.VersionedCtx, supervoxels, mapped [
 		}
 	}
 	return
+}
+
+// modifies the label index for a given supervoxel, returning the slice of blocks
+// that were modified.
+func (d *Data) splitSupervoxelIndex(v dvid.VersionID, info dvid.ModInfo, op labels.SplitSupervoxelOp, idx *labels.Index) (dvid.IZYXSlice, error) {
+	idx.LastMutId = op.MutID
+	idx.LastModUser = info.User
+	idx.LastModTime = info.Time
+	idx.LastModApp = info.App
+
+	// modify the index to reflect old supervoxel -> two new supervoxels.
+	var svblocks dvid.IZYXSlice
+	for zyx, svc := range idx.Blocks {
+		origNumVoxels, found := svc.Counts[op.Supervoxel]
+		if found { // split supervoxel is in this block
+			delete(svc.Counts, op.Supervoxel)
+			izyx := labels.BlockIndexToIZYXString(zyx)
+			svblocks = append(svblocks, izyx)
+			rles, found := op.Split[izyx]
+			if found { // part of split
+				splitNumVoxels, _ := rles.Stats()
+				svc.Counts[op.SplitSupervoxel] = uint32(splitNumVoxels)
+				svc.Counts[op.RemainSupervoxel] = origNumVoxels - uint32(splitNumVoxels)
+			} else { // part of remainder
+				svc.Counts[op.RemainSupervoxel] = origNumVoxels
+			}
+		}
+	}
+
+	// store the modified index
+	if err := putCachedLabelIndex(d, v, idx); err != nil {
+		return nil, fmt.Errorf("split supervoxel index for data %q, supervoxel %d: %v", d.DataName(), op.Supervoxel, err)
+	}
+	return svblocks, nil
 }
 
 // SplitIndex modifies the split label's index and creates a new index for the split portion.

@@ -1296,8 +1296,7 @@ func (i IZYXSlice) Downres(scale uint8) (IZYXSlice, error) {
 		blockPt[0] >>= scale
 		blockPt[1] >>= scale
 		blockPt[2] >>= scale
-		izyxStr = blockPt.ToIZYXString()
-		downresMap[izyxStr] = struct{}{}
+		downresMap[blockPt.ToIZYXString()] = struct{}{}
 	}
 	downres := make(IZYXSlice, len(downresMap))
 	pos := 0

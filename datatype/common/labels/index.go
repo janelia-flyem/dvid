@@ -208,8 +208,10 @@ func (idx *Index) GetProcessedBlockIndices(scale uint8, bounds dvid.Bounds) (dvi
 				return nil, fmt.Errorf("error decoding block %v: %v", izyx, err)
 			}
 			if bounds.Block.Outside(blockPt) {
+				dvid.Infof("block pt %s considered OUTSIDE bounds (%v)\n", blockPt, bounds.Block)
 				continue
 			}
+			dvid.Infof("block pt %s considered INSIDE bounds (%v)\n", blockPt, bounds.Block)
 		}
 		indices[totBlocks] = izyx
 		totBlocks++

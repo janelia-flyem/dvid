@@ -1315,9 +1315,9 @@ func TestSupervoxelSplit(t *testing.T) {
 	testResponseLabel(t, expectedLabel4.setSupervoxels([]uint64{4}), "%snode/%s/mysynapses/label/4?relationships=true", server.WebAPIPath, uuid)
 
 	// Create the sparsevol encoding for split area
-	numspans := len(bodysplit.voxelSpans)
+	numspans := len(svsplit.voxelSpans)
 	rles := make(dvid.RLEs, numspans, numspans)
-	for i, span := range bodysplit.voxelSpans {
+	for i, span := range svsplit.voxelSpans {
 		start := dvid.Point3d{span[2], span[1], span[0]}
 		length := span[3] - span[2] + 1
 		rles[i] = dvid.NewRLE(start, length)
@@ -1584,7 +1584,8 @@ var (
 				{3, 2, 4, 4},
 			},
 			voxelSpans: []dvid.Span{
-				{37, 25, 13, 15}, {99, 63, 126, 127},
+				{37, 25, 13, 15},
+				{99, 63, 126, 127},
 			},
 		}, {
 			label:  4,
@@ -1619,7 +1620,7 @@ var (
 			voxelSpans: []dvid.Span{
 				{40, 30, 12, 20}, {99, 63, 126, 127},
 			},
-		}, { // Body to split
+		}, { // Split volume
 			label:  7,
 			offset: dvid.Point3d{10, 24, 36},
 			size:   dvid.Point3d{12, 7, 5},
@@ -1633,6 +1634,18 @@ var (
 				{37, 25, 13, 15},
 				{40, 30, 19, 21},
 			},
+		}, { // split supervoxel volume
+			label:  7,
+			offset: dvid.Point3d{10, 20, 36},
+			size:   dvid.Point3d{12, 7, 5},
+			blockSpans: []dvid.Span{
+				{1, 0, 0, 0},
+				{3, 2, 4, 4},
+			},
+			voxelSpans: []dvid.Span{
+				{37, 25, 14, 14},
+				{99, 63, 126, 126},
+			},
 		},
 	}
 	body1     = bodies[0]
@@ -1642,4 +1655,5 @@ var (
 	body2a    = bodies[4]
 	body3a    = bodies[5]
 	bodysplit = bodies[6]
+	svsplit   = bodies[7]
 )

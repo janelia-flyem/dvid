@@ -656,8 +656,8 @@ POST <api URL>/node/<UUID>/<data name>/blocks[?queryopts]
 	                down-sampled to lower resolution.  If "true", scale must be "0" or absent.
     compression   Specifies compression format of block data: default and only option currently is
 					"blocks" (native DVID label blocks).
-	noindexing	  If "true", will not compute label indices from the received voxel data.  Use this
-					in conjunction with POST /index and /affinities endpoint for faster ingestion.
+	noindexing	  If "true" (default "false"), will not compute label indices from the received voxel data.  
+	                Use this in conjunction with POST /index and /affinities endpoint for faster ingestion.
     throttle      If "true", makes sure only N compute-intense operation (all API calls that can be 
 	                throttled) are handled.  If the server can't initiate the API call right away, a 503 
                     (Service Unavailable) status code is returned.
@@ -822,12 +822,12 @@ GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
 			  "srles" - streaming RLEs with each RLE composed of 4 int32 (16 bytes) for x, y, z, run 
 			  "blocks" - binary Block stream
 
-    minx    Spans must be equal to or larger than this minimum x voxel coordinate.
-    maxx    Spans must be equal to or smaller than this maximum x voxel coordinate.
-    miny    Spans must be equal to or larger than this minimum y voxel coordinate.
-    maxy    Spans must be equal to or smaller than this maximum y voxel coordinate.
-    minz    Spans must be equal to or larger than this minimum z voxel coordinate.
-    maxz    Spans must be equal to or smaller than this maximum z voxel coordinate.
+    minx    Spans must be equal to or larger than this minimum hi-res (scale 0) x voxel coordinate.
+    maxx    Spans must be equal to or smaller than this maximum hi-res (scale 0) x voxel coordinate.
+    miny    Spans must be equal to or larger than this minimum hi-res (scale 0) y voxel coordinate.
+    maxy    Spans must be equal to or smaller than this maximum hi-res (scale 0) y voxel coordinate.
+    minz    Spans must be equal to or larger than this minimum hi-res (scale 0) z voxel coordinate.
+    maxz    Spans must be equal to or smaller than this maximum hi-res (scale 0) z voxel coordinate.
     exact   "false" if RLEs can extend a bit outside voxel bounds within border blocks.
              This will give slightly faster responses. 
 
@@ -1389,9 +1389,6 @@ type Data struct {
 	mlMu sync.RWMutex // For atomic access of MaxLabel and MaxRepoLabel
 
 	voxelMu sync.Mutex // Only allow voxel-level label mutation ops sequentially.
-
-	// unpersisted data: channels for mutations
-	mutateCh [numMutateHandlers]chan procMsg // channels into mutate (merge/split) ops.
 }
 
 // GetMaxDownresLevel returns the number of down-res levels, where level 0 = high-resolution
@@ -1660,7 +1657,7 @@ func (d *Data) persistMaxLabel(v dvid.VersionID) error {
 		return err
 	}
 	if len(d.MaxLabel) == 0 {
-		return fmt.Errorf("bad attempt to save non-existant max label for version %d\n", v)
+		return fmt.Errorf("bad attempt to save non-existant max label for version %d", v)
 	}
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint64(buf, d.MaxLabel[v])
@@ -1716,7 +1713,7 @@ func (d *Data) LoadMutable(root dvid.VersionID, storedVersion, expectedVersion u
 	ctx := storage.NewDataContext(d, 0)
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
-		return false, fmt.Errorf("Data type labelmap had error initializing store: %v\n", err)
+		return false, fmt.Errorf("Data type labelmap had error initializing store: %v", err)
 	}
 
 	wg := new(sync.WaitGroup)

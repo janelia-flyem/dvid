@@ -99,6 +99,7 @@ func (m *Mutation) BlockMutated(bcoord dvid.IZYXString, block interface{}) error
 
 // Execute computes lower-res scales for all altered blocks in a mutation.
 func (m *Mutation) Execute() error {
+	timedLog := dvid.NewTimeLog()
 	m.Lock()
 	bm := m.hiresCache
 	var err error
@@ -107,10 +108,10 @@ func (m *Mutation) Execute() error {
 		if err != nil {
 			return fmt.Errorf("mutation %d for data %q: %v", m.mutID, m.d.DataName(), err)
 		}
-		dvid.Infof("Finished down-resolution processing for data %q at scale %d.\n", m.d.DataName(), scale+1)
 		m.d.StopScaleUpdate(scale + 1)
 	}
 	m.hiresCache = nil
 	m.Unlock()
+	timedLog.Debugf("Finished scale %d downres for data %q", m.d.GetMaxDownresLevel(), m.d.DataName())
 	return nil
 }
