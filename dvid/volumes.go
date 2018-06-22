@@ -973,6 +973,15 @@ func (i IZYXSlice) Len() int           { return len(i) }
 func (i IZYXSlice) Swap(a, b int)      { i[a], i[b] = i[b], i[a] }
 func (i IZYXSlice) Less(a, b int) bool { return i[a] < i[b] }
 
+func (i IZYXSlice) String() string {
+	s := "["
+	for _, izyxStr := range i {
+		s += izyxStr.String()
+	}
+	s += "]"
+	return s
+}
+
 // MarshalBinary implements the encoding.BinaryMarshaler interface
 func (i IZYXSlice) MarshalBinary() ([]byte, error) {
 	buf := make([]byte, len(i)*12)
