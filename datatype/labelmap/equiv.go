@@ -226,8 +226,8 @@ func (svm *SVMap) SupervoxelSplitsJSON(v dvid.VersionID) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	str := "["
-	for i, ancestor := range ancestry {
+	var items []string
+	for _, ancestor := range ancestry {
 		splitops, found := svm.splits[ancestor]
 		if !found || len(splitops) == 0 {
 			continue
@@ -240,18 +240,15 @@ func (svm *SVMap) SupervoxelSplitsJSON(v dvid.VersionID) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		str += fmt.Sprintf(`"%s",`, uuid)
+		str := fmt.Sprintf(`"%s",`, uuid)
 		splitstrs := make([]string, len(splitops))
 		for i, splitop := range splitops {
 			splitstrs[i] = fmt.Sprintf("[%d,%d,%d,%d]", splitop.Mutid, splitop.Supervoxel, splitop.Remainlabel, splitop.Splitlabel)
 		}
 		str += "[" + strings.Join(splitstrs, ",") + "]"
-		if i < len(ancestry)-1 {
-			str += ","
-		}
+		items = append(items, str)
 	}
-	str += "]"
-	return str, nil
+	return "[" + strings.Join(items, ",") + "]", nil
 }
 
 // getAncestry with a receiver lock built-in.
