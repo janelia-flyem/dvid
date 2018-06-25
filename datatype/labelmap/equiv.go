@@ -227,7 +227,7 @@ func (svm *SVMap) SupervoxelSplitsJSON(v dvid.VersionID) (string, error) {
 		return "", err
 	}
 	str := "["
-	for _, ancestor := range ancestry {
+	for i, ancestor := range ancestry {
 		splitops, found := svm.splits[ancestor]
 		if !found || len(splitops) == 0 {
 			continue
@@ -246,6 +246,9 @@ func (svm *SVMap) SupervoxelSplitsJSON(v dvid.VersionID) (string, error) {
 			splitstrs[i] = fmt.Sprintf("[%d,%d,%d,%d]", splitop.Mutid, splitop.Supervoxel, splitop.Remainlabel, splitop.Splitlabel)
 		}
 		str += "[" + strings.Join(splitstrs, ",") + "]"
+		if i < len(ancestry)-1 {
+			str += ","
+		}
 	}
 	str += "]"
 	return str, nil
