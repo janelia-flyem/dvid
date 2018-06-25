@@ -2024,7 +2024,19 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 
 		// Iterate through elements, organizing them into blocks and tags.
 		// Note: we do not check for redundancy and guarantee uniqueness at this stage.
-		for _, elem := range elems {
+		blockFixBatch := batcher.NewBatch(ctx)
+		deleteElems := make(map[int]struct{})
+		for i, elem := range elems {
+			// Check element is in correct block
+			elemChunkPt := elem.Pos.Chunk(d.blockSize()).(dvid.ChunkPoint3d)
+			if !chunkPt.Equals(elemChunkPt) {
+				dvid.Criticalf("Fixing element at %s found in block %s: %v\n", elem.Pos, elemChunkPt, elem)
+				deleteElems[i] = struct{}{}
+				actualTk := NewBlockTKey(elemChunkPt)
+				if err := d.modifyElements(ctx, blockFixBatch, actualTk, Elements{elem}); err != nil {
+					return err
+				}
+			}
 			// Append to tags if present
 			if len(elem.Tags) > 0 {
 				for _, tag := range elem.Tags {
@@ -2035,7 +2047,20 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 				}
 			}
 		}
-
+		if len(deleteElems) > 0 {
+			fixed := elems[:0]
+			for i, elem := range elems {
+				if _, found := deleteElems[i]; !found {
+					fixed = append(fixed, elem)
+				}
+			}
+			if err := putBatchElements(blockFixBatch, c.K, fixed); err != nil {
+				return err
+			}
+			if err := blockFixBatch.Commit(); err != nil {
+				return fmt.Errorf("bad batch commit in fixing block keyvalues for data %q: %v", d.DataName(), err)
+			}
+		}
 		if numTagE > 1000 {
 			if err := d.storeTags(batcher, ctx, tagE); err != nil {
 				return err

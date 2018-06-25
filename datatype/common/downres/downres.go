@@ -112,6 +112,6 @@ func (m *Mutation) Execute() error {
 	}
 	m.hiresCache = nil
 	m.Unlock()
-	timedLog.Debugf("Finished scale %d downres for data %q", m.d.GetMaxDownresLevel(), m.d.DataName())
+	timedLog.Debugf("Computed and stored downres for scale 1 to %d for data %q", m.d.GetMaxDownresLevel(), m.d.DataName())
 	return nil
 }

@@ -588,6 +588,8 @@ POST <api URL>/node/<UUID>/<data name>/blocks[?queryopts]
 	DVID label Block serialization.
 
 	Note that maximum label and extents are automatically handled during these calls.
+	If the optional "scale" query is greater than 0, these ingestions will not trigger
+	syncing with associated annotations, etc.
 
     Example: 
 
@@ -2434,6 +2436,11 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 				d.handleBlockIndexing(ctx.VersionID(), blockCh, ingestBlock)
 			}
 			go d.updateBlockMaxLabel(ctx.VersionID(), ingestBlock.Data)
+			evt := datastore.SyncEvent{d.DataUUID(), event}
+			msg := datastore.SyncMessage{event, ctx.VersionID(), ingestBlock}
+			if err := datastore.NotifySubscribers(evt, msg); err != nil {
+				dvid.Errorf("Unable to notify subscribers of event %s in %s\n", event, d.DataName())
+			}
 		}
 		if downscale {
 			if err := downresMut.BlockMutated(bcoord, block); err != nil {
@@ -2441,11 +2448,6 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 			}
 		}
 
-		evt := datastore.SyncEvent{d.DataUUID(), event}
-		msg := datastore.SyncMessage{event, ctx.VersionID(), ingestBlock}
-		if err := datastore.NotifySubscribers(evt, msg); err != nil {
-			dvid.Errorf("Unable to notify subscribers of event %s in %s\n", event, d.DataName())
-		}
 		putWG.Done()
 	}
 

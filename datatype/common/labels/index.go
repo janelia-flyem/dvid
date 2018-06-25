@@ -182,6 +182,10 @@ func (idx *Index) LimitToSupervoxel(supervoxel uint64) (*Index, error) {
 		if svc != nil && len(svc.Counts) != 0 {
 			count, found := svc.Counts[supervoxel]
 			if found {
+				if count == 0 {
+					dvid.Debugf("ignoring block %s for supervoxel %d because zero count\n", BlockIndexToIZYXString(zyx), supervoxel)
+					continue
+				}
 				sidx.Blocks[zyx] = &proto.SVCount{Counts: map[uint64]uint32{supervoxel: count}}
 			}
 		}
@@ -208,10 +212,26 @@ func (idx *Index) GetProcessedBlockIndices(scale uint8, bounds dvid.Bounds) (dvi
 				return nil, fmt.Errorf("error decoding block %v: %v", izyx, err)
 			}
 			if bounds.Block.Outside(blockPt) {
-				dvid.Infof("block pt %s considered OUTSIDE bounds (%v)\n", blockPt, bounds.Block)
+				// dvid.Infof("block pt %s considered OUTSIDE bounds (%v)\n", blockPt, bounds.Block)
 				continue
 			}
-			dvid.Infof("block pt %s considered INSIDE bounds (%v)\n", blockPt, bounds.Block)
+			// dvid.Infof("block pt %s considered INSIDE bounds (%v)\n", blockPt, bounds.Block)
+		}
+		svc := idx.Blocks[zyx]
+		if svc == nil || svc.Counts == nil {
+			dvid.Debugf("ignoring block %s for label %d because of nil Counts\n", izyx, idx.Label)
+			continue
+		}
+		var ok bool
+		for _, count := range svc.Counts {
+			if count > 0 {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			dvid.Debugf("ignoring block %s for label %d because all counts are zero: %v\n", izyx, idx.Label, svc.Counts)
+			continue
 		}
 		indices[totBlocks] = izyx
 		totBlocks++

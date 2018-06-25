@@ -386,6 +386,13 @@ func (d *Data) getMappedLabelData() mappedLabelType {
 
 // If a block of labels is ingested, adjust each label's synaptic element list.
 func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, chunkPt dvid.ChunkPoint3d, data []byte, batcher storage.KeyValueBatcher) {
+	blockSize := d.blockSize()
+	expectedDataBytes := blockSize.Prod() * 8
+	if int64(len(data)) != expectedDataBytes {
+		dvid.Errorf("ingested block %s during sync of annotation %q is not appropriate block size %s (block data bytes = %d)... skipping\n", chunkPt, d.DataName(), blockSize, len(data))
+		return
+	}
+
 	// Get the synaptic elements for this block
 	tk := NewBlockTKey(chunkPt)
 	elems, err := getElements(ctx, tk)
@@ -396,12 +403,7 @@ func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, chunkPt dvid.ChunkPoint3
 	if len(elems) == 0 {
 		return
 	}
-	blockSize := d.blockSize()
 	batch := batcher.NewBatch(ctx)
-
-	// Compute the strides (in bytes)
-	bX := blockSize[0] * 8
-	bY := blockSize[1] * bX
 
 	// Iterate through all element positions, finding corresponding label and storing elements.
 	lmapData := d.getMappedLabelData()
@@ -409,7 +411,7 @@ func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, chunkPt dvid.ChunkPoint3
 	toAdd := LabelElements{}
 	for n := range elems {
 		pt := elems[n].Pos.Point3dInChunk(blockSize)
-		i := (pt[2]*bY+pt[1])*bX + pt[0]*8
+		i := (pt[2]*blockSize[1]+pt[1])*blockSize[0]*8 + pt[0]*8
 		label := binary.LittleEndian.Uint64(data[i : i+8])
 		if label != 0 {
 			if lmapData != nil && elems[n].Supervoxel != label {
