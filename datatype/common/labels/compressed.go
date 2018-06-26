@@ -834,23 +834,12 @@ func (b *Block) ReplaceLabel(target, newLabel uint64) (replace *Block, replaceSi
 		return
 	}
 
-	var targetFound bool
-	var targetIndex uint32
 	for i, label := range replace.Labels {
 		if label == target {
-			targetFound = true
-			targetIndex = uint32(i)
-			break
+			replaceSize += replace.getNumVoxels(uint32(i))
+			replace.Labels[i] = newLabel
 		}
 	}
-
-	if !targetFound {
-		replaceSize = 0
-		return
-	}
-
-	replace.Labels[targetIndex] = newLabel
-	replaceSize = replace.getNumVoxels(targetIndex)
 	return
 }
 
