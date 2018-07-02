@@ -28,7 +28,6 @@ requirements:
     - lz4
 
   run:
-  # TODO: dvid-console should be packaged in conda and included as a dependency here, right?
     - snappy
     - basholeveldb
     - lz4
