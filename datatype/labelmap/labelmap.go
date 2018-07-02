@@ -3419,6 +3419,10 @@ func (d *Data) handleIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 			server.BadRequest(w, r, err)
 			return
 		}
+		if idx == nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		serialization, err := idx.Marshal()
 		if err != nil {
 			server.BadRequest(w, r, err)
