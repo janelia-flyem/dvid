@@ -296,31 +296,44 @@ func (d *Data) splitPass1(ctx *datastore.VersionedCtx, splitmap dvid.BlockRLEs, 
 		}
 	}
 
+	targetChunk := dvid.ChunkPoint3d{498, 465, 274}
+	targetzyx, _ := labels.IZYXStringToBlockIndex(targetChunk.ToIZYXString())
+	svc, _ := blockSplits[targetzyx]
+	dvid.Infof("Pass 1 stats on %s: %v\n", targetChunk, svc)
+	dvid.Infof("svsplits: %v\n", svsplit.Splits)
+
 	timedLog.Debugf("split pass 1 completed: %d blocks with %d errors (max queue %d/%d)\n", numBlocks, numErr, maxQueue, len(splitblks))
 	return blockSplits, svsplit, lastErr
 }
 
 // if every split supervoxel in a split block is fully replaceable, we can just switch header.
-func checkSplitBlockReplace(svsplits map[uint64]labels.SVSplitCount, svc *proto.SVCount) (map[uint64]uint64, bool) {
-	mapping := make(map[uint64]uint64, len(svc.Counts))
+func checkSplitBlockReplace(blockSplits map[uint64]labels.SVSplitCount, allSplits map[uint64]labels.SVSplit, idxsvc *proto.SVCount) (map[uint64]uint64, bool) {
+	mapping := make(map[uint64]uint64, len(idxsvc.Counts))
 	replaceable := true
-	for supervoxel, count := range svc.Counts {
-		svc, found := svsplits[supervoxel]
+	for supervoxel, count := range idxsvc.Counts {
+		split, found := blockSplits[supervoxel] // the supervoxels split in this particular block
 		if found {
-			if svc.Voxels != count { // this is not a complete replacement.
+			if split.Voxels != count { // this is not a complete replacement.
 				replaceable = false
 				break
 			}
-			mapping[supervoxel] = svc.Split
+			mapping[supervoxel] = split.Split
+		} else {
+			split, found := allSplits[supervoxel]
+			if found {
+				// this is supervoxel split elsewhere but not in this block, so it
+				// must be part of remainder.
+				mapping[supervoxel] = split.Remain
+			}
 		}
 	}
 	return mapping, replaceable
 }
 
-func checkNonsplitBlockAffected(svsplits map[uint64]labels.SVSplit, svc *proto.SVCount) (map[uint64]uint64, bool) {
-	mapping := make(map[uint64]uint64, len(svc.Counts))
-	for sv, svsplit := range svsplits {
-		_, found := svc.Counts[sv]
+func checkNonsplitBlockAffected(allSplits map[uint64]labels.SVSplit, idxsvc *proto.SVCount) (map[uint64]uint64, bool) {
+	mapping := make(map[uint64]uint64, len(idxsvc.Counts))
+	for sv, svsplit := range allSplits {
+		_, found := idxsvc.Counts[sv]
 		if found {
 			mapping[sv] = svsplit.Remain // since this is a non-split block (not in split RLE)
 		}
@@ -419,7 +432,7 @@ func (d *Data) splitPass2(ctx *datastore.VersionedCtx, downresMut *downres.Mutat
 			if !found {
 				return fmt.Errorf("block %s supposedly in split but not found in splitmap", izyxStr)
 			}
-			mapping, canReplace := checkSplitBlockReplace(bsvc, isvc)
+			mapping, canReplace := checkSplitBlockReplace(bsvc, svsplits, isvc)
 			if canReplace {
 				numHeaderMod++
 				modCh <- headerMod{bcoord: izyxStr, mapping: mapping, pb: pb}
@@ -439,7 +452,7 @@ func (d *Data) splitPass2(ctx *datastore.VersionedCtx, downresMut *downres.Mutat
 			maxQueue = curQueue
 		}
 	}
-	getLog.Debugf("split pass 2: got %d out of %d affected blocks\n", numHeaderMod+numVoxelMod, len(affectedBlocks))
+	getLog.Infof("split pass 2: got %d out of %d affected blocks\n", numHeaderMod+numVoxelMod, len(affectedBlocks))
 	var numErr int
 	var err error
 	for i := 0; i < numHeaderMod+numVoxelMod; i++ {
@@ -452,7 +465,7 @@ func (d *Data) splitPass2(ctx *datastore.VersionedCtx, downresMut *downres.Mutat
 	if err != nil {
 		return fmt.Errorf("had %d errors in splitting data %q blocks, last one: %v", numErr, len(blockSplits), err)
 	}
-	timedLog.Debugf("split pass 2 completed: %d blocks (max queue %d/%d): %d header changes, %d voxel relabels\n", numHeaderMod+numVoxelMod, maxQueue, len(idx.Blocks), numHeaderMod, numVoxelMod)
+	timedLog.Infof("split pass 2 completed: %d blocks (max queue %d/%d): %d header changes, %d voxel relabels\n", numHeaderMod+numVoxelMod, maxQueue, len(idx.Blocks), numHeaderMod, numVoxelMod)
 	return nil
 }
 
@@ -758,12 +771,6 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser
 		RemainSupervoxel: remainSupervoxel,
 		Split:            splitmap,
 	}
-	if err = addSupervoxelSplitToMapping(d, v, op); err != nil {
-		return
-	}
-	if err = labels.LogSupervoxelSplit(d, v, op); err != nil {
-		return
-	}
 	downresMut := downres.NewMutation(d, v, mutID)
 
 	var splitblks dvid.IZYXSlice
@@ -815,6 +822,12 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser
 	if err != nil {
 		err = fmt.Errorf("supervoxel split of %d: %d errors, last one: %v", svlabel, numErr, err)
 		d.restoreOldBlocks(ctx, numBlocks, origBlocks)
+		return
+	}
+	if err = addSupervoxelSplitToMapping(d, v, op); err != nil {
+		return
+	}
+	if err = labels.LogSupervoxelSplit(d, v, op); err != nil {
 		return
 	}
 	// store the new split index

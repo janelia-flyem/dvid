@@ -1033,6 +1033,644 @@ func TestSplitLabel(t *testing.T) {
 	}
 }
 
+func getIndex(t *testing.T, uuid dvid.UUID, name string, label uint64) *labels.Index {
+	url := fmt.Sprintf("http://%snode/%s/%s/index/%d", server.WebAPIPath, uuid, name, label)
+	data := server.TestHTTP(t, "GET", url, nil)
+	if len(data) == 0 {
+		t.Fatalf("Read label index %d returned no bytes\n", label)
+	}
+	idx := new(labels.Index)
+	if err := idx.Unmarshal(data); err != nil {
+		t.Fatalf("couldn't unmarshal index: %v\n", err)
+	}
+	return idx
+}
+
+type blockCounts struct {
+	bcoord dvid.ChunkPoint3d
+	counts map[uint64]uint32
+}
+
+func checkIndex(t *testing.T, desc string, idx *labels.Index, blocks []blockCounts) {
+	if len(idx.Blocks) != len(blocks) {
+		t.Fatalf("Expected %d blocks for index %d (%s), got %d blocks: %s\n", len(blocks), idx.Label, desc, len(idx.Blocks), idx.StringDump(false))
+	}
+	seen := make(map[uint64]struct{})
+	for _, block := range blocks {
+		zyx, err := labels.IZYXStringToBlockIndex(block.bcoord.ToIZYXString())
+		if err != nil {
+			t.Fatalf("bad block coord (%s): %s\n", desc, block.bcoord)
+		}
+		seen[zyx] = struct{}{}
+		svc, found := idx.Blocks[zyx]
+		if !found {
+			t.Fatalf("expected %s block %s to be in index %d but found none\n", desc, block.bcoord, idx.Label)
+		}
+		if len(svc.Counts) != len(block.counts) {
+			t.Fatalf("expected %s block %s counts %v and got this instead: %v\n", desc, block.bcoord, block.counts, svc.Counts)
+		}
+		for supervoxel, count := range block.counts {
+			actual, found := svc.Counts[supervoxel]
+			if !found {
+				t.Fatalf("expected label %d (%s) to have %d voxels, but label not in the retrieved index for block %s\n", supervoxel, desc, count, block.bcoord)
+			}
+			if actual != count {
+				t.Fatalf("expected label %d (%s) to have %d voxels in block %s, but got %d voxels\n", supervoxel, desc, count, block.bcoord, actual)
+			}
+		}
+	}
+}
+
+func TestArbitrarySplit(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := datastore.NewTestRepo()
+	server.CreateTestInstance(t, uuid, "labelmap", "labels", dvid.Config{})
+
+	labelA := uint64(1000)
+	labelB := uint64(2000)
+
+	data := make([]byte, 128*128*128*8)
+	var x, y, z int32
+	for z = 32; z < 96; z++ {
+		for y = 32; y < 96; y++ {
+			for x = 32; x < 96; x++ {
+				i := (z*128*128 + y*128 + x) * 8
+				binary.LittleEndian.PutUint64(data[i:i+8], labelA)
+			}
+		}
+	}
+	for z = 32; z < 96; z++ {
+		for y = 96; y < 112; y++ {
+			for x = 32; x < 112; x++ {
+				i := (z*128*128 + y*128 + x) * 8
+				binary.LittleEndian.PutUint64(data[i:i+8], labelB)
+			}
+		}
+	}
+	for z = 32; z < 96; z++ {
+		for y = 32; y < 96; y++ {
+			for x = 96; x < 112; x++ {
+				i := (z*128*128 + y*128 + x) * 8
+				binary.LittleEndian.PutUint64(data[i:i+8], labelB)
+			}
+		}
+	}
+
+	apiStr := fmt.Sprintf("%snode/%s/labels/raw/0_1_2/128_128_128/0_0_0", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBuffer(data))
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	// Get the original body indices
+	origIndexA := getIndex(t, uuid, "labels", labelA)
+	blocksA := []blockCounts{
+		{
+			bcoord: dvid.ChunkPoint3d{0, 0, 0},
+			counts: map[uint64]uint32{labelA: 32768},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 0, 0},
+			counts: map[uint64]uint32{labelA: 32768},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{0, 1, 0},
+			counts: map[uint64]uint32{labelA: 32768},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 1, 0},
+			counts: map[uint64]uint32{labelA: 32768},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{0, 0, 1},
+			counts: map[uint64]uint32{labelA: 32768},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 0, 1},
+			counts: map[uint64]uint32{labelA: 32768},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{0, 1, 1},
+			counts: map[uint64]uint32{labelA: 32768},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 1, 1},
+			counts: map[uint64]uint32{labelA: 32768},
+		},
+	}
+	checkIndex(t, "original index A", origIndexA, blocksA)
+
+	origIndexB := getIndex(t, uuid, "labels", labelB)
+	blocksB := []blockCounts{
+		{
+			bcoord: dvid.ChunkPoint3d{1, 0, 0},
+			counts: map[uint64]uint32{labelB: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{0, 1, 0},
+			counts: map[uint64]uint32{labelB: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 1, 0},
+			counts: map[uint64]uint32{labelB: 16384 + 24576},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 0, 1},
+			counts: map[uint64]uint32{labelB: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{0, 1, 1},
+			counts: map[uint64]uint32{labelB: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 1, 1},
+			counts: map[uint64]uint32{labelB: 16384 + 24576},
+		},
+	}
+	checkIndex(t, "original index B", origIndexB, blocksB)
+
+	// merge the two supervoxels into one body
+	mergeJSON := fmt.Sprintf("[%d,%d]", labelA, labelB)
+	apiStr = fmt.Sprintf("%snode/%s/labels/merge", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(mergeJSON))
+
+	mergeIndex := getIndex(t, uuid, "labels", labelA)
+	blocksAB := []blockCounts{
+		{
+			bcoord: dvid.ChunkPoint3d{0, 0, 0},
+			counts: map[uint64]uint32{labelA: 32768},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 0, 0},
+			counts: map[uint64]uint32{labelA: 32768, labelB: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{0, 1, 0},
+			counts: map[uint64]uint32{labelA: 32768, labelB: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 1, 0},
+			counts: map[uint64]uint32{labelA: 32768, labelB: 16384 + 24576},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{0, 0, 1},
+			counts: map[uint64]uint32{labelA: 32768},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 0, 1},
+			counts: map[uint64]uint32{labelA: 32768, labelB: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{0, 1, 1},
+			counts: map[uint64]uint32{labelA: 32768, labelB: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 1, 1},
+			counts: map[uint64]uint32{labelA: 32768, labelB: 16384 + 24576},
+		},
+	}
+	checkIndex(t, "merged index", mergeIndex, blocksAB)
+
+	// do a split
+	var split dvid.RLEs
+	x = 56
+	for z = 32; z < 96; z++ {
+		for y = 32; y < 64; y++ {
+			split = append(split, dvid.NewRLE(dvid.Point3d{x, y, z}, 40))
+		}
+	}
+	x = 80
+	for z = 32; z < 48; z++ {
+		for y = 64; y < 100; y++ {
+			split = append(split, dvid.NewRLE(dvid.Point3d{x, y, z}, 8))
+		}
+	}
+	splitVoxels, splitRuns := split.Stats()
+	dvid.Infof("split has %d voxels, %d runs\n", splitVoxels, splitRuns)
+
+	buf := new(bytes.Buffer)
+	buf.WriteByte(dvid.EncodingBinary)
+	binary.Write(buf, binary.LittleEndian, uint8(3))          // # of dimensions
+	binary.Write(buf, binary.LittleEndian, byte(0))           // dimension of run (X = 0)
+	buf.WriteByte(byte(0))                                    // reserved for later
+	binary.Write(buf, binary.LittleEndian, uint32(0))         // Placeholder for # voxels
+	binary.Write(buf, binary.LittleEndian, uint32(splitRuns)) // Placeholder for # spans
+	splitBytes, err := split.MarshalBinary()
+	if err != nil {
+		t.Errorf("Unable to serialize RLEs: %v\n", err)
+	}
+	buf.Write(splitBytes)
+
+	apiStr = fmt.Sprintf("%snode/%s/labels/split/%d", server.WebAPIPath, uuid, labelA)
+	r := server.TestHTTP(t, "POST", apiStr, buf)
+	var splitResp struct {
+		Label uint64 `json:"label"`
+	}
+	if err := json.Unmarshal(r, &splitResp); err != nil {
+		t.Errorf("Unable to get new label from split.  Instead got: %v\n", splitResp)
+	}
+	dvid.Infof("Test split produced new label %d\n", splitResp.Label)
+
+	splitIndex := getIndex(t, uuid, "labels", splitResp.Label)
+	remainIndex := getIndex(t, uuid, "labels", labelA)
+
+	zyx110, _ := labels.IZYXStringToBlockIndex(dvid.ChunkPoint3d{1, 1, 0}.ToIZYXString())
+	svc, found := splitIndex.Blocks[zyx110]
+	if !found {
+		t.Fatalf("expected split index block (1,1,0) but not found\n")
+	}
+	if len(svc.Counts) != 2 {
+		t.Fatalf("expected two supervoxels in split block (1,1,0), got: %v\n", svc.Counts)
+	}
+	var labelSplitA, labelSplitB, labelRemainA, labelRemainB uint64
+	for label, count := range svc.Counts {
+		switch count {
+		case 512:
+			labelSplitB = label
+		case 4096:
+			labelSplitA = label
+		default:
+			t.Fatalf("bad split block (1,1,0): %v\n", svc.Counts)
+		}
+	}
+	svc, found = remainIndex.Blocks[zyx110]
+	if !found {
+		t.Fatalf("expected remain index block (1,1,0) but not found\n")
+	}
+	if len(svc.Counts) != 2 {
+		t.Fatalf("expected two supervoxels in remain block (1,1,0), got: %v\n", svc.Counts)
+	}
+	for label, count := range svc.Counts {
+		switch count {
+		case 16384 + 24576 - 512:
+			labelRemainB = label
+		case 32768 - 4096:
+			labelRemainA = label
+		default:
+			t.Fatalf("bad remain block (1,1,0): %v\n", svc.Counts)
+		}
+	}
+	dvid.Infof("Supervoxel %d -> split %d, remain %d\n", labelA, labelSplitA, labelRemainA)
+	dvid.Infof("Supervoxel %d -> split %d, remain %d\n", labelB, labelSplitB, labelRemainB)
+
+	blocksSplit := []blockCounts{
+		{
+			bcoord: dvid.ChunkPoint3d{0, 0, 0},
+			counts: map[uint64]uint32{labelSplitA: 8192},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 0, 0},
+			counts: map[uint64]uint32{labelSplitA: 32768},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 1, 0},
+			counts: map[uint64]uint32{labelSplitA: 4096, labelSplitB: 512},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{0, 0, 1},
+			counts: map[uint64]uint32{labelSplitA: 8192},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 0, 1},
+			counts: map[uint64]uint32{labelSplitA: 32768},
+		},
+	}
+	checkIndex(t, "split index", splitIndex, blocksSplit)
+
+	blocksRemain := []blockCounts{
+		{
+			bcoord: dvid.ChunkPoint3d{0, 0, 0},
+			counts: map[uint64]uint32{labelRemainA: 32768 - 8192},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 0, 0},
+			counts: map[uint64]uint32{labelRemainB: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{0, 1, 0},
+			counts: map[uint64]uint32{labelRemainA: 32768, labelRemainB: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 1, 0},
+			counts: map[uint64]uint32{labelRemainA: 32768 - 4096, labelRemainB: 16384 + 24576 - 512},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{0, 0, 1},
+			counts: map[uint64]uint32{labelRemainA: 32768 - 8192},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 0, 1},
+			counts: map[uint64]uint32{labelRemainB: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{0, 1, 1},
+			counts: map[uint64]uint32{labelRemainA: 32768, labelRemainB: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 1, 1},
+			counts: map[uint64]uint32{labelRemainA: 32768, labelRemainB: 16384 + 24576},
+		},
+	}
+	checkIndex(t, "remain index", remainIndex, blocksRemain)
+
+	blocks := testGetVolumeBlocks(t, uuid, "labels", true, dvid.Point3d{128, 128, 128}, dvid.Point3d{0, 0, 0})
+	checkVoxels(t, blocks, blocksSplit, blocksRemain)
+}
+
+func checkVoxels(t *testing.T, blocks []labels.PositionedBlock, blocksSplit, blocksRemain []blockCounts) {
+	expected := make(map[uint64]map[uint64]int32)
+	for _, blockSplit := range blocksSplit {
+		zyx, _ := labels.IZYXStringToBlockIndex(blockSplit.bcoord.ToIZYXString())
+		counts, found := expected[zyx]
+		if !found {
+			counts = make(map[uint64]int32)
+		}
+		for sv, count := range blockSplit.counts {
+			counts[sv] = int32(count)
+		}
+		expected[zyx] = counts
+	}
+	for _, blockRemain := range blocksRemain {
+		zyx, _ := labels.IZYXStringToBlockIndex(blockRemain.bcoord.ToIZYXString())
+		counts, found := expected[zyx]
+		if !found {
+			counts = make(map[uint64]int32)
+		}
+		for sv, count := range blockRemain.counts {
+			counts[sv] = int32(count)
+		}
+		expected[zyx] = counts
+	}
+	actual := make(map[uint64]map[uint64]int32)
+	for _, block := range blocks {
+		zyx, _ := labels.IZYXStringToBlockIndex(block.BCoord)
+		got := block.CalcNumLabels(nil)
+		actual[zyx] = got
+		want, found := expected[zyx]
+		if !found {
+			t.Fatalf("Received block %s but wasn't expected block\n", block.BCoord)
+		}
+		for sv, count := range got {
+			wantcount, found := want[sv]
+			if !found {
+				t.Fatalf("got supervoxel %d in block %s but not expected\n", sv, block.BCoord)
+			}
+			if wantcount != count {
+				t.Fatalf("expected supervoxel %d to have %d voxels in block %s, got %d\n", sv, wantcount, block.BCoord, count)
+			}
+		}
+	}
+	for zyx, counts := range expected {
+		bcoord := labels.BlockIndexToIZYXString(zyx)
+		got, found := actual[zyx]
+		if !found {
+			t.Fatalf("Expected to get block %s but not found\n", bcoord)
+		}
+		for sv, count := range counts {
+			gotcount, found := got[sv]
+			if !found {
+				t.Fatalf("expected supervoxel %d in block %s but not received\n", sv, bcoord)
+			}
+			if gotcount != count {
+				t.Fatalf("expected supervoxel %d to have %d voxels in block %s, got %d\n", sv, count, bcoord, gotcount)
+			}
+		}
+	}
+}
+
+func TestSupervoxelSplit2(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := datastore.NewTestRepo()
+	server.CreateTestInstance(t, uuid, "labelmap", "labels", dvid.Config{})
+
+	labelA := uint64(1000)
+	labelB := uint64(2000)
+
+	data := make([]byte, 128*128*128*8)
+	var x, y, z int32
+	for z = 32; z < 96; z++ {
+		for y = 32; y < 96; y++ {
+			for x = 32; x < 96; x++ {
+				i := (z*128*128 + y*128 + x) * 8
+				binary.LittleEndian.PutUint64(data[i:i+8], labelA)
+			}
+		}
+	}
+	for z = 32; z < 96; z++ {
+		for y = 96; y < 112; y++ {
+			for x = 32; x < 112; x++ {
+				i := (z*128*128 + y*128 + x) * 8
+				binary.LittleEndian.PutUint64(data[i:i+8], labelB)
+			}
+		}
+	}
+	for z = 32; z < 96; z++ {
+		for y = 32; y < 96; y++ {
+			for x = 96; x < 112; x++ {
+				i := (z*128*128 + y*128 + x) * 8
+				binary.LittleEndian.PutUint64(data[i:i+8], labelB)
+			}
+		}
+	}
+	origdata := make([]byte, 128*128*128*8)
+	copy(origdata, data)
+
+	apiStr := fmt.Sprintf("%snode/%s/labels/raw/0_1_2/128_128_128/0_0_0", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBuffer(data))
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	// Get the original body indices
+	origIndexB := getIndex(t, uuid, "labels", labelB)
+	blocksB := []blockCounts{
+		{
+			bcoord: dvid.ChunkPoint3d{1, 0, 0},
+			counts: map[uint64]uint32{labelB: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{0, 1, 0},
+			counts: map[uint64]uint32{labelB: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 1, 0},
+			counts: map[uint64]uint32{labelB: 16384 + 24576},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 0, 1},
+			counts: map[uint64]uint32{labelB: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{0, 1, 1},
+			counts: map[uint64]uint32{labelB: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 1, 1},
+			counts: map[uint64]uint32{labelB: 16384 + 24576},
+		},
+	}
+	checkIndex(t, "original index B", origIndexB, blocksB)
+
+	// do a bad split
+	var split dvid.RLEs
+	x = 56
+	for z = 32; z < 96; z++ {
+		for y = 32; y < 64; y++ {
+			split = append(split, dvid.NewRLE(dvid.Point3d{x, y, z}, 40))
+		}
+	}
+	x = 80
+	for z = 32; z < 48; z++ {
+		for y = 64; y < 100; y++ {
+			split = append(split, dvid.NewRLE(dvid.Point3d{x, y, z}, 8))
+		}
+	}
+	_, splitRuns := split.Stats()
+
+	buf := new(bytes.Buffer)
+	buf.WriteByte(dvid.EncodingBinary)
+	binary.Write(buf, binary.LittleEndian, uint8(3))          // # of dimensions
+	binary.Write(buf, binary.LittleEndian, byte(0))           // dimension of run (X = 0)
+	buf.WriteByte(byte(0))                                    // reserved for later
+	binary.Write(buf, binary.LittleEndian, uint32(0))         // Placeholder for # voxels
+	binary.Write(buf, binary.LittleEndian, uint32(splitRuns)) // Placeholder for # spans
+	splitBytes, err := split.MarshalBinary()
+	if err != nil {
+		t.Errorf("Unable to serialize RLEs: %v\n", err)
+	}
+	buf.Write(splitBytes)
+
+	apiStr = fmt.Sprintf("%snode/%s/labels/split-supervoxel/%d", server.WebAPIPath, uuid, labelB)
+	server.TestBadHTTP(t, "POST", apiStr, buf)
+
+	// make sure indices and volume is not changed
+	afterBadSplit := getIndex(t, uuid, "labels", labelB)
+	checkIndex(t, "label B after bad split", afterBadSplit, blocksB)
+
+	postvol := newTestVolume(128, 128, 128)
+	postvol.get(t, uuid, "labels", true)
+	oldvol := testVolume{
+		data: origdata,
+		size: dvid.Point3d{128, 128, 128},
+	}
+	if err := oldvol.equals(postvol); err != nil {
+		t.Fatalf("bad supervoxel volume get after aborted supervoxel split: %v\n", err)
+	}
+	postvol.get(t, uuid, "labels", false)
+	if err := oldvol.equals(postvol); err != nil {
+		t.Fatalf("bad label volume get after aborted supervoxel split: %v\n", err)
+	}
+
+	// run valid split
+	split = nil
+	x = 96
+	for z = 32; z < 96; z++ {
+		for y = 32; y < 96; y++ {
+			split = append(split, dvid.NewRLE(dvid.Point3d{x, y, z}, 16))
+		}
+	}
+	_, splitRuns = split.Stats()
+
+	buf = new(bytes.Buffer)
+	buf.WriteByte(dvid.EncodingBinary)
+	binary.Write(buf, binary.LittleEndian, uint8(3))          // # of dimensions
+	binary.Write(buf, binary.LittleEndian, byte(0))           // dimension of run (X = 0)
+	buf.WriteByte(byte(0))                                    // reserved for later
+	binary.Write(buf, binary.LittleEndian, uint32(0))         // Placeholder for # voxels
+	binary.Write(buf, binary.LittleEndian, uint32(splitRuns)) // Placeholder for # spans
+	splitBytes, err = split.MarshalBinary()
+	if err != nil {
+		t.Errorf("Unable to serialize RLEs: %v\n", err)
+	}
+	buf.Write(splitBytes)
+
+	r := server.TestHTTP(t, "POST", apiStr, buf)
+	var resp struct {
+		Split  uint64 `json:"SplitSupervoxel"`
+		Remain uint64 `json:"RemainSupervoxel"`
+	}
+	if err := json.Unmarshal(r, &resp); err != nil {
+		t.Errorf("Unable to get new labels from supervoxel split.  Instead got: %v\n", resp)
+	}
+	dvid.Infof("supervoxel split %d -> split %d, remain %d\n", labelB, resp.Split, resp.Remain)
+
+	// label B index shouldn't have changed
+	splitIndexB := getIndex(t, uuid, "labels", labelB)
+	blocksSplitB := []blockCounts{
+		{
+			bcoord: dvid.ChunkPoint3d{1, 0, 0},
+			counts: map[uint64]uint32{resp.Split: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{0, 1, 0},
+			counts: map[uint64]uint32{resp.Remain: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 1, 0},
+			counts: map[uint64]uint32{resp.Split: 16384, resp.Remain: 24576},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 0, 1},
+			counts: map[uint64]uint32{resp.Split: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{0, 1, 1},
+			counts: map[uint64]uint32{resp.Remain: 16384},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 1, 1},
+			counts: map[uint64]uint32{resp.Split: 16384, resp.Remain: 24576},
+		},
+	}
+	checkIndex(t, "split index B", splitIndexB, blocksSplitB)
+
+	// supervoxels should have changed
+	blocksA := []blockCounts{
+		{
+			bcoord: dvid.ChunkPoint3d{0, 0, 0},
+			counts: map[uint64]uint32{labelA: 32768},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 0, 0},
+			counts: map[uint64]uint32{labelA: 32768},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{0, 1, 0},
+			counts: map[uint64]uint32{labelA: 32768},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 1, 0},
+			counts: map[uint64]uint32{labelA: 32768},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{0, 0, 1},
+			counts: map[uint64]uint32{labelA: 32768},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 0, 1},
+			counts: map[uint64]uint32{labelA: 32768},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{0, 1, 1},
+			counts: map[uint64]uint32{labelA: 32768},
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{1, 1, 1},
+			counts: map[uint64]uint32{labelA: 32768},
+		},
+	}
+	blocks := testGetVolumeBlocks(t, uuid, "labels", true, dvid.Point3d{128, 128, 128}, dvid.Point3d{0, 0, 0})
+	checkVoxels(t, blocks, blocksSplitB, blocksA)
+}
+
 func testSplitSupervoxel(t *testing.T, testEnclosing bool) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)

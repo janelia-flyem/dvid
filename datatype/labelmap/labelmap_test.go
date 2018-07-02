@@ -1270,6 +1270,56 @@ func testGetBlock(t *testing.T, uuid dvid.UUID, name string, bcoord dvid.Point3d
 	}
 }
 
+func testGetVolumeBlocks(t *testing.T, uuid dvid.UUID, name string, supervoxels bool, size, offset dvid.Point3d) []labels.PositionedBlock {
+	apiStr := fmt.Sprintf("%snode/%s/%s/blocks/%d_%d_%d/%d_%d_%d?compression=blocks&supervoxels=%t", server.WebAPIPath,
+		uuid, name, size[0], size[1], size[2], offset[0], offset[1], offset[2], supervoxels)
+	data := server.TestHTTP(t, "GET", apiStr, nil)
+
+	nx := size[0] / 64
+	ny := size[1] / 64
+	nz := size[2] / 64
+	numBlocks := int(nx * ny * nz)
+
+	var blocks []labels.PositionedBlock
+
+	b := 0
+	for {
+		if b+16 > len(data) {
+			t.Fatalf("Only got %d bytes back from block API call\n", len(data))
+		}
+		x := int32(binary.LittleEndian.Uint32(data[b : b+4]))
+		b += 4
+		y := int32(binary.LittleEndian.Uint32(data[b : b+4]))
+		b += 4
+		z := int32(binary.LittleEndian.Uint32(data[b : b+4]))
+		b += 4
+		n := int(binary.LittleEndian.Uint32(data[b : b+4]))
+		b += 4
+		bcoord := dvid.ChunkPoint3d{x, y, z}.ToIZYXString()
+
+		gzipIn := bytes.NewBuffer(data[b : b+n])
+		zr, err := gzip.NewReader(gzipIn)
+		if err != nil {
+			t.Fatalf("can't uncompress gzip block: %v\n", err)
+		}
+		uncompressed, err := ioutil.ReadAll(zr)
+		if err != nil {
+			t.Fatalf("can't uncompress gzip block: %v\n", err)
+		}
+		zr.Close()
+
+		var block labels.Block
+		if err = block.UnmarshalBinary(uncompressed); err != nil {
+			t.Fatalf("unable to deserialize label block (%d, %d, %d): %v\n", x, y, z, err)
+		}
+		blocks = append(blocks, labels.PositionedBlock{BCoord: bcoord, Block: block})
+		b += n
+		if len(blocks) == numBlocks {
+			break
+		}
+	}
+	return blocks
+}
 func TestPostBlocks(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)

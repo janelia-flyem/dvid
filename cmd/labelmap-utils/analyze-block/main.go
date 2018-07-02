@@ -117,57 +117,5 @@ func main() {
 		fmt.Printf("unable to deserialize label block (%d, %d, %d): %v\n", x, y, z, err)
 		os.Exit(1)
 	}
-	uint64array, size := block.MakeLabelVolume()
-	if !size.Equals(blockSize) {
-		fmt.Printf("got bad block size from deserialized block (%d, %d, %d): %s\n", x, y, z, size)
-		os.Exit(1)
-	}
-	ptInBlock := coord.Point3dInChunk(blockSize)
-	i := (ptInBlock[2]*width*width + ptInBlock[1]*width + ptInBlock[0]) * 8
-	label := binary.LittleEndian.Uint64(uint64array[i : i+8])
-	fmt.Printf("Coord %s, pt in block %s = label %d by direct lookup after inflation\n", coord, ptInBlock, label)
-	fmt.Printf("Coord %s, pt in block %s = label %d by using block.Value()\n", coord, ptInBlock, block.Value(ptInBlock))
-
-	counts := make(map[uint64]int, len(block.Labels))
-	for i := 0; i < len(uint64array); i += 8 {
-		label := binary.LittleEndian.Uint64(uint64array[i : i+8])
-		counts[label]++
-	}
-	for _, label := range block.Labels {
-		fmt.Printf("Label %10d: %d voxels\n", label, counts[label])
-	}
-	fmt.Printf("Block Size: %s\n", block.Size)
-
-	subBlocksPerDim := int(width) / labels.SubBlockSize
-	numSubBlocks := subBlocksPerDim * subBlocksPerDim * subBlocksPerDim
-	if len(block.NumSBLabels) != numSubBlocks {
-		fmt.Printf("Expected %d entries for number of sub-block indices but got %d instead!\n", numSubBlocks, len(block.NumSBLabels))
-		os.Exit(1)
-	}
-	if !*runVerbose {
-		os.Exit(0)
-	}
-	i = 0
-	sb := 0
-	for z := 0; z < subBlocksPerDim; z++ {
-		z0 := z * labels.SubBlockSize
-		z1 := z0 + labels.SubBlockSize - 1
-		for y := 0; y < subBlocksPerDim; y++ {
-			y0 := y * labels.SubBlockSize
-			y1 := y0 + labels.SubBlockSize - 1
-			for x := 0; x < subBlocksPerDim; x++ {
-				x0 := x * labels.SubBlockSize
-				x1 := x0 + labels.SubBlockSize - 1
-				fmt.Printf("(%2d-%2d, %2d-%2d, %2d-%2d) ", x0, x1, y0, y1, z0, z1)
-				for n := 0; n < int(block.NumSBLabels[sb]); n++ {
-					index := block.SBIndices[i]
-					label := block.Labels[index]
-					fmt.Printf("%d [%d]  ", block.SBIndices[i], label)
-					i++
-				}
-				fmt.Printf("\n")
-				sb++
-			}
-		}
-	}
+	fmt.Printf("%s\n", block.StringDump(*runVerbose))
 }

@@ -88,6 +88,30 @@ func BlockIndexToIZYXString(zyx uint64) dvid.IZYXString {
 	return dvid.ChunkPoint3d{x, y, z}.ToIZYXString()
 }
 
+// StringDump returns a description of the data within the Index.
+// If showMutationInfo is true, the mutation ID and information about
+// modification is also printed.
+func (idx Index) StringDump(showMutationInfo bool) string {
+	s := fmt.Sprintf("\nLabel: %d\n", idx.Label)
+	if showMutationInfo {
+		s += fmt.Sprintf("Last Mutation ID: %d\n", idx.LastMutId)
+		s += fmt.Sprintf("Last Modification Time: %s\n", idx.LastModTime)
+		s += fmt.Sprintf("Last Modification User: %s\n", idx.LastModUser)
+		s += fmt.Sprintf("Last Modification App:  %s\n\n", idx.LastModApp)
+	}
+
+	s += fmt.Sprintf("Total blocks: %d\n", len(idx.Blocks))
+	for zyx, svc := range idx.Blocks {
+		izyxStr := BlockIndexToIZYXString(zyx)
+		s += fmt.Sprintf("Block %s:\n", izyxStr)
+		for sv, count := range svc.Counts {
+			s += fmt.Sprintf("  Supervoxel %10d: %d voxels\n", sv, count)
+		}
+		s += fmt.Sprintf("\n")
+	}
+	return s
+}
+
 // NumVoxels returns the number of voxels for the Index.
 func (idx Index) NumVoxels() uint64 {
 	if len(idx.Blocks) == 0 {

@@ -468,8 +468,7 @@ func (pb PositionedBlock) SplitSupervoxels(rles dvid.RLEs, svsplits map[uint64]S
 		}
 	}
 
-	split, err = MakeBlock(lblarrayBytes, pb.Size)
-	return
+	return MakeBlock(lblarrayBytes, pb.Size)
 }
 
 // MakeSolidBlock returns a Block that represents a single label of the given block size.
@@ -1532,6 +1531,61 @@ func (b *Block) UnmarshalBinary(data []byte) error {
 	b.data = dvid.New8ByteAlignBytes(numBytes)
 	copy(b.data, data)
 	return b.setExportedVars()
+}
+
+// StringDump returns a string that lists pretty-printed data from the block.
+func (b Block) StringDump(verbose bool) string {
+	uint64array, size := b.MakeLabelVolume()
+	s := fmt.Sprintf("Block size: %s\n", size)
+	counts := make(map[uint64]int, len(b.Labels))
+	for i := 0; i < len(uint64array); i += 8 {
+		label := binary.LittleEndian.Uint64(uint64array[i : i+8])
+		counts[label]++
+	}
+	seen := make(Set)
+	for _, label := range b.Labels {
+		s += fmt.Sprintf("Label %10d: ", label)
+		if _, found := seen[label]; found {
+			s += fmt.Sprintf("duplicate\n")
+		} else {
+			s += fmt.Sprintf("%d voxels\n", counts[label])
+			seen[label] = struct{}{}
+		}
+	}
+
+	subBlocksPerDim := int(size[0]) / SubBlockSize
+	numSubBlocks := subBlocksPerDim * subBlocksPerDim * subBlocksPerDim
+	if len(b.NumSBLabels) != numSubBlocks {
+		s += fmt.Sprintf("Expected %d entries for number of sub-block indices but got %d instead!\n", numSubBlocks, len(b.NumSBLabels))
+		return s
+	}
+	if !verbose {
+		return s
+	}
+	i := 0
+	sb := 0
+	for z := 0; z < subBlocksPerDim; z++ {
+		z0 := z * SubBlockSize
+		z1 := z0 + SubBlockSize - 1
+		for y := 0; y < subBlocksPerDim; y++ {
+			y0 := y * SubBlockSize
+			y1 := y0 + SubBlockSize - 1
+			for x := 0; x < subBlocksPerDim; x++ {
+				x0 := x * SubBlockSize
+				x1 := x0 + SubBlockSize - 1
+				s += fmt.Sprintf("(%2d-%2d, %2d-%2d, %2d-%2d) ", x0, x1, y0, y1, z0, z1)
+				for n := 0; n < int(b.NumSBLabels[sb]); n++ {
+					index := b.SBIndices[i]
+					label := b.Labels[index]
+					s += fmt.Sprintf("%d [%d]  ", b.SBIndices[i], label)
+					i++
+				}
+				s += fmt.Sprintf("\n")
+				sb++
+			}
+		}
+	}
+	return s
 }
 
 // assumes b.data is set and we need to compute all other properties of a Block

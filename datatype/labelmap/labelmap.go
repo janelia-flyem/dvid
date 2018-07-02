@@ -241,8 +241,9 @@ GET  <api URL>/node/<UUID>/<data name>/specificblocks[?queryopts]
 	bytes for the value.  If blocks are unset within the span, they will not appear in the stream,
 	so the returned data will be equal to or less than spanX blocks worth of data.  
 
-    The returned data format has the following format where int32 is in little endian and the bytes of
-    block data have been compressed in JPEG format.
+	The returned data format has the following format where int32 is in little endian and the bytes 
+	of block data have been compressed in the desired output format, according to the specification 
+	in "compression" query string.
 
         int32  Block 1 coordinate X (Note that this may not be starting block coordinate if it is unset.)
         int32  Block 1 coordinate Y
@@ -2394,6 +2395,9 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 	// Only do voxel-based mutations one at a time.  This lets us remove handling for block-level concurrency.
 	d.voxelMu.Lock()
 	defer d.voxelMu.Unlock()
+
+	d.StartUpdate()
+	defer d.StopUpdate()
 
 	// extract buffer interface if it exists
 	var putbuffer storage.RequestBuffer

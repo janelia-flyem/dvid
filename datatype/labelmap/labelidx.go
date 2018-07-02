@@ -517,7 +517,12 @@ func (d *Data) splitSupervoxelIndex(v dvid.VersionID, info dvid.ModInfo, op labe
 			if found { // part of split
 				splitNumVoxels, _ := rles.Stats()
 				svc.Counts[op.SplitSupervoxel] = uint32(splitNumVoxels)
-				svc.Counts[op.RemainSupervoxel] = origNumVoxels - uint32(splitNumVoxels)
+				if splitNumVoxels > uint64(origNumVoxels) {
+					return nil, fmt.Errorf("tried to split %d voxels from supervoxel %d, but label index only has %d voxels", splitNumVoxels, op.Supervoxel, origNumVoxels)
+				}
+				if splitNumVoxels != uint64(origNumVoxels) {
+					svc.Counts[op.RemainSupervoxel] = origNumVoxels - uint32(splitNumVoxels)
+				}
 			} else { // part of remainder
 				svc.Counts[op.RemainSupervoxel] = origNumVoxels
 			}
@@ -541,42 +546,43 @@ func (d *Data) splitIndex(v dvid.VersionID, info dvid.ModInfo, op labels.SplitOp
 	sidx.Label = op.NewLabel
 	sidx.Blocks = make(map[uint64]*proto.SVCount, len(blockSplits))
 
-	for zyx, splitCounts := range blockSplits {
-		indexsvc, found := idx.Blocks[zyx]
-		if !found || indexsvc == nil || len(indexsvc.Counts) == 0 {
-			return fmt.Errorf("block %s was overwritten in split of label %d yet this block was not in the index", labels.BlockIndexToIZYXString(zyx), op.Target)
-		}
-		splitsvc := new(proto.SVCount)
-		splitsvc.Counts = make(map[uint64]uint32, len(splitCounts))
-		for supervoxel, svsplit := range splitCounts {
-			splitsvc.Counts[svsplit.Split] = svsplit.Voxels
-			numVoxels, found := indexsvc.Counts[supervoxel]
-			if !found {
-				return fmt.Errorf("block %s had %d voxels written over supervoxel %d in label %d split yet this supervoxel was not in the index", labels.BlockIndexToIZYXString(zyx), svsplit.Voxels, supervoxel, op.Target)
-			}
-			if numVoxels < svsplit.Voxels {
-				return fmt.Errorf("block %s had %d voxels written over supervoxel %d in label %d split yet this supervoxel only had %d voxels from index", labels.BlockIndexToIZYXString(zyx), svsplit.Voxels, supervoxel, op.Target, numVoxels)
-			}
-			numVoxels -= svsplit.Voxels
-			if numVoxels > 0 {
-				indexsvc.Counts[svsplit.Remain] = numVoxels
-			}
-			delete(indexsvc.Counts, supervoxel)
-		}
-		sidx.Blocks[zyx] = splitsvc
-	}
 	for zyx, indexsvc := range idx.Blocks {
-		if _, found := blockSplits[zyx]; found {
-			continue
+		splitCount, inSplitBlock := blockSplits[zyx]
+		var splitsvc *proto.SVCount
+		if inSplitBlock {
+			splitsvc = new(proto.SVCount)
+			splitsvc.Counts = make(map[uint64]uint32, len(splitCount))
 		}
-		for supervoxel, count := range indexsvc.Counts {
-			svsplit, found := op.SplitMap[supervoxel]
-			if found {
-				indexsvc.Counts[svsplit.Remain] = count
-				delete(indexsvc.Counts, supervoxel)
+		for supervoxel, svOrigCount := range indexsvc.Counts {
+			var svWasSplit bool
+			var svSplitCount labels.SVSplitCount
+			if inSplitBlock {
+				svSplitCount, svWasSplit = splitCount[supervoxel]
+				if svWasSplit {
+					if svSplitCount.Voxels > svOrigCount {
+						return fmt.Errorf("block %s had %d voxels written over supervoxel %d in label %d split yet this supervoxel only had %d voxels from index", labels.BlockIndexToIZYXString(zyx), svSplitCount.Voxels, supervoxel, op.Target, svOrigCount)
+					}
+					splitsvc.Counts[svSplitCount.Split] = svSplitCount.Voxels
+					if svOrigCount > svSplitCount.Voxels {
+						indexsvc.Counts[svSplitCount.Remain] = svOrigCount - svSplitCount.Voxels
+					}
+					delete(indexsvc.Counts, supervoxel)
+				}
+			}
+			if !svWasSplit {
+				// see if split anywhere
+				svsplit, found := op.SplitMap[supervoxel]
+				if found {
+					indexsvc.Counts[svsplit.Remain] = svOrigCount
+					delete(indexsvc.Counts, supervoxel)
+				}
 			}
 		}
+		if inSplitBlock {
+			sidx.Blocks[zyx] = splitsvc
+		}
 	}
+
 	if err := putCachedLabelIndex(d, v, idx); err != nil {
 		return fmt.Errorf("modify split index for data %q, label %d: %v", d.DataName(), op.Target, err)
 	}
