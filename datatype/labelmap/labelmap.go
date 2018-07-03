@@ -2445,10 +2445,10 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 			if err := datastore.NotifySubscribers(evt, msg); err != nil {
 				dvid.Errorf("Unable to notify subscribers of event %s in %s\n", event, d.DataName())
 			}
-		}
-		if downscale {
-			if err := downresMut.BlockMutated(bcoord, block); err != nil {
-				dvid.Errorf("data %q publishing downres: %v\n", d.DataName(), err)
+			if downscale {
+				if err := downresMut.BlockMutated(bcoord, block); err != nil {
+					dvid.Errorf("data %q publishing downres: %v\n", d.DataName(), err)
+				}
 			}
 		}
 
@@ -3354,7 +3354,7 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 		if err := d.ReceiveBlocks(ctx, r.Body, scale, downscale, compression, indexing); err != nil {
 			server.BadRequest(w, r, err)
 		}
-		timedLog.Infof("HTTP POST blocks, indexing = %t (%s)", indexing, r.URL)
+		timedLog.Infof("HTTP POST blocks, indexing = %t, downscale = %t (%s)", indexing, downscale, r.URL)
 	}
 }
 

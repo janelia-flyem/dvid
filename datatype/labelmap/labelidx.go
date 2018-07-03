@@ -581,6 +581,9 @@ func (d *Data) splitIndex(v dvid.VersionID, info dvid.ModInfo, op labels.SplitOp
 		if inSplitBlock {
 			sidx.Blocks[zyx] = splitsvc
 		}
+		if len(indexsvc.Counts) == 0 {
+			delete(idx.Blocks, zyx)
+		}
 	}
 
 	if err := putCachedLabelIndex(d, v, idx); err != nil {

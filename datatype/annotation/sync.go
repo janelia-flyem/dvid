@@ -406,7 +406,6 @@ func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, chunkPt dvid.ChunkPoint3
 	batch := batcher.NewBatch(ctx)
 
 	// Iterate through all element positions, finding corresponding label and storing elements.
-	lmapData := d.getMappedLabelData()
 	added := 0
 	toAdd := LabelElements{}
 	for n := range elems {
@@ -414,13 +413,11 @@ func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, chunkPt dvid.ChunkPoint3
 		i := (pt[2]*blockSize[1]+pt[1])*blockSize[0]*8 + pt[0]*8
 		label := binary.LittleEndian.Uint64(data[i : i+8])
 		if label != 0 {
-			if lmapData != nil && elems[n].Supervoxel != label {
-				elems[n].Supervoxel = label
-			}
 			toAdd.add(label, elems[n].ElementNR)
 			added++
 		}
 	}
+	lmapData := d.getMappedLabelData()
 	if lmapData != nil {
 		toAdd, err = toAdd.applyMapping(lmapData, ctx.VersionID(), true)
 		if err != nil {
@@ -915,7 +912,7 @@ func (d *Data) splitMappedLabels(batcher storage.KeyValueBatcher, lmapData mappe
 		return err
 	}
 
-	// for each element, see if it's in the split area and if so, change supervoxel to split id.
+	// for each element, see if it's in the split area and if so, change supervoxels
 	var curModified bool
 	var delta DeltaModifyElements
 	toAdd := ElementsNR{}

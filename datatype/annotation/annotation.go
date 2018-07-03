@@ -485,13 +485,14 @@ func (t Tags) Swap(i, j int) {
 }
 
 // ElementNR describes a synaptic element's properties with No Relationships (NR),
-// used purely for label and tag annotations.
+// used for label and tag annotations while block-indexed annotations include the
+// relationships.
 type ElementNR struct {
 	Pos        dvid.Point3d
 	Kind       ElementType
 	Tags       Tags              // Indexed
 	Prop       map[string]string // Non-Indexed
-	Supervoxel uint64            // only used when synced with supervoxel-aware datatypes like labelmap
+	Supervoxel uint64            // only used when synced with supervoxel-aware datatypes like labelmap and then only present in the label-indexed annotations
 }
 
 func (e ElementNR) String() string {
@@ -1433,7 +1434,7 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 		}
 	}
 
-	// If synced with a mapped label type, adjust the labels and add supervoxels to each element.
+	// If synced with a mapped label type, add supervoxels to each element.
 	if lmapData != nil {
 		var err error
 		toAdd, err = toAdd.applyMapping(lmapData, ctx.VersionID(), false)
