@@ -296,12 +296,6 @@ func (d *Data) splitPass1(ctx *datastore.VersionedCtx, splitmap dvid.BlockRLEs, 
 		}
 	}
 
-	targetChunk := dvid.ChunkPoint3d{498, 465, 274}
-	targetzyx, _ := labels.IZYXStringToBlockIndex(targetChunk.ToIZYXString())
-	svc, _ := blockSplits[targetzyx]
-	dvid.Infof("Pass 1 stats on %s: %v\n", targetChunk, svc)
-	dvid.Infof("svsplits: %v\n", svsplit.Splits)
-
 	timedLog.Debugf("split pass 1 completed: %d blocks with %d errors (max queue %d/%d)\n", numBlocks, numErr, maxQueue, len(splitblks))
 	return blockSplits, svsplit, lastErr
 }
@@ -363,9 +357,6 @@ func (d *Data) modifyBlocks(ctx *datastore.VersionedCtx, downresMut *downres.Mut
 		switch m := mod.(type) {
 		case headerMod:
 			bcoord = m.bcoord
-			if bcoord == (dvid.ChunkPoint3d{109, 427, 409}).ToIZYXString() {
-				dvid.Infof("Block %s replacing header using mapping: %v\n", bcoord, m.mapping)
-			}
 			block, _, err = m.pb.ReplaceLabels(m.mapping)
 			if err != nil {
 				errCh <- fmt.Errorf("issue with header modification, block %s: %v", bcoord, err)
@@ -373,9 +364,6 @@ func (d *Data) modifyBlocks(ctx *datastore.VersionedCtx, downresMut *downres.Mut
 			}
 		case voxelMod:
 			bcoord = m.bcoord
-			if bcoord == (dvid.ChunkPoint3d{109, 427, 409}).ToIZYXString() {
-				dvid.Infof("Block %s doing full rewrite using svsplits: %v\n", bcoord, m.svsplits)
-			}
 			block, err = m.pb.SplitSupervoxels(m.split, m.svsplits)
 			if err != nil {
 				errCh <- fmt.Errorf("issue with voxel modification, block %s: %v", bcoord, err)
