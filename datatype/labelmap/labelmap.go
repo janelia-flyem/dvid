@@ -2502,6 +2502,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 	if blockCh != nil {
 		close(blockCh)
 	}
+	processWG.Wait()
 
 	if extentsChanged {
 		if err := d.PostExtents(ctx, extents.StartPoint(), extents.EndPoint()); err != nil {
@@ -2518,7 +2519,6 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 			return err
 		}
 	}
-	processWG.Wait()
 	timedLog.Infof("Received and stored %d blocks for labelmap %q", numBlocks, d.DataName())
 	return nil
 }
@@ -4467,7 +4467,7 @@ func (d *Data) GetLabelAtScaledPoint(v dvid.VersionID, pt dvid.Point, scale uint
 
 // The following functions implement an interface to synced data types like annotation.
 
-// GetLabelBytes returns a block of hi-res labels (scale 0) in packed little-endian uint64 format
+// GetLabelBytes returns a block of hi-res (body) labels (scale 0) in packed little-endian uint64 format
 func (d *Data) GetLabelBytes(v dvid.VersionID, bcoord dvid.ChunkPoint3d) ([]byte, error) {
 	return d.GetLabelBytesWithScale(v, bcoord, 0, false)
 }

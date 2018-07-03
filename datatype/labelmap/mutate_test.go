@@ -1243,6 +1243,12 @@ func TestArbitrarySplit(t *testing.T) {
 			split = append(split, dvid.NewRLE(dvid.Point3d{x, y, z}, 40))
 		}
 	}
+	x = 50  // 10 x 10 x 10 notch in (0, 1, 0) block just in LabelA area
+	for z = 32; z < 42; z++ {
+		for y = 64; y < 74; y++ {
+			split = append(split, dvid.NewRLE(dvid.Point3d{x, y, z}, 10))
+		}
+	}
 	x = 80
 	for z = 32; z < 48; z++ {
 		for y = 64; y < 100; y++ {
@@ -1327,6 +1333,10 @@ func TestArbitrarySplit(t *testing.T) {
 			counts: map[uint64]uint32{labelSplitA: 32768},
 		},
 		{
+			bcoord: dvid.ChunkPoint3d{0, 1, 0},
+			counts: map[uint64]uint32{labelSplitA: 1000},
+		},
+		{
 			bcoord: dvid.ChunkPoint3d{1, 1, 0},
 			counts: map[uint64]uint32{labelSplitA: 4096, labelSplitB: 512},
 		},
@@ -1352,7 +1362,7 @@ func TestArbitrarySplit(t *testing.T) {
 		},
 		{
 			bcoord: dvid.ChunkPoint3d{0, 1, 0},
-			counts: map[uint64]uint32{labelRemainA: 32768, labelRemainB: 16384},
+			counts: map[uint64]uint32{labelRemainA: 31768, labelRemainB: 16384},
 		},
 		{
 			bcoord: dvid.ChunkPoint3d{1, 1, 0},

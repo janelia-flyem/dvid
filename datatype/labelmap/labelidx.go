@@ -546,12 +546,16 @@ func (d *Data) splitIndex(v dvid.VersionID, info dvid.ModInfo, op labels.SplitOp
 	sidx.Label = op.NewLabel
 	sidx.Blocks = make(map[uint64]*proto.SVCount, len(blockSplits))
 
+	tzyx, _ := labels.IZYXStringToBlockIndex((dvid.ChunkPoint3d{109, 427, 409}).ToIZYXString())
 	for zyx, indexsvc := range idx.Blocks {
 		splitCount, inSplitBlock := blockSplits[zyx]
 		var splitsvc *proto.SVCount
 		if inSplitBlock {
 			splitsvc = new(proto.SVCount)
 			splitsvc.Counts = make(map[uint64]uint32, len(splitCount))
+		}
+		if tzyx == zyx {
+			fmt.Printf("inSplitBlock %t, split count %v, index count %v\n", inSplitBlock, splitCount, indexsvc.Counts)
 		}
 		for supervoxel, svOrigCount := range indexsvc.Counts {
 			var svWasSplit bool
@@ -580,6 +584,10 @@ func (d *Data) splitIndex(v dvid.VersionID, info dvid.ModInfo, op labels.SplitOp
 		}
 		if inSplitBlock {
 			sidx.Blocks[zyx] = splitsvc
+		}
+		if tzyx == zyx {
+			fmt.Printf("indexsvc: %v\n", indexsvc.Counts)
+			fmt.Printf("splitsvc: %v\n", splitsvc.Counts)
 		}
 	}
 
@@ -671,9 +679,15 @@ func (d *Data) aggregateBlockChanges(v dvid.VersionID, svmap *SVMap, ch <-chan b
 		}
 	}()
 	if d.IndexedLabels {
+		dvid.Infof("Changing label indices for %d labels...\n", len(labelset))
+		i := 0
 		for label := range labelset {
 			if err := ChangeLabelIndex(d, v, label, svChanges); err != nil {
 				dvid.Errorf("indexing label %d: %v\n", label, err)
+			}
+			i++
+			if i%100 == 0 {
+				dvid.Infof("Changed %d of %d label indices for this mutation.\n", i, len(labelset)+1)
 			}
 		}
 	}

@@ -350,7 +350,7 @@ type headerMod struct {
 type voxelMod struct {
 	bcoord   dvid.IZYXString
 	split    dvid.RLEs
-	svsplits map[uint64]labels.SVSplitCount
+	svsplits map[uint64]labels.SVSplit
 	pb       *labels.PositionedBlock
 }
 
@@ -363,6 +363,9 @@ func (d *Data) modifyBlocks(ctx *datastore.VersionedCtx, downresMut *downres.Mut
 		switch m := mod.(type) {
 		case headerMod:
 			bcoord = m.bcoord
+			if bcoord == (dvid.ChunkPoint3d{109, 427, 409}).ToIZYXString() {
+				dvid.Infof("Block %s replacing header using mapping: %v\n", bcoord, m.mapping)
+			}
 			block, _, err = m.pb.ReplaceLabels(m.mapping)
 			if err != nil {
 				errCh <- fmt.Errorf("issue with header modification, block %s: %v", bcoord, err)
@@ -370,6 +373,9 @@ func (d *Data) modifyBlocks(ctx *datastore.VersionedCtx, downresMut *downres.Mut
 			}
 		case voxelMod:
 			bcoord = m.bcoord
+			if bcoord == (dvid.ChunkPoint3d{109, 427, 409}).ToIZYXString() {
+				dvid.Infof("Block %s doing full rewrite using svsplits: %v\n", bcoord, m.svsplits)
+			}
 			block, err = m.pb.SplitSupervoxels(m.split, m.svsplits)
 			if err != nil {
 				errCh <- fmt.Errorf("issue with voxel modification, block %s: %v", bcoord, err)
@@ -438,7 +444,7 @@ func (d *Data) splitPass2(ctx *datastore.VersionedCtx, downresMut *downres.Mutat
 				modCh <- headerMod{bcoord: izyxStr, mapping: mapping, pb: pb}
 			} else {
 				numVoxelMod++
-				modCh <- voxelMod{bcoord: izyxStr, split: splitRLEs, svsplits: bsvc, pb: pb}
+				modCh <- voxelMod{bcoord: izyxStr, split: splitRLEs, svsplits: svsplits, pb: pb}
 			}
 		} else {
 			mapping, affected := checkNonsplitBlockAffected(svsplits, isvc)

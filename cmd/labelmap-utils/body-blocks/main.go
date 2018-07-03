@@ -19,6 +19,8 @@ Store compressed label blocks that cover a given body into a file
 
 Usage: body-blocks [options] <server> <uuid> <instance name> <label>
 
+Example: body-blocks emdata3:8900 662ed segmentation 1539193374
+
       -filename    (string)  File to store retrieved block stream.  Default is body-<label>.dat
       -supervoxels (flag)    Store raw blocks without mapping to body labels.
       -verbose     (flag)    Run in verbose mode.

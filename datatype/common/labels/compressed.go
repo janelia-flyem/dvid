@@ -433,7 +433,7 @@ func (pb PositionedBlock) SplitSupervoxel(op SplitSupervoxelOp) (split *Block, k
 
 // SplitSupervoxels replaces all split supervoxels in a block with either a split label or a
 // remain label depending on whether it falls under the split RLEs.
-func (pb PositionedBlock) SplitSupervoxels(rles dvid.RLEs, svsplits map[uint64]SVSplitCount) (split *Block, err error) {
+func (pb PositionedBlock) SplitSupervoxels(rles dvid.RLEs, svsplits map[uint64]SVSplit) (split *Block, err error) {
 	var offset dvid.Point3d
 	if offset, err = pb.OffsetDVID(); err != nil {
 		return

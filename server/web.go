@@ -487,10 +487,10 @@ const (
 	WebAPIPath = "/api/" + WebAPIVersion
 
 	// WriteTimeout is the maximum time in seconds DVID will wait to write data down HTTP connection.
-	WriteTimeout = 300 * time.Second
+	WriteTimeout = 600 * time.Second
 
 	// ReadTimeout is the maximum time in seconds DVID will wait to read data from HTTP connection.
-	ReadTimeout = 300 * time.Second
+	ReadTimeout = 600 * time.Second
 )
 
 var (
