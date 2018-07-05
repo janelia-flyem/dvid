@@ -15,6 +15,8 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
+// ElementPos describes the label and kind of an annotation, useful for synchronizing
+// changes in data to other data types like labelsz.
 type ElementPos struct {
 	Label uint64
 	Kind  ElementType
@@ -55,48 +57,6 @@ func (le LabelElements) add(label uint64, elem ElementNR) {
 	} else {
 		le[label] = ElementsNR{elem}
 	}
-}
-
-func (le LabelElements) applyMapping(d mappedLabelType, v dvid.VersionID, setSupervoxels bool) (LabelElements, error) {
-	supervoxels := make([]uint64, len(le))
-	i := 0
-	for supervoxel := range le {
-		supervoxels[i] = supervoxel
-		i++
-	}
-	mapped, err := d.GetMappedLabels(v, supervoxels)
-	if err != nil {
-		return nil, err
-	}
-	mapping := make(map[uint64]uint64, len(mapped))
-	for i, supervoxel := range supervoxels {
-		mapping[supervoxel] = mapped[i]
-	}
-	mappedAdd := make(LabelElements, len(le))
-	for supervoxel, elems := range le {
-		elemsCopy := make(ElementsNR, len(elems))
-		copy(elemsCopy, elems)
-		if setSupervoxels {
-			for _, elem := range elemsCopy {
-				elem.Supervoxel = supervoxel
-			}
-		}
-		mappedAdd[supervoxel] = elemsCopy
-	}
-	for supervoxel, elems := range le {
-		body := mapping[supervoxel]
-		if body != supervoxel {
-			mappedElems, found := mappedAdd[body]
-			if found {
-				mappedAdd[body] = append(mappedElems, elems...)
-			} else {
-				mappedElems = elems
-			}
-			mappedAdd[body] = mappedElems
-			delete(mappedAdd, supervoxel)
-		}
-	}
-	return mappedAdd, nil
 }
 
 type LabelPoints map[uint64][]dvid.Point3d
@@ -237,11 +197,12 @@ func (d *Data) GetSyncSubs(synced dvid.Data) (subs datastore.SyncSubs, err error
 				Notify: d.DataUUID(),
 				Ch:     d.syncCh,
 			},
-			datastore.SyncSub{
-				Event:  datastore.SyncEvent{synced.DataUUID(), labels.SupervoxelSplitEvent},
-				Notify: d.DataUUID(),
-				Ch:     d.syncCh,
-			},
+			// --- supervoxel split does not change labels of a point, so ignored
+			// datastore.SyncSub{
+			// 	Event:  datastore.SyncEvent{synced.DataUUID(), labels.SupervoxelSplitEvent},
+			// 	Notify: d.DataUUID(),
+			// 	Ch:     d.syncCh,
+			// },
 			datastore.SyncSub{
 				Event:  datastore.SyncEvent{synced.DataUUID(), labels.CleaveLabelEvent},
 				Notify: d.DataUUID(),
@@ -343,16 +304,10 @@ func (d *Data) handleSyncMessage(ctx *datastore.VersionedCtx, msg datastore.Sync
 			}
 			return
 		}
-		lmapData := d.getMappedLabelData()
-		if lmapData == nil {
-			if err := d.splitLabels(batcher, msg.Version, delta); err != nil {
-				dvid.Errorf("error on splitting labels for data %q: %v\n", d.DataName(), err)
-			}
-			return
+		if err := d.splitLabels(batcher, msg.Version, delta); err != nil {
+			dvid.Errorf("error on splitting labels for data %q: %v\n", d.DataName(), err)
 		}
-		if err := d.splitMappedLabels(batcher, lmapData, msg.Version, delta); err != nil {
-			dvid.Errorf("error on splitting mapped labels for data %q: %v\n", d.DataName(), err)
-		}
+		return
 
 	case labels.CleaveOp:
 		if err := d.cleaveLabels(batcher, msg.Version, delta); err != nil {
@@ -360,28 +315,9 @@ func (d *Data) handleSyncMessage(ctx *datastore.VersionedCtx, msg datastore.Sync
 			return
 		}
 
-	case labels.SplitSupervoxelOp:
-		if err := d.supervoxelSplit(batcher, msg.Version, delta); err != nil {
-			dvid.Errorf("error on supervoxel split for data %q: %v\n", d.DataName(), err)
-			return
-		}
-
 	default:
 		dvid.Criticalf("Got unexpected delta: %v\n", msg)
 	}
-}
-
-func (d *Data) getMappedLabelData() mappedLabelType {
-	var lmapData mappedLabelType
-	labelData := d.getSyncedLabels()
-	if labelData != nil {
-		var ok bool
-		lmapData, ok = labelData.(mappedLabelType)
-		if !ok {
-			lmapData = nil
-		}
-	}
-	return lmapData
 }
 
 // If a block of labels is ingested, adjust each label's synaptic element list.
@@ -415,13 +351,6 @@ func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, chunkPt dvid.ChunkPoint3
 		if label != 0 {
 			toAdd.add(label, elems[n].ElementNR)
 			added++
-		}
-	}
-	lmapData := d.getMappedLabelData()
-	if lmapData != nil {
-		toAdd, err = toAdd.applyMapping(lmapData, ctx.VersionID(), true)
-		if err != nil {
-			dvid.Errorf("unable to applying label mapping from synced labelmap %q: %v\n", lmapData.DataName(), err)
 		}
 	}
 
@@ -484,7 +413,6 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, chunkPt dvid.ChunkPoint3
 
 	// Iterate through all element positions, finding corresponding label and storing elements.
 	var delta DeltaModifyElements
-	lmapData := d.getMappedLabelData()
 	labels := make(map[uint64]struct{})
 	toAdd := LabelElements{}
 	toDel := LabelPoints{}
@@ -495,19 +423,6 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, chunkPt dvid.ChunkPoint3
 		var old uint64
 		if len(prev) != 0 {
 			old = binary.LittleEndian.Uint64(prev[i : i+8])
-		}
-		if lmapData != nil {
-			if elems[n].Supervoxel != label {
-				elems[n].Supervoxel = label
-			}
-			supervoxels := []uint64{label, old}
-			mapped, err := lmapData.GetMappedLabels(ctx.VersionID(), supervoxels)
-			if err != nil {
-				dvid.Errorf("mutateBlock had problem with synced labelmap, annotations %q will be wrong: %v\n", d.DataName(), err)
-			} else {
-				label = mapped[0]
-				old = mapped[1]
-			}
 		}
 		if label != 0 {
 			toAdd.add(label, elems[n].ElementNR)
@@ -617,6 +532,58 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 	return nil
 }
 
+// group the given elements into labels based on associated label data.  This can be used on all of a current
+// label's elements after a cleave since the RLEs are not known.
+func (d *Data) relabelElements(v dvid.VersionID, target uint64, blockElems map[dvid.IZYXString]ElementsNR) (labelElems LabelElements, delta DeltaModifyElements, err error) {
+	labelData := d.getSyncedLabels()
+	if labelData == nil {
+		err = fmt.Errorf("no synced labels for annotation %q, skipping label-aware denormalization", d.DataName())
+		return
+	}
+	blockSize := d.blockSize()
+	bX := blockSize[0] * 8
+	bY := blockSize[1] * bX
+	blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * 8)
+
+	labelElems = LabelElements{}
+	for izyxStr, elems := range blockElems {
+		var bcoord dvid.ChunkPoint3d
+		bcoord, err = izyxStr.ToChunkPoint3d()
+		if err != nil {
+			return
+		}
+
+		// Get the labels for this block
+		var labels []byte
+		labels, err = labelData.GetLabelBytes(v, bcoord)
+		if err != nil {
+			return
+		}
+		if len(labels) == 0 {
+			continue
+		}
+		if len(labels) != blockBytes {
+			err = fmt.Errorf("expected %d bytes in %q label block, got %d instead.  aborting", blockBytes, d.DataName(), len(labels))
+			return
+		}
+
+		// Group annotations by label
+		for _, elem := range elems {
+			pt := elem.Pos.Point3dInChunk(blockSize)
+			i := pt[2]*bY + pt[1]*bX + pt[0]*8
+			label := binary.LittleEndian.Uint64(labels[i : i+8])
+			if label != target {
+				delta.Del = append(delta.Del, ElementPos{Label: target, Kind: elem.Kind, Pos: elem.Pos})
+				delta.Add = append(delta.Add, ElementPos{Label: label, Kind: elem.Kind, Pos: elem.Pos})
+			}
+			if label != 0 {
+				labelElems.add(label, elem)
+			}
+		}
+	}
+	return
+}
+
 func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op labels.CleaveOp) error {
 	d.Lock()
 	defer d.Unlock()
@@ -625,82 +592,43 @@ func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, o
 	defer d.StopUpdate()
 
 	ctx := datastore.NewVersionedCtx(d, v)
-	batch := batcher.NewBatch(ctx)
-
-	// Get the elements for the target label.
 	oldTk := NewLabelTKey(op.Target)
-	oldElems, err := getElementsNR(ctx, oldTk)
+	blockElems, err := getBlockElementsNR(ctx, oldTk, d.blockSize())
 	if err != nil {
-		return fmt.Errorf("unable to get annotations for instance %q, label %d in syncSplit: %v", d.DataName(), op.Target, err)
+		return err
 	}
-
-	cleaved := make(labels.Set)
-	for _, supervoxel := range op.CleavedSupervoxels {
-		cleaved[supervoxel] = struct{}{}
-	}
-
-	// Iterate through all the old elements and if it has a cleaved supervoxel, move it to new label.
-	var delta DeltaModifyElements
-	toDel := make(map[int]struct{})
-	toAdd := ElementsNR{}
-	for i, elem := range oldElems {
-		s := fmt.Sprintf("%s", elem)
-		if _, found := cleaved[elem.Supervoxel]; found {
-			s += fmt.Sprintf(" was in cleaved supervoxel %d, moved from label %d to label %d", elem.Supervoxel, op.Target, op.CleavedLabel)
-			toDel[i] = struct{}{}
-			toAdd = append(toAdd, elem)
-
-			// for downstream annotation syncs like labelsz.  TODO: only perform if subscribed.  Better: do ROI filtering here.
-			delta.Del = append(delta.Del, ElementPos{Label: op.Target, Kind: elem.Kind, Pos: elem.Pos})
-			delta.Add = append(delta.Add, ElementPos{Label: op.CleavedLabel, Kind: elem.Kind, Pos: elem.Pos})
-		}
-	}
-	if len(toDel) == 0 {
-		return nil
-	}
-
-	// Store cleaved elements into new label elements.
-	newTk := NewLabelTKey(op.CleavedLabel)
-	newElems, err := getElementsNR(ctx, newTk)
+	labelElements, delta, err := d.relabelElements(v, op.Target, blockElems)
 	if err != nil {
-		return fmt.Errorf("unable to get annotations for instance %q, label %d in sync of cleave: %v", d.DataName(), op.CleavedLabel, err)
-	}
-	newElems.add(toAdd)
-	val, err := json.Marshal(newElems)
-	if err != nil {
-		return fmt.Errorf("couldn't serialize annotation elements in instance %q: %v", d.DataName(), err)
-	}
-	batch.Put(newTk, val)
-
-	// Delete any cleave from old label elements without removing the relationships.
-	// This filters without allocating, using fact that a slice shares the same backing array and
-	// capacity as the original, so storage is reused.
-	filtered := oldElems[:0]
-	for i, elem := range oldElems {
-		if _, found := toDel[i]; !found {
-			filtered = append(filtered, elem)
-		}
+		return err
 	}
 
-	// Delete or store k/v depending on what remains.
-	if len(filtered) == 0 {
-		batch.Delete(oldTk)
-	} else {
-		val, err := json.Marshal(filtered)
+	// Write the new label-indexed denormalizations
+	batch := batcher.NewBatch(ctx)
+	for label, elems := range labelElements {
+		labelTKey := NewLabelTKey(label)
+		val, err := json.Marshal(elems)
 		if err != nil {
-			return fmt.Errorf("couldn't serialize annotation elements in instance %q: %v", d.DataName(), err)
+			return fmt.Errorf("couldn't serialize annotation elements for label %d in instance %q: %v", label, d.DataName(), err)
 		}
-		batch.Put(oldTk, val)
+		batch.Put(labelTKey, val)
 	}
+
+	// Handle case of a completely removed label
+	if _, found := labelElements[op.Target]; !found {
+		batch.Delete(NewLabelTKey(op.Target))
+	}
+
 	if err := batch.Commit(); err != nil {
 		return fmt.Errorf("bad commit in annotations %q after split: %v", d.DataName(), err)
 	}
 
 	// Notify any subscribers of label annotation changes.
-	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
-	msg := datastore.SyncMessage{Event: ModifyElementsEvent, Version: ctx.VersionID(), Delta: delta}
-	if err := datastore.NotifySubscribers(evt, msg); err != nil {
-		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
+	if len(delta.Add) != 0 || len(delta.Del) != 0 {
+		evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
+		msg := datastore.SyncMessage{Event: ModifyElementsEvent, Version: ctx.VersionID(), Delta: delta}
+		if err := datastore.NotifySubscribers(evt, msg); err != nil {
+			dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
+		}
 	}
 	return nil
 }
@@ -893,165 +821,4 @@ func (d *Data) splitLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
 	}
 	return nil
-}
-
-func (d *Data) splitMappedLabels(batcher storage.KeyValueBatcher, lmapData mappedLabelType, v dvid.VersionID, op labels.DeltaSplit) error {
-	d.Lock()
-	defer d.Unlock()
-
-	d.StartUpdate()
-	defer d.StopUpdate()
-
-	ctx := datastore.NewVersionedCtx(d, v)
-	batch := batcher.NewBatch(ctx)
-
-	// get the elements for label being split
-	oldTk := NewLabelTKey(op.OldLabel)
-	elems, err := getElementsNR(ctx, oldTk)
-	if err != nil {
-		return err
-	}
-
-	// for each element, see if it's in the split area and if so, change supervoxels
-	var curModified bool
-	var delta DeltaModifyElements
-	toAdd := ElementsNR{}
-	toDel := make(map[string]struct{})
-	blockSize := d.blockSize()
-	for n, elem := range elems {
-		supervoxel, err := d.getSupervoxelAtPoint(v, elem.Pos)
-		if err != nil {
-			return err
-		}
-		izyxStr := elem.Pos.ToBlockIZYXString(blockSize)
-		var wasSplit bool
-		rles, found := op.Split[izyxStr]
-		if found {
-			for _, rle := range rles {
-				if rle.Within(elem.Pos) {
-					wasSplit = true
-					elems[n].Supervoxel = supervoxel
-					toAdd = append(toAdd, elems[n])
-					toDel[elem.Pos.String()] = struct{}{}
-					curModified = true
-
-					// for downstream annotation syncs like labelsz.  TODO: only perform if subscribed.  Better: do ROI filtering here.
-					delta.Del = append(delta.Del, ElementPos{Label: op.OldLabel, Kind: elem.Kind, Pos: elem.Pos})
-					delta.Add = append(delta.Add, ElementPos{Label: op.NewLabel, Kind: elem.Kind, Pos: elem.Pos})
-					break
-				}
-			}
-		}
-		if !wasSplit {
-			curModified = true
-			elems[n].Supervoxel = supervoxel
-		}
-	}
-	// Modify the old label k/v
-	if curModified {
-		filtered := elems[:0]
-		for _, elem := range elems {
-			if _, found := toDel[elem.Pos.String()]; !found {
-				filtered = append(filtered, elem)
-			}
-		}
-		if len(filtered) == 0 {
-			batch.Delete(oldTk)
-		} else {
-			val, err := json.Marshal(filtered)
-			if err != nil {
-				dvid.Errorf("couldn't serialize annotation elements in instance %q: %v\n", d.DataName(), err)
-			} else {
-				batch.Put(oldTk, val)
-			}
-		}
-	}
-
-	// Modify the new label k/v
-	if len(toAdd) != 0 {
-		tk := NewLabelTKey(op.NewLabel)
-		elems, err := getElementsNR(ctx, tk)
-		if err != nil {
-			dvid.Errorf("unable to get annotations for instance %q, label %d in syncSplit: %v\n", d.DataName(), op.NewLabel, err)
-		} else {
-			elems.add(toAdd)
-			val, err := json.Marshal(elems)
-			if err != nil {
-				dvid.Errorf("couldn't serialize annotation elements in instance %q: %v\n", d.DataName(), err)
-			} else {
-				batch.Put(tk, val)
-			}
-		}
-	}
-
-	if err := batch.Commit(); err != nil {
-		return fmt.Errorf("bad commit in annotations %q after split: %v", d.DataName(), err)
-	}
-
-	// Notify any subscribers of label annotation changes.
-	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
-	msg := datastore.SyncMessage{Event: ModifyElementsEvent, Version: ctx.VersionID(), Delta: delta}
-	if err := datastore.NotifySubscribers(evt, msg); err != nil {
-		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
-	}
-	return nil
-}
-
-func (d *Data) supervoxelSplit(batcher storage.KeyValueBatcher, v dvid.VersionID, op labels.SplitSupervoxelOp) error {
-	labelData := d.getSyncedLabels()
-	if labelData == nil {
-		return fmt.Errorf("no synced labels for annotation %q, skipping supervoxel split", d.DataName())
-	}
-	lmapData, ok := labelData.(mappedLabelType)
-	if !ok {
-		lmapData = nil
-	}
-	supervoxels := []uint64{op.Supervoxel, op.SplitSupervoxel, op.RemainSupervoxel}
-	mapped, err := lmapData.GetMappedLabels(v, supervoxels)
-	if err != nil {
-		return fmt.Errorf("unable to get label for supervoxel %d, skipping supervoxel split sync for annotation %q", op.Supervoxel, d.DataName())
-	}
-	// no matter if this is reached before or after mapping is altered, one of these should be mapped.
-	var label uint64
-	for _, supervoxel := range mapped {
-		if supervoxel != 0 {
-			label = supervoxel
-			break
-		}
-	}
-
-	d.Lock()
-	defer d.Unlock()
-
-	d.StartUpdate()
-	defer d.StopUpdate()
-
-	ctx := datastore.NewVersionedCtx(d, v)
-	oldTk := NewLabelTKey(label)
-	elems, err := getElementsNR(ctx, oldTk)
-	if err != nil {
-		return err
-	}
-
-	// for each element, see if it's in the affected supervoxel and if so, change supervoxel.
-	blockSize := d.blockSize()
-	for n, elem := range elems {
-		izyxStr := elem.Pos.ToBlockIZYXString(blockSize)
-		var inSplit bool
-		rles, found := op.Split[izyxStr]
-		if found {
-			for _, rle := range rles {
-				if rle.Within(elem.Pos) {
-					inSplit = true
-					elems[n].Supervoxel = op.SplitSupervoxel
-					break
-				}
-			}
-		}
-		if !inSplit {
-			elems[n].Supervoxel = op.RemainSupervoxel
-		}
-	}
-
-	return putElements(ctx, oldTk, elems)
 }

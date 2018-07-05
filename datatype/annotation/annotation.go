@@ -488,16 +488,15 @@ func (t Tags) Swap(i, j int) {
 // used for label and tag annotations while block-indexed annotations include the
 // relationships.
 type ElementNR struct {
-	Pos        dvid.Point3d
-	Kind       ElementType
-	Tags       Tags              // Indexed
-	Prop       map[string]string // Non-Indexed
-	Supervoxel uint64            // only used when synced with supervoxel-aware datatypes like labelmap and then only present in the label-indexed annotations
+	Pos  dvid.Point3d
+	Kind ElementType
+	Tags Tags              // Indexed
+	Prop map[string]string // Non-Indexed
 }
 
 func (e ElementNR) String() string {
 	s := fmt.Sprintf("Pos %s; Kind: %s; ", e.Pos, e.Kind)
-	s += fmt.Sprintf("Tags: %v; Prop: %v; Supervoxel %d", e.Tags, e.Prop, e.Supervoxel)
+	s += fmt.Sprintf("Tags: %v; Prop: %v", e.Tags, e.Prop)
 	return s
 }
 
@@ -505,7 +504,6 @@ func (e ElementNR) Copy() *ElementNR {
 	c := new(ElementNR)
 	c.Pos = e.Pos
 	c.Kind = e.Kind
-	c.Supervoxel = e.Supervoxel
 	c.Tags = make(Tags, len(e.Tags))
 	copy(c.Tags, e.Tags)
 	c.Prop = make(map[string]string, len(e.Prop))
@@ -539,7 +537,6 @@ func (elems ElementsNR) Normalize() ElementsNR {
 	for i, elem := range elems {
 		out[i].Pos = elem.Pos
 		out[i].Kind = elem.Kind
-		out[i].Supervoxel = elem.Supervoxel
 		out[i].Tags = make(Tags, len(elem.Tags))
 		copy(out[i].Tags, elem.Tags)
 
@@ -630,24 +627,6 @@ func (elems *ElementsNR) move(from, to dvid.Point3d, deleteElement bool) (moved 
 	return
 }
 
-// if only 1 supervoxel passed, it's used to set all elements
-func (elems ElementsNR) setSupervoxels(supervoxels []uint64) ElementsNR {
-	var supervoxel uint64
-	if len(supervoxels) != len(elems) {
-		supervoxel = supervoxels[0]
-	}
-	dup := make(ElementsNR, len(elems))
-	for i, elem := range elems {
-		dup[i] = *elem.Copy()
-		if supervoxel != 0 {
-			dup[i].Supervoxel = supervoxel
-		} else {
-			dup[i].Supervoxel = supervoxels[i]
-		}
-	}
-	return dup
-}
-
 // Elements is a slice of Element, which includes relationships.
 type Elements []Element
 
@@ -667,7 +646,6 @@ func (elems Elements) Normalize() Elements {
 	for i, elem := range elems {
 		out[i].Pos = elem.Pos
 		out[i].Kind = elem.Kind
-		out[i].Supervoxel = elem.Supervoxel
 		out[i].Rels = make(Relationships, len(elem.Rels))
 		copy(out[i].Rels, elem.Rels)
 		out[i].Tags = make(Tags, len(elem.Tags))
@@ -773,24 +751,6 @@ func (elems *Elements) move(from, to dvid.Point3d, deleteElement bool) (moved *E
 	return
 }
 
-// if only 1 supervoxel passed, it's used to set all elements
-func (elems Elements) setSupervoxels(supervoxels []uint64) Elements {
-	var supervoxel uint64
-	if len(supervoxels) != len(elems) {
-		supervoxel = supervoxels[0]
-	}
-	dup := make(Elements, len(elems))
-	for i, elem := range elems {
-		dup[i] = *elem.Copy()
-		if supervoxel != 0 {
-			dup[i].Supervoxel = supervoxel
-		} else {
-			dup[i].Supervoxel = supervoxels[i]
-		}
-	}
-	return dup
-}
-
 // --- Sort interface
 
 func (elems Elements) Len() int {
@@ -812,9 +772,6 @@ func (elems Elements) Less(i, j int) bool {
 func (elems Elements) Swap(i, j int) {
 	elems[i], elems[j] = elems[j], elems[i]
 }
-
-type blockElements map[dvid.IZYXString]Elements
-type tagElements map[Tag]Elements
 
 // NewData returns a pointer to annotation data.
 func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
@@ -891,6 +848,21 @@ func getElementsNR(ctx *datastore.VersionedCtx, tk storage.TKey) (ElementsNR, er
 		return nil, err
 	}
 	return elems, nil
+}
+
+func getBlockElementsNR(ctx *datastore.VersionedCtx, tk storage.TKey, blockSize dvid.Point3d) (map[dvid.IZYXString]ElementsNR, error) {
+	elems, err := getElementsNR(ctx, tk)
+	if err != nil {
+		return nil, err
+	}
+	blockE := make(map[dvid.IZYXString]ElementsNR)
+	for _, elem := range elems {
+		izyxStr := elem.Pos.ToBlockIZYXString(blockSize)
+		be := blockE[izyxStr]
+		be = append(be, elem)
+		blockE[izyxStr] = be
+	}
+	return blockE, nil
 }
 
 func putBatchElements(batch storage.Batch, tk storage.TKey, elems interface{}) error {
@@ -1008,11 +980,6 @@ type supervoxelType interface {
 	DataName() dvid.InstanceName
 }
 
-type mappedLabelType interface {
-	GetMappedLabels(dvid.VersionID, []uint64) ([]uint64, error)
-	DataName() dvid.InstanceName
-}
-
 func (d *Data) getSyncedLabels() labelType {
 	for dataUUID := range d.SyncedData() {
 		source0, err := labelmap.GetByDataUUID(dataUUID)
@@ -1061,7 +1028,7 @@ func (d *Data) getExpandedElements(ctx *datastore.VersionedCtx, tk storage.TKey)
 
 	// Batch each element into blocks.
 	blockSize := d.blockSize()
-	blockE := make(blockElements)
+	blockE := make(map[dvid.IZYXString]Elements)
 	for _, elem := range elems {
 		// Get block coord for this element.
 		izyxStr := elem.Pos.ToBlockIZYXString(blockSize)
@@ -1095,9 +1062,6 @@ func (d *Data) getExpandedElements(ctx *datastore.VersionedCtx, tk storage.TKey)
 		for _, elem := range be {
 			i, found := emap[elem.Pos.MapKey()]
 			if found {
-				if elem.Supervoxel != 0 {
-					relElems[i].Supervoxel = elem.Supervoxel
-				}
 				expanded = append(expanded, relElems[i])
 			} else {
 				dvid.Errorf("Can't expand relationships for data %q, element @ %s, didn't find it in block %s!\n", d.DataName(), elem.Pos, izyx)
@@ -1366,7 +1330,7 @@ func (d *Data) modifyElements(ctx *datastore.VersionedCtx, batch storage.Batch, 
 
 // stores synaptic elements arranged by block, replacing any
 // elements at same position.
-func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, batch storage.Batch, be blockElements) error {
+func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, batch storage.Batch, be map[dvid.IZYXString]Elements) error {
 	for izyxStr, elems := range be {
 		bcoord, err := izyxStr.ToChunkPoint3d()
 		if err != nil {
@@ -1383,15 +1347,11 @@ func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, batch storage.Bat
 
 // stores synaptic elements arranged by label, replacing any
 // elements at same position.
-func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Batch, be blockElements) error {
+func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Batch, be map[dvid.IZYXString]Elements) error {
 	labelData := d.getSyncedLabels()
 	if labelData == nil {
 		dvid.Infof("No synced labels for annotation %q, skipping label-aware denormalization.\n", d.DataName())
 		return nil // no synced labels
-	}
-	lmapData, ok := labelData.(mappedLabelType)
-	if !ok {
-		lmapData = nil
 	}
 
 	// Compute the strides (in bytes)
@@ -1424,22 +1384,9 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 			pt := elem.Pos.Point3dInChunk(blockSize)
 			i := pt[2]*bY + pt[1]*bX + pt[0]*8
 			label := binary.LittleEndian.Uint64(labels[i : i+8])
-			if lmapData != nil {
-				elem.Supervoxel = label
-			}
-
 			if label != 0 {
 				toAdd.add(label, elem.ElementNR)
 			}
-		}
-	}
-
-	// If synced with a mapped label type, add supervoxels to each element.
-	if lmapData != nil {
-		var err error
-		toAdd, err = toAdd.applyMapping(lmapData, ctx.VersionID(), false)
-		if err != nil {
-			return err
 		}
 	}
 
@@ -1483,7 +1430,7 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 
 // stores synaptic elements arranged by tag, replacing any
 // elements at same position.
-func (d *Data) storeTagElements(ctx *datastore.VersionedCtx, batch storage.Batch, te tagElements) error {
+func (d *Data) storeTagElements(ctx *datastore.VersionedCtx, batch storage.Batch, te map[Tag]Elements) error {
 	for tag, elems := range te {
 		tk, err := NewTagTKey(tag)
 		if err != nil {
@@ -1580,9 +1527,7 @@ func (d *Data) GetTagJSON(ctx *datastore.VersionedCtx, tag Tag, addRels bool) (j
 		elems, err = getElementsNR(ctx, tk)
 	}
 	if err == nil {
-		var fullJSON []byte
-		fullJSON, err = json.Marshal(elems)
-		jsonBytes = []byte(strings.Replace(string(fullJSON), `,"Supervoxel":0`, "", -1))
+		jsonBytes, err = json.Marshal(elems)
 	}
 	return
 }
@@ -1673,7 +1618,7 @@ func (d *Data) GetROISynapses(ctx *datastore.VersionedCtx, roiSpec storage.Filte
 			return nil
 		})
 		if err != nil {
-			return nil, fmt.Errorf("error retrieving annotations from %s -> %s: %v\n", begBlockCoord, endBlockCoord, err)
+			return nil, fmt.Errorf("error retrieving annotations from %s -> %s: %v", begBlockCoord, endBlockCoord, err)
 		}
 	}
 	return elements, nil
@@ -1697,8 +1642,8 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff 
 	dvid.Infof("%d synaptic elements received via POST", len(elems))
 
 	blockSize := d.blockSize()
-	blockE := make(blockElements)
-	tagE := make(tagElements)
+	blockE := make(map[dvid.IZYXString]Elements)
+	tagE := make(map[Tag]Elements)
 
 	// Iterate through elements, organizing them into blocks and tags.
 	// Note: we do not check for redundancy and guarantee uniqueness at this stage.
@@ -1933,7 +1878,7 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d, k
 	return batch.Commit()
 }
 
-func (d *Data) storeTags(batcher storage.KeyValueBatcher, ctx *datastore.VersionedCtx, tagE tagElements) error {
+func (d *Data) storeTags(batcher storage.KeyValueBatcher, ctx *datastore.VersionedCtx, tagE map[Tag]Elements) error {
 	batch := batcher.NewBatch(ctx)
 	if err := d.storeTagElements(ctx, batch, tagE); err != nil {
 		return err
@@ -1944,7 +1889,7 @@ func (d *Data) storeTags(batcher storage.KeyValueBatcher, ctx *datastore.Version
 	return nil
 }
 
-func (d *Data) storeLabels(batcher storage.KeyValueBatcher, ctx *datastore.VersionedCtx, blockE blockElements) error {
+func (d *Data) storeLabels(batcher storage.KeyValueBatcher, ctx *datastore.VersionedCtx, blockE map[dvid.IZYXString]Elements) error {
 	batch := batcher.NewBatch(ctx)
 	if err := d.storeLabelElements(ctx, batch, blockE); err != nil {
 		return err
@@ -1994,8 +1939,8 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 	var numBlockE, numTagE int
 	var totBlockE, totTagE int
 
-	blockE := make(blockElements)
-	tagE := make(tagElements)
+	blockE := make(map[dvid.IZYXString]Elements)
+	tagE := make(map[Tag]Elements)
 
 	minTKey := storage.MinTKey(keyBlock)
 	maxTKey := storage.MaxTKey(keyBlock)
@@ -2068,7 +2013,7 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 			}
 			totTagE += numTagE
 			numTagE = 0
-			tagE = make(tagElements)
+			tagE = make(map[Tag]Elements)
 		}
 		if numBlockE > 1000 {
 			if err := d.storeLabels(batcher, ctx, blockE); err != nil {
@@ -2076,7 +2021,7 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 			}
 			totBlockE += numBlockE
 			numBlockE = 0
-			blockE = make(blockElements)
+			blockE = make(map[dvid.IZYXString]Elements)
 		}
 
 		return nil
@@ -2328,13 +2273,11 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				return
 			}
 			w.Header().Set("Content-type", "application/json")
-			var fullJSON []byte
-			fullJSON, err = json.Marshal(elems)
+			jsonBytes, err := json.Marshal(elems)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
-			jsonBytes := []byte(strings.Replace(string(fullJSON), `,"Supervoxel":0`, "", -1))
 			if _, err := w.Write(jsonBytes); err != nil {
 				server.BadRequest(w, r, err)
 				return
@@ -2366,13 +2309,11 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				return
 			}
 			w.Header().Set("Content-type", "application/json")
-			var fullJSON []byte
-			fullJSON, err = json.Marshal(elems)
+			jsonBytes, err := json.Marshal(elems)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
-			jsonBytes := []byte(strings.Replace(string(fullJSON), `,"Supervoxel":0`, "", -1))
 			if _, err := w.Write(jsonBytes); err != nil {
 				server.BadRequest(w, r, err)
 				return
