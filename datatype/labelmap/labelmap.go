@@ -3791,18 +3791,21 @@ func (d *Data) handleSupervoxels(ctx *datastore.VersionedCtx, w http.ResponseWri
 		server.BadRequest(w, r, err)
 		return
 	}
-
-	w.Header().Set("Content-type", "application/json")
-	fmt.Fprintf(w, "[")
-	i := 0
-	for supervoxel := range supervoxels {
-		fmt.Fprintf(w, "%d", supervoxel)
-		i++
-		if i < len(supervoxels) {
-			fmt.Fprintf(w, ",")
+	if len(supervoxels) == 0 {
+		w.WriteHeader(http.StatusNotFound)
+	} else {
+		w.Header().Set("Content-type", "application/json")
+		fmt.Fprintf(w, "[")
+		i := 0
+		for supervoxel := range supervoxels {
+			fmt.Fprintf(w, "%d", supervoxel)
+			i++
+			if i < len(supervoxels) {
+				fmt.Fprintf(w, ",")
+			}
 		}
+		fmt.Fprintf(w, "]")
 	}
-	fmt.Fprintf(w, "]")
 
 	timedLog.Infof("HTTP GET supervoxels for label %d (%s)", label, r.URL)
 }
