@@ -3756,6 +3756,18 @@ func (d *Data) getSparsevolOptions(r *http.Request) (b dvid.Bounds, compression 
 	return
 }
 
+// GetSupervoxels returns the set of supervoxel ids that compose the given label
+func (d *Data) GetSupervoxels(v dvid.VersionID, label uint64) (labels.Set, error) {
+	idx, err := GetLabelIndex(d, v, label, false)
+	if err != nil {
+		return nil, err
+	}
+	if idx == nil || len(idx.Blocks) == 0 {
+		return nil, err
+	}
+	return idx.GetSupervoxels(), nil
+}
+
 func (d *Data) handleSupervoxels(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
 	// GET <api URL>/node/<UUID>/<data name>/supervoxels/<label>
 	if len(parts) < 5 {
@@ -3774,16 +3786,11 @@ func (d *Data) handleSupervoxels(ctx *datastore.VersionedCtx, w http.ResponseWri
 		return
 	}
 
-	idx, err := GetLabelIndex(d, ctx.VersionID(), label, false)
+	supervoxels, err := d.GetSupervoxels(ctx.VersionID(), label)
 	if err != nil {
-		server.BadRequest(w, r, "unable to get label %d index: %v", label, err)
+		server.BadRequest(w, r, err)
 		return
 	}
-	if idx == nil || len(idx.Blocks) == 0 {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	supervoxels := idx.GetSupervoxels()
 
 	w.Header().Set("Content-type", "application/json")
 	fmt.Fprintf(w, "[")
