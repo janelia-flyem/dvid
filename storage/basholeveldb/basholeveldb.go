@@ -3,12 +3,12 @@
 package basholeveldb
 
 import (
-	"encoding/base64"
 	"bytes"
+	"encoding/base64"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
-	"hash/fnv"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -241,14 +241,14 @@ func (e Engine) Repair(path string) error {
 // AddTestConfig sets the basholeveldb as the default key-value backend.  If another
 // engine is already set, it returns an error since only one key-value backend should
 // be tested via tags.
-func (e Engine) AddTestConfig(backend *storage.Backend) error {
+func (e Engine) AddTestConfig(backend *storage.Backend) (storage.Alias, error) {
+	alias := storage.Alias("basholeveldb")
 	if backend.DefaultKVDB != "" {
-		return fmt.Errorf("basholeveldb can't be testable key-value.  DefaultKVDB already set to %s", backend.DefaultKVDB)
+		return alias, fmt.Errorf("basholeveldb can't be testable key-value.  DefaultKVDB already set to %s", backend.DefaultKVDB)
 	}
 	if backend.Metadata != "" {
-		return fmt.Errorf("basholeveldb can't be testable key-value.  Metadata already set to %s", backend.DefaultKVDB)
+		return alias, fmt.Errorf("basholeveldb can't be testable key-value.  Metadata already set to %s", backend.DefaultKVDB)
 	}
-	alias := storage.Alias("basholeveldb")
 	backend.Metadata = alias
 	backend.DefaultKVDB = alias
 	if backend.Stores == nil {
@@ -261,7 +261,7 @@ func (e Engine) AddTestConfig(backend *storage.Backend) error {
 	var c dvid.Config
 	c.SetAll(tc)
 	backend.Stores[alias] = dvid.StoreConfig{Config: c, Engine: "basholeveldb"}
-	return nil
+	return alias, nil
 }
 
 // Delete implements the TestableEngine interface by providing a way to dispose

@@ -14,6 +14,7 @@ import (
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 var (
@@ -36,7 +37,10 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 }
 
 func TestTarballRoundTrip(t *testing.T) {
-	if err := server.OpenTest(); err != nil {
+	testConfig := server.TestConfig{
+		KVStoresMap: storage.DataMap{"tarsupervoxels": "filestore"},
+	}
+	if err := server.OpenTest(testConfig); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
 	}
 	defer server.CloseTest()

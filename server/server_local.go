@@ -61,15 +61,27 @@ func init() {
 
 // TestConfig specifies configuration for testing servers.
 type TestConfig struct {
-	CacheSize map[string]int // MB for caches
+	KVStoresMap  storage.DataMap
+	LogStoresMap storage.DataMap
+	CacheSize    map[string]int // MB for caches
 }
 
 // OpenTest initializes the server for testing, setting up caching, datastore, etc.
 // Later configurations will override earlier ones.
 func OpenTest(configs ...TestConfig) error {
+	var dataMap datastore.DataStorageMap
+	var dataMapped bool
 	tc = tomlConfig{}
 	if len(configs) > 0 {
 		for _, c := range configs {
+			if len(c.KVStoresMap) != 0 {
+				dataMap.KVStores = c.KVStoresMap
+				dataMapped = true
+			}
+			if len(c.LogStoresMap) != 0 {
+				dataMap.LogStores = c.LogStoresMap
+				dataMapped = true
+			}
 			if len(c.CacheSize) != 0 {
 				for id, size := range c.CacheSize {
 					if tc.Cache == nil {
@@ -82,7 +94,11 @@ func OpenTest(configs ...TestConfig) error {
 	}
 	config = &tc
 	dvid.Infof("OpenTest with %v: cache setting %v\n", configs, tc.Cache)
-	datastore.OpenTest()
+	if dataMapped {
+		datastore.OpenTest(dataMap)
+	} else {
+		datastore.OpenTest()
+	}
 	return nil
 }
 
@@ -313,8 +329,8 @@ func LoadConfig(filename string) (*tomlConfig, *storage.Backend, error) {
 	}
 
 	// Create the backend mapping.
-	backend.KVStore = make(map[dvid.DataSpecifier]storage.Alias)
-	backend.LogStore = make(map[dvid.DataSpecifier]storage.Alias)
+	backend.KVStore = make(storage.DataMap)
+	backend.LogStore = make(storage.DataMap)
 	for k, v := range tc.Backend {
 		// lookup store config
 		_, found := backend.Stores[v.Store]
@@ -336,6 +352,7 @@ func LoadConfig(filename string) (*tomlConfig, *storage.Backend, error) {
 			return &tc, nil, fmt.Errorf("if no default backend specified, must have exactly one store defined in config file")
 		}
 	}
+
 	defaultLog, found := backend.LogStore["default"]
 	if found {
 		backend.DefaultLog = defaultLog

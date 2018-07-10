@@ -12,6 +12,7 @@ import (
 
 type testStoreT struct {
 	sync.Mutex
+	engines map[storage.Alias]storage.TestableEngine
 	backend *storage.Backend
 }
 
@@ -33,11 +34,18 @@ func NewTestRepo() (dvid.UUID, dvid.VersionID) {
 	return uuid, versionID
 }
 
-func openStore(create bool) {
+func openStores(create bool, datamap ...DataStorageMap) {
+	if len(datamap) > 1 {
+		log.Fatalf("can't have more than one data mapping in opening stores")
+	}
 	dvid.Infof("Opening test datastore.  Create = %v\n", create)
 	if create {
 		var err error
-		testStore.backend, err = storage.GetTestableBackend()
+		if len(datamap) == 1 {
+			testStore.engines, testStore.backend, err = storage.GetTestableBackend(datamap[0].KVStores, datamap[0].LogStores)
+		} else {
+			testStore.engines, testStore.backend, err = storage.GetTestableBackend(nil, nil)
+		}
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -52,29 +60,33 @@ func openStore(create bool) {
 	dvid.Infof("Storage initialized.  initMetadata = %v\n", initMetadata)
 }
 
-func OpenTest() {
+// DataStorageMap describes mappings from various instance and data type
+// specifications to KV and Log stores.
+type DataStorageMap struct {
+	KVStores  storage.DataMap
+	LogStores storage.DataMap
+}
+
+func OpenTest(datamap ...DataStorageMap) {
 	testStore.Lock()
-	dvid.Infof("Opening test datastore...\n")
-	openStore(true)
+	openStores(true, datamap...)
 }
 
 // CloseReopenTest forces close and then reopening of the datastore, useful for testing
 // persistence.  We only allow close/reopen when all tests not avaiting close/reopen are finished.
-func CloseReopenTest() {
+func CloseReopenTest(datamap ...DataStorageMap) {
 	dvid.Infof("Closing test datastore for reopen test...\n")
 	storage.Shutdown()
 	dvid.Infof("Reopening test datastore...\n")
-	openStore(false)
+	openStores(false, datamap...)
 }
 
 func CloseTest() {
-	dvid.Infof("Closing and deleting test datastore...\n")
 	Shutdown()
-	testableEng := storage.GetTestableEngine()
-	if testableEng == nil {
-		log.Fatalf("Could not find a storage engine that was testable")
+	for alias, engine := range testStore.engines {
+		storeConfig := testStore.backend.Stores[alias]
+		engine.Delete(storeConfig)
+		dvid.Infof("Deleted test engine %q with backend %q\n", engine, storeConfig)
 	}
-	config, _ := testStore.backend.StoreConfig("default")
-	testableEng.Delete(config)
 	testStore.Unlock()
 }

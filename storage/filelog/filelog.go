@@ -378,11 +378,11 @@ func (flogs *fileLogs) Equal(config dvid.StoreConfig) bool {
 // AddTestConfig sets the filelog as the default append-only log.  If another engine is already
 // set for the append-only log, it returns an error since only one append-only log backend should
 // be tested via tags.
-func (e Engine) AddTestConfig(backend *storage.Backend) error {
-	if backend.DefaultLog != "" {
-		return fmt.Errorf("filelog can't be testable log.  DefaultLog already set to %s", backend.DefaultLog)
-	}
+func (e Engine) AddTestConfig(backend *storage.Backend) (storage.Alias, error) {
 	alias := storage.Alias("filelog")
+	if backend.DefaultLog != "" {
+		return alias, fmt.Errorf("filelog can't be testable log.  DefaultLog already set to %s", backend.DefaultLog)
+	}
 	backend.DefaultLog = alias
 	if backend.Stores == nil {
 		backend.Stores = make(map[storage.Alias]dvid.StoreConfig)
@@ -394,7 +394,7 @@ func (e Engine) AddTestConfig(backend *storage.Backend) error {
 	var c dvid.Config
 	c.SetAll(tc)
 	backend.Stores[alias] = dvid.StoreConfig{Config: c, Engine: "filelog"}
-	return nil
+	return alias, nil
 }
 
 // Delete implements the TestableEngine interface by providing a way to dispose

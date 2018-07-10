@@ -20,6 +20,7 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 
 	"github.com/janelia-flyem/go/semver"
+	"github.com/janelia-flyem/go/uuid"
 )
 
 func init() {
@@ -62,6 +63,41 @@ func (e Engine) String() string {
 // NewStore returns file-based log. The passed Config must contain "path" setting.
 func (e Engine) NewStore(config dvid.StoreConfig) (dvid.Store, bool, error) {
 	return e.newStore(config)
+}
+
+// ---- TestableEngine interface implementation -------
+
+// AddTestConfig adds the filestore engine as a possible store.
+func (e Engine) AddTestConfig(backend *storage.Backend) (storage.Alias, error) {
+	alias := storage.Alias("filestore")
+	if backend.Stores == nil {
+		backend.Stores = make(map[storage.Alias]dvid.StoreConfig)
+	}
+	tc := map[string]interface{}{
+		"path":    fmt.Sprintf("dvid-test-filestore-%x", uuid.NewV4().Bytes()),
+		"testing": true,
+	}
+	var c dvid.Config
+	c.SetAll(tc)
+	backend.Stores[alias] = dvid.StoreConfig{Config: c, Engine: "filestore"}
+	return alias, nil
+}
+
+// Delete implements the TestableEngine interface by providing a way to dispose
+// of testing databases.
+func (e Engine) Delete(config dvid.StoreConfig) error {
+	// path, _, err := parseConfig(config)
+	// if err != nil {
+	// 	return err
+	// }
+
+	// // Delete the directory if it exists
+	// if _, err := os.Stat(path); !os.IsNotExist(err) {
+	// 	if err := os.RemoveAll(path); err != nil {
+	// 		return fmt.Errorf("Can't delete old datastore %q: %v", path, err)
+	// 	}
+	// }
+	return nil
 }
 
 func parseConfig(config dvid.StoreConfig) (path string, testing bool, err error) {
@@ -176,6 +212,7 @@ func (fs *fileStore) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	dvid.Infof("Get - dirpath %q, filename %q\n", dirpath, filename)
 	fpath := filepath.Join(dirpath, filename)
 	return ioutil.ReadFile(fpath)
 }
@@ -222,7 +259,8 @@ func (fs *fileStore) Put(ctx storage.Context, tk storage.TKey, v []byte) error {
 	if err := os.MkdirAll(dirpath, 0777); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0755)
+	fpath := filepath.Join(dirpath, filename)
+	f, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE, 0755)
 	if err != nil {
 		return err
 	}
