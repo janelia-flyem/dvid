@@ -5,8 +5,8 @@
 package tarsupervoxels
 
 import (
-	"encoding/binary"
 	"fmt"
+	"strconv"
 
 	"github.com/janelia-flyem/dvid/storage"
 )
@@ -19,21 +19,19 @@ const (
 	keyStandard = 133
 )
 
-// NewTKey returns the type-specific key corresponding to a supervoxel id.
-func NewTKey(supervoxel uint64) (storage.TKey, error) {
-	ibytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(ibytes, supervoxel)
-	return storage.NewTKey(keyStandard, ibytes), nil
+// NewTKey returns the type-specific key corresponding to a supervoxel id in
+// simple ASCII bytes.
+func NewTKey(supervoxel uint64, ext string) (storage.TKey, error) {
+	filename := strconv.FormatUint(supervoxel, 10) + "." + ext
+	return storage.NewTKey(keyStandard, []byte(filename)), nil
 }
 
 // DecodeTKey returns the supervoxel id corresponding to the type-specific ke.y
-func DecodeTKey(tk storage.TKey) (uint64, error) {
-	ibytes, err := tk.ClassBytes(keyStandard)
-	if err != nil {
-		return 0, err
+func DecodeTKey(tk storage.TKey) (supervoxel uint64, ext string, err error) {
+	var fnameBytes []byte
+	if fnameBytes, err = tk.ClassBytes(keyStandard); err != nil {
+		return
 	}
-	if len(ibytes) != 8 {
-		return 0, fmt.Errorf("expected 8 bytes for type-specific key, got %d bytes", len(ibytes))
-	}
-	return binary.LittleEndian.Uint64(ibytes), nil
+	_, err = fmt.Sscanf(string(fnameBytes), "%s.%d", &supervoxel, &ext)
+	return
 }

@@ -109,10 +109,14 @@ DEL  <api URL>/node/<UUID>/<data name>/supervoxel/<id>
 
 	GET <api URL>/node/3f8c/supervoxel-meshes/supervoxel/18473948
 
-	Returns the data associated with the supervoxel 18473948 of instance "supervoxel-meshes".
+		Returns the data associated with the supervoxel 18473948 of instance "supervoxel-meshes".
 
-	The "Content-type" of the HTTP GET response and POST payload are "application/octet-stream" 
-	for arbitrary binary data.
+	POST <api URL>/node/3f8c/supervoxel-meshes/supervoxel/18473948
+
+		Stores data associated with supervoxel 18473948 of instance 
+		"supervoxel-meshes".
+
+	The "Content-type" of the HTTP GET response and POST payload are "application/octet-stream" for arbitrary binary data.
 
 	Arguments:
 
@@ -122,7 +126,8 @@ DEL  <api URL>/node/<UUID>/<data name>/supervoxel/<id>
 
 GET  <api URL>/node/<UUID>/<data name>/tarfile/<label> 
 
-	Returns a tarfile of all supervoxel data that has been mapped to the given label.  
+	Returns a tarfile of all supervoxel data that has been mapped to the given label.
+	File names within the tarfile will be the supervoxel id without extension.  
 
 	Example: 
 
@@ -184,7 +189,14 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	if err != nil {
 		return nil, err
 	}
-	return &Data{basedata}, nil
+	extension, found, err := c.GetString("Extension")
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("tarsupervoxels instances must have Extension set in the configuration")
+	}
+	return &Data{Data: basedata, Extension: extension}, nil
 }
 
 func (dtype *Type) Help() string {
@@ -213,6 +225,10 @@ type mappedLabelType interface {
 // Data embeds the datastore's Data and extends it with keyvalue properties (none for now).
 type Data struct {
 	*datastore.Data
+
+	// Extension is the expected extension for blobs uploaded.
+	// If no extension is given, it is "dat" by default.
+	Extension string
 }
 
 func (d *Data) getSyncedLabels() mappedLabelType {
@@ -232,26 +248,41 @@ func (d *Data) Equals(d2 *Data) bool {
 	return true
 }
 
+type propsJSON struct {
+	Extension string
+}
+
 func (d *Data) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Base     *datastore.Data
-		Extended struct{}
+		Extended propsJSON
 	}{
 		d.Data,
-		struct{}{},
+		propsJSON{
+			Extension: d.Extension,
+		},
 	})
 }
 
 func (d *Data) GobDecode(b []byte) error {
 	buf := bytes.NewBuffer(b)
 	dec := gob.NewDecoder(buf)
-	return dec.Decode(&(d.Data))
+	if err := dec.Decode(&(d.Data)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(d.Extension)); err != nil {
+		return fmt.Errorf("decoding tarsupervoxels %q: no Extension", d.DataName())
+	}
+	return nil
 }
 
 func (d *Data) GobEncode() ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(d.Data); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.Extension); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -275,7 +306,7 @@ func (d *Data) GetData(uuid dvid.UUID, supervoxel uint64) ([]byte, bool, error) 
 	if err != nil {
 		return nil, false, err
 	}
-	tk, err := NewTKey(supervoxel)
+	tk, err := NewTKey(supervoxel, d.Extension)
 	if err != nil {
 		return nil, false, err
 	}
@@ -299,7 +330,7 @@ func (d *Data) PutData(uuid dvid.UUID, supervoxel uint64, data []byte) error {
 	if err != nil {
 		return err
 	}
-	tk, err := NewTKey(supervoxel)
+	tk, err := NewTKey(supervoxel, d.Extension)
 	if err != nil {
 		return err
 	}
@@ -316,7 +347,7 @@ func (d *Data) DeleteData(uuid dvid.UUID, supervoxel uint64) error {
 	if err != nil {
 		return err
 	}
-	tk, err := NewTKey(supervoxel)
+	tk, err := NewTKey(supervoxel, d.Extension)
 	if err != nil {
 		return err
 	}
@@ -345,7 +376,7 @@ type fileData struct {
 func (d *Data) getSupervoxelGoroutine(db storage.KeyValueDB, ctx *datastore.VersionedCtx, supervoxels []uint64, outCh chan fileData, done <-chan struct{}) {
 	dbt, canGetTimestamp := db.(storage.KeyValueTimestampGetter)
 	for _, supervoxel := range supervoxels {
-		tk, err := NewTKey(supervoxel)
+		tk, err := NewTKey(supervoxel, d.Extension)
 		if err != nil {
 			outCh <- fileData{err: err}
 			continue
@@ -362,8 +393,9 @@ func (d *Data) getSupervoxelGoroutine(db storage.KeyValueDB, ctx *datastore.Vers
 			continue
 		}
 		hdr := &tar.Header{
-			Name:    fmt.Sprintf("%d.dat", supervoxel),
+			Name:    fmt.Sprintf("%d.%s", supervoxel, d.Extension),
 			Size:    int64(len(data)),
+			Mode:    0755,
 			ModTime: modTime,
 		}
 		select {
@@ -456,6 +488,9 @@ func (d *Data) ingestTarfile(r *http.Request, uuid dvid.UUID) error {
 		if err != nil || n != 2 {
 			return fmt.Errorf("file %d name is invalid, expect supervoxel+ext: %s", filenum, hdr.Name)
 		}
+		if ext != d.Extension {
+			return fmt.Errorf("file %d name has bad extension (expect %q): %s", filenum, d.Extension, hdr.Name)
+		}
 		if supervoxel == 0 {
 			return fmt.Errorf("supervoxel 0 is reserved and cannot have data saved under 0 id")
 		}
@@ -463,7 +498,7 @@ func (d *Data) ingestTarfile(r *http.Request, uuid dvid.UUID) error {
 		if _, err := io.Copy(&buf, tr); err != nil {
 			return err
 		}
-		tk, err := NewTKey(supervoxel)
+		tk, err := NewTKey(supervoxel, ext)
 		if err := db.Put(ctx, tk, buf.Bytes()); err != nil {
 			return err
 		}

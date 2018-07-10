@@ -50,6 +50,7 @@ func TestTarballRoundTrip(t *testing.T) {
 	labelname := "labels"
 	server.CreateTestInstance(t, uuid, "labelmap", labelname, config)
 	tarsvname := "blobs"
+	config.Set("Extension", "dat")
 	server.CreateTestInstance(t, uuid, "tarsupervoxels", tarsvname, config)
 	server.CreateTestSync(t, uuid, tarsvname, labelname)
 
@@ -81,6 +82,7 @@ func TestTarballRoundTrip(t *testing.T) {
 		data := fmt.Sprintf("This is the data for supervoxel %d.", i)
 		hdr := &tar.Header{
 			Name: fmt.Sprintf("%d.dat", i),
+			Mode: 0755,
 			Size: int64(len(data)),
 		}
 		if err := tw.WriteHeader(hdr); err != nil {

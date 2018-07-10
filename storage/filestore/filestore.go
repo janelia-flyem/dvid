@@ -2,7 +2,7 @@
 
 /*
 	Package filestore implements a simple file-based store that fulfills
-	the KeyValueDB interface.  This is done by taking a FNV
+	the KeyValueDB interface.  Keys are strings that must be valid file names.
 */
 package filestore
 
@@ -86,17 +86,17 @@ func (e Engine) AddTestConfig(backend *storage.Backend) (storage.Alias, error) {
 // Delete implements the TestableEngine interface by providing a way to dispose
 // of testing databases.
 func (e Engine) Delete(config dvid.StoreConfig) error {
-	// path, _, err := parseConfig(config)
-	// if err != nil {
-	// 	return err
-	// }
+	path, _, err := parseConfig(config)
+	if err != nil {
+		return err
+	}
 
-	// // Delete the directory if it exists
-	// if _, err := os.Stat(path); !os.IsNotExist(err) {
-	// 	if err := os.RemoveAll(path); err != nil {
-	// 		return fmt.Errorf("Can't delete old datastore %q: %v", path, err)
-	// 	}
-	// }
+	// Delete the directory if it exists
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("Can't delete old datastore %q: %v", path, err)
+		}
+	}
 	return nil
 }
 
@@ -181,8 +181,16 @@ type instanceGetter interface {
 }
 
 func (fs *fileStore) filepathFromTKey(ctx storage.Context, tk storage.TKey) (dirpath, filename string, err error) {
+	var class storage.TKeyClass
+	if class, err = tk.Class(); err != nil {
+		return
+	}
+	var namebytes []byte
+	if namebytes, err = tk.ClassBytes(class); err != nil {
+		return
+	}
 	h := fnv.New32()
-	if _, err = h.Write(tk); err != nil {
+	if _, err = h.Write(namebytes); err != nil {
 		return
 	}
 	hexHash := hex.EncodeToString(h.Sum(nil))
@@ -192,14 +200,13 @@ func (fs *fileStore) filepathFromTKey(ctx storage.Context, tk storage.TKey) (dir
 	dirpath = filepath.Join(fs.path, hexHash[0:2], hexHash[2:4], hexHash[4:])
 
 	v := ctx.VersionID()
-	hexTKey := hex.EncodeToString(tk)
 	filename = fmt.Sprintf("v%d", v)
 
 	igetter, ok := ctx.(instanceGetter)
 	if ok {
 		filename += fmt.Sprintf("-i%d", igetter.InstanceID())
 	}
-	filename += "-" + hexTKey
+	filename += "-" + string(namebytes)
 	return
 }
 
@@ -212,7 +219,6 @@ func (fs *fileStore) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	dvid.Infof("Get - dirpath %q, filename %q\n", dirpath, filename)
 	fpath := filepath.Join(dirpath, filename)
 	return ioutil.ReadFile(fpath)
 }
