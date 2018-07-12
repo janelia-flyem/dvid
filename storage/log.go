@@ -16,11 +16,13 @@ type LogMessage struct {
 	Data      []byte
 }
 
-// WriteLog is an append-only log of messages specific to a data instance and UUID.
+// WriteLog is an append-only log of messages specific to a topic or a data instance and UUID.
 type WriteLog interface {
 	dvid.Store
 	Append(dataID, version dvid.UUID, msg LogMessage) error
 	CloseLog(dataID, version dvid.UUID) error
+	TopicAppend(topic string, msg LogMessage) error
+	TopicClose(topic string) error
 }
 
 type ReadLog interface {

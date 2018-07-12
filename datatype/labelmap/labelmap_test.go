@@ -23,7 +23,7 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 
-	lz4 "github.com/janelia-flyem/go/golz4"
+	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
 
 var (
@@ -245,6 +245,28 @@ func (v *testVolume) equals(v2 *testVolume) error {
 	return nil
 }
 
+func (v *testVolume) equalsDownres(v2 *testVolume) error {
+	lores, err := labels.DownresLabels(v2.data, v2.size)
+	if err != nil {
+		return err
+	}
+	var i uint64
+	var x, y, z int32
+	for z = 0; z < v.size[2]; z++ {
+		for y = 0; y < v.size[1]; y++ {
+			for x = 0; x < v.size[0]; x++ {
+				val1 := binary.LittleEndian.Uint64(v.data[i : i+8])
+				val2 := binary.LittleEndian.Uint64(lores[i : i+8])
+				i += 8
+				if val1 != val2 {
+					return fmt.Errorf("voxel (%d,%d,%d), expected downres label %d, got %d", x, y, z, val2, val1)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func (v *testVolume) testBlock(t *testing.T, context string, bx, by, bz int32, data []byte) {
 	if len(data) < int(DefaultBlockSize*DefaultBlockSize*DefaultBlockSize*8) {
 		t.Fatalf("[%s] got bad uint64 array of len %d for block (%d, %d, %d)\n", context, len(data), bx, by, bz)
@@ -271,7 +293,7 @@ func (v *testVolume) testBlock(t *testing.T, context string, bx, by, bz int32, d
 }
 
 func (v *testVolume) testGetBlocks(t *testing.T, context string, uuid dvid.UUID, name, compression string, scale uint8) {
-	apiStr := fmt.Sprintf("%snode/%s/%s/blocks/%d_%d_%d/0_0_0", server.WebAPIPath, uuid, name, v.size[0], v.size[1], v.size[2])
+	apiStr := fmt.Sprintf("%snode/%s/%s/blocks/%d_%d_%d/0_0_0", server.WebAPIPath, uuid, name, v.size[0]+64, v.size[1]+64, v.size[2]+64)
 	var qstrs []string
 	if compression != "" {
 		qstrs = append(qstrs, "compression="+compression)
@@ -584,9 +606,6 @@ func (vol *labelVol) testBlocks(t *testing.T, context string, uuid dvid.UUID, co
 	blockBytes := int(vol.blockSize.Prod() * 8)
 
 	// Check if values are what we expect
-	bx := vol.offset[0] / vol.blockSize[0]
-	by := vol.offset[1] / vol.blockSize[1]
-	bz := vol.offset[2] / vol.blockSize[2]
 	b := 0
 	for i := 0; i < span; i++ {
 		// Get block coord + block size
@@ -601,9 +620,6 @@ func (vol *labelVol) testBlocks(t *testing.T, context string, uuid dvid.UUID, co
 		b += 4
 		n := int(binary.LittleEndian.Uint32(data[b : b+4]))
 		b += 4
-		if x != bx || y != by || z != bz {
-			t.Fatalf("Bad block coordinate: expected (%d,%d,%d), got (%d,%d,%d)\n", bx, by, bz, x, y, z)
-		}
 
 		// Read in the block data as assumed LZ4 and check it.
 		var uncompressed []byte
@@ -641,7 +657,6 @@ func (vol *labelVol) testBlocks(t *testing.T, context string, uuid dvid.UUID, co
 		}
 		vol.testBlock(t, context, x, y, z, uncompressed)
 		b += n
-		bx++
 	}
 }
 
@@ -1069,6 +1084,13 @@ func TestMultiscaleIngest(t *testing.T) {
 	reqStr := fmt.Sprintf("%snode/%s/labels/size/3", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "GET", reqStr, nil)
 
+	reqStr = fmt.Sprintf("%snode/%s/labels/sizes", server.WebAPIPath, uuid)
+	bodystr := "[1, 2, 3, 13, 209, 311]"
+	r := server.TestHTTP(t, "GET", reqStr, bytes.NewBufferString(bodystr))
+	if string(r) != "[64000,64000,0,64000,64000,64000]" {
+		t.Errorf("bad batch sizes result.  got: %s\n", string(r))
+	}
+
 	// Check the first downres: 64^3
 	downres1 := newTestVolume(64, 64, 64)
 	downres1.getScale(t, uuid, "labels", 1, false)
@@ -1188,7 +1210,7 @@ func loadTestData(t *testing.T, filename string) (td testData) {
 	return
 }
 
-func writeInt32(t *testing.T, buf *bytes.Buffer, i int32) {
+func writeTestInt32(t *testing.T, buf *bytes.Buffer, i int32) {
 	b := make([]byte, 4)
 	binary.LittleEndian.PutUint32(b, uint32(i))
 	n, err := buf.Write(b)
@@ -1248,6 +1270,56 @@ func testGetBlock(t *testing.T, uuid dvid.UUID, name string, bcoord dvid.Point3d
 	}
 }
 
+func testGetVolumeBlocks(t *testing.T, uuid dvid.UUID, name string, supervoxels bool, size, offset dvid.Point3d) []labels.PositionedBlock {
+	apiStr := fmt.Sprintf("%snode/%s/%s/blocks/%d_%d_%d/%d_%d_%d?compression=blocks&supervoxels=%t", server.WebAPIPath,
+		uuid, name, size[0], size[1], size[2], offset[0], offset[1], offset[2], supervoxels)
+	data := server.TestHTTP(t, "GET", apiStr, nil)
+
+	nx := size[0] / 64
+	ny := size[1] / 64
+	nz := size[2] / 64
+	numBlocks := int(nx * ny * nz)
+
+	var blocks []labels.PositionedBlock
+
+	b := 0
+	for {
+		if b+16 > len(data) {
+			t.Fatalf("Only got %d bytes back from block API call\n", len(data))
+		}
+		x := int32(binary.LittleEndian.Uint32(data[b : b+4]))
+		b += 4
+		y := int32(binary.LittleEndian.Uint32(data[b : b+4]))
+		b += 4
+		z := int32(binary.LittleEndian.Uint32(data[b : b+4]))
+		b += 4
+		n := int(binary.LittleEndian.Uint32(data[b : b+4]))
+		b += 4
+		bcoord := dvid.ChunkPoint3d{x, y, z}.ToIZYXString()
+
+		gzipIn := bytes.NewBuffer(data[b : b+n])
+		zr, err := gzip.NewReader(gzipIn)
+		if err != nil {
+			t.Fatalf("can't uncompress gzip block: %v\n", err)
+		}
+		uncompressed, err := ioutil.ReadAll(zr)
+		if err != nil {
+			t.Fatalf("can't uncompress gzip block: %v\n", err)
+		}
+		zr.Close()
+
+		var block labels.Block
+		if err = block.UnmarshalBinary(uncompressed); err != nil {
+			t.Fatalf("unable to deserialize label block (%d, %d, %d): %v\n", x, y, z, err)
+		}
+		blocks = append(blocks, labels.PositionedBlock{BCoord: bcoord, Block: block})
+		b += n
+		if len(blocks) == numBlocks {
+			break
+		}
+	}
+	return blocks
+}
 func TestPostBlocks(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
@@ -1269,15 +1341,15 @@ func TestPostBlocks(t *testing.T) {
 	var data [4]testData
 	var buf bytes.Buffer
 	for i, fname := range testFiles {
-		writeInt32(t, &buf, blockCoords[i][0])
-		writeInt32(t, &buf, blockCoords[i][1])
-		writeInt32(t, &buf, blockCoords[i][2])
+		writeTestInt32(t, &buf, blockCoords[i][0])
+		writeTestInt32(t, &buf, blockCoords[i][1])
+		writeTestInt32(t, &buf, blockCoords[i][2])
 		data[i] = loadTestData(t, fname)
 		gzipped, err := data[i].b.CompressGZIP()
 		if err != nil {
 			t.Fatalf("unable to gzip compress block: %v\n", err)
 		}
-		writeInt32(t, &buf, int32(len(gzipped)))
+		writeTestInt32(t, &buf, int32(len(gzipped)))
 		fmt.Printf("Wrote %d gzipped block bytes for block %s\n", len(gzipped), blockCoords[i])
 		n, err := buf.Write(gzipped)
 		if err != nil {
@@ -1399,10 +1471,10 @@ func TestPostBlock(t *testing.T) {
 		t.Fatalf("Couldn't read compressed block test data: %v\n", err)
 	}
 	var buf bytes.Buffer
-	writeInt32(t, &buf, 0)
-	writeInt32(t, &buf, 0)
-	writeInt32(t, &buf, 0)
-	writeInt32(t, &buf, int32(len(data)))
+	writeTestInt32(t, &buf, 0)
+	writeTestInt32(t, &buf, 0)
+	writeTestInt32(t, &buf, 0)
+	writeTestInt32(t, &buf, int32(len(data)))
 	fmt.Printf("Writing %d bytes of compressed block\n", len(data))
 	n, err := buf.Write(data)
 	if err != nil {
@@ -1506,11 +1578,26 @@ func TestBlocksWithMerge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error making block 0: %v\n", err)
 	}
+
+	testBlockData := [2]struct {
+		bcoord dvid.ChunkPoint3d
+		labels []uint64
+	}{
+		{
+			bcoord: dvid.ChunkPoint3d{2, 3, 4},
+			labels: blockVol0,
+		},
+		{
+			bcoord: dvid.ChunkPoint3d{3, 3, 4},
+			labels: blockVol1,
+		},
+	}
+
 	var buf bytes.Buffer
-	writeInt32(t, &buf, 2)
-	writeInt32(t, &buf, 3)
-	writeInt32(t, &buf, 4)
-	writeInt32(t, &buf, int32(len(block0data)))
+	writeTestInt32(t, &buf, 2)
+	writeTestInt32(t, &buf, 3)
+	writeTestInt32(t, &buf, 4)
+	writeTestInt32(t, &buf, int32(len(block0data)))
 	n, err := buf.Write(block0data)
 	if err != nil {
 		t.Fatalf("unable to write gzip block: %v\n", err)
@@ -1518,10 +1605,10 @@ func TestBlocksWithMerge(t *testing.T) {
 	if n != len(block0data) {
 		t.Fatalf("unable to write %d bytes to buffer, only wrote %d bytes\n", len(block0data), n)
 	}
-	writeInt32(t, &buf, 3)
-	writeInt32(t, &buf, 3)
-	writeInt32(t, &buf, 4)
-	writeInt32(t, &buf, int32(len(block1data)))
+	writeTestInt32(t, &buf, 3)
+	writeTestInt32(t, &buf, 3)
+	writeTestInt32(t, &buf, 4)
+	writeTestInt32(t, &buf, int32(len(block1data)))
 	n, err = buf.Write(block1data)
 	if err != nil {
 		t.Fatalf("unable to write gzip block: %v\n", err)
@@ -1533,41 +1620,79 @@ func TestBlocksWithMerge(t *testing.T) {
 	apiStr := fmt.Sprintf("%snode/%s/labels/blocks", server.WebAPIPath, uuid)
 	server.TestHTTP(t, "POST", apiStr, &buf)
 
+	apiStr = fmt.Sprintf("%snode/%s/labels/blocks/128_64_64/128_192_256?compression=blocks", server.WebAPIPath, uuid)
+	respRec := server.TestHTTPResponse(t, "GET", apiStr, nil)
+	for bnum := 0; bnum < 2; bnum++ {
+		gotBlock, _, bx, by, bz, err := readStreamedBlock(respRec.Body, 0)
+		if err != nil {
+			t.Fatalf("problem reading block %d from stream: %v\n", bnum, err)
+		}
+		for _, label := range gotBlock.Labels {
+			if label != 1 && label != 2 {
+				t.Errorf("got bad block with label %d when only 1 or 2 should have been present\n", label)
+			}
+		}
+		bcoord := dvid.ChunkPoint3d{bx, by, bz}
+		var found bool
+		for i := 0; i < 2; i++ {
+			if bcoord == testBlockData[i].bcoord {
+				found = true
+				labelBytes, _ := gotBlock.MakeLabelVolume()
+				labelVol, err := dvid.ByteToUint64(labelBytes)
+				if err != nil {
+					t.Fatalf("problem inflating block %s labels to []uint64: %v\n", bcoord, err)
+				}
+				for v, val := range labelVol {
+					if testBlockData[i].labels[v] != val {
+						t.Fatalf("label mismatch found at index %d, expected %d, got %d\n", v, testBlockData[i].labels[v], val)
+					}
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("got block %s but wasn't an expected block!\n", bcoord)
+		}
+	}
+
 	testMerge := mergeJSON(`[1, 2]`)
 	testMerge.send(t, uuid, "labels")
 
-	apiStr = fmt.Sprintf("%snode/%s/labels/blocks/128_64_64/128_192_256?compression=blocks", server.WebAPIPath, uuid)
-	respRec := server.TestHTTPResponse(t, "GET", apiStr, nil)
-	gotBlock0, _, bx, by, bz, err := readStreamedBlock(respRec.Body, 0)
-	if err != nil {
-		t.Fatalf("problem reading block 0 from stream: %v\n", err)
-	}
-	if bx != 2 || by != 3 || bz != 4 {
-		t.Errorf("got bad block coord on GET /blocks: (%d,%d,%d) when expected (2,3,4)\n", bx, by, bz)
-	}
-	for _, label := range gotBlock0.Labels {
-		if label != 1 {
-			t.Errorf("got bad block with label %d when only 1 should have been present\n", label)
+	respRec = server.TestHTTPResponse(t, "GET", apiStr, nil)
+	for bnum := 0; bnum < 2; bnum++ {
+		gotBlock, _, bx, by, bz, err := readStreamedBlock(respRec.Body, 0)
+		if err != nil {
+			t.Fatalf("problem reading block %d from stream: %v\n", bnum, err)
+		}
+		for _, label := range gotBlock.Labels {
+			if label != 1 {
+				t.Errorf("got bad block with label %d when only 1 should have been present\n", label)
+			}
+		}
+		bcoord := dvid.ChunkPoint3d{bx, by, bz}
+		var found bool
+		for i := 0; i < 2; i++ {
+			if bcoord == testBlockData[i].bcoord {
+				found = true
+				labelBytes, _ := gotBlock.MakeLabelVolume()
+				labelVol, err := dvid.ByteToUint64(labelBytes)
+				if err != nil {
+					t.Fatalf("problem inflating block %s labels to []uint64: %v\n", bcoord, err)
+				}
+				for v, val := range labelVol {
+					if testBlockData[i].labels[v] != 0 && val != 1 {
+						t.Fatalf("label mismatch found at index %d, expected 1, got %d\n", v, val)
+					}
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("got block %s but wasn't an expected block!\n", bcoord)
 		}
 	}
-	gotBlock1, _, bx, by, bz, err := readStreamedBlock(respRec.Body, 0)
-	if err != nil {
-		t.Fatalf("problem reading block 1 from stream: %v\n", err)
-	}
-	if bx != 3 || by != 3 || bz != 4 {
-		t.Errorf("got bad block coord on GET /blocks: (%d,%d,%d) when expected (3,3,4)\n", bx, by, bz)
-	}
-	for _, label := range gotBlock1.Labels {
-		if label != 1 {
-			t.Errorf("got bad block with label %d when only 1 should have been present\n", label)
-		}
-	}
+
 	apiStr = fmt.Sprintf("%snode/%s/labels/blocks/128_64_64/128_192_256?compression=blocks&supervoxels=true", server.WebAPIPath, uuid)
 	respRec = server.TestHTTPResponse(t, "GET", apiStr, nil)
-	gotBlock0, _, bx, by, bz, err = readStreamedBlock(respRec.Body, 0)
-	if bx != 2 || by != 3 || bz != 4 {
-		t.Errorf("got bad block coord on GET /blocks: (%d,%d,%d) when expected (2,3,4)\n", bx, by, bz)
-	}
+	gotBlock0, _, _, _, _, err := readStreamedBlock(respRec.Body, 0)
 	gotLabels := make(labels.Set)
 	for _, label := range gotBlock0.Labels {
 		gotLabels[label] = struct{}{}
@@ -1579,12 +1704,9 @@ func TestBlocksWithMerge(t *testing.T) {
 		t.Errorf("expected label 1 but found none\n")
 	}
 	if _, found := gotLabels[2]; !found {
-		t.Errorf("expected label 1 but found none\n")
+		t.Errorf("expected label 2 but found none\n")
 	}
-	gotBlock1, _, bx, by, bz, err = readStreamedBlock(respRec.Body, 0)
-	if bx != 3 || by != 3 || bz != 4 {
-		t.Errorf("got bad block coord on GET /blocks: (%d,%d,%d) when expected (3,3,4)\n", bx, by, bz)
-	}
+	gotBlock1, _, _, _, _, err := readStreamedBlock(respRec.Body, 0)
 	gotLabels = make(labels.Set)
 	for _, label := range gotBlock1.Labels {
 		gotLabels[label] = struct{}{}
@@ -1596,7 +1718,7 @@ func TestBlocksWithMerge(t *testing.T) {
 		t.Errorf("expected label 1 but found none\n")
 	}
 	if _, found := gotLabels[2]; !found {
-		t.Errorf("expected label 1 but found none\n")
+		t.Errorf("expected label 2 but found none\n")
 	}
 }
 

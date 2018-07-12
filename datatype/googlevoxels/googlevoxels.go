@@ -26,7 +26,7 @@ import (
 	"golang.org/x/oauth2/google"
 
 	"github.com/golang/snappy"
-	lz4 "github.com/janelia-flyem/go/golz4"
+	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
 
 const (

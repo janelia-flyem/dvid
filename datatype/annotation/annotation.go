@@ -19,6 +19,7 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/labelarray"
 	"github.com/janelia-flyem/dvid/datatype/labelblk"
+	"github.com/janelia-flyem/dvid/datatype/labelmap"
 	"github.com/janelia-flyem/dvid/datatype/labelvol"
 	"github.com/janelia-flyem/dvid/datatype/roi"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -85,15 +86,16 @@ POST <api URL>/node/<UUID>/<data name>/sync?<options>
 
     { "sync": "labels,bodies" }
 
-	To delete syncs, pass an empty string of names with query string "replace=true":
+    To delete syncs, pass an empty string of names with query string "replace=true":
 
-	{ "sync": "" }
+    { "sync": "" }
 
     The "sync" property should be followed by a comma-delimited list of data instances that MUST
     already exist.  Currently, syncs should be created before any annotations are pushed to
     the server.  If annotations already exist, these are currently not synced.
 
-    The annotations data type only accepts syncs to labelblk and labelvol data instances.
+	The annotations data type only accepts syncs to label-oriented datatypes: labelblk, labelvol,
+	labelarray, and labelmap.
 
     POST Query-string Options:
 
@@ -108,7 +110,7 @@ GET <api URL>/node/<UUID>/<data name>/label/<label>[?<options>]
 
 	Returns all point annotations within the given label as an array of elements.
 	This endpoint is only available if the annotation data instance is synced with
-	a labelblk data instance.
+	voxel label data instances (labelblk, labelarray, labelmap).
 	
 	GET Query-string Option:
 
@@ -483,12 +485,19 @@ func (t Tags) Swap(i, j int) {
 }
 
 // ElementNR describes a synaptic element's properties with No Relationships (NR),
-// used purely for label and tag annotations.
+// used for label and tag annotations while block-indexed annotations include the
+// relationships.
 type ElementNR struct {
 	Pos  dvid.Point3d
 	Kind ElementType
 	Tags Tags              // Indexed
 	Prop map[string]string // Non-Indexed
+}
+
+func (e ElementNR) String() string {
+	s := fmt.Sprintf("Pos %s; Kind: %s; ", e.Pos, e.Kind)
+	s += fmt.Sprintf("Tags: %v; Prop: %v", e.Tags, e.Prop)
+	return s
 }
 
 func (e ElementNR) Copy() *ElementNR {
@@ -764,9 +773,6 @@ func (elems Elements) Swap(i, j int) {
 	elems[i], elems[j] = elems[j], elems[i]
 }
 
-type blockElements map[dvid.IZYXString]Elements
-type tagElements map[Tag]Elements
-
 // NewData returns a pointer to annotation data.
 func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
 	// Initialize the Data for this data type
@@ -844,6 +850,21 @@ func getElementsNR(ctx *datastore.VersionedCtx, tk storage.TKey) (ElementsNR, er
 	return elems, nil
 }
 
+func getBlockElementsNR(ctx *datastore.VersionedCtx, tk storage.TKey, blockSize dvid.Point3d) (map[dvid.IZYXString]ElementsNR, error) {
+	elems, err := getElementsNR(ctx, tk)
+	if err != nil {
+		return nil, err
+	}
+	blockE := make(map[dvid.IZYXString]ElementsNR)
+	for _, elem := range elems {
+		izyxStr := elem.Pos.ToBlockIZYXString(blockSize)
+		be := blockE[izyxStr]
+		be = append(be, elem)
+		blockE[izyxStr] = be
+	}
+	return blockE, nil
+}
+
 func putBatchElements(batch storage.Batch, tk storage.TKey, elems interface{}) error {
 	val, err := json.Marshal(elems)
 	if err != nil {
@@ -862,10 +883,7 @@ func putElements(ctx *datastore.VersionedCtx, tk storage.TKey, elems interface{}
 	if err != nil {
 		return err
 	}
-	if err := store.Put(ctx, tk, val); err != nil {
-		return err
-	}
-	return nil
+	return store.Put(ctx, tk, val)
 }
 
 // Returns elements within the sparse volume represented by the blocks of RLEs.
@@ -927,7 +945,7 @@ func (d *Data) blockSize() dvid.Point3d {
 	}
 	var bsize dvid.Point3d
 	d.cachedBlockSize = &bsize
-	if lb := d.GetSyncedLabels(); lb != nil {
+	if lb := d.getSyncedLabels(); lb != nil {
 		bsize = lb.BlockSize().(dvid.Point3d)
 		return bsize
 	}
@@ -956,12 +974,18 @@ type labelType interface {
 	DataName() dvid.InstanceName
 }
 
-func (d *Data) GetSyncedLabels() labelType {
+type supervoxelType interface {
+	GetSupervoxelAtPoint(dvid.VersionID, dvid.Point) (uint64, error)
+	BlockSize() dvid.Point
+	DataName() dvid.InstanceName
+}
+
+func (d *Data) getSyncedLabels() labelType {
 	for dataUUID := range d.SyncedData() {
-		// source0, err := labelmap.GetByDataUUID(dataUUID)
-		// if err == nil {
-		// 	return source0
-		// }
+		source0, err := labelmap.GetByDataUUID(dataUUID)
+		if err == nil {
+			return source0
+		}
 		source1, err := labelarray.GetByDataUUID(dataUUID)
 		if err == nil {
 			return source1
@@ -974,6 +998,27 @@ func (d *Data) GetSyncedLabels() labelType {
 	return nil
 }
 
+func (d *Data) getSyncedSupervoxels() supervoxelType {
+	for dataUUID := range d.SyncedData() {
+		source0, err := labelmap.GetByDataUUID(dataUUID)
+		if err == nil {
+			return source0
+		}
+	}
+	return nil
+}
+
+// get supervoxel associated with a 3d point via synced label data.  This is not most efficient if
+// there are multiple elements per block, but is ok for infrequent use.
+func (d *Data) getSupervoxelAtPoint(v dvid.VersionID, pt dvid.Point3d) (label uint64, err error) {
+	labelData := d.getSyncedSupervoxels()
+	if labelData == nil {
+		err = fmt.Errorf("no synced supervoxels for annotation %q", d.DataName())
+		return
+	}
+	return labelData.GetSupervoxelAtPoint(v, pt)
+}
+
 // returns Elements with Relationships added by querying the block-indexed elements.
 func (d *Data) getExpandedElements(ctx *datastore.VersionedCtx, tk storage.TKey) (Elements, error) {
 	elems, err := getElements(ctx, tk)
@@ -983,7 +1028,7 @@ func (d *Data) getExpandedElements(ctx *datastore.VersionedCtx, tk storage.TKey)
 
 	// Batch each element into blocks.
 	blockSize := d.blockSize()
-	blockE := make(blockElements)
+	blockE := make(map[dvid.IZYXString]Elements)
 	for _, elem := range elems {
 		// Get block coord for this element.
 		izyxStr := elem.Pos.ToBlockIZYXString(blockSize)
@@ -1068,7 +1113,7 @@ func (d *Data) deleteElementInTags(ctx *datastore.VersionedCtx, batch storage.Ba
 }
 
 func (d *Data) deleteElementInLabel(ctx *datastore.VersionedCtx, batch storage.Batch, pt dvid.Point3d) error {
-	labelData := d.GetSyncedLabels()
+	labelData := d.getSyncedLabels()
 	if labelData == nil {
 		return nil // no synced labels
 	}
@@ -1079,7 +1124,7 @@ func (d *Data) deleteElementInLabel(ctx *datastore.VersionedCtx, batch storage.B
 	tk := NewLabelTKey(label)
 	elems, err := getElementsNR(ctx, tk)
 	if err != nil {
-		return fmt.Errorf("err getting elements for label %d: %v\n", label, err)
+		return fmt.Errorf("err getting elements for label %d: %v", label, err)
 	}
 
 	// Note all elements to be deleted.
@@ -1172,7 +1217,7 @@ func (d *Data) moveElementInTags(ctx *datastore.VersionedCtx, batch storage.Batc
 }
 
 func (d *Data) moveElementInLabels(ctx *datastore.VersionedCtx, batch storage.Batch, from, to dvid.Point3d, moved ElementNR) error {
-	labelData := d.GetSyncedLabels()
+	labelData := d.getSyncedLabels()
 	if labelData == nil {
 		return nil // no label denormalization possible
 	}
@@ -1285,7 +1330,7 @@ func (d *Data) modifyElements(ctx *datastore.VersionedCtx, batch storage.Batch, 
 
 // stores synaptic elements arranged by block, replacing any
 // elements at same position.
-func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, batch storage.Batch, be blockElements) error {
+func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, batch storage.Batch, be map[dvid.IZYXString]Elements) error {
 	for izyxStr, elems := range be {
 		bcoord, err := izyxStr.ToChunkPoint3d()
 		if err != nil {
@@ -1302,8 +1347,8 @@ func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, batch storage.Bat
 
 // stores synaptic elements arranged by label, replacing any
 // elements at same position.
-func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Batch, be blockElements) error {
-	labelData := d.GetSyncedLabels()
+func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Batch, be map[dvid.IZYXString]Elements) error {
+	labelData := d.getSyncedLabels()
 	if labelData == nil {
 		dvid.Infof("No synced labels for annotation %q, skipping label-aware denormalization.\n", d.DataName())
 		return nil // no synced labels
@@ -1311,7 +1356,6 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 
 	// Compute the strides (in bytes)
 	blockSize := d.blockSize()
-	dvid.Infof("Arranging elements by label using synced labels %q with block size %s\n", labelData.DataName(), labelData.BlockSize())
 	bX := blockSize[0] * 8
 	bY := blockSize[1] * bX
 	blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * 8)
@@ -1332,7 +1376,7 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 			continue
 		}
 		if len(labels) != blockBytes {
-			return fmt.Errorf("Expected %d bytes in %q label block, got %d instead.  Aborting.", blockBytes, d.DataName(), len(labels))
+			return fmt.Errorf("expected %d bytes in %q label block, got %d instead.  aborting", blockBytes, d.DataName(), len(labels))
 		}
 
 		// Group annotations by label
@@ -1352,7 +1396,7 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 		tk := NewLabelTKey(label)
 		elems, err := getElementsNR(ctx, tk)
 		if err != nil {
-			return fmt.Errorf("err getting elements for label %d: %v\n", label, err)
+			return fmt.Errorf("err getting elements for label %d: %v", label, err)
 		}
 
 		// Check if these annotations already exist.
@@ -1370,7 +1414,7 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 			}
 		}
 		if err := putBatchElements(batch, tk, elems); err != nil {
-			return fmt.Errorf("couldn't serialize label %d annotations in instance %q: %v\n", label, d.DataName(), err)
+			return fmt.Errorf("couldn't serialize label %d annotations in instance %q: %v", label, d.DataName(), err)
 		}
 	}
 
@@ -1386,7 +1430,7 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 
 // stores synaptic elements arranged by tag, replacing any
 // elements at same position.
-func (d *Data) storeTagElements(ctx *datastore.VersionedCtx, batch storage.Batch, te tagElements) error {
+func (d *Data) storeTagElements(ctx *datastore.VersionedCtx, batch storage.Batch, te map[Tag]Elements) error {
 	for tag, elems := range te {
 		tk, err := NewTagTKey(tag)
 		if err != nil {
@@ -1406,7 +1450,7 @@ func (d *Data) ProcessLabelAnnotations(v dvid.VersionID, f func(label uint64, el
 
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
-		return fmt.Errorf("Annotation %q had error initializing store: %v\n", d.DataName(), err)
+		return fmt.Errorf("annotation %q had error initializing store: %v", d.DataName(), err)
 	}
 	ctx := datastore.NewVersionedCtx(d, v)
 	err = store.ProcessRange(ctx, minTKey, maxTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
@@ -1472,11 +1516,11 @@ func (d *Data) GetTagJSON(ctx *datastore.VersionedCtx, tag Tag, addRels bool) (j
 	defer d.RUnlock()
 
 	var tk storage.TKey
-	var elems interface{}
 	tk, err = NewTagTKey(tag)
 	if err != nil {
 		return
 	}
+	var elems interface{}
 	if addRels {
 		elems, err = d.getExpandedElements(ctx, tk)
 	} else {
@@ -1574,7 +1618,7 @@ func (d *Data) GetROISynapses(ctx *datastore.VersionedCtx, roiSpec storage.Filte
 			return nil
 		})
 		if err != nil {
-			return nil, fmt.Errorf("error retrieving annotations from %s -> %s: %v\n", begBlockCoord, endBlockCoord, err)
+			return nil, fmt.Errorf("error retrieving annotations from %s -> %s: %v", begBlockCoord, endBlockCoord, err)
 		}
 	}
 	return elements, nil
@@ -1598,8 +1642,8 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff 
 	dvid.Infof("%d synaptic elements received via POST", len(elems))
 
 	blockSize := d.blockSize()
-	blockE := make(blockElements)
-	tagE := make(tagElements)
+	blockE := make(map[dvid.IZYXString]Elements)
+	tagE := make(map[Tag]Elements)
 
 	// Iterate through elements, organizing them into blocks and tags.
 	// Note: we do not check for redundancy and guarantee uniqueness at this stage.
@@ -1834,7 +1878,7 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d, k
 	return batch.Commit()
 }
 
-func (d *Data) storeTags(batcher storage.KeyValueBatcher, ctx *datastore.VersionedCtx, tagE tagElements) error {
+func (d *Data) storeTags(batcher storage.KeyValueBatcher, ctx *datastore.VersionedCtx, tagE map[Tag]Elements) error {
 	batch := batcher.NewBatch(ctx)
 	if err := d.storeTagElements(ctx, batch, tagE); err != nil {
 		return err
@@ -1845,7 +1889,7 @@ func (d *Data) storeTags(batcher storage.KeyValueBatcher, ctx *datastore.Version
 	return nil
 }
 
-func (d *Data) storeLabels(batcher storage.KeyValueBatcher, ctx *datastore.VersionedCtx, blockE blockElements) error {
+func (d *Data) storeLabels(batcher storage.KeyValueBatcher, ctx *datastore.VersionedCtx, blockE map[dvid.IZYXString]Elements) error {
 	batch := batcher.NewBatch(ctx)
 	if err := d.storeLabelElements(ctx, batch, blockE); err != nil {
 		return err
@@ -1895,8 +1939,8 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 	var numBlockE, numTagE int
 	var totBlockE, totTagE int
 
-	blockE := make(blockElements)
-	tagE := make(tagElements)
+	blockE := make(map[dvid.IZYXString]Elements)
+	tagE := make(map[Tag]Elements)
 
 	minTKey := storage.MinTKey(keyBlock)
 	maxTKey := storage.MaxTKey(keyBlock)
@@ -1926,7 +1970,19 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 
 		// Iterate through elements, organizing them into blocks and tags.
 		// Note: we do not check for redundancy and guarantee uniqueness at this stage.
-		for _, elem := range elems {
+		blockFixBatch := batcher.NewBatch(ctx)
+		deleteElems := make(map[int]struct{})
+		for i, elem := range elems {
+			// Check element is in correct block
+			elemChunkPt := elem.Pos.Chunk(d.blockSize()).(dvid.ChunkPoint3d)
+			if !chunkPt.Equals(elemChunkPt) {
+				dvid.Criticalf("Fixing element at %s found in block %s: %v\n", elem.Pos, elemChunkPt, elem)
+				deleteElems[i] = struct{}{}
+				actualTk := NewBlockTKey(elemChunkPt)
+				if err := d.modifyElements(ctx, blockFixBatch, actualTk, Elements{elem}); err != nil {
+					return err
+				}
+			}
 			// Append to tags if present
 			if len(elem.Tags) > 0 {
 				for _, tag := range elem.Tags {
@@ -1937,14 +1993,27 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 				}
 			}
 		}
-
+		if len(deleteElems) > 0 {
+			fixed := elems[:0]
+			for i, elem := range elems {
+				if _, found := deleteElems[i]; !found {
+					fixed = append(fixed, elem)
+				}
+			}
+			if err := putBatchElements(blockFixBatch, c.K, fixed); err != nil {
+				return err
+			}
+			if err := blockFixBatch.Commit(); err != nil {
+				return fmt.Errorf("bad batch commit in fixing block keyvalues for data %q: %v", d.DataName(), err)
+			}
+		}
 		if numTagE > 1000 {
 			if err := d.storeTags(batcher, ctx, tagE); err != nil {
 				return err
 			}
 			totTagE += numTagE
 			numTagE = 0
-			tagE = make(tagElements)
+			tagE = make(map[Tag]Elements)
 		}
 		if numBlockE > 1000 {
 			if err := d.storeLabels(batcher, ctx, blockE); err != nil {
@@ -1952,7 +2021,7 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 			}
 			totBlockE += numBlockE
 			numBlockE = 0
-			blockE = make(blockElements)
+			blockE = make(map[dvid.IZYXString]Elements)
 		}
 
 		return nil
@@ -1991,7 +2060,7 @@ func GetByDataUUID(dataUUID dvid.UUID) (*Data, error) {
 	}
 	data, ok := source.(*Data)
 	if !ok {
-		return nil, fmt.Errorf("Instance '%s' is not an annotation datatype!", source.DataName())
+		return nil, fmt.Errorf("instance %q is not an annotation datatype", source.DataName())
 	}
 	return data, nil
 }
@@ -2004,7 +2073,7 @@ func GetByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	}
 	data, ok := source.(*Data)
 	if !ok {
-		return nil, fmt.Errorf("Instance '%s' is not an annotation datatype!", name)
+		return nil, fmt.Errorf("instance %q is not an annotation datatype", name)
 	}
 	return data, nil
 }
@@ -2053,7 +2122,7 @@ func (d *Data) GobEncode() ([]byte, error) {
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
 	switch request.TypeCommand() {
 	default:
-		return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
+		return fmt.Errorf("unknown command.  Data type %q [%s] does not support %q command.",
 			d.DataName(), d.TypeName(), request.TypeCommand())
 	}
 }
@@ -2088,7 +2157,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, err)
 			return
 		}
-		fmt.Fprintf(w, "Changed '%s' based on received configuration:\n%s\n", d.DataName(), config)
+		fmt.Fprintf(w, "Changed %q based on received configuration:\n%s\n", d.DataName(), config)
 		return
 	}
 
@@ -2198,13 +2267,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				server.BadRequest(w, r, "Bad ROI specification: %q", parts[4])
 				return
 			}
-			elements, err := d.GetROISynapses(ctx, storage.FilterSpec(roiSpec))
+			elems, err := d.GetROISynapses(ctx, storage.FilterSpec(roiSpec))
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
 			w.Header().Set("Content-type", "application/json")
-			jsonBytes, err := json.Marshal(elements)
+			jsonBytes, err := json.Marshal(elems)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
@@ -2234,13 +2303,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				server.BadRequest(w, r, err)
 				return
 			}
-			elements, err := d.GetRegionSynapses(ctx, ext3d)
+			elems, err := d.GetRegionSynapses(ctx, ext3d)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
 			w.Header().Set("Content-type", "application/json")
-			jsonBytes, err := json.Marshal(elements)
+			jsonBytes, err := json.Marshal(elems)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return

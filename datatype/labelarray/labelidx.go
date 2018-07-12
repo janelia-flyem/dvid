@@ -18,7 +18,7 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 
 	"github.com/coocood/freecache"
-	lz4 "github.com/janelia-flyem/go/golz4"
+	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
 
 const (
@@ -953,7 +953,7 @@ func (d *Data) writeStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scal
 
 func (d *Data) writeLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, b dvid.Bounds, compression string, w io.Writer) (found bool, err error) {
 	var data []byte
-	data, err = d.GetLegacyRLE(ctx, label, scale, b)
+	data, err = d.getLegacyRLE(ctx, label, scale, b)
 	if err != nil {
 		return
 	}
@@ -988,16 +988,6 @@ func (d *Data) writeLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale u
 	return
 }
 
-// GetLegacyRLE returns an encoded sparse volume given a label and an output format.
-func (d *Data) GetLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds) ([]byte, error) {
-	meta, lbls, err := GetMappedLabelIndex(d, ctx.VersionID(), label, scale, bounds)
-	if err != nil {
-		return nil, err
-	}
-	// dvid.Infof("GetLegacyRLE --> got lbls %s, and meta: %v\n", lbls, meta)
-	return d.getLegacyRLEs(ctx, meta, lbls, scale, bounds)
-}
-
 //  The encoding has the following format where integers are little endian:
 //
 //    byte     Payload descriptor:
@@ -1017,7 +1007,23 @@ func (d *Data) GetLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uin
 //        int32   Length of run
 //        bytes   Optional payload dependent on first byte descriptor
 //
-func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, meta *Meta, lbls labels.Set, scale uint8, bounds dvid.Bounds) ([]byte, error) {
+func (d *Data) getLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds) ([]byte, error) {
+	meta, lbls, err := GetMappedLabelIndex(d, ctx.VersionID(), label, scale, bounds)
+	if err != nil {
+		return nil, err
+	}
+	if meta == nil || len(meta.Blocks) == 0 || len(lbls) == 0 {
+		return nil, err
+	}
+	indices, err := getBoundedBlockIndices(meta, bounds)
+	if err != nil {
+		return nil, err
+	}
+	store, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return nil, err
+	}
+
 	buf := new(bytes.Buffer)
 	buf.WriteByte(dvid.EncodingBinary)
 	binary.Write(buf, binary.LittleEndian, uint8(3))  // # of dimensions
@@ -1026,15 +1032,6 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, meta *Meta, lbls label
 	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # voxels
 	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # spans
 
-	indices, err := getBoundedBlockIndices(meta, bounds)
-	if err != nil {
-		return nil, err
-	}
-
-	store, err := datastore.GetOrderedKeyValueDB(d)
-	if err != nil {
-		return nil, err
-	}
 	op := labels.NewOutputOp(buf)
 	go labels.WriteRLEs(lbls, op, bounds)
 	var numEmpty int

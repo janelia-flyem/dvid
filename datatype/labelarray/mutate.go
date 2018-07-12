@@ -165,7 +165,10 @@ func (d *Data) processMerge(v dvid.VersionID, mutID uint64, delta labels.DeltaMe
 		dvid.Criticalf("can't notify subscribers for event %v: %v\n", evt, err)
 	}
 
-	downresMut.Done()
+	if err := downresMut.Execute(); err != nil {
+		return err
+	}
+
 	dvid.Infof("Merged %s -> %d, data %q, resulting in %d blocks\n", delta.Merged, delta.Target, d.DataName(), len(delta.Blocks))
 
 	// send kafka merge complete event to instance-uuid topic
@@ -544,8 +547,7 @@ func (d *Data) processSplit(v dvid.VersionID, mutID uint64, delta labels.DeltaSp
 		return fmt.Errorf("Unable to notify subscribers to data %q for evt %v\n", d.DataName(), evt)
 	}
 
-	downresMut.Done()
-	return nil
+	return downresMut.Execute()
 }
 
 // handles modification of the old and new label's block indices on split.
@@ -666,7 +668,6 @@ func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
 			dvid.Errorf("can't store label %d RLEs into block %s: %v\n", op.NewLabel, op.bcoord, err)
 			return
 		}
-		dvid.Infof("Split block %s, label %d -> %d: kept %d voxels, split %d voxels\n", pb.BCoord, op.Target, op.NewLabel, keptSize, toLabelSize)
 		if splitBlock == nil {
 			dvid.Infof("Attempt to split missing label %d in block %s!\n", op.SplitOp.Target, pb)
 			return

@@ -35,9 +35,9 @@ func (pb PositionedBlock) OffsetDVID() (dvid.Point3d, error) {
 	return pb.BCoord.VoxelOffset(pb.Size)
 }
 
-// SplitWithStats writes a new label into the RLEs defined by the split and returns how many of
-// each label was overwritten.  This is done by doing full expansion of block into uint64 array.
-func (pb PositionedBlock) SplitWithStats(op SplitOp) (split *Block, counts map[uint64]uint32, err error) {
+// DoSplitWithStats writes a new label into the RLEs defined by the split and returns how each supervoxel
+// (counts key) was split.  This is done by doing full expansion of block into uint64 array.
+func (pb PositionedBlock) DoSplitWithStats(op SplitOp, m *SVSplitMap, newLabelFunc func() (uint64, error)) (split *Block, counts map[uint64]SVSplitCount, err error) {
 	var offset dvid.Point3d
 	if offset, err = pb.OffsetDVID(); err != nil {
 		return
@@ -47,21 +47,76 @@ func (pb PositionedBlock) SplitWithStats(op SplitOp) (split *Block, counts map[u
 	if err != nil {
 		return
 	}
-	counts = make(map[uint64]uint32)
+	counts = make(map[uint64]SVSplitCount)
 
+	replacements := make(map[uint64]uint64)
 	rles := op.RLEs.Offset(offset)
 	for _, rle := range rles {
 		pt := rle.StartPt()
 		i := pt[2]*pb.Size[1]*pb.Size[0] + pt[1]*pb.Size[0] + pt[0]
 		for x := int32(0); x < rle.Length(); x++ {
 			lbl := lblarray[i]
-			counts[lbl]++
-			lblarray[i] = op.NewLabel
+			if lbl != 0 {
+				svc := counts[lbl]
+
+				var relabel SVSplit
+				relabel, _, err = m.getMapping(lbl, newLabelFunc)
+				if err != nil {
+					return
+				}
+				lblarray[i] = relabel.Split
+				replacements[lbl] = relabel.Remain
+				svc.SVSplit = relabel
+				svc.Voxels++
+				counts[lbl] = svc
+			}
 			i++
 		}
 	}
 
-	split, err = MakeBlock(lblarrayBytes, pb.Size)
+	if split, err = MakeBlock(lblarrayBytes, pb.Size); err != nil {
+		return
+	}
+	if len(replacements) > 0 {
+		split, _, err = split.ReplaceLabels(replacements)
+	}
+	return
+}
+
+// SplitStats checks voxels under the split RLEs and returns how each supervoxel
+// should be split without doing a split.  This is done by doing full expansion
+// of block into uint64 array.
+func (pb PositionedBlock) SplitStats(rles dvid.RLEs, m *SVSplitMap, newLabelFunc func() (uint64, error)) (counts map[uint64]SVSplitCount, err error) {
+	var offset dvid.Point3d
+	if offset, err = pb.OffsetDVID(); err != nil {
+		return
+	}
+	lblarrayBytes, _ := pb.MakeLabelVolume()
+	lblarray, err := dvid.ByteToUint64(lblarrayBytes)
+	if err != nil {
+		return
+	}
+
+	var relabel SVSplit
+	counts = make(map[uint64]SVSplitCount)
+	for _, rle := range rles.Offset(offset) {
+		pt := rle.StartPt()
+		i := pt[2]*pb.Size[1]*pb.Size[0] + pt[1]*pb.Size[0] + pt[0]
+		for x := int32(0); x < rle.Length(); x++ {
+			lbl := lblarray[i]
+			if lbl != 0 {
+				svc := counts[lbl]
+				relabel, _, err = m.getMapping(lbl, newLabelFunc)
+				if err != nil {
+					return
+				}
+				svc.SVSplit = relabel
+				svc.Voxels++
+				counts[lbl] = svc
+			}
+			i++
+		}
+	}
 	return
 }
 
@@ -337,9 +392,7 @@ func (pb PositionedBlock) splitFast(op SplitOp) (split *Block, keptSize, splitSi
 	return
 }
 
-// SplitSupervoxel splits a target supervoxel using RLEs within a block by doing full expansion of block
-// into uint64 array.  The voxels of the RLEs get the SplitSupervoxel id while all other voxels of the
-// target supervoxel get assigned the RemainSupervoxel id by simply changing the label header.
+// SplitSupervoxel splits a target supervoxel using RLEs within a block.
 func (pb PositionedBlock) SplitSupervoxel(op SplitSupervoxelOp) (split *Block, keptSize, splitSize uint64, err error) {
 	var offset dvid.Point3d
 	if offset, err = pb.OffsetDVID(); err != nil {
@@ -376,6 +429,46 @@ func (pb PositionedBlock) SplitSupervoxel(op SplitSupervoxelOp) (split *Block, k
 
 	split, err = MakeBlock(lblarrayBytes, pb.Size)
 	return
+}
+
+// SplitSupervoxels replaces all split supervoxels in a block with either a split label or a
+// remain label depending on whether it falls under the split RLEs.
+func (pb PositionedBlock) SplitSupervoxels(rles dvid.RLEs, svsplits map[uint64]SVSplit) (split *Block, err error) {
+	var offset dvid.Point3d
+	if offset, err = pb.OffsetDVID(); err != nil {
+		return
+	}
+	lblarrayBytes, _ := pb.MakeLabelVolume()
+	lblarray, err := dvid.ByteToUint64(lblarrayBytes)
+	if err != nil {
+		return
+	}
+	// assign voxels under split first
+	for _, rle := range rles.Offset(offset) {
+		pt := rle.StartPt()
+		i := pt[2]*pb.Size[1]*pb.Size[0] + pt[1]*pb.Size[0] + pt[0]
+		for x := int32(0); x < rle.Length(); x++ {
+			lbl := lblarray[i]
+			svsplit, found := svsplits[lbl]
+			if found {
+				lblarray[i] = svsplit.Split
+			}
+			i++
+		}
+	}
+
+	// iterate over rest of block and if an affected supervoxel still exists, it was in
+	// outside of split.
+	numVoxels := int(pb.Size[0] * pb.Size[1] * pb.Size[2])
+	for i := 0; i < numVoxels; i++ {
+		lbl := lblarray[i]
+		svsplit, found := svsplits[lbl]
+		if found {
+			lblarray[i] = svsplit.Remain
+		}
+	}
+
+	return MakeBlock(lblarrayBytes, pb.Size)
 }
 
 // MakeSolidBlock returns a Block that represents a single label of the given block size.
@@ -740,23 +833,32 @@ func (b *Block) ReplaceLabel(target, newLabel uint64) (replace *Block, replaceSi
 		return
 	}
 
-	var targetFound bool
-	var targetIndex uint32
 	for i, label := range replace.Labels {
 		if label == target {
-			targetFound = true
-			targetIndex = uint32(i)
-			break
+			replaceSize += replace.getNumVoxels(uint32(i))
+			replace.Labels[i] = newLabel
 		}
 	}
+	return
+}
 
-	if !targetFound {
-		replaceSize = 0
+// ReplaceLabels replaces labels according to mapping and doesn't compute sizes.
+func (b *Block) ReplaceLabels(mapping map[uint64]uint64) (replace *Block, replaced bool, err error) {
+	replace = new(Block)
+	replace.data = dvid.New8ByteAlignBytes(uint32(len(b.data)))
+	copy(replace.data, b.data)
+	if err = replace.setExportedVars(); err != nil {
+		replace = nil
 		return
 	}
 
-	replace.Labels[targetIndex] = newLabel
-	replaceSize = replace.getNumVoxels(targetIndex)
+	for i, label := range replace.Labels {
+		replacement, found := mapping[label]
+		if found {
+			replaced = true
+			replace.Labels[i] = replacement
+		}
+	}
 	return
 }
 
@@ -872,6 +974,9 @@ func downresArray(hires, lores []byte, vx, vy, vz int32, blockSize dvid.Point3d)
 					if winnerVotes < votes {
 						winnerVotes = votes
 						winner = lbl
+					} else if winnerVotes == votes && lbl < winner {
+						winnerVotes = votes
+						winner = lbl
 					}
 					delete(votemap, lbl)
 				}
@@ -880,6 +985,68 @@ func downresArray(hires, lores []byte, vx, vy, vz int32, blockSize dvid.Point3d)
 			}
 		}
 	}
+}
+
+// DownresLabels takes an array of uint64 in []byte format and returns a 2x down-sampled
+// array of uint64.  An error is returned if size is not multiple of two or passed array
+// is incorrect size.
+func DownresLabels(hires []byte, hisize dvid.Point3d) (lores []byte, err error) {
+	loresBytes := int(hisize[0] * hisize[1] * hisize[2])
+	hiresBytes := loresBytes * 8
+	if len(hires) != hiresBytes {
+		err = fmt.Errorf("hi-res array had %d bytes, expected %d bytes for %s uint64 volume", len(hires), hiresBytes, hisize)
+		return
+	}
+	if hisize[0]%2 != 0 || hisize[1]%2 != 0 || hisize[2]%2 != 0 {
+		err = fmt.Errorf("hi-res array to be down-sampled must have size equal to power of two")
+		return
+	}
+	var losize dvid.Point3d
+	losize[0] = hisize[0] >> 1
+	losize[1] = hisize[1] >> 1
+	losize[2] = hisize[2] >> 1
+	lores = make([]byte, loresBytes)
+
+	votemap := make(map[uint64]int, 8)
+	var lx, ly, lz, x, y, z int32
+	for z = 0; z < hisize[2]; z += 2 {
+		lz = z >> 1
+		for y = 0; y < hisize[1]; y += 2 {
+			ly = y >> 1
+			for x = 0; x < hisize[0]; x += 2 {
+				lx = x >> 1
+
+				var ix, iy, iz int32
+				for iz = 0; iz < 2; iz++ {
+					for iy = 0; iy < 2; iy++ {
+						for ix = 0; ix < 2; ix++ {
+							i := (z+iz)*hisize[0]*hisize[1] + (y+iy)*hisize[0] + x + ix
+							lbl := binary.LittleEndian.Uint64(hires[i*8 : i*8+8])
+							if lbl != 0 {
+								votemap[lbl]++
+							}
+						}
+					}
+				}
+
+				var winner uint64
+				var winnerVotes int
+				for lbl, votes := range votemap {
+					if winnerVotes < votes {
+						winnerVotes = votes
+						winner = lbl
+					} else if winnerVotes == votes && lbl < winner {
+						winnerVotes = votes
+						winner = lbl
+					}
+					delete(votemap, lbl)
+				}
+				li := lz*losize[1]*losize[0] + ly*losize[0] + lx
+				binary.LittleEndian.PutUint64(lores[li*8:li*8+8], winner)
+			}
+		}
+	}
+	return
 }
 
 // Downres takes eight Blocks that represent higher-resolution octants (by 2x) of
@@ -1364,6 +1531,61 @@ func (b *Block) UnmarshalBinary(data []byte) error {
 	b.data = dvid.New8ByteAlignBytes(numBytes)
 	copy(b.data, data)
 	return b.setExportedVars()
+}
+
+// StringDump returns a string that lists pretty-printed data from the block.
+func (b Block) StringDump(verbose bool) string {
+	uint64array, size := b.MakeLabelVolume()
+	s := fmt.Sprintf("Block size: %s\n", size)
+	counts := make(map[uint64]int, len(b.Labels))
+	for i := 0; i < len(uint64array); i += 8 {
+		label := binary.LittleEndian.Uint64(uint64array[i : i+8])
+		counts[label]++
+	}
+	seen := make(Set)
+	for _, label := range b.Labels {
+		s += fmt.Sprintf("Label %10d: ", label)
+		if _, found := seen[label]; found {
+			s += fmt.Sprintf("duplicate\n")
+		} else {
+			s += fmt.Sprintf("%d voxels\n", counts[label])
+			seen[label] = struct{}{}
+		}
+	}
+
+	subBlocksPerDim := int(size[0]) / SubBlockSize
+	numSubBlocks := subBlocksPerDim * subBlocksPerDim * subBlocksPerDim
+	if len(b.NumSBLabels) != numSubBlocks {
+		s += fmt.Sprintf("Expected %d entries for number of sub-block indices but got %d instead!\n", numSubBlocks, len(b.NumSBLabels))
+		return s
+	}
+	if !verbose {
+		return s
+	}
+	i := 0
+	sb := 0
+	for z := 0; z < subBlocksPerDim; z++ {
+		z0 := z * SubBlockSize
+		z1 := z0 + SubBlockSize - 1
+		for y := 0; y < subBlocksPerDim; y++ {
+			y0 := y * SubBlockSize
+			y1 := y0 + SubBlockSize - 1
+			for x := 0; x < subBlocksPerDim; x++ {
+				x0 := x * SubBlockSize
+				x1 := x0 + SubBlockSize - 1
+				s += fmt.Sprintf("(%2d-%2d, %2d-%2d, %2d-%2d) ", x0, x1, y0, y1, z0, z1)
+				for n := 0; n < int(b.NumSBLabels[sb]); n++ {
+					index := b.SBIndices[i]
+					label := b.Labels[index]
+					s += fmt.Sprintf("%d [%d]  ", b.SBIndices[i], label)
+					i++
+				}
+				s += fmt.Sprintf("\n")
+				sb++
+			}
+		}
+	}
+	return s
 }
 
 // assumes b.data is set and we need to compute all other properties of a Block

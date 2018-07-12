@@ -10,4 +10,6 @@ const (
 	MutationCompleteType
 	AffinityType
 	MappingOpType
+	SupervoxelSplitType
+	CleaveOpType
 )

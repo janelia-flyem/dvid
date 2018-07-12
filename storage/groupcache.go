@@ -127,9 +127,13 @@ func setupGroupcache(config GroupcacheConfig) error {
 
 // returns a store that tries groupcache before resorting to passed Store.
 func wrapGroupcache(store dvid.Store, cache *groupcache.Group) (dvid.Store, error) {
+	okvstore, ok := store.(OrderedKeyValueDB)
+	if ok {
+		return groupcacheOrderedStore{OrderedKeyValueDB: okvstore, cache: cache}, nil
+	}
 	kvstore, ok := store.(KeyValueDB)
 	if !ok {
-		return store, fmt.Errorf("store %s doesn't implement KeyValueDB", store)
+		return store, fmt.Errorf("can't wrap store %s in groupcache: doesn't implement KeyValueDB", store)
 	}
 	return groupcacheStore{KeyValueDB: kvstore, cache: cache}, nil
 }
@@ -138,17 +142,41 @@ type instanceProvider interface {
 	InstanceID() dvid.InstanceID
 }
 
+type groupcacheOrderedStore struct {
+	OrderedKeyValueDB
+	cache *groupcache.Group
+}
+
 type groupcacheStore struct {
 	KeyValueDB
 	cache *groupcache.Group
 }
 
-// only need to override the Get function of the wrapped KeyValueDB.
-func (g groupcacheStore) Get(ctx Context, k TKey) ([]byte, error) {
+func (g groupcacheOrderedStore) Get(ctx Context, k TKey) ([]byte, error) {
+	// we only provide this server for data contexts that have InstanceID().
+	ip, ok := ctx.(instanceProvider)
+	if !ok {
+		dvid.Criticalf("groupcache Get passed a non-data context %v, falling back on normal kv store Get\n", ctx)
+		return g.OrderedKeyValueDB.Get(ctx, k)
+	}
+
+	// the groupcache key has an instance identifier in first 4 bytes.
+	instanceBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(instanceBytes, uint32(ip.InstanceID()))
+	gkey := string(instanceBytes) + string(k)
+
+	// Try to get data from groupcache, which if fails, will call the original KeyValueDB in passed Context.
+	var data []byte
 	gctx := GroupcacheCtx{
 		Context:    ctx,
-		KeyValueDB: g.KeyValueDB,
+		KeyValueDB: g.OrderedKeyValueDB,
 	}
+	err := g.cache.Get(groupcache.Context(gctx), gkey, groupcache.AllocatingByteSliceSink(&data))
+	return data, err
+}
+
+// only need to override the Get function of the wrapped KeyValueDB.
+func (g groupcacheStore) Get(ctx Context, k TKey) ([]byte, error) {
 	// we only provide this server for data contexts that have InstanceID().
 	ip, ok := ctx.(instanceProvider)
 	if !ok {
@@ -163,6 +191,10 @@ func (g groupcacheStore) Get(ctx Context, k TKey) ([]byte, error) {
 
 	// Try to get data from groupcache, which if fails, will call the original KeyValueDB in passed Context.
 	var data []byte
+	gctx := GroupcacheCtx{
+		Context:    ctx,
+		KeyValueDB: g.KeyValueDB,
+	}
 	err := g.cache.Get(groupcache.Context(gctx), gkey, groupcache.AllocatingByteSliceSink(&data))
 	return data, err
 }

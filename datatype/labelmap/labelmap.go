@@ -36,7 +36,7 @@ import (
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 
-	lz4 "github.com/janelia-flyem/go/golz4"
+	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
 
 const (
@@ -115,16 +115,16 @@ $ dvid node <UUID> <data name> composite <uint8 data name> <new rgba8 data name>
 	
 $ dvid node <UUID> <data name> dump <dump type> <file path>
 
-	Dumps the internal state of the specified version of labelmap data into a CSV file.
-	The format of the CSV files are as follows depending on the <dump type>:
+	Dumps the internal state of the specified version of labelmap data into a space-delimted file.
+	The format of the space-delimted files are as follows depending on the <dump type>:
 
-	"svcount": Supervoxel counts in a CSV file where each block in a supervoxel has a row:
+	"svcount": Supervoxel counts in a space-delimted file where each block in a supervoxel has a row:
 		<supervoxel id> <block z> <block y> <block x> <# voxels>
 	
-	"mappings": Supervoxel to agglomerated label mappings in a CSV file where each supervoxel has a row:
+	"mappings": Supervoxel to agglomerated label mappings in a space-delimted file where each supervoxel has a row:
 		<supervoxel id> <label>
 	
-	"indices": Label indices in a CSV file where each supervoxel has a row with its agglomerated label:
+	"indices": Label indices in a space-delimted file where each supervoxel has a row with its agglomerated label:
 		<label> <supervoxel id> <block z> <block y> <block x> <# voxels>
 	
 	Note that the last two dumps can be used by a program to ingest all but the actual voxel labels,
@@ -241,8 +241,9 @@ GET  <api URL>/node/<UUID>/<data name>/specificblocks[?queryopts]
 	bytes for the value.  If blocks are unset within the span, they will not appear in the stream,
 	so the returned data will be equal to or less than spanX blocks worth of data.  
 
-    The returned data format has the following format where int32 is in little endian and the bytes of
-    block data have been compressed in JPEG format.
+	The returned data format has the following format where int32 is in little endian and the bytes 
+	of block data have been compressed in the desired output format, according to the specification 
+	in "compression" query string.
 
         int32  Block 1 coordinate X (Note that this may not be starting block coordinate if it is unset.)
         int32  Block 1 coordinate Y
@@ -473,11 +474,14 @@ GET <api URL>/node/<UUID>/<data name>/mapping[?queryopts]
 
 	Returns JSON for mapped labels given a list of supervoxels.  Expects JSON in GET body:
 
-	[ supervoxel1, supervoxel2, ...]
+	[ supervoxel1, supervoxel2, supervoxel3, ...]
 
-	Returns for each POSTed supervoxel the corresponding mapped label:
+	Returns for each POSTed supervoxel the corresponding mapped label, which may be 0 if the
+	supervoxel no longer exists, e.g., has been split:
 
-	[ 23, 911, ...]
+	[ 23, 0, 911, ...]
+
+	In the example above, supervoxel2 had been split and no longer exists.
 	
     Arguments:
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
@@ -485,7 +489,33 @@ GET <api URL>/node/<UUID>/<data name>/mapping[?queryopts]
 
     Query-string Options:
 
+	nolookup      if "true", dvid won't verify that a supervoxel actually exists by looking up
+	                the label indices.  Only use this if supervoxels were known to exist at some time.
     hash          MD5 hash of request body content in hexidecimal string format.
+
+GET <api URL>/node/<UUID>/<data name>/supervoxel-splits
+
+	Returns JSON for all supervoxel splits that have occured up to this version of the
+	labelmap instance.  The returned JSON is of format:
+
+		[
+			"abc123",
+			[[<mutid>, <old>, <remain>, <split>],
+			[<mutid>, <old>, <remain>, <split>],
+			[<mutid>, <old>, <remain>, <split>]],
+			"bcd234",
+			[[<mutid>, <old>, <remain>, <split>],
+			[<mutid>, <old>, <remain>, <split>],
+			[<mutid>, <old>, <remain>, <split>]]
+		]
+	
+	The UUID examples above, "abc123" and "bcd234", would be full UUID strings and are in order
+	of proximity to the given UUID.  So the first UUID would be the version of interest, then
+	its parent, and so on.
+		  
+    Arguments:
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of label data.
 
 
 GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
@@ -559,6 +589,8 @@ POST <api URL>/node/<UUID>/<data name>/blocks[?queryopts]
 	DVID label Block serialization.
 
 	Note that maximum label and extents are automatically handled during these calls.
+	If the optional "scale" query is greater than 0, these ingestions will not trigger
+	syncing with associated annotations, etc.
 
     Example: 
 
@@ -627,8 +659,8 @@ POST <api URL>/node/<UUID>/<data name>/blocks[?queryopts]
 	                down-sampled to lower resolution.  If "true", scale must be "0" or absent.
     compression   Specifies compression format of block data: default and only option currently is
 					"blocks" (native DVID label blocks).
-	noindexing	  If "true", will not compute label indices from the received voxel data.  Use this
-					in conjunction with POST /index and /affinities endpoint for faster ingestion.
+	noindexing	  If "true" (default "false"), will not compute label indices from the received voxel data.  
+	                Use this in conjunction with POST /index and /affinities endpoint for faster ingestion.
     throttle      If "true", makes sure only N compute-intense operation (all API calls that can be 
 	                throttled) are handled.  If the server can't initiate the API call right away, a 503 
                     (Service Unavailable) status code is returned.
@@ -644,6 +676,20 @@ GET <api URL>/node/<UUID>/<data name>/maxlabel
 -------------------------------------------------------------------------------------------------------
 --- The following endpoints require the labelmap data instance to have IndexedLabels set to true. ---
 -------------------------------------------------------------------------------------------------------
+
+GET <api URL>/node/<UUID>/<data name>/lastmod/<label>
+
+	Returns last modification metadata for a label in JSON:
+
+	{ "mutation id": 2314, "last mod user": "johndoe", "last mod time": "2000-02-01 12:13:14 +0000 UTC", "last mod app": "Neu3" }
+	
+	Time is returned in RFC3339 string format. Returns a status code 404 (Not Found)
+    if label does not exist.
+	
+    Arguments:
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of labelmap instance.
+    label     	  A 64-bit integer label id
 
 GET <api URL>/node/<UUID>/<data name>/supervoxels/<label>
 
@@ -674,6 +720,28 @@ GET <api URL>/node/<UUID>/<data name>/size/<label>[?supervoxels=true]
     Query-string Options:
 
 	supervoxels   If "true", interprets the given label as a supervoxel id, not a possibly merged label.
+
+GET <api URL>/node/<UUID>/<data name>/sizes[?supervoxels=true]
+
+	Returns the sizes in voxels for a list of labels (or supervoxels) in JSON.  Expects JSON
+	for the list of labels (or supervoxels) in the body of the request:
+
+	[ 1, 2, 3, ... ]
+
+	Returns JSON of the sizes for each of the above labels:
+
+	[ 19381, 308, 586, ... ]
+	
+	Returns a size of 0 if label does not exist.
+	
+    Arguments:
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of labelmap instance.
+
+    Query-string Options:
+
+	supervoxels   If "true", interprets the given labels as a supervoxel ids.
+    hash          MD5 hash of request body content in hexidecimal string format.
 
 GET  <api URL>/node/<UUID>/<data name>/sparsevol-size/<label>[?supervoxels=true]
 
@@ -757,12 +825,12 @@ GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
 			  "srles" - streaming RLEs with each RLE composed of 4 int32 (16 bytes) for x, y, z, run 
 			  "blocks" - binary Block stream
 
-    minx    Spans must be equal to or larger than this minimum x voxel coordinate.
-    maxx    Spans must be equal to or smaller than this maximum x voxel coordinate.
-    miny    Spans must be equal to or larger than this minimum y voxel coordinate.
-    maxy    Spans must be equal to or smaller than this maximum y voxel coordinate.
-    minz    Spans must be equal to or larger than this minimum z voxel coordinate.
-    maxz    Spans must be equal to or smaller than this maximum z voxel coordinate.
+    minx    Spans must be equal to or larger than this minimum hi-res (scale 0) x voxel coordinate.
+    maxx    Spans must be equal to or smaller than this maximum hi-res (scale 0) x voxel coordinate.
+    miny    Spans must be equal to or larger than this minimum hi-res (scale 0) y voxel coordinate.
+    maxy    Spans must be equal to or smaller than this maximum hi-res (scale 0) y voxel coordinate.
+    minz    Spans must be equal to or larger than this minimum hi-res (scale 0) z voxel coordinate.
+    maxz    Spans must be equal to or smaller than this maximum hi-res (scale 0) z voxel coordinate.
     exact   "false" if RLEs can extend a bit outside voxel bounds within border blocks.
              This will give slightly faster responses. 
 
@@ -988,8 +1056,8 @@ POST <api URL>/node/<UUID>/<data name>/split-supervoxel/<supervoxel>
 			  ...
 	        int32   Length of run
 
-	NOTE 1: The POSTed split sparse volume must be a subset of the given supervoxel.  You cannot
-	give an arbitrary sparse volume that may span multiple supervoxels.
+	NOTE: The POSTed split sparse volume should be a subset of the given supervoxel.  Any
+	region that falls out of the given supervoxel will be ignored.
 
 	Kafka JSON message generated by this request:
 		{ 
@@ -1041,8 +1109,9 @@ POST <api URL>/node/<UUID>/<data name>/split/<label>
 				...
 			int32   Length of run
 
-	NOTE 1: The POSTed split sparse volume must be a subset of the given label's voxels.  You cannot
-	give an arbitrary sparse volume that may span multiple labels.
+	NOTE: The POSTed split sparse volume must be a subset of the given label's voxels.  You cannot
+	give an arbitrary sparse volume that may span multiple labels.  An error will be returned if
+	the POSTed split sparsevol isn't contained within the split label.
 	
 	Kafka JSON message generated by this request:
 		{ 
@@ -1052,8 +1121,10 @@ POST <api URL>/node/<UUID>/<data name>/split/<label>
 			"Split": <string for reference to split data in serialized RLE format>,
 			"MutationID": <unique id for mutation>
 			"UUID": <UUID on which split was done>
+			"SVSplit": {23918: {"Remain": 481273, "Split": 481274}, 1839109: {"Remain":...}}
 		}
 	
+	The SVSplit field above gives the new remain and split labels for any given split supervoxel.
 	The split reference above can be used to download the split binary data by calling
 	this data instance's BlobStore API.  See the node-level HTTP API documentation.
 
@@ -1065,16 +1136,18 @@ POST <api URL>/node/<UUID>/<data name>/split/<label>
 			"MutationID": <unique id for mutation>
 			"UUID": <UUID on which split was done>
 		}
-	
+
+
+GET  <api URL>/node/<UUID>/<data name>/index/<label>
 POST <api URL>/node/<UUID>/<data name>/index/<label>
 
-	Allows direct storing of an index (blocks per supervoxel and their voxel count) for any
-	particular label.  Typically, these indices are computed on-the-fly during ingestion of
+	Allows direct retrieval or storing of an index (blocks per supervoxel and their voxel count) 
+	for a label.  Typically, these indices are computed on-the-fly during ingestion of
 	of blocks of label voxels.  If there are cluster systems capable of computing label
-	blocks, indices, and affinities directly, though, it's more efficient to simply load
+	blocks, indices, and affinities directly, though, it's more efficient to simply POST
 	them into dvid.
 
-	The POST expects a protobuf serialization of a LabelIndex message defined by:
+	The returned (GET) or sent (POST) protobuf serialization of a LabelIndex message is defined by:
 
 	message SVCount {
 		map<uint64, uint32> counts = 1;
@@ -1088,7 +1161,7 @@ POST <api URL>/node/<UUID>/<data name>/index/<label>
 		string last_mod_user = 5;
 	}
 
-	If the blocks map is empty, the label index is deleted.
+	If the blocks map is empty on a POST, the label index is deleted.
 	
 POST <api URL>/node/<UUID>/<data name>/indices
 
@@ -1107,6 +1180,18 @@ POST <api URL>/node/<UUID>/<data name>/indices
 	where LabelIndex is defined by the protobuf above in the POST /index documentation.
 	A label index can be deleted as per the POST /index documentation by having an empty
 	blocks map.
+
+GET <api URL>/node/<UUID>/<data name>/mappings
+
+	Streams space-delimited mappings for the given UUID, one mapping per line:
+
+		supervoxel0 mappedTo0
+		supervoxel1 mappedTo1
+		supervoxel2 mappedTo2
+		...
+		supervoxelN mappedToN
+	
+	Note that only non-identity mappings are transmitted.
 
 POST <api URL>/node/<UUID>/<data name>/mappings
 
@@ -1309,8 +1394,7 @@ type Data struct {
 
 	mlMu sync.RWMutex // For atomic access of MaxLabel and MaxRepoLabel
 
-	// unpersisted data: channels for mutations
-	mutateCh [numMutateHandlers]chan procMsg // channels into mutate (merge/split) ops.
+	voxelMu sync.Mutex // Only allow voxel-level label mutation ops sequentially.
 }
 
 // GetMaxDownresLevel returns the number of down-res levels, where level 0 = high-resolution
@@ -1579,7 +1663,7 @@ func (d *Data) persistMaxLabel(v dvid.VersionID) error {
 		return err
 	}
 	if len(d.MaxLabel) == 0 {
-		return fmt.Errorf("bad attempt to save non-existant max label for version %d\n", v)
+		return fmt.Errorf("bad attempt to save non-existant max label for version %d", v)
 	}
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint64(buf, d.MaxLabel[v])
@@ -1635,7 +1719,7 @@ func (d *Data) LoadMutable(root dvid.VersionID, storedVersion, expectedVersion u
 	ctx := storage.NewDataContext(d, 0)
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
-		return false, fmt.Errorf("Data type labelmap had error initializing store: %v\n", err)
+		return false, fmt.Errorf("Data type labelmap had error initializing store: %v", err)
 	}
 
 	wg := new(sync.WaitGroup)
@@ -1849,6 +1933,35 @@ func (d *Data) convertTo64bit(geom dvid.Geometry, data []uint8, bytesPerVoxel, s
 	return data64, nil
 }
 
+type blockSend struct {
+	bcoord dvid.ChunkPoint3d
+	value  []byte
+	err    error
+}
+
+func writeBlock(w http.ResponseWriter, bcoord dvid.ChunkPoint3d, out []byte) error {
+	if err := binary.Write(w, binary.LittleEndian, bcoord[0]); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, bcoord[1]); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, bcoord[2]); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, uint32(len(out))); err != nil {
+		return err
+	}
+	if written, err := w.Write(out); err != nil || written != int(len(out)) {
+		if err != nil {
+			dvid.Errorf("error writing value: %v\n", err)
+			return err
+		}
+		return fmt.Errorf("could not write %d bytes of block %s: only %d bytes written", len(out), bcoord, written)
+	}
+	return nil
+}
+
 // sendBlocksSpecific writes data to the blocks specified -- best for non-ordered backend
 func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWriter, supervoxels bool, compression, blockstring string, scale uint8) error {
 	switch compression {
@@ -1870,17 +1983,32 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 		return fmt.Errorf("block query string should be three coordinates per block")
 	}
 
-	// make a finished queue
-	finishedRequests := make(chan error, len(coordarray)/3)
-	var mutex sync.Mutex
-
-	// get store
 	store, err := datastore.GetKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("Data type labelblk had error initializing store: %v", err)
 	}
 
-	// iterate through each block and query
+	// launch goroutine that will stream blocks to client
+	numBlocks := len(coordarray) / 3
+	wg := new(sync.WaitGroup)
+
+	ch := make(chan blockSend, numBlocks)
+	var sendErr error
+	go func() {
+		for data := range ch {
+			if data.err != nil && sendErr == nil {
+				sendErr = data.err
+			} else {
+				err := writeBlock(w, data.bcoord, data.value)
+				if err != nil && sendErr == nil {
+					sendErr = err
+				}
+			}
+			wg.Done()
+		}
+	}()
+
+	// iterate through each block, get data from store, and transcode based on request parameters
 	for i := 0; i < len(coordarray); i += 3 {
 		xloc, err := strconv.Atoi(coordarray[i])
 		if err != nil {
@@ -1894,44 +2022,37 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 		if err != nil {
 			return err
 		}
+		bcoord := dvid.ChunkPoint3d{int32(xloc), int32(yloc), int32(zloc)}
 
-		go func(xloc, yloc, zloc int32, finishedRequests chan error, store storage.KeyValueDB) {
-			var err error
-			defer func() {
-				finishedRequests <- err
-			}()
-			indexBeg := dvid.IndexZYX(dvid.ChunkPoint3d{xloc, yloc, zloc})
+		wg.Add(1)
+		go func(bcoord dvid.ChunkPoint3d) {
+			indexBeg := dvid.IndexZYX(bcoord)
 			keyBeg := NewBlockTKey(scale, &indexBeg)
 
 			value, err := store.Get(ctx, keyBeg)
 			if err != nil {
+				ch <- blockSend{err: err}
 				return
 			}
 			if len(value) > 0 {
-				// lock shared resource
-				mutex.Lock()
-				defer mutex.Unlock()
 				b := blockData{
-					x: xloc, y: yloc, z: zloc,
+					bcoord:      bcoord,
 					v:           ctx.VersionID(),
 					data:        value,
 					compression: compression,
 					supervoxels: supervoxels,
 				}
-				d.sendBlock(w, b)
+				out, err := d.transcodeBlock(b)
+				ch <- blockSend{bcoord: bcoord, value: out, err: err}
+				return
 			}
-		}(int32(xloc), int32(yloc), int32(zloc), finishedRequests, store)
+			ch <- blockSend{value: nil}
+		}(bcoord)
 	}
 
-	// wait for everything to finish
-	for i := 0; i < len(coordarray); i += 3 {
-		errjob := <-finishedRequests
-		if errjob != nil {
-			err = errjob
-		}
-	}
-
-	return err
+	wg.Wait()
+	close(ch)
+	return sendErr
 }
 
 // returns nil block if no block is at the given block coordinate
@@ -1979,17 +2100,16 @@ func (d *Data) putLabelBlock(ctx *datastore.VersionedCtx, scale uint8, pb *label
 }
 
 type blockData struct {
-	x, y, z     int32
+	bcoord      dvid.ChunkPoint3d
 	compression string
 	supervoxels bool
 	v           dvid.VersionID
 	data        []byte
 }
 
-// sends a block of data through http.ResponseWriter while handling any data modifications
-// necessary to meet requested compression compared to stored compression as well as raw
-// supervoxels versus mapped labels.
-func (d *Data) sendBlock(w http.ResponseWriter, b blockData) error {
+// transcodes a block of data by doing any data modifications necessary to meet requested
+// compression compared to stored compression as well as raw supervoxels versus mapped labels.
+func (d *Data) transcodeBlock(b blockData) (out []byte, err error) {
 	formatIn, checksum := dvid.DecodeSerializationFormat(dvid.SerializationFormat(b.data[0]))
 
 	var start int
@@ -2000,20 +2120,21 @@ func (d *Data) sendBlock(w http.ResponseWriter, b blockData) error {
 	}
 
 	var outsize uint32
-	var out []byte
 
 	switch formatIn {
 	case dvid.LZ4:
 		outsize = binary.LittleEndian.Uint32(b.data[start : start+4])
 		out = b.data[start+4:]
 		if len(out) != int(outsize) {
-			return fmt.Errorf("block (%d,%d,%d) was corrupted lz4: supposed size %d but had %d bytes", b.x, b.y, b.z, outsize, len(out))
+			err = fmt.Errorf("block %s was corrupted lz4: supposed size %d but had %d bytes", b.bcoord, outsize, len(out))
+			return
 		}
 	case dvid.Uncompressed, dvid.Gzip:
 		outsize = uint32(len(b.data[start:]))
 		out = b.data[start:]
 	default:
-		return fmt.Errorf("labelmap data was stored in unknown compressed format: %s", formatIn)
+		err = fmt.Errorf("labelmap data was stored in unknown compressed format: %s", formatIn)
+		return
 	}
 
 	var formatOut dvid.CompressionFormat
@@ -2027,15 +2148,15 @@ func (d *Data) sendBlock(w http.ResponseWriter, b blockData) error {
 	case "uncompressed":
 		formatOut = dvid.Uncompressed
 	default:
-		return fmt.Errorf("unknown compression %q requested for blocks", b.compression)
+		err = fmt.Errorf("unknown compression %q requested for blocks", b.compression)
+		return
 	}
 
 	var doMapping bool
 	var mapping *SVMap
 	if !b.supervoxels {
-		var err error
 		if mapping, err = getMapping(d, b.v); err != nil {
-			return err
+			return
 		}
 		if mapping != nil && mapping.exists(b.v) {
 			doMapping = true
@@ -2043,33 +2164,34 @@ func (d *Data) sendBlock(w http.ResponseWriter, b blockData) error {
 	}
 
 	// Need to do uncompression/recompression if we are changing compression or mapping
-	var err error
 	var uncompressed, recompressed []byte
 	if formatIn != formatOut || b.compression == "gzip" || doMapping {
 		switch formatIn {
 		case dvid.LZ4:
 			uncompressed = make([]byte, outsize)
 			if err = lz4.Uncompress(out, uncompressed); err != nil {
-				return err
+				return
 			}
 		case dvid.Uncompressed:
 			uncompressed = out
 		case dvid.Gzip:
 			gzipIn := bytes.NewBuffer(out)
-			zr, err := gzip.NewReader(gzipIn)
+			var zr *gzip.Reader
+			zr, err = gzip.NewReader(gzipIn)
 			if err != nil {
-				return err
+				return
 			}
 			uncompressed, err = ioutil.ReadAll(zr)
 			if err != nil {
-				return err
+				return
 			}
 			zr.Close()
 		}
 
 		var block labels.Block
 		if err = block.UnmarshalBinary(uncompressed); err != nil {
-			return fmt.Errorf("unable to deserialize label block (%d, %d, %d): %v", b.x, b.y, b.z, err)
+			err = fmt.Errorf("unable to deserialize label block %s: %v", b.bcoord, err)
+			return
 		}
 
 		if doMapping {
@@ -2079,14 +2201,15 @@ func (d *Data) sendBlock(w http.ResponseWriter, b blockData) error {
 		if b.compression == "blocks" { // send native DVID block compression with gzip
 			out, err = block.CompressGZIP()
 			if err != nil {
-				return err
+				return nil, err
 			}
 			outsize = uint32(len(out))
 		} else { // we are sending raw block data
 			uint64array, size := block.MakeLabelVolume()
 			expectedSize := d.BlockSize().(dvid.Point3d)
 			if !size.Equals(expectedSize) {
-				return fmt.Errorf("deserialized label block size %s does not equal data %q block size %s", size, d.DataName(), expectedSize)
+				err = fmt.Errorf("deserialized label block size %s does not equal data %q block size %s", size, d.DataName(), expectedSize)
+				return
 			}
 
 			switch formatOut {
@@ -2094,47 +2217,36 @@ func (d *Data) sendBlock(w http.ResponseWriter, b blockData) error {
 				recompressed = make([]byte, lz4.CompressBound(uint64array))
 				var size int
 				if size, err = lz4.Compress(uint64array, recompressed); err != nil {
-					return err
+					return nil, err
 				}
 				outsize = uint32(size)
 				out = recompressed[:outsize]
 			case dvid.Uncompressed:
 				out = uint64array
-				outsize = uint32(len(uint64array))
 			case dvid.Gzip:
 				var gzipOut bytes.Buffer
 				zw := gzip.NewWriter(&gzipOut)
 				if _, err = zw.Write(uint64array); err != nil {
-					return err
+					return nil, err
 				}
 				zw.Flush()
 				zw.Close()
 				out = gzipOut.Bytes()
-				outsize = uint32(len(out))
 			}
 		}
 	}
+	return
+}
 
-	// Send block coordinate, size of data, then data
-	if err := binary.Write(w, binary.LittleEndian, b.x); err != nil {
+// sends a block of data through http.ResponseWriter while handling any data modifications
+// necessary to meet requested compression compared to stored compression as well as raw
+// supervoxels versus mapped labels.
+func (d *Data) sendBlock(w http.ResponseWriter, b blockData) error {
+	out, err := d.transcodeBlock(b)
+	if err != nil {
 		return err
 	}
-	if err := binary.Write(w, binary.LittleEndian, b.y); err != nil {
-		return err
-	}
-	if err := binary.Write(w, binary.LittleEndian, b.z); err != nil {
-		return err
-	}
-	if err := binary.Write(w, binary.LittleEndian, outsize); err != nil {
-		return err
-	}
-	if written, err := w.Write(out); err != nil || written != int(outsize) {
-		if err != nil {
-			return err
-		}
-		return fmt.Errorf("could not write %d bytes of block (%d,%d,%d): only %d bytes written", outsize, b.x, b.y, b.z, written)
-	}
-	return nil
+	return writeBlock(w, b.bcoord, out)
 }
 
 // SendBlocks returns a series of blocks covering the given block-aligned subvolume.
@@ -2153,6 +2265,26 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 
 	timedLog := dvid.NewTimeLog()
 	defer timedLog.Infof("SendBlocks %s, span x %d, span y %d, span z %d", blocksoff, blocksdims.Value(0), blocksdims.Value(1), blocksdims.Value(2))
+
+	numBlocks := int(blocksdims.Prod())
+	wg := new(sync.WaitGroup)
+
+	// launch goroutine that will stream blocks to client
+	ch := make(chan blockSend, numBlocks)
+	var sendErr error
+	go func() {
+		for data := range ch {
+			if data.err != nil && sendErr == nil {
+				sendErr = data.err
+			} else {
+				err := writeBlock(w, data.bcoord, data.value)
+				if err != nil && sendErr == nil {
+					sendErr = err
+				}
+			}
+			wg.Done()
+		}
+	}()
 
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
@@ -2197,13 +2329,18 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 					return nil
 				}
 				b := blockData{
-					x: x, y: y, z: z,
+					bcoord:      dvid.ChunkPoint3d{x, y, z},
 					compression: compression,
 					supervoxels: supervoxels,
 					v:           ctx.VersionID(),
 					data:        kv.V,
 				}
-				return d.sendBlock(w, b)
+				wg.Add(1)
+				go func(b blockData) {
+					out, err := d.transcodeBlock(b)
+					ch <- blockSend{bcoord: b.bcoord, value: out, err: err}
+				}(b)
+				return nil
 			})
 
 			if err != nil {
@@ -2212,17 +2349,18 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 		}
 	}
 
+	wg.Wait()
+	close(ch)
+
 	if hasbuffer {
 		// submit the entire buffer to the DB
 		err = okv.(storage.RequestBuffer).Flush()
-
 		if err != nil {
 			return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
-
 		}
 	}
 
-	return err
+	return sendErr
 }
 
 func (d *Data) blockChangesExtents(extents *dvid.Extents, bx, by, bz int32) bool {
@@ -2254,9 +2392,12 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		return fmt.Errorf("Data type labelmap had error initializing store: %v", err)
 	}
 
-	// only do one request at a time, although each request can start many goroutines.
-	server.LargeMutationMutex.Lock()
-	defer server.LargeMutationMutex.Unlock()
+	// Only do voxel-based mutations one at a time.  This lets us remove handling for block-level concurrency.
+	d.voxelMu.Lock()
+	defer d.voxelMu.Unlock()
+
+	d.StartUpdate()
+	defer d.StopUpdate()
 
 	// extract buffer interface if it exists
 	var putbuffer storage.RequestBuffer
@@ -2275,11 +2416,15 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		return fmt.Errorf("ReceiveBlocks couldn't get mapping for data %q, version %d: %v", d.DataName(), ctx.VersionID(), err)
 	}
 	var blockCh chan blockChange
+	var putWG, processWG sync.WaitGroup
 	if indexing {
 		blockCh = make(chan blockChange, 100)
-		go d.aggregateBlockChanges(ctx.VersionID(), svmap, blockCh)
+		processWG.Add(1)
+		go func() {
+			d.aggregateBlockChanges(ctx.VersionID(), svmap, blockCh)
+			processWG.Done()
+		}()
 	}
-	var wg sync.WaitGroup
 
 	callback := func(bcoord dvid.IZYXString, block *labels.Block, ready chan error) {
 		if ready != nil {
@@ -2295,20 +2440,19 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 				d.handleBlockIndexing(ctx.VersionID(), blockCh, ingestBlock)
 			}
 			go d.updateBlockMaxLabel(ctx.VersionID(), ingestBlock.Data)
-		}
-		if downscale {
-			if err := downresMut.BlockMutated(bcoord, block); err != nil {
-				dvid.Errorf("data %q publishing downres: %v\n", d.DataName(), err)
+			evt := datastore.SyncEvent{d.DataUUID(), event}
+			msg := datastore.SyncMessage{event, ctx.VersionID(), ingestBlock}
+			if err := datastore.NotifySubscribers(evt, msg); err != nil {
+				dvid.Errorf("Unable to notify subscribers of event %s in %s\n", event, d.DataName())
+			}
+			if downscale {
+				if err := downresMut.BlockMutated(bcoord, block); err != nil {
+					dvid.Errorf("data %q publishing downres: %v\n", d.DataName(), err)
+				}
 			}
 		}
 
-		evt := datastore.SyncEvent{d.DataUUID(), event}
-		msg := datastore.SyncMessage{event, ctx.VersionID(), ingestBlock}
-		if err := datastore.NotifySubscribers(evt, msg); err != nil {
-			dvid.Errorf("Unable to notify subscribers of event %s in %s\n", event, d.DataName())
-		}
-
-		wg.Done()
+		putWG.Done()
 	}
 
 	if d.Compression().Format() != dvid.Gzip {
@@ -2340,7 +2484,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		if err != nil {
 			return fmt.Errorf("can't serialize received block %s data: %v", bcoord, err)
 		}
-		wg.Add(1)
+		putWG.Add(1)
 		if putbuffer != nil {
 			ready := make(chan error, 1)
 			go callback(bcoord, block, ready)
@@ -2354,10 +2498,11 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		numBlocks++
 	}
 
-	wg.Wait()
+	putWG.Wait()
 	if blockCh != nil {
 		close(blockCh)
 	}
+	processWG.Wait()
 
 	if extentsChanged {
 		if err := d.PostExtents(ctx, extents.StartPoint(), extents.EndPoint()); err != nil {
@@ -2370,7 +2515,9 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		putbuffer.Flush()
 	}
 	if downscale {
-		downresMut.Done()
+		if err := downresMut.Execute(); err != nil {
+			return err
+		}
 	}
 	timedLog.Infof("Received and stored %d blocks for labelmap %q", numBlocks, d.DataName())
 	return nil
@@ -2458,7 +2605,7 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 			go d.writeSVCounts(f, outPath, v)
 			reply.Text = fmt.Sprintf("Asynchronously writing supervoxel counts for data %q, uuid %s to file: %s\n", d.DataName(), uuid, outPath)
 		case "mappings":
-			go d.writeMappings(f, outPath, v)
+			go d.writeFileMappings(f, outPath, v)
 			reply.Text = fmt.Sprintf("Asynchronously writing mappings for data %q, uuid %s to file: %s\n", d.DataName(), uuid, outPath)
 		case "indices":
 			go d.writeIndices(f, outPath, v)
@@ -2760,10 +2907,7 @@ func (d *Data) SetResolution(uuid dvid.UUID, jsonBytes []byte) error {
 		return err
 	}
 	d.Properties.VoxelSize = config
-	if err := datastore.SaveDataByUUID(uuid, d); err != nil {
-		return err
-	}
-	return nil
+	return datastore.SaveDataByUUID(uuid, d)
 }
 
 // if hash is not empty, make sure it is hash of data.
@@ -2883,11 +3027,11 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		if action == "get" {
+			timedLog := dvid.NewTimeLog()
 			if err := d.sendBlocksSpecific(ctx, w, supervoxels, compression, blocklist, scale); err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
-			timedLog := dvid.NewTimeLog()
 			timedLog.Infof("HTTP %s: %s", r.Method, r.URL)
 		} else {
 			server.BadRequest(w, r, "DVID does not accept the %s action on the 'specificblocks' endpoint", action)
@@ -2914,6 +3058,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "mapping":
 		d.handleMapping(ctx, w, r)
 
+	case "supervoxel-splits":
+		d.handleSupervoxelSplits(ctx, w, r)
+
 	case "blocks":
 		d.handleBlocks(ctx, w, r, parts)
 
@@ -2925,11 +3072,17 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 	// endpoints after this must have data instance IndexedLabels = true
 
+	case "lastmod":
+		d.handleLabelmod(ctx, w, r, parts)
+
 	case "supervoxels":
 		d.handleSupervoxels(ctx, w, r, parts)
 
 	case "size":
 		d.handleSize(ctx, w, r, parts)
+
+	case "sizes":
+		d.handleSizes(ctx, w, r)
 
 	case "sparsevol-size":
 		d.handleSparsevolSize(ctx, w, r, parts)
@@ -2965,13 +3118,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		d.handleMerge(ctx, w, r, parts)
 
 	case "index":
-		d.handleIngestIndex(ctx, w, r, parts)
+		d.handleIndex(ctx, w, r, parts)
 
 	case "indices":
 		d.handleIngestIndices(ctx, w, r)
 
 	case "mappings":
-		d.handleIngestMappings(ctx, w, r)
+		d.handleMappings(ctx, w, r)
 
 	default:
 		server.BadAPIRequest(w, r, d)
@@ -3097,6 +3250,13 @@ func (d *Data) handleMapping(ctx *datastore.VersionedCtx, w http.ResponseWriter,
 		server.BadRequest(w, r, err)
 		return
 	}
+	if queryStrings.Get("nolookup") != "true" {
+		labels, err = d.verifyMappings(ctx, supervoxels, labels)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+	}
 
 	w.Header().Set("Content-type", "application/json")
 	fmt.Fprintf(w, "[")
@@ -3111,6 +3271,31 @@ func (d *Data) handleMapping(ctx *datastore.VersionedCtx, w http.ResponseWriter,
 	fmt.Fprintf(w, "]")
 
 	timedLog.Infof("HTTP GET batch mapping query (%s)", r.URL)
+}
+
+func (d *Data) handleSupervoxelSplits(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+	// GET <api URL>/node/<UUID>/<data name>/supervoxel-splits
+	timedLog := dvid.NewTimeLog()
+
+	if strings.ToLower(r.Method) != "get" {
+		server.BadRequest(w, r, "The /supervoxel-splits endpoint is GET only")
+		return
+	}
+	svmap, err := getMapping(d, ctx.VersionID())
+	if err != nil {
+		server.BadRequest(w, r, "couldn't get mapping for data %q, version %d: %v", d.DataName(), ctx.VersionID(), err)
+		return
+	}
+	splitsJSON, err := svmap.SupervoxelSplitsJSON(ctx.VersionID())
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+
+	w.Header().Set("Content-type", "application/json")
+	fmt.Fprintf(w, splitsJSON)
+
+	timedLog.Infof("HTTP GET supervoxel splits query (%s)", r.URL)
 }
 
 func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
@@ -3153,7 +3338,7 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 
 		// Make sure subvolume gets align with blocks
 		if !dvid.BlockAligned(subvol, d.BlockSize()) {
-			server.BadRequest(w, r, "cannot use labels via 'block' endpoint in non-block aligned geometry %s -> %s", subvol.StartPoint(), subvol.EndPoint())
+			server.BadRequest(w, r, "cannot use labels via 'blocks' endpoint in non-block aligned geometry %s -> %s", subvol.StartPoint(), subvol.EndPoint())
 			return
 		}
 
@@ -3169,11 +3354,12 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 		if err := d.ReceiveBlocks(ctx, r.Body, scale, downscale, compression, indexing); err != nil {
 			server.BadRequest(w, r, err)
 		}
-		timedLog.Infof("HTTP POST blocks, indexing = %t (%s)", indexing, r.URL)
+		timedLog.Infof("HTTP POST blocks, indexing = %t, downscale = %t (%s)", indexing, downscale, r.URL)
 	}
 }
 
-func (d *Data) handleIngestIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
+func (d *Data) handleIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
+	// GET  <api URL>/node/<UUID>/<data name>/index/<label>
 	// POST <api URL>/node/<UUID>/<data name>/index/<label>
 	timedLog := dvid.NewTimeLog()
 
@@ -3185,49 +3371,80 @@ func (d *Data) handleIngestIndex(ctx *datastore.VersionedCtx, w http.ResponseWri
 		defer server.ThrottledOpDone()
 	}
 
-	if strings.ToLower(r.Method) != "post" {
-		server.BadRequest(w, r, "only POST action allowed for /index endpoint")
-		return
-	}
 	label, err := strconv.ParseUint(parts[4], 10, 64)
 	if err != nil {
 		server.BadRequest(w, r, err)
 		return
 	}
 	if label == 0 {
-		server.BadRequest(w, r, "cannot ingest protected label 0")
+		server.BadRequest(w, r, "there is no index for protected label 0")
 		return
 	}
-	if r.Body == nil {
-		server.BadRequest(w, r, fmt.Errorf("no data POSTed"))
-		return
-	}
-	serialization, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		server.BadRequest(w, r, err)
-		return
-	}
-	idx := new(labels.Index)
-	if err := idx.Unmarshal(serialization); err != nil {
-		server.BadRequest(w, r, err)
-	}
-	if idx.Label != label {
-		server.BadRequest(w, r, "serialized Index was for label %d yet was POSTed to label %d", idx.Label, label)
-		return
-	}
-	if len(idx.Blocks) == 0 {
-		if err := deleteLabelIndex(ctx, label); err != nil {
+
+	switch strings.ToLower(r.Method) {
+	case "post":
+		if r.Body == nil {
+			server.BadRequest(w, r, fmt.Errorf("no data POSTed"))
+			return
+		}
+		serialization, err := ioutil.ReadAll(r.Body)
+		if err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
-		timedLog.Infof("HTTP POST index for label %d (%s) -- empty index so deleted index", label, r.URL)
+		idx := new(labels.Index)
+		if err := idx.Unmarshal(serialization); err != nil {
+			server.BadRequest(w, r, err)
+		}
+		if idx.Label != label {
+			server.BadRequest(w, r, "serialized Index was for label %d yet was POSTed to label %d", idx.Label, label)
+			return
+		}
+		if len(idx.Blocks) == 0 {
+			if err := deleteLabelIndex(ctx, label); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			timedLog.Infof("HTTP POST index for label %d (%s) -- empty index so deleted index", label, r.URL)
+			return
+		}
+		if err := putLabelIndex(ctx, idx); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+
+	case "get":
+		idx, err := getLabelIndex(ctx, label)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if idx == nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		serialization, err := idx.Marshal()
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		w.Header().Set("Content-type", "application/octet-stream")
+		n, err := w.Write(serialization)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if n != len(serialization) {
+			server.BadRequest(w, r, "unable to write all %d bytes of serialized label %d index: only %d bytes written", len(serialization), label, n)
+			return
+		}
+
+	default:
+		server.BadRequest(w, r, "only POST or GET action allowed for /index endpoint")
 		return
 	}
-	if err := putLabelIndex(ctx, idx); err != nil {
-		server.BadRequest(w, r, err)
-		return
-	}
-	timedLog.Infof("HTTP POST index for label %d (%s)", label, r.URL)
+
+	timedLog.Infof("HTTP %s index for label %d (%s)", r.Method, label, r.URL)
 }
 
 func (d *Data) handleIngestIndices(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
@@ -3290,7 +3507,7 @@ func (d *Data) handleIngestIndices(ctx *datastore.VersionedCtx, w http.ResponseW
 	timedLog.Infof("HTTP POST indices for %d labels (%s)", len(indices.Indices), r.URL)
 }
 
-func (d *Data) handleIngestMappings(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+func (d *Data) handleMappings(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	// POST <api URL>/node/<UUID>/<data name>/mappings
 	timedLog := dvid.NewTimeLog()
 
@@ -3302,26 +3519,34 @@ func (d *Data) handleIngestMappings(ctx *datastore.VersionedCtx, w http.Response
 		defer server.ThrottledOpDone()
 	}
 
-	if strings.ToLower(r.Method) != "post" {
+	switch strings.ToLower(r.Method) {
+	case "post":
+		if r.Body == nil {
+			server.BadRequest(w, r, fmt.Errorf("no data POSTed"))
+			return
+		}
+		serialization, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			server.BadRequest(w, r, err)
+		}
+		var mappings proto.MappingOps
+		if err := mappings.Unmarshal(serialization); err != nil {
+			server.BadRequest(w, r, err)
+		}
+		if err := d.ingestMappings(ctx, mappings); err != nil {
+			server.BadRequest(w, r, err)
+		}
+		timedLog.Infof("HTTP POST %d merges (%s)", len(mappings.Mappings), r.URL)
+
+	case "get":
+		if err := d.writeMappings(w, ctx.VersionID()); err != nil {
+			server.BadRequest(w, r, "unable to write mappings: %v", err)
+		}
+		timedLog.Infof("HTTP GET mappings (%s)", r.URL)
+
+	default:
 		server.BadRequest(w, r, "only POST action allowed for /mappings endpoint")
-		return
 	}
-	if r.Body == nil {
-		server.BadRequest(w, r, fmt.Errorf("no data POSTed"))
-		return
-	}
-	serialization, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		server.BadRequest(w, r, err)
-	}
-	var mappings proto.MappingOps
-	if err := mappings.Unmarshal(serialization); err != nil {
-		server.BadRequest(w, r, err)
-	}
-	if err := d.ingestMappings(ctx, mappings); err != nil {
-		server.BadRequest(w, r, err)
-	}
-	timedLog.Infof("HTTP POST %d merges (%s)", len(mappings.Mappings), r.URL)
 }
 
 func (d *Data) handlePseudocolor(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
@@ -3531,10 +3756,64 @@ func (d *Data) getSparsevolOptions(r *http.Request) (b dvid.Bounds, compression 
 	return
 }
 
+// GetSupervoxels returns the set of supervoxel ids that compose the given label
+func (d *Data) GetSupervoxels(v dvid.VersionID, label uint64) (labels.Set, error) {
+	idx, err := GetLabelIndex(d, v, label, false)
+	if err != nil {
+		return nil, err
+	}
+	if idx == nil || len(idx.Blocks) == 0 {
+		return nil, err
+	}
+	return idx.GetSupervoxels(), nil
+}
+
 func (d *Data) handleSupervoxels(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
 	// GET <api URL>/node/<UUID>/<data name>/supervoxels/<label>
 	if len(parts) < 5 {
 		server.BadRequest(w, r, "DVID requires label to follow 'supervoxels' command")
+		return
+	}
+	timedLog := dvid.NewTimeLog()
+
+	label, err := strconv.ParseUint(parts[4], 10, 64)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	if label == 0 {
+		server.BadRequest(w, r, "Label 0 is protected background value and cannot be queried as body.\n")
+		return
+	}
+
+	supervoxels, err := d.GetSupervoxels(ctx.VersionID(), label)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	if len(supervoxels) == 0 {
+		w.WriteHeader(http.StatusNotFound)
+	} else {
+		w.Header().Set("Content-type", "application/json")
+		fmt.Fprintf(w, "[")
+		i := 0
+		for supervoxel := range supervoxels {
+			fmt.Fprintf(w, "%d", supervoxel)
+			i++
+			if i < len(supervoxels) {
+				fmt.Fprintf(w, ",")
+			}
+		}
+		fmt.Fprintf(w, "]")
+	}
+
+	timedLog.Infof("HTTP GET supervoxels for label %d (%s)", label, r.URL)
+}
+
+func (d *Data) handleLabelmod(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
+	// GET <api URL>/node/<UUID>/<data name>/lastmod/<label>
+	if len(parts) < 5 {
+		server.BadRequest(w, r, "DVID requires label to follow 'lastmod' command")
 		return
 	}
 	timedLog := dvid.NewTimeLog()
@@ -3558,21 +3837,16 @@ func (d *Data) handleSupervoxels(ctx *datastore.VersionedCtx, w http.ResponseWri
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	supervoxels := idx.GetSupervoxels()
 
 	w.Header().Set("Content-type", "application/json")
-	fmt.Fprintf(w, "[")
-	i := 0
-	for supervoxel := range supervoxels {
-		fmt.Fprintf(w, "%d", supervoxel)
-		i++
-		if i < len(supervoxels) {
-			fmt.Fprintf(w, ",")
-		}
-	}
-	fmt.Fprintf(w, "]")
+	fmt.Fprintf(w, `{`)
+	fmt.Fprintf(w, `"mutation id": %d, `, idx.LastMutId)
+	fmt.Fprintf(w, `"last mod user": %q, `, idx.LastModUser)
+	fmt.Fprintf(w, `"last mod app": %q, `, idx.LastModApp)
+	fmt.Fprintf(w, `"last mod time": %q `, idx.LastModTime)
+	fmt.Fprintf(w, `}`)
 
-	timedLog.Infof("HTTP GET supervoxels for label %d (%s)", label, r.URL)
+	timedLog.Infof("HTTP GET lastmod for label %d (%s)", label, r.URL)
 }
 
 func (d *Data) handleSize(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
@@ -3607,6 +3881,52 @@ func (d *Data) handleSize(ctx *datastore.VersionedCtx, w http.ResponseWriter, r 
 	}
 
 	timedLog.Infof("HTTP GET size for label %d, supervoxels=%t (%s)", label, isSupervoxel, r.URL)
+}
+
+func (d *Data) handleSizes(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+	// GET <api URL>/node/<UUID>/<data name>/sizes
+	timedLog := dvid.NewTimeLog()
+
+	if strings.ToLower(r.Method) != "get" {
+		server.BadRequest(w, r, "Batch sizes query must be a GET request")
+		return
+	}
+	data, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		server.BadRequest(w, r, "Bad GET request body for batch sizes query: %v", err)
+		return
+	}
+	queryStrings := r.URL.Query()
+	hash := queryStrings.Get("hash")
+	if err := checkContentHash(hash, data); err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	var labelList []uint64
+	if err := json.Unmarshal(data, &labelList); err != nil {
+		server.BadRequest(w, r, fmt.Sprintf("Bad mapping request JSON: %v", err))
+		return
+	}
+	isSupervoxel := queryStrings.Get("supervoxels") == "true"
+	sizes, err := GetLabelSizes(d, ctx.VersionID(), labelList, isSupervoxel)
+	if err != nil {
+		server.BadRequest(w, r, "unable to get label sizes: %v", err)
+		return
+	}
+
+	w.Header().Set("Content-type", "application/json")
+	fmt.Fprintf(w, "[")
+	sep := false
+	for _, size := range sizes {
+		if sep {
+			fmt.Fprintf(w, ",")
+		}
+		fmt.Fprintf(w, "%d", size)
+		sep = true
+	}
+	fmt.Fprintf(w, "]")
+
+	timedLog.Infof("HTTP GET batch sizes query (%s)", r.URL)
 }
 
 func (d *Data) handleSparsevolSize(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
@@ -3963,7 +4283,8 @@ func (d *Data) handleSplitSupervoxel(ctx *datastore.VersionedCtx, w http.Respons
 		server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as split target\n")
 		return
 	}
-	splitSupervoxel, remainSupervoxel, err := d.SplitSupervoxel(ctx.VersionID(), supervoxel, r.Body)
+	info := dvid.GetModInfo(r)
+	splitSupervoxel, remainSupervoxel, err := d.SplitSupervoxel(ctx.VersionID(), supervoxel, r.Body, info)
 	if err != nil {
 		server.BadRequest(w, r, fmt.Sprintf("split supervoxel %d -> %d, %d: %v", supervoxel, splitSupervoxel, remainSupervoxel, err))
 		return
@@ -3995,7 +4316,8 @@ func (d *Data) handleCleave(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 		server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as cleave target\n")
 		return
 	}
-	cleaveLabel, err := d.CleaveLabel(ctx.VersionID(), label, r.Body)
+	modInfo := dvid.GetModInfo(r)
+	cleaveLabel, err := d.CleaveLabel(ctx.VersionID(), label, modInfo, r.Body)
 	if err != nil {
 		server.BadRequest(w, r, err)
 		return
@@ -4027,7 +4349,8 @@ func (d *Data) handleSplit(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 		server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
 		return
 	}
-	toLabel, err := d.SplitLabels(ctx.VersionID(), fromLabel, r.Body)
+	info := dvid.GetModInfo(r)
+	toLabel, err := d.SplitLabels(ctx.VersionID(), fromLabel, r.Body, info)
 	if err != nil {
 		server.BadRequest(w, r, fmt.Sprintf("split label %d: %v", fromLabel, err))
 		return
@@ -4061,7 +4384,8 @@ func (d *Data) handleMerge(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 		server.BadRequest(w, r, err)
 		return
 	}
-	if err := d.MergeLabels(ctx.VersionID(), mergeOp); err != nil {
+	info := dvid.GetModInfo(r)
+	if err := d.MergeLabels(ctx.VersionID(), mergeOp, info); err != nil {
 		server.BadRequest(w, r, fmt.Sprintf("Error on merge: %v", err))
 		return
 	}
@@ -4153,7 +4477,7 @@ func (d *Data) GetLabelAtScaledPoint(v dvid.VersionID, pt dvid.Point, scale uint
 
 // The following functions implement an interface to synced data types like annotation.
 
-// GetLabelBytes returns a block of hi-res labels (scale 0) in packed little-endian uint64 format
+// GetLabelBytes returns a block of hi-res (body) labels (scale 0) in packed little-endian uint64 format
 func (d *Data) GetLabelBytes(v dvid.VersionID, bcoord dvid.ChunkPoint3d) ([]byte, error) {
 	return d.GetLabelBytesWithScale(v, bcoord, 0, false)
 }

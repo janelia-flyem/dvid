@@ -30,7 +30,7 @@ import (
 
 	"github.com/janelia-flyem/go/go-humanize"
 
-	lz4 "github.com/janelia-flyem/go/golz4"
+	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
 
 const (
@@ -1318,6 +1318,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, err)
 			return
 		}
+		mergeOp.MutID = d.NewMutationID()
 		if err := d.MergeLabels(ctx.VersionID(), mergeOp); err != nil {
 			server.BadRequest(w, r, fmt.Sprintf("Error on merge: %v", err))
 			return

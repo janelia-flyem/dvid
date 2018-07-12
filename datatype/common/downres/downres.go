@@ -78,6 +78,14 @@ func NewMutation(d Downreser, v dvid.VersionID, mutID uint64) *Mutation {
 	return &m
 }
 
+// MutationID returns the mutation ID associated with this mutation.
+func (m *Mutation) MutationID() uint64 {
+	if m == nil {
+		return 0
+	}
+	return m.mutID
+}
+
 // BlockMutated caches mutations at the highest resolution (scale 0)
 func (m *Mutation) BlockMutated(bcoord dvid.IZYXString, block interface{}) error {
 	if m.hiresCache == nil {
@@ -89,22 +97,21 @@ func (m *Mutation) BlockMutated(bcoord dvid.IZYXString, block interface{}) error
 	return nil
 }
 
-// Done asynchronously computes lower-res scales for all altered blocks in a mutation.
-func (m *Mutation) Done() {
-	go func() {
-		m.Lock()
-		bm := m.hiresCache
-		var err error
-		for scale := uint8(0); scale < m.d.GetMaxDownresLevel(); scale++ {
-			bm, err = m.d.StoreDownres(m.v, scale, bm)
-			if err != nil {
-				dvid.Errorf("Mutation %d for data %q: %v\n", m.mutID, m.d.DataName(), err)
-				break
-			}
-			dvid.Infof("Finished down-resolution processing for data %q at scale %d.\n", m.d.DataName(), scale+1)
-			m.d.StopScaleUpdate(scale + 1)
+// Execute computes lower-res scales for all altered blocks in a mutation.
+func (m *Mutation) Execute() error {
+	timedLog := dvid.NewTimeLog()
+	m.Lock()
+	bm := m.hiresCache
+	var err error
+	for scale := uint8(0); scale < m.d.GetMaxDownresLevel(); scale++ {
+		bm, err = m.d.StoreDownres(m.v, scale, bm)
+		if err != nil {
+			return fmt.Errorf("mutation %d for data %q: %v", m.mutID, m.d.DataName(), err)
 		}
-		m.hiresCache = nil
-		m.Unlock()
-	}()
+		m.d.StopScaleUpdate(scale + 1)
+	}
+	m.hiresCache = nil
+	m.Unlock()
+	timedLog.Debugf("Computed and stored downres for scale 1 to %d for data %q", m.d.GetMaxDownresLevel(), m.d.DataName())
+	return nil
 }

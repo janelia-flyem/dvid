@@ -15,4 +15,4 @@ ${DVID_REPO}/scripts/get-go-dependencies.sh
 make dvid
 
 # Install
-cp bin/* ${PREFIX}/bin
+make install

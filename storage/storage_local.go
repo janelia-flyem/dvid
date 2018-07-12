@@ -17,7 +17,7 @@ type managerT struct {
 	setup bool
 
 	// cache the default stores at both global and datatype level
-	defaultKV     dvid.Store
+	defaultKV     dvid.Store // could be non-ordered kv store
 	defaultLog    dvid.Store
 	metadataStore dvid.Store
 
@@ -243,7 +243,7 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 		}
 		store, created, err := NewStore(dbconfig)
 		if err != nil {
-			fmt.Errorf("dbconfig: %v\n", dbconfig)
+			dvid.Errorf("dbconfig: %v\n", dbconfig)
 			return false, fmt.Errorf("bad store %q: %v", alias, err)
 		}
 		if alias == backend.Metadata {
@@ -355,19 +355,23 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 	var ok bool
 	kvdb, ok := store.(OrderedKeyValueDB)
 	if !ok {
-		return false, fmt.Errorf("assigned labelgraph store %q isn't ordered kv db", store)
+		dvid.Errorf("assigned labelgraph store %q isn't ordered kv db, labelgraph not available\n", store)
+		return
 	}
 	manager.graphDB, err = NewGraphStore(kvdb)
 	if err != nil {
-		return false, err
+		dvid.Errorf("cannot get new graph store (%v), labelgraph not available\n", err)
+		return
 	}
 	manager.graphSetter, ok = manager.graphDB.(GraphSetter)
 	if !ok {
-		return false, fmt.Errorf("Database %q cannot support a graph setter", kvdb)
+		dvid.Errorf("Database %q cannot support a graph setter, so labelgraph not available\n", kvdb)
+		return
 	}
 	manager.graphGetter, ok = manager.graphDB.(GraphGetter)
 	if !ok {
-		return false, fmt.Errorf("Database %q cannot support a graph getter", kvdb)
+		dvid.Errorf("Database %q cannot support a graph getter, so labelgraph not available\n", kvdb)
+		return
 	}
 	return
 }

@@ -49,6 +49,7 @@ import (
 	"bytes"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 )
@@ -198,6 +199,11 @@ type KeyValueIngestable interface {
 	// will be immediately readable.  This allows immutable stores to accept data that will
 	// be later processed into its final readable, immutable form.
 	KeyValueIngest(Context, TKey, []byte) error
+}
+
+type KeyValueTimestampGetter interface {
+	// Get returns a value as well as last modification time
+	GetWithTimestamp(ctx Context, k TKey) ([]byte, time.Time, error)
 }
 
 type KeyValueGetter interface {

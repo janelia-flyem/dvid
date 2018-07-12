@@ -35,10 +35,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/storage"
-	"github.com/janelia-flyem/go/semver"
-	"google.golang.org/api/iterator"
 	"io/ioutil"
 	"os"
 	"runtime"
@@ -48,10 +44,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
+	"github.com/janelia-flyem/go/semver"
+	"google.golang.org/api/iterator"
+
+	"net/http"
+
 	api "cloud.google.com/go/storage"
 	"golang.org/x/net/context"
 	"google.golang.org/api/option"
-	"net/http"
 )
 
 func init() {

@@ -28,6 +28,8 @@ endif
 export CGO_CFLAGS = -I${CONDA_PREFIX}/include
 export CGO_LDFLAGS = -L${CONDA_PREFIX}/lib -Wl,-rpath,${CONDA_PREFIX}/lib
 
+install: dvid
+	cp bin/dvid ${CONDA_PREFIX}/bin/dvid
 
 dvid: bin/dvid
 dvid-backup: bin/dvid-backup

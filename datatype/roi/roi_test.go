@@ -341,17 +341,39 @@ func TestROIPostAndDelete(t *testing.T) {
 	if err != nil {
 		t.Errorf("Error on getting back JSON from roi GET: %v\n", err)
 	}
-
-	// Make sure the two are the same.
 	if !reflect.DeepEqual(spans, testSpans) {
 		t.Errorf("Bad PUT/GET ROI roundtrip\nOriginal:\n%s\nReturned:\n%s\n", testSpans, spans)
 	}
 
-	// Delete the ROI
-	_ = server.TestHTTP(t, "DELETE", roiRequest, nil)
+	// Make a new version
+	reqStr := fmt.Sprintf("%snode/%s/commit", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", reqStr, nil)
+	versionReq := fmt.Sprintf("%snode/%s/newversion", server.WebAPIPath, uuid)
+	respData := server.TestHTTP(t, "POST", versionReq, nil)
+	resp := struct {
+		Child string `json:"child"`
+	}{}
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		t.Errorf("Expected 'child' JSON response.  Got %s\n", string(respData))
+	}
+	child := dvid.UUID(resp.Child)
 
-	// ROI should now be empty
+	// Delete the ROI
+	roiRequest2 := fmt.Sprintf("%snode/%s/%s/roi", server.WebAPIPath, child, data.DataName())
+	_ = server.TestHTTP(t, "DELETE", roiRequest2, nil)
+
+	// ROI in past version should still be there
 	returnedData = server.TestHTTP(t, "GET", roiRequest, nil)
+	spans, err = putSpansJSON(returnedData)
+	if err != nil {
+		t.Errorf("Error on getting back JSON from roi GET: %v\n", err)
+	}
+	if !reflect.DeepEqual(spans, testSpans) {
+		t.Errorf("Bad PUT/GET ROI roundtrip\nOriginal:\n%s\nReturned:\n%s\n", testSpans, spans)
+	}
+
+	// ROI should now be empty for leaf
+	returnedData = server.TestHTTP(t, "GET", roiRequest2, nil)
 	if string(returnedData) != "[]" {
 		t.Errorf("Bad ROI after ROI delete.  Should be [ ] got: %s\n", string(returnedData))
 	}

@@ -45,6 +45,7 @@ type SplitOp struct {
 	NewLabel uint64
 	RLEs     dvid.RLEs
 	Coarse   bool // true if the RLEs are block coords (coarse split), not voxels.
+	SplitMap map[uint64]SVSplit
 }
 
 // CleaveOp represents a cleave of a label using supervoxels.
@@ -175,20 +176,23 @@ type DeltaSparsevol struct {
 
 // Label change event identifiers
 const (
-	IngestBlockEvent    = imageblk.IngestBlockEvent
-	MutateBlockEvent    = imageblk.MutateBlockEvent
-	DeleteBlockEvent    = imageblk.DeleteBlockEvent
-	SparsevolStartEvent = "SPARSEVOL_START"
-	SparsevolModEvent   = "SPARSEVOL_MOD"
-	SparsevolEndEvent   = "SPARSEVOL_END"
-	ChangeSizeEvent     = "LABEL_SIZE_CHANGE"
-	MergeStartEvent     = "MERGE_START"
-	MergeBlockEvent     = "MERGE_BLOCK"
-	MergeEndEvent       = "MERGE_END"
-	SplitStartEvent     = "SPLIT_START"
-	SplitLabelEvent     = "SPLIT_LABEL"
-	SplitEndEvent       = "SPLIT_END"
-	CleaveStartEvent    = "CLEAVE_START"
-	CleaveLabelEvent    = "CLEAVE_LABEL"
-	CleaveEndEvent      = "CLEAVE_END"
+	IngestBlockEvent          = imageblk.IngestBlockEvent
+	MutateBlockEvent          = imageblk.MutateBlockEvent
+	DeleteBlockEvent          = imageblk.DeleteBlockEvent
+	SparsevolStartEvent       = "SPARSEVOL_START"
+	SparsevolModEvent         = "SPARSEVOL_MOD"
+	SparsevolEndEvent         = "SPARSEVOL_END"
+	ChangeSizeEvent           = "LABEL_SIZE_CHANGE"
+	MergeStartEvent           = "MERGE_START"
+	MergeBlockEvent           = "MERGE_BLOCK"
+	MergeEndEvent             = "MERGE_END"
+	SplitStartEvent           = "SPLIT_START"
+	SplitLabelEvent           = "SPLIT_LABEL"
+	SplitEndEvent             = "SPLIT_END"
+	CleaveStartEvent          = "CLEAVE_START"
+	CleaveLabelEvent          = "CLEAVE_LABEL"
+	CleaveEndEvent            = "CLEAVE_END"
+	SupervoxelSplitStartEvent = "SV_SPLIT_START"
+	SupervoxelSplitEvent      = "SV_SPLIT"
+	SupervoxelSplitEndEvent   = "SV_SPLIT_END"
 )

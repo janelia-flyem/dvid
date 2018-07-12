@@ -16,8 +16,7 @@ import (
 )
 
 const (
-	numMutateHandlers = 16  // goroutines used to process mutations on blocks
-	numLabelHandlers  = 256 // goroutines used to do get/put tx on label indices
+	numLabelHandlers = 256 // goroutines used to do get/put tx on label indices
 )
 
 // IngestedBlock is the unit of delta for a IngestBlockEvent.
@@ -54,19 +53,6 @@ type mergeOp struct {
 	downresMut *downres.Mutation
 }
 
-type splitOp struct {
-	labels.SplitOp
-	mutID      uint64
-	bcoord     dvid.IZYXString
-	downresMut *downres.Mutation
-	deltaCh    chan blockSplitCounts
-}
-
-type blockSplitCounts struct {
-	bcoord  dvid.IZYXString
-	deleted map[uint64]uint32
-}
-
 type splitSupervoxelOp struct {
 	labels.SplitSupervoxelOp
 	mutID      uint64
@@ -76,48 +62,24 @@ type splitSupervoxelOp struct {
 
 // InitDataHandlers launches goroutines to handle each labelmap instance's syncs.
 func (d *Data) InitDataHandlers() error {
-	if d.mutateCh[0] != nil {
-		return nil
-	}
-
-	// Start N goroutines to process mutations for each block that will be consistently
-	// assigned to one of the N goroutines.
-	for i := 0; i < numMutateHandlers; i++ {
-		d.mutateCh[i] = make(chan procMsg, 10)
-		go d.mutateBlock(d.mutateCh[i])
-	}
-
-	dvid.Infof("Launched mutation handlers for data %q...\n", d.DataName())
 	return nil
-}
-
-func (d *Data) queuedSize() int {
-	var queued int
-	for i := 0; i < numMutateHandlers; i++ {
-		queued += len(d.mutateCh[i])
-	}
-	return queued
 }
 
 // Shutdown terminates blocks until syncs are done then terminates background goroutines processing data.
 func (d *Data) Shutdown(wg *sync.WaitGroup) {
 	var elapsed int
 	for {
-		queued := d.queuedSize()
-		if queued > 0 {
+		if d.Updating() {
 			if elapsed >= datastore.DataShutdownTime {
-				dvid.Infof("Timed out after %d seconds waiting for data %q mutations: %d still to be processed", elapsed, d.DataName(), queued)
+				dvid.Infof("Timed out after %d seconds waiting for data %q updating", elapsed, d.DataName())
 				break
 			}
-			dvid.Infof("After %d seconds, data %q has %d mutations in queue pending.", elapsed, d.DataName(), queued)
+			dvid.Infof("After %d seconds, data %q is still updating", elapsed, d.DataName())
 			time.Sleep(1 * time.Second)
 			elapsed++
 		} else {
 			break
 		}
-	}
-	for i := 0; i < numMutateHandlers; i++ {
-		close(d.mutateCh[i])
 	}
 	if indexCache != nil {
 		var hitrate float64

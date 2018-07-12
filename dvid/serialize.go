@@ -17,7 +17,7 @@ import (
 	"io"
 
 	"github.com/golang/snappy"
-	lz4 "github.com/janelia-flyem/go/golz4"
+	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
 
 // Compression is the format of compression for storing data.

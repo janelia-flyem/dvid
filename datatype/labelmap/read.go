@@ -321,7 +321,8 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 	}
 }
 
-// overwrites labels in header with their mapped values
+// overwrites labels in header with their mapped values, so converts blocks from
+// supervoxels to body labels
 func modifyBlockMapping(v dvid.VersionID, block *labels.Block, m *SVMap) error {
 	ancestry, err := m.getLockedAncestry(v)
 	if err != nil {

@@ -9,28 +9,24 @@ import (
 	"github.com/janelia-flyem/go/semver"
 )
 
-// DataStoreType describes the semantics of a particular data store.
-type DataStoreType uint8
-
-const (
-	UnknownData DataStoreType = iota
-	MetaData
-	Mutable
-	Immutable
-)
-
-// Alias is a nickname for a storage configuration, e.g., "raid6" for basholeveldb on RAID6 drives.
-// It is used in the DVID TOML configuration file like [storage.alias]
+// Alias is a nickname for a storage configuration, e.g., "raid6" for
+// basholeveldb on RAID6 drives. It is used in the DVID TOML configuration file
+// like [storage.alias]
 type Alias string
 
+// DataMap describes how data instances and types are mapped to
+// available storage systems.
+type DataMap map[dvid.DataSpecifier]Alias
+
 // Backend provide data instance to store mappings gleaned from DVID configuration.
+// Currently, a data instance can be mapped to one KV and one Log store.
 type Backend struct {
 	Metadata    Alias // The store that should be used for metadata storage.
 	DefaultLog  Alias // The log that should be used by default.
 	DefaultKVDB Alias // The key-value datastore that should be used by default.
 	Stores      map[Alias]dvid.StoreConfig
-	KVStore     map[dvid.DataSpecifier]Alias
-	LogStore    map[dvid.DataSpecifier]Alias
+	KVStore     DataMap
+	LogStore    DataMap
 	Groupcache  GroupcacheConfig
 }
 
@@ -95,7 +91,7 @@ type RepairableEngine interface {
 // TestableEngine is a storage engine that allows creation of temporary stores for testing.
 type TestableEngine interface {
 	Engine
-	AddTestConfig(*Backend) error
+	AddTestConfig(*Backend) (Alias, error)
 	Delete(dvid.StoreConfig) error
 }
 
@@ -135,34 +131,30 @@ func GetEngine(name string) Engine {
 	return e
 }
 
-// GetTestableEngine returns a Testable engine, i.e. has ability to create and delete database.
-func GetTestableEngine() TestableEngine {
-	for _, e := range availEngines {
-		testableEng, ok := e.(TestableEngine)
-		if ok {
-			return testableEng
-		}
-	}
-	return nil
-}
-
-// GetTestableBackend returns a storage backend that combines all testable engine configurations.
-func GetTestableBackend() (*Backend, error) {
+// GetTestableBackend returns testable enines and a storage backend that combines all
+// testable engine configurations.
+func GetTestableBackend(kvMap, logMap DataMap) (map[Alias]TestableEngine, *Backend, error) {
 	var found bool
+	engines := make(map[Alias]TestableEngine)
 	backend := new(Backend)
 	for _, e := range availEngines {
-		testableEng, ok := e.(TestableEngine)
+		tEng, ok := e.(TestableEngine)
 		if ok {
-			if err := testableEng.AddTestConfig(backend); err != nil {
-				return nil, err
+			alias, err := tEng.AddTestConfig(backend)
+			if err != nil {
+				dvid.Errorf("checking engine %q: %v\n", e, err)
+			} else {
+				engines[alias] = tEng
+				found = true
 			}
-			found = true
 		}
 	}
+	backend.KVStore = kvMap
+	backend.LogStore = logMap
 	if !found {
-		return nil, fmt.Errorf("could not find any testable storage configuration")
+		return nil, nil, fmt.Errorf("could not find any testable storage configuration")
 	}
-	return backend, nil
+	return engines, backend, nil
 }
 
 // NewStore checks if a given engine is available and if so, returns

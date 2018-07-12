@@ -12,12 +12,13 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"sort"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/downres"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
+	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/server"
 )
 
 type sizeChange struct {
@@ -39,14 +40,13 @@ type sizeChange struct {
 //
 // labels.MergeEndEvent occurs at end of merge and transmits labels.DeltaMergeEnd struct.
 //
-func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
+func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInfo) error {
 	dvid.Debugf("Merging %s into label %d ...\n", op.Merged, op.Target)
 
 	d.StartUpdate()
 	defer d.StopUpdate()
 
 	timedLog := dvid.NewTimeLog()
-
 	mutID := d.NewMutationID()
 
 	// send kafka merge event to instance-uuid topic
@@ -102,6 +102,10 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 		if err := targetIdx.Add(mergeIdx); err != nil {
 			return err
 		}
+		targetIdx.LastMutId = mutID
+		targetIdx.LastModUser = info.User
+		targetIdx.LastModTime = info.Time
+		targetIdx.LastModApp = info.App
 		if err := PutLabelIndex(d, v, op.Target, targetIdx); err != nil {
 			return err
 		}
@@ -109,8 +113,11 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 	for merged := range delta.Merged {
 		DeleteLabelIndex(d, v, merged)
 	}
+	if err := labels.LogMerge(d, v, op); err != nil {
+		return err
+	}
 
-	dvid.Infof("merged label %d: supervoxels %v\n", op.Target, mergeIdx.GetSupervoxels())
+	dvid.Infof("merged label %d: supervoxels %v, %d blocks\n", op.Target, mergeIdx.GetSupervoxels(), len(mergeIdx.Blocks))
 
 	delta.Blocks = targetIdx.GetBlockIndices()
 	evt = datastore.SyncEvent{d.DataUUID(), labels.MergeBlockEvent}
@@ -144,7 +151,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 // given a new label or the one optionally supplied via the "cleavelabel" query string.
 // A cleave label can be specified via the "toLabel" parameter, which if 0 will have an
 // automatic label ID selected for the cleaved body.
-func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, r io.ReadCloser) (cleaveLabel uint64, err error) {
+func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r io.ReadCloser) (cleaveLabel uint64, err error) {
 	if r == nil {
 		return 0, fmt.Errorf("no cleave supervoxels JSON was POSTed")
 	}
@@ -193,10 +200,20 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, r io.ReadCloser) (cle
 		CleavedLabel:       cleaveLabel,
 		CleavedSupervoxels: cleaveSupervoxels,
 	}
-	if err = CleaveIndex(d, v, op); err != nil {
+	evt := datastore.SyncEvent{d.DataUUID(), labels.CleaveLabelEvent}
+	msg := datastore.SyncMessage{labels.CleaveLabelEvent, v, op}
+	if err = datastore.NotifySubscribers(evt, msg); err != nil {
+		err = fmt.Errorf("can't notify subscribers for event %v: %v", evt, err)
+		return
+	}
+
+	if err = CleaveIndex(d, v, op, info); err != nil {
 		return
 	}
 	if err = addCleaveToMapping(d, v, op); err != nil {
+		return
+	}
+	if err = labels.LogCleave(d, v, op); err != nil {
 		return
 	}
 
@@ -212,14 +229,262 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, r io.ReadCloser) (cle
 	return
 }
 
+// created while iterating over all split RLEs and computing what the
+// split supervoxels should be and the # voxels split for each supervoxel per block.
+type blockSplitsMap map[uint64]map[uint64]labels.SVSplitCount
+
+// 1st pass: retrieve and check blocks intersecting split RLEs and get mappings of current supervoxels
+// to new split supervoxels.
+func (d *Data) splitPass1(ctx *datastore.VersionedCtx, splitmap dvid.BlockRLEs, splitblks dvid.IZYXSlice) (blockSplitsMap, *labels.SVSplitMap, error) {
+	timedLog := dvid.NewTimeLog()
+	svsplit := new(labels.SVSplitMap)
+	newLabelFunc := func() (uint64, error) {
+		return d.NewLabel(ctx.VersionID())
+	}
+
+	errCh := make(chan error, len(splitblks))
+	blockCh := make(chan *labels.PositionedBlock, len(splitblks))
+	defer close(blockCh)
+
+	var maxQueue int
+	blockSplits := make(blockSplitsMap)
+	go func() {
+		for pb := range blockCh {
+			blockRLEs := splitmap[pb.BCoord]
+			counts, err := pb.SplitStats(blockRLEs, svsplit, newLabelFunc)
+			if err != nil {
+				errCh <- fmt.Errorf("issue with computing split remap in block %s: %v", pb.BCoord, err)
+			} else {
+				zyx, err := labels.IZYXStringToBlockIndex(pb.BCoord)
+				if err != nil {
+					errCh <- fmt.Errorf("unable to convert block %s to block index: %v", pb.BCoord, err)
+				} else {
+					blockSplits[zyx] = counts
+					errCh <- nil
+				}
+			}
+			curQueue := len(blockCh)
+			if curQueue > maxQueue {
+				maxQueue = curQueue
+			}
+		}
+	}()
+
+	var numBlocks int
+	var scale uint8
+	getLog := dvid.NewTimeLog()
+	for _, izyx := range splitblks {
+		pb, err := d.getLabelBlock(ctx, scale, izyx)
+		if err != nil {
+			return nil, nil, err
+		}
+		if pb == nil {
+			return nil, nil, fmt.Errorf("split on block %s attempted but block doesn't exist", izyx)
+		}
+		numBlocks++
+		blockCh <- pb
+	}
+	getLog.Debugf("split pass 1: got %d blocks under split volume", numBlocks)
+
+	var numErr int
+	var lastErr error
+	for i := 0; i < numBlocks; i++ {
+		processErr := <-errCh
+		if processErr != nil {
+			lastErr = processErr
+			numErr++
+		}
+	}
+
+	timedLog.Debugf("split pass 1 completed: %d blocks with %d errors (max queue %d/%d)\n", numBlocks, numErr, maxQueue, len(splitblks))
+	return blockSplits, svsplit, lastErr
+}
+
+// if every split supervoxel in a split block is fully replaceable, we can just switch header.
+func checkSplitBlockReplace(blockSplits map[uint64]labels.SVSplitCount, allSplits map[uint64]labels.SVSplit, idxsvc *proto.SVCount) (map[uint64]uint64, bool) {
+	mapping := make(map[uint64]uint64, len(idxsvc.Counts))
+	replaceable := true
+	for supervoxel, count := range idxsvc.Counts {
+		split, found := blockSplits[supervoxel] // the supervoxels split in this particular block
+		if found {
+			if split.Voxels != count { // this is not a complete replacement.
+				replaceable = false
+				break
+			}
+			mapping[supervoxel] = split.Split
+		} else {
+			split, found := allSplits[supervoxel]
+			if found {
+				// this is supervoxel split elsewhere but not in this block, so it
+				// must be part of remainder.
+				mapping[supervoxel] = split.Remain
+			}
+		}
+	}
+	return mapping, replaceable
+}
+
+func checkNonsplitBlockAffected(allSplits map[uint64]labels.SVSplit, idxsvc *proto.SVCount) (map[uint64]uint64, bool) {
+	mapping := make(map[uint64]uint64, len(idxsvc.Counts))
+	for sv, svsplit := range allSplits {
+		_, found := idxsvc.Counts[sv]
+		if found {
+			mapping[sv] = svsplit.Remain // since this is a non-split block (not in split RLE)
+		}
+	}
+	return mapping, len(mapping) > 0
+}
+
+type headerMod struct {
+	bcoord  dvid.IZYXString
+	mapping map[uint64]uint64
+	pb      *labels.PositionedBlock
+}
+
+type voxelMod struct {
+	bcoord   dvid.IZYXString
+	split    dvid.RLEs
+	svsplits map[uint64]labels.SVSplit
+	pb       *labels.PositionedBlock
+}
+
+func (d *Data) modifyBlocks(ctx *datastore.VersionedCtx, downresMut *downres.Mutation, modCh chan interface{}, errCh chan error) {
+	var err error
+	var scale uint8
+	for mod := range modCh {
+		var bcoord dvid.IZYXString
+		var block *labels.Block
+		switch m := mod.(type) {
+		case headerMod:
+			bcoord = m.bcoord
+			block, _, err = m.pb.ReplaceLabels(m.mapping)
+			if err != nil {
+				errCh <- fmt.Errorf("issue with header modification, block %s: %v", bcoord, err)
+				return
+			}
+		case voxelMod:
+			bcoord = m.bcoord
+			block, err = m.pb.SplitSupervoxels(m.split, m.svsplits)
+			if err != nil {
+				errCh <- fmt.Errorf("issue with voxel modification, block %s: %v", bcoord, err)
+				return
+			}
+		default:
+			errCh <- fmt.Errorf("received bad mod type: %v", mod)
+			return
+		}
+		splitpb := labels.PositionedBlock{Block: *block, BCoord: bcoord}
+		if err := d.putLabelBlock(ctx, scale, &splitpb); err != nil {
+			errCh <- fmt.Errorf("unable to put block %s in split, data %q: %v", bcoord, d.DataName(), err)
+			return
+		}
+		if err := downresMut.BlockMutated(bcoord, block); err != nil {
+			errCh <- fmt.Errorf("data %q publishing downres: %v", d.DataName(), err)
+			return
+		}
+		errCh <- nil
+	}
+}
+
+// 2nd pass: go through all blocks with affected supervoxels, compare affected supervoxels counts
+// in each block, and either modify header or rewrite the voxel labels.  Activate downres for affected
+// blocks.
+func (d *Data) splitPass2(ctx *datastore.VersionedCtx, downresMut *downres.Mutation, idx *labels.Index, affectedBlocks dvid.IZYXSlice, svsplits map[uint64]labels.SVSplit, splitmap dvid.BlockRLEs, blockSplits blockSplitsMap) error {
+	// note that the blockSplits give supervoxel relabelings and counts for blocks in split volume,
+	// but does not include blocks that may have been affected outside of split volume.
+	timedLog := dvid.NewTimeLog()
+	modCh := make(chan interface{}, len(affectedBlocks))
+	errCh := make(chan error, len(affectedBlocks))
+
+	defer close(modCh)
+
+	numHandlers := 16
+	for i := 0; i < numHandlers; i++ {
+		go d.modifyBlocks(ctx, downresMut, modCh, errCh)
+	}
+
+	var scale uint8
+	var maxQueue int
+	var numHeaderMod, numVoxelMod int
+	getLog := dvid.NewTimeLog()
+	for _, izyxStr := range affectedBlocks {
+		zyx, err := labels.IZYXStringToBlockIndex(izyxStr)
+		isvc, found := idx.Blocks[zyx]
+		if !found {
+			return fmt.Errorf("split affected block %s was not found in index", izyxStr)
+		}
+		pb, err := d.getLabelBlock(ctx, scale, izyxStr)
+		if err != nil {
+			return fmt.Errorf("error in getting block %s: %v", izyxStr, err)
+		}
+		if pb == nil {
+			return fmt.Errorf("block %s doesn't exist for split modification", izyxStr)
+		}
+		bsvc, inSplit := blockSplits[zyx]
+		if inSplit {
+			splitRLEs, found := splitmap[izyxStr]
+			if !found {
+				return fmt.Errorf("block %s supposedly in split but not found in splitmap", izyxStr)
+			}
+			mapping, canReplace := checkSplitBlockReplace(bsvc, svsplits, isvc)
+			if canReplace {
+				numHeaderMod++
+				modCh <- headerMod{bcoord: izyxStr, mapping: mapping, pb: pb}
+			} else {
+				numVoxelMod++
+				modCh <- voxelMod{bcoord: izyxStr, split: splitRLEs, svsplits: svsplits, pb: pb}
+			}
+		} else {
+			mapping, affected := checkNonsplitBlockAffected(svsplits, isvc)
+			if affected {
+				numHeaderMod++
+				modCh <- headerMod{bcoord: izyxStr, mapping: mapping, pb: pb}
+			}
+		}
+		curQueue := len(modCh)
+		if curQueue > maxQueue {
+			maxQueue = curQueue
+		}
+	}
+	getLog.Infof("split pass 2: got %d out of %d affected blocks\n", numHeaderMod+numVoxelMod, len(affectedBlocks))
+	var numErr int
+	var err error
+	for i := 0; i < numHeaderMod+numVoxelMod; i++ {
+		processErr := <-errCh
+		if processErr != nil {
+			err = processErr
+			numErr++
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("had %d errors in splitting data %q blocks, last one: %v", numErr, len(blockSplits), err)
+	}
+	timedLog.Infof("split pass 2 completed: %d blocks (max queue %d/%d): %d header changes, %d voxel relabels\n", numHeaderMod+numVoxelMod, maxQueue, len(idx.Blocks), numHeaderMod, numVoxelMod)
+	return nil
+}
+
+func getAffectedBlocks(idx *labels.Index, svsplit *labels.SVSplitMap) (affectedBlocks dvid.IZYXSlice) {
+	for zyx, svc := range idx.Blocks {
+		for supervoxel := range svsplit.Splits {
+			_, found := svc.Counts[supervoxel]
+			if found {
+				izyxStr := labels.BlockIndexToIZYXString(zyx)
+				affectedBlocks = append(affectedBlocks, izyxStr)
+				break
+			}
+		}
+	}
+	sort.Sort(affectedBlocks)
+	return
+}
+
 // SplitLabels splits a portion of a label's voxels into a given split label or, if the given split
 // label is 0, a new label, which is returned.  The input is a binary sparse volume and should
 // preferably be the smaller portion of a labeled region.  In other words, the caller should chose
 // to submit for relabeling the smaller portion of any split.  It is assumed that the given split
 // voxels are within the fromLabel set of voxels and will generate unspecified behavior if this is
 // not the case.
-func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) (toLabel uint64, err error) {
-
+func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, info dvid.ModInfo) (toLabel uint64, err error) {
 	timedLog := dvid.NewTimeLog()
 
 	// Create a new label id for this version that will persist to store
@@ -235,10 +500,69 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 	if err != nil {
 		return
 	}
+	splitSize, _ := split.Stats()
+	if splitSize == 0 {
+		err = fmt.Errorf("bad split since split volume was zero voxels")
+		return
+	}
 
-	// Only do one large mutation at a time, although each request can start many goroutines.
-	server.LargeMutationMutex.Lock()
-	defer server.LargeMutationMutex.Unlock()
+	// read label index and do simple check on split size
+	shard := fromLabel % numIndexShards
+	indexMu[shard].Lock()
+	defer indexMu[shard].Unlock()
+
+	var idx *labels.Index
+	idx, err = getCachedLabelIndex(d, v, fromLabel)
+	if err != nil {
+		err = fmt.Errorf("modify split index for data %q, label %d: %v", d.DataName(), fromLabel, err)
+		return
+	}
+	if idx == nil {
+		err = fmt.Errorf("unable to modify split index for data %q: missing label %d", d.DataName(), fromLabel)
+		return
+	}
+	fromLabelSize := idx.NumVoxels()
+	if splitSize >= fromLabelSize {
+		err = fmt.Errorf("split volume of %d voxels >= %d of label %d", splitSize, fromLabelSize, fromLabel)
+		return
+	}
+
+	// Only do voxel-based mutations one at a time.  This lets us remove handling for block-level concurrency.
+	d.voxelMu.Lock()
+	defer d.voxelMu.Unlock()
+
+	d.StartUpdate()
+	defer d.StopUpdate()
+
+	// Partition the split spans into blocks.
+	blockSize, ok := d.BlockSize().(dvid.Point3d)
+	if !ok {
+		err = fmt.Errorf("can't do split because block size for instance %s is not 3d: %v", d.DataName(), d.BlockSize())
+		return
+	}
+	var splitmap dvid.BlockRLEs
+	splitmap, err = split.Partition(blockSize)
+	if err != nil {
+		return
+	}
+	splitblks := splitmap.SortedKeys() // sorted list of blocks that cover split
+
+	// 1st pass: go through blocks intersecting split RLEs and get mappings of current supervoxels
+	// to new split supervoxels
+	ctx := datastore.NewVersionedCtx(d, v)
+	var blockSplits blockSplitsMap
+	var svsplit *labels.SVSplitMap
+	if blockSplits, svsplit, err = d.splitPass1(ctx, splitmap, splitblks); err != nil {
+		return
+	}
+	labelSupervoxels := idx.GetSupervoxels()
+	for supervoxel := range svsplit.Splits {
+		if _, found := labelSupervoxels[supervoxel]; !found {
+			err = fmt.Errorf("supervoxel %d was part of split volume yet was not part of body label %d", supervoxel, fromLabel)
+			return
+		}
+	}
+	affectedBlocks := getAffectedBlocks(idx, svsplit)
 
 	// store split info into separate data.
 	var splitData []byte
@@ -260,60 +584,56 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 		"Split":      splitRef,
 		"MutationID": mutID,
 		"UUID":       string(versionuuid),
+		"SVSplits":   svsplit.Splits,
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
 		dvid.Errorf("error on sending split op to kafka: %v", err)
 	}
 
-	d.StartUpdate()
-	defer d.StopUpdate()
-
-	// Partition the split spans into blocks.
-	var splitmap dvid.BlockRLEs
-	blockSize, ok := d.BlockSize().(dvid.Point3d)
-	if !ok {
-		err = fmt.Errorf("can't do split because block size for instance %s is not 3d: %v", d.DataName(), d.BlockSize())
-		return
-	}
-	splitmap, err = split.Partition(blockSize)
-	if err != nil {
-		return
-	}
-
-	// Do the split
+	// 2nd pass: go through all blocks with affected supervoxels, compare affected supervoxels counts
+	// in each block, and either modify header or rewrite the voxel labels.  Activate downres for affected
+	// blocks.
 	downresMut := downres.NewMutation(d, v, mutID)
-
-	doneCh := make(chan struct{})
-	blockCh := make(chan blockSplitCounts)
-	go modifySplitIndex(d, v, fromLabel, toLabel, blockCh, doneCh)
-
-	for izyx, blockRLEs := range splitmap {
-		n := izyx.Hash(numMutateHandlers)
-		d.MutAdd(mutID)
-		op := splitOp{
-			mutID: mutID,
-			SplitOp: labels.SplitOp{
-				Target:   fromLabel,
-				NewLabel: toLabel,
-				RLEs:     blockRLEs,
-			},
-			bcoord:     izyx,
-			downresMut: downresMut,
-			deltaCh:    blockCh,
-		}
-		d.mutateCh[n] <- procMsg{op: op, v: v}
+	if err = d.splitPass2(ctx, downresMut, idx, affectedBlocks, svsplit.Splits, splitmap, blockSplits); err != nil {
+		return
 	}
 
-	// Wait for all blocks to be split then modify label indices and mark end of split op.
-	d.MutWait(mutID)
-	d.MutDelete(mutID)
-	if doneCh != nil {
-		close(doneCh)
+	// adjust the indices and mappings
+	op := labels.SplitOp{
+		MutID:    mutID,
+		Target:   fromLabel,
+		NewLabel: toLabel,
+		RLEs:     split,
+		SplitMap: svsplit.Splits,
 	}
-	timedLog.Debugf("completed labelmap split (%d blocks) of %d -> %d", len(splitmap), fromLabel, toLabel)
+	if err = d.splitIndex(v, info, op, idx, splitmap, blockSplits); err != nil {
+		return
+	}
+	if err = addSplitToMapping(d, v, op); err != nil {
+		return
+	}
+	if err = labels.LogSplit(d, v, op); err != nil {
+		return
+	}
+	if err = downresMut.Execute(); err != nil {
+		return
+	}
 
-	downresMut.Done()
+	timedLog.Debugf("completed labelmap split (%d affected, %d split blocks) of %d -> %d", len(affectedBlocks), len(splitmap), fromLabel, toLabel)
+
+	deltaSplit := labels.DeltaSplit{
+		OldLabel:     fromLabel,
+		NewLabel:     toLabel,
+		Split:        splitmap,
+		SortedBlocks: splitblks,
+		SplitVoxels:  splitSize,
+	}
+	evt := datastore.SyncEvent{d.DataUUID(), labels.SplitLabelEvent}
+	msg := datastore.SyncMessage{labels.SplitLabelEvent, v, deltaSplit}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
+	}
 
 	msginfo = map[string]interface{}{
 		"Action":     "split-complete",
@@ -332,7 +652,8 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 // binary sparse volume and should be totally contained by the given supervoxel.  The first
 // returned label is assigned to the split voxels while the second returned label is assigned
 // to the remainder voxels.
-func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser) (splitSupervoxel, remainSupervoxel uint64, err error) {
+func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser, info dvid.ModInfo) (splitSupervoxel, remainSupervoxel uint64, err error) {
+	timedLog := dvid.NewTimeLog()
 
 	// Create new labels for this split that will persist to store
 	splitSupervoxel, err = d.NewLabel(v)
@@ -351,10 +672,49 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser
 	if err != nil {
 		return
 	}
+	splitSize, _ := split.Stats()
+	if splitSize == 0 {
+		err = fmt.Errorf("bad split since split volume was zero voxels")
+		return
+	}
 
-	// Only do one large mutation at a time, although each request can start many goroutines.
-	server.LargeMutationMutex.Lock()
-	defer server.LargeMutationMutex.Unlock()
+	// read parent label index and do simple check on split size
+	var mapping *SVMap
+	mapping, err = getMapping(d, v)
+	if err != nil {
+		return
+	}
+	label := svlabel
+	if mapping != nil {
+		if mapped, found := mapping.MappedLabel(v, svlabel); found {
+			if mapped == 0 {
+				err = fmt.Errorf("cannot get label for supervoxel %d, which has been split and doesn't exist anymore", svlabel)
+			}
+			label = mapped
+		}
+	}
+	shard := label % numIndexShards
+	indexMu[shard].Lock()
+	defer indexMu[shard].Unlock()
+
+	idx, err := getCachedLabelIndex(d, v, label)
+	if err != nil {
+		err = fmt.Errorf("split supervoxel index for data %q, supervoxel %d: %v", d.DataName(), svlabel, err)
+		return
+	}
+	if idx == nil {
+		err = fmt.Errorf("unable to split supervoxel %d for data %q: missing label index %d", svlabel, d.DataName(), label)
+		return
+	}
+	svSize := idx.GetSupervoxelCount(svlabel)
+	if splitSize >= svSize {
+		err = fmt.Errorf("split volume of %d >= %d of supervoxel %d", splitSize, svSize, svlabel)
+		return
+	}
+
+	// Only do voxel-based mutations one at a time.  This lets us remove handling for block-level concurrency.
+	d.voxelMu.Lock()
+	defer d.voxelMu.Unlock()
 
 	// store split info into separate data.
 	var splitData []byte
@@ -405,36 +765,85 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser
 		RemainSupervoxel: remainSupervoxel,
 		Split:            splitmap,
 	}
-	if err = addSupervoxelSplitToMapping(d, v, op); err != nil {
-		return
-	}
-	timedLog := dvid.NewTimeLog()
-	downresMut := downres.NewMutation(d, v, op.MutID)
+	downresMut := downres.NewMutation(d, v, mutID)
 
-	svblocks, err := SplitSupervoxelIndex(d, v, op)
+	var splitblks dvid.IZYXSlice
+	splitblks, err = d.splitSupervoxelIndex(v, info, op, idx)
 	if err != nil {
 		return splitSupervoxel, remainSupervoxel, err
 	}
 
-	for _, izyx := range svblocks {
-		n := izyx.Hash(numMutateHandlers)
-		d.MutAdd(op.MutID)
-		sop := splitSupervoxelOp{
-			SplitSupervoxelOp: op,
-			mutID:             op.MutID,
-			bcoord:            izyx,
-			downresMut:        downresMut,
+	getLog := dvid.NewTimeLog()
+	blockCh := make(chan *labels.PositionedBlock, len(splitblks))
+	errCh := make(chan error, len(splitblks))
+	ctx := datastore.NewVersionedCtx(d, v)
+
+	numHandlers := 16
+	for i := 0; i < numHandlers; i++ {
+		go d.splitSupervoxelThread(ctx, downresMut, op, idx.Blocks, blockCh, errCh)
+	}
+
+	origBlocks := make([]*labels.PositionedBlock, len(splitblks))
+	var numBlocks int
+	var scale uint8
+	for _, izyx := range splitblks {
+		var pb *labels.PositionedBlock
+		pb, err = d.getLabelBlock(ctx, scale, izyx)
+		if err != nil {
+			d.restoreOldBlocks(ctx, numBlocks, origBlocks)
+			return
 		}
-		d.mutateCh[n] <- procMsg{op: sop, v: v}
+		if pb == nil {
+			dvid.Errorf("supervoxel split of %d: block %s should have been split but was nil\n", svlabel, izyx)
+			continue
+		}
+		origBlocks[numBlocks] = pb
+		numBlocks++
+		blockCh <- pb
 	}
 
 	// Wait for all blocks in supervoxel to be relabeled before returning.
-	d.MutWait(op.MutID)
-	d.MutDelete(op.MutID)
+	getLog.Debugf("supervoxel split of %d: got %d blocks", svlabel, numBlocks)
+	var numErr int
+	for i := 0; i < numBlocks; i++ {
+		processErr := <-errCh
+		if processErr != nil {
+			err = processErr
+			numErr++
+		}
+	}
+	close(blockCh)
+	if err != nil {
+		err = fmt.Errorf("supervoxel split of %d: %d errors, last one: %v", svlabel, numErr, err)
+		d.restoreOldBlocks(ctx, numBlocks, origBlocks)
+		return
+	}
+	if err = addSupervoxelSplitToMapping(d, v, op); err != nil {
+		return
+	}
+	if err = labels.LogSupervoxelSplit(d, v, op); err != nil {
+		return
+	}
+	// store the new split index
+	if err = putCachedLabelIndex(d, v, idx); err != nil {
+		d.restoreOldBlocks(ctx, numBlocks, origBlocks)
+		err = fmt.Errorf("split supervoxel index for data %q, supervoxel %d: %v", d.DataName(), op.Supervoxel, err)
+		return
+	}
+
+	if err = downresMut.Execute(); err != nil {
+		dvid.Criticalf("down-res compute of supervoxel split %d failed with error: %v\n", svlabel, err)
+		dvid.Criticalf("down-res error can lead to sync issue between scale 0 and higher affecting these blocks: %s\n", splitblks)
+		return
+	}
 
 	timedLog.Debugf("labelmap supervoxel %d split complete (%d blocks split)", op.Supervoxel, len(op.Split))
 
-	downresMut.Done()
+	evt := datastore.SyncEvent{d.DataUUID(), labels.SupervoxelSplitEvent}
+	msg := datastore.SyncMessage{labels.SupervoxelSplitEvent, v, op}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
+	}
 
 	msginfo = map[string]interface{}{
 		"Action":     "split-supervoxel-complete",
@@ -449,110 +858,52 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser
 	return splitSupervoxel, remainSupervoxel, nil
 }
 
-// Serializes block operations so despite having concurrent merge/split label requests,
-// we make sure any particular block isn't concurrently GET/POSTED.
-// TODO: consolidate this block processing stream with d.putChunk() used for POST /raw
-// and also POST /blocks.  For now, we assume there is never SPLIT ops at same time as
-// POST /raw or /blocks --> ingest phase is distinct from merge/split phase.
-func (d *Data) mutateBlock(ch <-chan procMsg) {
-	for {
-		msg, more := <-ch
-		if !more {
-			return
-		}
-
-		ctx := datastore.NewVersionedCtx(d, msg.v)
-		switch op := msg.op.(type) {
-		case splitOp:
-			d.splitBlock(ctx, op)
-
-		case splitSupervoxelOp:
-			d.splitSupervoxelBlock(ctx, op)
-
-		// TODO
-		// case ingestOp:
-		// 	d.ingestBlock(ctx, op)
-
-		// case mutateOp:
-		// 	d.mutateBlock(ctx, op)
-
-		default:
-			dvid.Criticalf("Received unknown processing msg in mutateBlock: %v\n", msg)
+func (d *Data) restoreOldBlocks(ctx *datastore.VersionedCtx, numBlocks int, blocks []*labels.PositionedBlock) {
+	var scale uint8
+	for i := 0; i < numBlocks; i++ {
+		if err := d.putLabelBlock(ctx, scale, blocks[i]); err != nil {
+			dvid.Criticalf("unable to put back block %s, data %q after error: %v", blocks[i].BCoord, d.DataName(), err)
 		}
 	}
 }
 
 // splits a set of voxels to a specified label within a block
-func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
-	defer d.MutDone(op.mutID)
-
+func (d *Data) splitSupervoxelThread(ctx *datastore.VersionedCtx, downresMut *downres.Mutation, op labels.SplitSupervoxelOp, idxblocks map[uint64]*proto.SVCount, blockCh chan *labels.PositionedBlock, errCh chan error) {
 	var scale uint8
-	pb, err := d.getLabelBlock(ctx, scale, op.bcoord)
-	if err != nil {
-		dvid.Errorf("error in merge block %s: %v\n", op.bcoord, err)
-		return
-	}
-	if pb == nil {
-		dvid.Infof("split on block %s attempted but block doesn't exist\n", op.bcoord)
-		return
-	}
-
-	splitBlock, counts, err := pb.SplitWithStats(op.SplitOp)
-	if err != nil {
-		dvid.Errorf("issue with creating split in block %s: %v\n", op.Target, op.bcoord, err)
-		return
-	}
-	op.deltaCh <- blockSplitCounts{
-		bcoord:  op.bcoord,
-		deleted: counts,
-	}
-	dvid.Infof("Split block %s, label %d -> %d: affected %d supervoxels\n", pb.BCoord, op.Target, op.NewLabel, len(counts))
-
-	splitpb := labels.PositionedBlock{*splitBlock, op.bcoord}
-	if err := d.putLabelBlock(ctx, scale, &splitpb); err != nil {
-		dvid.Errorf("unable to put block %s in split of label %d, data %q: %v\n", op.bcoord, op.Target, d.DataName(), err)
-		return
-	}
-
-	if err := op.downresMut.BlockMutated(op.bcoord, splitBlock); err != nil {
-		dvid.Errorf("data %q publishing downres: %v\n", d.DataName(), err)
-	}
-}
-
-// splits a set of voxels to a specified label within a block
-func (d *Data) splitSupervoxelBlock(ctx *datastore.VersionedCtx, op splitSupervoxelOp) {
-	defer d.MutDone(op.mutID)
-
-	var scale uint8
-	pb, err := d.getLabelBlock(ctx, scale, op.bcoord)
-	if err != nil {
-		dvid.Errorf("error in merge block %s: %v\n", op.bcoord, err)
-		return
-	}
-	if pb == nil {
-		dvid.Infof("split on block %s attempted but block doesn't exist\n", op.bcoord)
-		return
-	}
-
-	var toLabelSize uint64
-	var splitBlock *labels.Block
-	if op.Split != nil {
-		var keptSize uint64
-		splitBlock, keptSize, toLabelSize, err = pb.SplitSupervoxel(op.SplitSupervoxelOp)
+	for pb := range blockCh {
+		zyx, err := labels.IZYXStringToBlockIndex(pb.BCoord)
 		if err != nil {
-			dvid.Errorf("can't store split supervoxel %d RLEs into block %s: %v\n", op.Supervoxel, op.bcoord, err)
-			return
+			errCh <- fmt.Errorf("couldn't convert block coord %s to block index: %v", pb.BCoord, err)
+			continue
 		}
-		dvid.Infof("Split block %s, label %d -> %d, %d: kept %d voxels, split %d voxels\n", pb.BCoord, op.Supervoxel, op.SplitSupervoxel, op.RemainSupervoxel, keptSize, toLabelSize)
-	}
+		svc, found := idxblocks[zyx]
+		if !found {
+			errCh <- fmt.Errorf("tried to supervoxel %d split block %s but was not in label index", op.Supervoxel, pb.BCoord)
+			continue
+		}
+		idxKeptSize := uint64(svc.Counts[op.RemainSupervoxel])
+		idxSplitSize := uint64(svc.Counts[op.SplitSupervoxel])
 
-	splitpb := labels.PositionedBlock{*splitBlock, op.bcoord}
-	if err := d.putLabelBlock(ctx, scale, &splitpb); err != nil {
-		dvid.Errorf("unable to put block %s in split of label %d, data %q: %v\n", op.bcoord, op.Supervoxel, d.DataName(), err)
-		return
-	}
+		splitBlock, keptSize, splitSize, err := pb.SplitSupervoxel(op)
+		if err != nil {
+			errCh <- fmt.Errorf("can't modify supervoxel %d, block %s: %v", op.Supervoxel, pb.BCoord, err)
+			continue
+		}
+		if keptSize != idxKeptSize || splitSize != idxSplitSize {
+			errCh <- fmt.Errorf("ran supervoxel %d split on block %s: got %d split, %d remain voxels, different from label index %d split, %d remain", op.Supervoxel, pb.BCoord, splitSize, keptSize, idxSplitSize, idxKeptSize)
+			continue
+		}
 
-	if err := op.downresMut.BlockMutated(op.bcoord, splitBlock); err != nil {
-		dvid.Errorf("data %q publishing downres: %v\n", d.DataName(), err)
+		splitpb := labels.PositionedBlock{*splitBlock, pb.BCoord}
+		if err := d.putLabelBlock(ctx, scale, &splitpb); err != nil {
+			errCh <- fmt.Errorf("unable to put block %s in split of label %d, data %q: %v", pb.BCoord, op.Supervoxel, d.DataName(), err)
+			continue
+		}
+
+		if err := downresMut.BlockMutated(pb.BCoord, splitBlock); err != nil {
+			errCh <- fmt.Errorf("data %q publishing downres, block %s: %v", d.DataName(), pb.BCoord, err)
+		} else {
+			errCh <- nil
+		}
 	}
 }

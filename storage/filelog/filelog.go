@@ -218,7 +218,7 @@ func (flogs *fileLogs) StreamAll(dataID, version dvid.UUID, ch chan storage.LogM
 		flogs.Unlock()
 	}
 
-    msgNum := 0
+	msgNum := 0
 	f, err := os.OpenFile(filename, os.O_RDONLY, 0755)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -243,7 +243,7 @@ func (flogs *fileLogs) StreamAll(dataID, version dvid.UUID, ch chan storage.LogM
 		if err != nil {
 			break
 		}
-        msgNum++
+		msgNum++
 		if wg != nil {
 			wg.Add(1)
 		}
@@ -267,14 +267,13 @@ restart:
 	return err
 }
 
-func (flogs *fileLogs) getWriteLog(dataID, version dvid.UUID) (fl *fileLog, err error) {
-	k := string(dataID + "-" + version)
+func (flogs *fileLogs) getWriteLog(topic string) (fl *fileLog, err error) {
 	var found bool
 	flogs.RLock()
-	fl, found = flogs.files[k]
+	fl, found = flogs.files[topic]
 	flogs.RUnlock()
 	if !found {
-		filename := filepath.Join(flogs.path, k)
+		filename := filepath.Join(flogs.path, topic)
 		var f *os.File
 		f, err = os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_APPEND|os.O_SYNC, 0755)
 		if err != nil {
@@ -282,21 +281,38 @@ func (flogs *fileLogs) getWriteLog(dataID, version dvid.UUID) (fl *fileLog, err 
 		}
 		fl = &fileLog{File: f}
 		flogs.Lock()
-		flogs.files[k] = fl
+		flogs.files[topic] = fl
 		flogs.Unlock()
 	}
 	return
 }
 
+func (flogs *fileLogs) closeWriteLog(topic string) error {
+	flogs.Lock()
+	fl, found := flogs.files[topic]
+	flogs.Unlock()
+	if found {
+		fl.Lock()
+		err := fl.Close()
+		flogs.Lock()
+		delete(flogs.files, topic)
+		flogs.Unlock()
+		fl.Unlock()
+		return err
+	}
+	return nil
+}
+
 func (flogs *fileLogs) Append(dataID, version dvid.UUID, msg storage.LogMessage) error {
-	fl, err := flogs.getWriteLog(dataID, version)
+	topic := string(dataID + "-" + version)
+	fl, err := flogs.getWriteLog(topic)
 	if err != nil {
 		return fmt.Errorf("append log %q: %v", flogs, err)
 	}
 	fl.Lock()
 	if err = fl.writeHeader(msg); err != nil {
 		fl.Unlock()
-		return fmt.Errorf("bad write of log header to data %s, uuid %s: %v\n", dataID, version, err)
+		return fmt.Errorf("bad write of log header to data %s, uuid %s: %v", dataID, version, err)
 	}
 	_, err = fl.Write(msg.Data)
 	fl.Unlock()
@@ -307,20 +323,30 @@ func (flogs *fileLogs) Append(dataID, version dvid.UUID, msg storage.LogMessage)
 }
 
 func (flogs *fileLogs) CloseLog(dataID, version dvid.UUID) error {
-	k := string(dataID + "-" + version)
-	flogs.Lock()
-	fl, found := flogs.files[k]
-	flogs.Unlock()
-	if found {
-		fl.Lock()
-		err := fl.Close()
-		flogs.Lock()
-		delete(flogs.files, k)
-		flogs.Unlock()
-		fl.Unlock()
-		return err
+	topic := string(dataID + "-" + version)
+	return flogs.closeWriteLog(topic)
+}
+
+func (flogs *fileLogs) TopicAppend(topic string, msg storage.LogMessage) error {
+	fl, err := flogs.getWriteLog(topic)
+	if err != nil {
+		return fmt.Errorf("append log %q: %v", flogs, err)
 	}
-	return nil
+	fl.Lock()
+	if err = fl.writeHeader(msg); err != nil {
+		fl.Unlock()
+		return fmt.Errorf("bad write of log header to topic %q: %v", topic, err)
+	}
+	_, err = fl.Write(msg.Data)
+	fl.Unlock()
+	if err != nil {
+		err = fmt.Errorf("append log %q: %v", flogs, err)
+	}
+	return err
+}
+
+func (flogs *fileLogs) TopicClose(topic string) error {
+	return flogs.closeWriteLog(topic)
 }
 
 func (flogs *fileLogs) Close() {
@@ -352,11 +378,11 @@ func (flogs *fileLogs) Equal(config dvid.StoreConfig) bool {
 // AddTestConfig sets the filelog as the default append-only log.  If another engine is already
 // set for the append-only log, it returns an error since only one append-only log backend should
 // be tested via tags.
-func (e Engine) AddTestConfig(backend *storage.Backend) error {
-	if backend.DefaultLog != "" {
-		return fmt.Errorf("filelog can't be testable log.  DefaultLog already set to %s", backend.DefaultLog)
-	}
+func (e Engine) AddTestConfig(backend *storage.Backend) (storage.Alias, error) {
 	alias := storage.Alias("filelog")
+	if backend.DefaultLog != "" {
+		return alias, fmt.Errorf("filelog can't be testable log.  DefaultLog already set to %s", backend.DefaultLog)
+	}
 	backend.DefaultLog = alias
 	if backend.Stores == nil {
 		backend.Stores = make(map[storage.Alias]dvid.StoreConfig)
@@ -368,7 +394,7 @@ func (e Engine) AddTestConfig(backend *storage.Backend) error {
 	var c dvid.Config
 	c.SetAll(tc)
 	backend.Stores[alias] = dvid.StoreConfig{Config: c, Engine: "filelog"}
-	return nil
+	return alias, nil
 }
 
 // Delete implements the TestableEngine interface by providing a way to dispose

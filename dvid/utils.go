@@ -96,6 +96,23 @@ func MinInt32(a, b int32) int32 {
 	return b
 }
 
+// ModInfo gives a user, app and time for a modification
+type ModInfo struct {
+	User string
+	App  string
+	Time string
+}
+
+// GetModInfo sets and returns a ModInfo using "u" query string.
+func GetModInfo(r *http.Request) ModInfo {
+	q := r.URL.Query()
+	var info ModInfo
+	info.User = q.Get("u")
+	info.App = q.Get("app")
+	info.Time = time.Now().Format(time.RFC3339)
+	return info
+}
+
 // RandomBytes returns a slices of random bytes.
 func RandomBytes(numBytes int32) []byte {
 	buf := make([]byte, numBytes)

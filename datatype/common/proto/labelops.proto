@@ -7,6 +7,13 @@ message MergeOp {
 	repeated uint64 merged = 3;
 }
 
+message CleaveOp {
+	uint64 mutid = 1;
+	uint64 target = 2;
+	uint64 cleavedlabel = 3;
+	repeated uint64 cleaved = 4;
+}
+
 message MappingOp {
     uint64 mutid = 1;
     uint64 mapped = 2;
@@ -23,6 +30,19 @@ message SplitOp {
     uint64 newlabel = 3;
     bool coarse = 4;  // true if rles are block coords (coarse split), not voxels
     bytes rles = 5;
+	map<uint64, SVSplit> svsplits = 6;
+}
+
+message SVSplit {
+	uint64 splitlabel = 1;
+	uint64 remainlabel = 2;
+}
+
+message SupervoxelSplitOp {
+	uint64 mutid = 1;
+	uint64 supervoxel = 2;
+	uint64 splitlabel = 3;
+	uint64 remainlabel = 4;
 }
 
 message OpCompleted {
@@ -52,9 +72,10 @@ message SVCount {
 message LabelIndex {
 	map<uint64, SVCount> blocks = 1;  // key is encoded block coord ZYX (packed little-endian 21-bit numbers where MSB is sign flag)
 	uint64 label = 2;
-	uint64 last_mutid = 3;
+	uint64 last_mut_id = 3;
 	string last_mod_time = 4;  // string is time in RFC 3339 format
 	string last_mod_user = 5;
+	string last_mod_app = 6;
 }
 
 message LabelIndices {

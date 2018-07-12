@@ -10,14 +10,13 @@ package server
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
-	"net/smtp"
-	"os"
+	"net/http"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"text/template"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -62,15 +61,27 @@ func init() {
 
 // TestConfig specifies configuration for testing servers.
 type TestConfig struct {
-	CacheSize map[string]int // MB for caches
+	KVStoresMap  storage.DataMap
+	LogStoresMap storage.DataMap
+	CacheSize    map[string]int // MB for caches
 }
 
 // OpenTest initializes the server for testing, setting up caching, datastore, etc.
 // Later configurations will override earlier ones.
 func OpenTest(configs ...TestConfig) error {
+	var dataMap datastore.DataStorageMap
+	var dataMapped bool
 	tc = tomlConfig{}
 	if len(configs) > 0 {
 		for _, c := range configs {
+			if len(c.KVStoresMap) != 0 {
+				dataMap.KVStores = c.KVStoresMap
+				dataMapped = true
+			}
+			if len(c.LogStoresMap) != 0 {
+				dataMap.LogStores = c.LogStoresMap
+				dataMapped = true
+			}
 			if len(c.CacheSize) != 0 {
 				for id, size := range c.CacheSize {
 					if tc.Cache == nil {
@@ -83,7 +94,11 @@ func OpenTest(configs ...TestConfig) error {
 	}
 	config = &tc
 	dvid.Infof("OpenTest with %v: cache setting %v\n", configs, tc.Cache)
-	datastore.OpenTest()
+	if dataMapped {
+		datastore.OpenTest(dataMap)
+	} else {
+		datastore.OpenTest()
+	}
 	return nil
 }
 
@@ -93,10 +108,10 @@ func CloseTest() {
 }
 
 type tomlConfig struct {
-	Server     serverConfig
-	Email      emailConfig
+	Server     ServerConfig
+	Email      dvid.EmailConfig
 	Logging    dvid.LogConfig
-	Kafka      dvid.KafkaConfig
+	Kafka      storage.KafkaConfig
 	Store      map[storage.Alias]storeConfig
 	Backend    map[dvid.DataSpecifier]backendConfig
 	Cache      map[string]sizeConfig
@@ -173,6 +188,10 @@ func (c *tomlConfig) Host() string {
 	return host
 }
 
+func (c *tomlConfig) Note() string {
+	return c.Server.Note
+}
+
 func (c *tomlConfig) HTTPAddress() string {
 	return c.Server.HTTPAddress
 }
@@ -189,6 +208,13 @@ func (c *tomlConfig) AllowTiming() bool {
 	return c.Server.AllowTiming
 }
 
+func (c *tomlConfig) KafkaServers() []string {
+	if len(c.Kafka.Servers) != 0 {
+		return c.Kafka.Servers
+	}
+	return nil
+}
+
 // CacheSize returns the number oF bytes reserved for the given identifier.
 // If unset, will return 0.
 func CacheSize(id string) int {
@@ -202,16 +228,60 @@ func CacheSize(id string) int {
 	return setting.Size * dvid.Mega
 }
 
-type serverConfig struct {
+// ServerConfig holds ports, host name, and other properties of this dvid server.
+type ServerConfig struct {
 	Host        string
 	HTTPAddress string
 	RPCAddress  string
 	WebClient   string
-	AllowTiming bool
 	Note        string
+
+	AllowTiming  bool   // If true, returns * for Timing-Allow-Origin in response headers.
+	StartWebhook string // http address that should be called when server is started up.
 
 	IIDGen   string `toml:"instance_id_gen"`
 	IIDStart uint32 `toml:"instance_id_start"`
+}
+
+// DatastoreInstanceConfig returns data instance configuration necessary to
+// handle id generation.
+func (sc ServerConfig) DatastoreInstanceConfig() datastore.InstanceConfig {
+	return datastore.InstanceConfig{
+		Gen:   sc.IIDGen,
+		Start: dvid.InstanceID(sc.IIDStart),
+	}
+}
+
+// Initialize POSTs data to any set webhook indicating the server configuration.
+func (sc ServerConfig) Initialize() error {
+	if sc.StartWebhook == "" {
+		return nil
+	}
+	data := map[string]string{
+		"Host":         sc.Host,
+		"Note":         sc.Note,
+		"HTTP Address": sc.HTTPAddress,
+		"RPC Address":  sc.RPCAddress,
+	}
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("POST", sc.StartWebhook, bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("called webhook specified in TOML (%q) and received bad status code: %d", sc.StartWebhook, resp.StatusCode)
+	}
+	return nil
 }
 
 type sizeConfig struct {
@@ -225,30 +295,22 @@ type backendConfig struct {
 	Log   storage.Alias
 }
 
-type emailConfig struct {
-	Notify   []string
-	Username string
-	Password string
-	Server   string
-	Port     int
-}
-
-func (e emailConfig) Host() string {
-	return fmt.Sprintf("%s:%d", e.Server, e.Port)
-}
-
 // LoadConfig loads DVID server configuration from a TOML file.
-func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *storage.Backend, *dvid.KafkaConfig, error) {
+func LoadConfig(filename string) (*tomlConfig, *storage.Backend, error) {
 	if filename == "" {
-		return nil, nil, nil, nil, fmt.Errorf("No server TOML configuration file provided")
+		return &tc, nil, fmt.Errorf("No server TOML configuration file provided")
 	}
 	if _, err := toml.DecodeFile(filename, &tc); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("could not decode TOML config: %v", err)
+		return &tc, nil, fmt.Errorf("could not decode TOML config: %v", err)
 	}
 	var err error
 	err = tc.ConvertPathsToAbsolute(filename)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("could not convert relative paths to absolute paths in TOML config: %v", err)
+		return &tc, nil, fmt.Errorf("could not convert relative paths to absolute paths in TOML config: %v", err)
+	}
+
+	if tc.Email.IsAvailable() {
+		dvid.SetEmailServer(tc.Email)
 	}
 
 	// Get all defined stores.
@@ -256,7 +318,7 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 	backend.Groupcache = tc.Groupcache
 	backend.Stores, err = tc.Stores()
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return &tc, nil, err
 	}
 
 	// Get default store if there's only one store defined.
@@ -267,13 +329,13 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 	}
 
 	// Create the backend mapping.
-	backend.KVStore = make(map[dvid.DataSpecifier]storage.Alias)
-	backend.LogStore = make(map[dvid.DataSpecifier]storage.Alias)
+	backend.KVStore = make(storage.DataMap)
+	backend.LogStore = make(storage.DataMap)
 	for k, v := range tc.Backend {
 		// lookup store config
 		_, found := backend.Stores[v.Store]
 		if !found {
-			return nil, nil, nil, nil, fmt.Errorf("Backend for %q specifies unknown store %q", k, v.Store)
+			return &tc, nil, fmt.Errorf("Backend for %q specifies unknown store %q", k, v.Store)
 		}
 		spec := dvid.DataSpecifier(strings.Trim(string(k), "\""))
 		backend.KVStore[spec] = v.Store
@@ -287,9 +349,10 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 		backend.DefaultKVDB = defaultStore
 	} else {
 		if backend.DefaultKVDB == "" {
-			return nil, nil, nil, nil, fmt.Errorf("if no default backend specified, must have exactly one store defined in config file")
+			return &tc, nil, fmt.Errorf("if no default backend specified, must have exactly one store defined in config file")
 		}
 	}
+
 	defaultLog, found := backend.LogStore["default"]
 	if found {
 		backend.DefaultLog = defaultLog
@@ -300,80 +363,14 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 		backend.Metadata = defaultMetadataName
 	} else {
 		if backend.DefaultKVDB == "" {
-			return nil, nil, nil, nil, fmt.Errorf("can't set metadata if no default backend specified, must have exactly one store defined in config file")
+			return &tc, nil, fmt.Errorf("can't set metadata if no default backend specified, must have exactly one store defined in config file")
 		}
 		backend.Metadata = backend.DefaultKVDB
 	}
 
 	// The server config could be local, cluster, gcloud-specific config.  Here it is local.
 	config = &tc
-	ic := datastore.InstanceConfig{
-		Gen:   tc.Server.IIDGen,
-		Start: dvid.InstanceID(tc.Server.IIDStart),
-	}
-	return &ic, &(tc.Logging), backend, &(tc.Kafka), nil
-}
-
-type emailData struct {
-	From    string
-	To      string
-	Subject string
-	Body    string
-	Host    string
-}
-
-// Go template
-const emailTemplate = `From: {{.From}}
-To: {{.To}}
-Subject: {{.Subject}}
-
-{{.Body}}
-
-Sincerely,
-
-DVID at {{.Host}}
-`
-
-// SendNotification sends e-mail to the given recipients or the default emails loaded
-// during configuration.
-func SendNotification(message string, recipients []string) error {
-	e := tc.Email
-	var auth smtp.Auth
-	if e.Password != "" {
-		auth = smtp.PlainAuth("", e.Username, e.Password, e.Server)
-	}
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostname = "Unknown host"
-	}
-
-	for _, recipient := range e.Notify {
-		context := &emailData{
-			From:    e.Username,
-			To:      recipient,
-			Subject: "DVID panic report",
-			Body:    message,
-			Host:    hostname,
-		}
-
-		t := template.New("emailTemplate")
-		if t, err = t.Parse(emailTemplate); err != nil {
-			return fmt.Errorf("error trying to parse mail template: %v", err)
-		}
-
-		// Apply the values we have initialized in our struct context to the template.
-		var doc bytes.Buffer
-		if err = t.Execute(&doc, context); err != nil {
-			return fmt.Errorf("error trying to execute mail template: %v", err)
-		}
-
-		// Send notification
-		err = smtp.SendMail(e.Host(), auth, e.Username, []string{recipient}, doc.Bytes())
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	return &tc, backend, nil
 }
 
 // Serve starts HTTP and RPC servers.

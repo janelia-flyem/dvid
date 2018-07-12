@@ -49,7 +49,7 @@ type InstanceConfig struct {
 }
 
 // Initialize creates a repositories manager that is handled through package functions.
-func Initialize(initMetadata bool, iconfig *InstanceConfig) error {
+func Initialize(initMetadata bool, iconfig InstanceConfig) error {
 	m := &repoManager{
 		repoToUUID:      make(map[dvid.RepoID]dvid.UUID),
 		versionToUUID:   make(map[dvid.VersionID]dvid.UUID),
@@ -110,6 +110,9 @@ func Initialize(initMetadata bool, iconfig *InstanceConfig) error {
 		}
 	}
 	for _, data := range m.iids {
+		if data.IsDeleted() {
+			continue
+		}
 		d, ok := data.(Initializer)
 		if ok {
 			go d.Initialize()
@@ -630,6 +633,17 @@ func (m *repoManager) loadVersion0() error {
 		}
 	}
 	dvid.Infof("Loaded %d repositories from metadata store.", len(m.repos))
+
+	// make sure any in-process deletions restart
+	for _, r := range m.repos {
+		for name, data := range r.data {
+			if data.IsDeleted() {
+				if err := r.deleteData(name); err != nil {
+					dvid.Criticalf("tried to restart deletion of data %q but failed: %v\n", name, err)
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -1790,7 +1804,7 @@ func (m *repoManager) setSync(d dvid.Data, syncs dvid.UUIDSet, replace bool) err
 
 		for uuid := range newSyncs {
 			syncedData, found := m.dataByUUID[uuid]
-			if !found {
+			if !found || syncedData.IsDeleted() {
 				return ErrInvalidDataUUID
 			}
 			subs, err := syncer.GetSyncSubs(syncedData)
@@ -1825,7 +1839,7 @@ func (m *repoManager) getDataByInstanceID(id dvid.InstanceID) (DataService, erro
 	m.idMutex.RLock()
 	d, found := m.iids[id]
 	m.idMutex.RUnlock()
-	if !found {
+	if !found || d.IsDeleted() {
 		return nil, ErrInvalidDataInstance
 	}
 	return d, nil
@@ -1835,7 +1849,7 @@ func (m *repoManager) getDataByDataUUID(dataUUID dvid.UUID) (DataService, error)
 	m.idMutex.RLock()
 	d, found := m.dataByUUID[dataUUID]
 	m.idMutex.RUnlock()
-	if !found {
+	if !found || d.IsDeleted() {
 		return nil, ErrInvalidDataUUID
 	}
 	return d, nil
@@ -1852,7 +1866,7 @@ func (m *repoManager) getDataByUUIDName(uuid dvid.UUID, name dvid.InstanceName) 
 	r.RLock()
 	data, found := r.data[name]
 	r.RUnlock()
-	if !found {
+	if !found || data.IsDeleted() {
 		return nil, ErrInvalidDataName
 	}
 	return data, nil
@@ -1867,7 +1881,7 @@ func (m *repoManager) getDataByVersionName(v dvid.VersionID, name dvid.InstanceN
 	r.RLock()
 	data, found := r.data[name]
 	r.RUnlock()
-	if !found {
+	if !found || data.IsDeleted() {
 		return nil, ErrInvalidDataName
 	}
 	return data, nil
@@ -1883,8 +1897,8 @@ func (m *repoManager) renameDataByName(uuid dvid.UUID, oldname, newname dvid.Ins
 		r.RUnlock()
 		return fmt.Errorf("incorrect passcode for repo %s", r.uuid)
 	}
-	_, found := r.data[oldname]
-	if !found {
+	data, found := r.data[oldname]
+	if !found || data.IsDeleted() {
 		r.RUnlock()
 		return ErrInvalidDataName
 	}
@@ -1917,7 +1931,7 @@ func (m *repoManager) deleteDataByName(uuid dvid.UUID, name dvid.InstanceName, p
 	if err != nil {
 		return err
 	}
-	return m.deleteData(r, name, passcode)
+	return r.deleteDataWithPasscode(name, passcode)
 }
 
 func (m *repoManager) deleteDataByVersion(v dvid.VersionID, name dvid.InstanceName, passcode string) error {
@@ -1925,45 +1939,7 @@ func (m *repoManager) deleteDataByVersion(v dvid.VersionID, name dvid.InstanceNa
 	if err != nil {
 		return err
 	}
-	return m.deleteData(r, name, passcode)
-}
-
-func (m *repoManager) deleteData(r *repoT, name dvid.InstanceName, passcode string) error {
-	r.RLock()
-	if r.passcode != "" && r.passcode != passcode {
-		r.RUnlock()
-		return fmt.Errorf("incorrect passcode for repo %s", r.uuid)
-	}
-	data, found := r.data[name]
-	r.RUnlock()
-	if !found {
-		return ErrInvalidDataName
-	}
-
-	// Delete entries in the sync graph if this data needs to be synced with another data instance.
-	_, syncable := data.(Syncer)
-	if syncable {
-		r.deleteSyncGraph(data, false)
-	}
-
-	// Remove this data instance from the repository and persist.
-	r.Lock()
-	tm := time.Now()
-	r.updated = tm
-	msg := fmt.Sprintf("Delete data instance '%s' of type '%s'", name, data.TypeName())
-	message := fmt.Sprintf("%s  %s", tm.Format(time.RFC3339), msg)
-	r.log = append(r.log, message)
-	delete(r.data, name)
-	r.Unlock()
-
-	// For all data tiers of storage, remove data kv pairs associated with this instance id.
-	go func() {
-		if err := storage.DeleteDataInstance(data); err != nil {
-			dvid.Errorf("Error trying to do async data instance deletion: %v\n", err)
-		}
-	}()
-
-	return r.save()
+	return r.deleteDataWithPasscode(name, passcode)
 }
 
 // modifyData modifies preexisting Data within a Repo.  Settings can be passed
@@ -1977,7 +1953,7 @@ func (m *repoManager) modifyDataByName(uuid dvid.UUID, name dvid.InstanceName, c
 	r.RLock()
 	data, found := r.data[name]
 	r.RUnlock()
-	if !found {
+	if !found || data.IsDeleted() {
 		return ErrInvalidDataName
 	}
 	if err := data.ModifyConfig(config); err != nil {
@@ -2040,6 +2016,52 @@ func newRepo(uuid dvid.UUID, v dvid.VersionID, id dvid.RepoID, passcode string) 
 	}
 	repo.dag = newDAG(uuid, v)
 	return repo
+}
+
+func (r *repoT) deleteDataWithPasscode(name dvid.InstanceName, passcode string) error {
+	r.RLock()
+	if r.passcode != "" && r.passcode != passcode {
+		r.RUnlock()
+		return fmt.Errorf("incorrect passcode for repo %s", r.uuid)
+	}
+	r.RUnlock()
+	return r.deleteData(name)
+}
+
+func (r *repoT) deleteData(name dvid.InstanceName) error {
+	r.RLock()
+	data, found := r.data[name]
+	r.RUnlock()
+	if !found {
+		return ErrInvalidDataName
+	}
+	data.SetDeleted(true)
+
+	// For all data tiers of storage, remove data kv pairs associated with this instance id.
+	go func() {
+		if err := storage.DeleteDataInstance(data); err != nil {
+			dvid.Errorf("Error trying to do async data instance deletion: %v\n", err)
+		}
+
+		// Delete entries in the sync graph if this data needs to be synced with another data instance.
+		_, syncable := data.(Syncer)
+		if syncable {
+			r.deleteSyncGraph(data, false)
+		}
+
+		// Remove this data instance from the repository and persist.
+		r.Lock()
+		tm := time.Now()
+		r.updated = tm
+		msg := fmt.Sprintf("Delete data instance '%s' of type '%s'", name, data.TypeName())
+		message := fmt.Sprintf("%s  %s", tm.Format(time.RFC3339), msg)
+		r.log = append(r.log, message)
+		delete(r.data, name)
+		r.Unlock()
+		r.save()
+	}()
+
+	return nil
 }
 
 // duplicate returns a duped repo optionally limited by the given

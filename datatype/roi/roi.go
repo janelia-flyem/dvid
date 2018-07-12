@@ -228,7 +228,6 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	d := &Data{
 		Data:       basedata,
 		Properties: Properties{blockSize, math.MaxInt32, math.MinInt32},
-		ready:      make(map[dvid.VersionID]bool),
 	}
 	return d, nil
 }
@@ -300,10 +299,10 @@ func ImmutableBySpec(spec string) (*Immutable, error) {
 // Data embeds the datastore's Data and extends it with keyvalue properties (none for now).
 type Data struct {
 	*datastore.Data
+	datastore.Updater
 	Properties
 
-	ready   map[dvid.VersionID]bool
-	readyMu sync.RWMutex
+	sync.RWMutex
 }
 
 // IsMutationRequest overrides the default behavior to specify POST /ptquery as an immutable
@@ -370,46 +369,10 @@ func DataByFilter(spec storage.FilterSpec) (d *Data, v dvid.VersionID, found boo
 	return DataBySpec(filterval)
 }
 
-func (d *Data) SetReady(versionID dvid.VersionID, set bool) {
-	d.readyMu.Lock()
-	if d.ready == nil {
-		d.ready = make(map[dvid.VersionID]bool)
-	}
-	d.ready[versionID] = set
-	d.readyMu.Unlock()
-}
-
-func (d *Data) IsReady(versionID dvid.VersionID) bool {
-	d.readyMu.RLock()
-	defer d.readyMu.RUnlock()
-
-	if len(d.ready) == 0 {
-		return false
-	}
-	ready, found := d.ready[versionID]
-	if !found {
-		return false
-	}
-	return ready
-}
-
-// Equals returns false if any version of the ROI is different in terms of readiness or the properties of the ROI
-// are different.  This does not return the equality of two ROI data.
+// Equals returns false if any version of the ROI is different
 func (d *Data) Equals(d2 *Data) bool {
 	if !d.Data.Equals(d2.Data) || !reflect.DeepEqual(d.Properties, d2.Properties) {
 		return false
-	}
-	if len(d.ready) != len(d2.ready) {
-		return false
-	}
-	for k, v := range d.ready {
-		v2, ok := d2.ready[k]
-		if !ok {
-			return false
-		}
-		if v != v2 {
-			return false
-		}
 	}
 	return true
 }
@@ -609,14 +572,21 @@ func (d *Data) Delete(ctx storage.VersionedCtx) error {
 	d.MinZ = math.MaxInt32
 	d.MaxZ = math.MinInt32
 	if err := datastore.SaveDataByVersion(ctx.VersionID(), d); err != nil {
-		return fmt.Errorf("Error in trying to save repo on roi extent change: %v\n", err)
+		return fmt.Errorf("error in trying to save repo on roi extent change: %v", err)
 	}
 
-	// Delete all spans for this ROI for just this version.
-	if err := db.DeleteAll(ctx, false); err != nil {
-		return err
+	// Delete all spans for this ROI for just this version by tombstoning.
+	begIndex := indexRLE{
+		start: dvid.MinIndexZYX,
+		span:  0,
 	}
-	return nil
+	begTk := storage.NewTKey(keyROI, begIndex.Bytes())
+	endIndex := indexRLE{
+		start: dvid.MaxIndexZYX,
+		span:  math.MaxUint32,
+	}
+	endTk := storage.NewTKey(keyROI, endIndex.Bytes())
+	return db.DeleteRange(ctx, begTk, endTk)
 }
 
 // PutSpans saves a slice of spans representing an ROI into the datastore.
@@ -628,7 +598,11 @@ func (d *Data) PutSpans(versionID dvid.VersionID, spans []dvid.Span, init bool) 
 	if err != nil {
 		return err
 	}
-	d.SetReady(versionID, false)
+	d.StartUpdate()
+	defer d.StopUpdate()
+
+	d.Lock()
+	defer d.Unlock()
 
 	// Delete the old key/values
 	if init {
@@ -687,8 +661,6 @@ func (d *Data) PutSpans(versionID dvid.VersionID, spans []dvid.Span, init bool) 
 			return fmt.Errorf("Error on last batch PUT: %v\n", err)
 		}
 	}
-
-	d.SetReady(versionID, true)
 	return nil
 }
 
@@ -1371,17 +1343,16 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "roi":
 		switch method {
 		case "get":
-			if !d.IsReady(ctx.VersionID()) {
-				w.WriteHeader(http.StatusPartialContent)
-			}
+			d.RLock()
 			jsonBytes, err := Get(ctx)
+			d.RUnlock()
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, string(jsonBytes))
-			comment = fmt.Sprintf("HTTP GET ROI %q: %d bytes\n", d.DataName(), len(jsonBytes))
+			comment = fmt.Sprintf("HTTP GET ROI %q: %d bytes", d.DataName(), len(jsonBytes))
 		case "post":
 			data, err := ioutil.ReadAll(r.Body)
 			if err != nil {
@@ -1393,13 +1364,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				server.BadRequest(w, r, err)
 				return
 			}
-			comment = fmt.Sprintf("HTTP POST ROI %q: %d bytes\n", d.DataName(), len(data))
+			comment = fmt.Sprintf("HTTP POST ROI %q: %d bytes", d.DataName(), len(data))
 		case "delete":
 			if err := d.Delete(ctx); err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
-			comment = fmt.Sprintf("HTTP DELETE ROI %q\n", d.DataName())
+			comment = fmt.Sprintf("HTTP DELETE ROI %q", d.DataName())
 		}
 	case "mask":
 		if method != "get" {
@@ -1457,7 +1428,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			}
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, string(jsonBytes))
-			comment = fmt.Sprintf("HTTP POST ptquery '%s'\n", d.DataName())
+			comment = fmt.Sprintf("HTTP POST ptquery '%s'", d.DataName())
 		}
 	case "partition":
 		if method != "get" {
@@ -1488,8 +1459,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, string(jsonBytes))
-		comment = fmt.Sprintf("HTTP partition '%s' with batch size %d\n",
-			d.DataName(), batchsize)
+		comment = fmt.Sprintf("HTTP partition '%s' with batch size %d", d.DataName(), batchsize)
 	default:
 		server.BadAPIRequest(w, r, d)
 		return

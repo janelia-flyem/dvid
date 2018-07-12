@@ -5,6 +5,7 @@ package labelmap
 import (
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -90,18 +91,21 @@ func (vm vmap) modify(vid uint8, toLabel uint64) (out vmap, changed bool) {
 }
 
 // SVMap is a version-aware supervoxel map that tries to be memory efficient and
-// allows up to 256 versions per SVMap instance.
+// allows up to 256 versions per SVMap instance.  Splits are also cached by version.
 type SVMap struct {
-	fm          map[uint64]vmap
+	fm          map[uint64]vmap            // forward map from supervoxel to agglomerated (body) id
 	versions    map[dvid.VersionID]uint8   // versions that have been initialized
 	versionsRev map[uint8]dvid.VersionID   // reverse map for byte -> version
 	ancestry    map[dvid.VersionID][]uint8 // cache of ancestry other than current version
 	numVersions uint8
+
+	splits map[uint8][]proto.SupervoxelSplitOp
+
 	sync.RWMutex
 }
 
 // makes sure that current map has been initialized with all forward mappings up to
-// given version.
+// given version as well as split index.
 func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 	svm.Lock()
 	defer svm.Unlock()
@@ -117,7 +121,7 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 		}
 		vid, err = svm.createShortVersion(ancestor)
 		if err != nil {
-			return fmt.Errorf("problem creating mapping version for id %d: %v\n", ancestor, err)
+			return fmt.Errorf("problem creating mapping version for id %d: %v", ancestor, err)
 		}
 		timedLog := dvid.NewTimeLog()
 		ch := make(chan storage.LogMessage, 100)
@@ -126,29 +130,58 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 			numMsgs := 0
 			for msg := range ch { // expects channel to be closed on completion
 				numMsgs++
-				if msg.EntryType != proto.MappingOpType {
-					dvid.Errorf("received odd log message not of type Mapping for version %d\n", ancestor)
-					wg.Done()
-					continue
-				}
-				var op proto.MappingOp
-				if err := op.Unmarshal(msg.Data); err != nil {
-					dvid.Errorf("unable to unmarshal mapping log message for version %d: %v\n", ancestor, err)
-					wg.Done()
-					continue
-				}
-				mapped := op.GetMapped()
-				for _, supervoxel := range op.GetOriginal() {
-					vm := svm.fm[supervoxel]
-					newvm, changed := vm.modify(vid, mapped)
-					if changed {
-						svm.fm[supervoxel] = newvm
+				switch msg.EntryType {
+				case proto.MappingOpType:
+					var op proto.MappingOp
+					if err := op.Unmarshal(msg.Data); err != nil {
+						dvid.Errorf("unable to unmarshal mapping log message for version %d: %v\n", ancestor, err)
+						wg.Done()
+						continue
 					}
+					mapped := op.GetMapped()
+					for _, supervoxel := range op.GetOriginal() {
+						svm.setMapping(vid, supervoxel, mapped)
+					}
+				case proto.SplitOpType:
+					var op proto.SplitOp
+					if err := op.Unmarshal(msg.Data); err != nil {
+						dvid.Errorf("unable to unmarshal split log message for version %d: %v\n", ancestor, err)
+						wg.Done()
+						continue
+					}
+					splits := svm.splits[vid]
+					for supervoxel, svsplit := range op.GetSvsplits() {
+						rec := proto.SupervoxelSplitOp{
+							Mutid:       op.Mutid,
+							Supervoxel:  supervoxel,
+							Remainlabel: svsplit.Remainlabel,
+							Splitlabel:  svsplit.Splitlabel,
+						}
+						splits = append(splits, rec)
+						svm.setMapping(vid, supervoxel, 0)
+					}
+					svm.splits[vid] = splits
+				case proto.SupervoxelSplitType:
+					var op proto.SupervoxelSplitOp
+					if err := op.Unmarshal(msg.Data); err != nil {
+						dvid.Errorf("unable to unmarshal split log message for version %d: %v\n", ancestor, err)
+						wg.Done()
+						continue
+					}
+					rec := proto.SupervoxelSplitOp{
+						Mutid:       op.Mutid,
+						Supervoxel:  op.Supervoxel,
+						Remainlabel: op.Remainlabel,
+						Splitlabel:  op.Splitlabel,
+					}
+					svm.splits[vid] = append(svm.splits[vid], rec)
+					svm.setMapping(vid, op.Supervoxel, 0)
+				default:
 				}
 				wg.Done()
 			}
 		}(vid, ch, wg)
-		if err = labels.StreamMappingLog(d, ancestor, ch, wg); err != nil {
+		if err = labels.StreamLog(d, ancestor, ch, wg); err != nil {
 			return fmt.Errorf("problem loading mapping logs: %v", err)
 		}
 		wg.Wait()
@@ -184,6 +217,40 @@ func (svm *SVMap) getAncestry(v dvid.VersionID) ([]uint8, error) {
 		return append([]uint8{vid}, ancestry...), nil
 	}
 	return ancestry, nil
+}
+
+// SupervoxelSplitsJSON returns a JSON string giving all the supervoxel splits from
+// this version to the root.
+func (svm *SVMap) SupervoxelSplitsJSON(v dvid.VersionID) (string, error) {
+	svm.Lock()
+	defer svm.Unlock()
+	ancestry, err := svm.getAncestry(v)
+	if err != nil {
+		return "", err
+	}
+	var items []string
+	for _, ancestor := range ancestry {
+		splitops, found := svm.splits[ancestor]
+		if !found || len(splitops) == 0 {
+			continue
+		}
+		ancestorVersion, found := svm.versionsRev[ancestor]
+		if !found {
+			return "", fmt.Errorf("ancestor id %d has no version id", ancestor)
+		}
+		uuid, err := datastore.UUIDFromVersion(ancestorVersion)
+		if err != nil {
+			return "", err
+		}
+		str := fmt.Sprintf(`"%s",`, uuid)
+		splitstrs := make([]string, len(splitops))
+		for i, splitop := range splitops {
+			splitstrs[i] = fmt.Sprintf("[%d,%d,%d,%d]", splitop.Mutid, splitop.Supervoxel, splitop.Remainlabel, splitop.Splitlabel)
+		}
+		str += "[" + strings.Join(splitstrs, ",") + "]"
+		items = append(items, str)
+	}
+	return "[" + strings.Join(items, ",") + "]", nil
 }
 
 // getAncestry with a receiver lock built-in.
@@ -236,6 +303,14 @@ func (svm *SVMap) mapLabel(label uint64, ancestry []uint8) (uint64, bool) {
 		return label, false
 	}
 	return vm.value(ancestry)
+}
+
+func (svm *SVMap) setMapping(vid uint8, from, to uint64) {
+	vm := svm.fm[from]
+	newvm, changed := vm.modify(vid, to)
+	if changed {
+		svm.fm[from] = newvm
+	}
 }
 
 // MappedLabel returns the mapped label and a boolean: true if
@@ -294,6 +369,16 @@ func (svm *SVMap) MappedLabels(v dvid.VersionID, supervoxels []uint64) ([]uint64
 	return mapped, nil
 }
 
+// GetMappedLabels returns an array of mapped labels, which could be the same as the passed slice,
+// for the given version of the data instance.
+func (d *Data) GetMappedLabels(v dvid.VersionID, supervoxels []uint64) ([]uint64, error) {
+	svmap, err := getMapping(d, v)
+	if err != nil {
+		return nil, fmt.Errorf("couldn't get mapping for data %q, version %d: %v", d.DataName(), v, err)
+	}
+	return svmap.MappedLabels(v, supervoxels)
+}
+
 type instanceMaps struct {
 	maps map[dvid.UUID]*SVMap
 	sync.RWMutex
@@ -314,6 +399,7 @@ func getMapping(d dvid.Data, v dvid.VersionID) (*SVMap, error) {
 	if !found {
 		m = new(SVMap)
 		m.fm = make(map[uint64]vmap)
+		m.splits = make(map[uint8][]proto.SupervoxelSplitOp)
 		m.versions = make(map[dvid.VersionID]uint8)
 		m.versionsRev = make(map[uint8]dvid.VersionID)
 		iMap.maps[d.DataUUID()] = m
@@ -343,11 +429,7 @@ func addMergeToMapping(d dvid.Data, v dvid.VersionID, mutID, toLabel uint64, mer
 		return err
 	}
 	for supervoxel := range supervoxels {
-		vm := m.fm[supervoxel]
-		newvm, changed := vm.modify(vid, toLabel)
-		if changed {
-			m.fm[supervoxel] = newvm
-		}
+		m.setMapping(vid, supervoxel, toLabel)
 	}
 	m.Unlock()
 	op := labels.MappingOp{
@@ -356,6 +438,68 @@ func addMergeToMapping(d dvid.Data, v dvid.VersionID, mutID, toLabel uint64, mer
 		Original: supervoxels,
 	}
 	return labels.LogMapping(d, v, op)
+}
+
+// adds new arbitrary split into the equivalence map for a given instance version.
+func addSplitToMapping(d dvid.Data, v dvid.VersionID, op labels.SplitOp) error {
+	m, err := getMapping(d, v)
+	if err != nil {
+		return err
+	}
+	m.Lock()
+	vid, err := m.createShortVersion(v)
+	if err != nil {
+		return err
+	}
+	deleteSupervoxels := make(labels.Set)
+	splitSupervoxels := make(labels.Set)
+	remainSupervoxels := make(labels.Set)
+
+	splits := m.splits[vid]
+	for supervoxel, svsplit := range op.SplitMap {
+		deleteSupervoxels[supervoxel] = struct{}{}
+		splitSupervoxels[svsplit.Split] = struct{}{}
+		remainSupervoxels[svsplit.Remain] = struct{}{}
+
+		m.setMapping(vid, svsplit.Split, op.NewLabel)
+		m.setMapping(vid, svsplit.Remain, op.Target)
+		m.setMapping(vid, supervoxel, 0)
+
+		rec := proto.SupervoxelSplitOp{
+			Mutid:       op.MutID,
+			Supervoxel:  supervoxel,
+			Remainlabel: svsplit.Remain,
+			Splitlabel:  svsplit.Split,
+		}
+		splits = append(splits, rec)
+	}
+	m.splits[vid] = splits
+	m.Unlock()
+
+	mapOp := labels.MappingOp{
+		MutID:    op.MutID,
+		Mapped:   0,
+		Original: deleteSupervoxels,
+	}
+	if err := labels.LogMapping(d, v, mapOp); err != nil {
+		dvid.Criticalf("unable to log the mapping of deleted supervoxels %s for split label %d: %v\n", deleteSupervoxels, op.Target, err)
+		return err
+	}
+	mapOp = labels.MappingOp{
+		MutID:    op.MutID,
+		Mapped:   op.NewLabel,
+		Original: splitSupervoxels,
+	}
+	if err := labels.LogMapping(d, v, mapOp); err != nil {
+		dvid.Criticalf("unable to log the mapping of split supervoxels %s to split body label %d: %v\n", splitSupervoxels, op.NewLabel, err)
+		return err
+	}
+	mapOp = labels.MappingOp{
+		MutID:    op.MutID,
+		Mapped:   op.Target,
+		Original: remainSupervoxels,
+	}
+	return labels.LogMapping(d, v, mapOp)
 }
 
 // adds new cleave into the equivalence map for a given instance version and also
@@ -376,11 +520,7 @@ func addCleaveToMapping(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error
 	supervoxelSet := make(labels.Set, len(op.CleavedSupervoxels))
 	for _, supervoxel := range op.CleavedSupervoxels {
 		supervoxelSet[supervoxel] = struct{}{}
-		vm := m.fm[supervoxel]
-		newvm, changed := vm.modify(vid, op.CleavedLabel)
-		if changed {
-			m.fm[supervoxel] = newvm
-		}
+		m.setMapping(vid, supervoxel, op.CleavedLabel)
 	}
 	m.Unlock()
 	mapOp := labels.MappingOp{
@@ -409,25 +549,40 @@ func addSupervoxelSplitToMapping(d dvid.Data, v dvid.VersionID, op labels.SplitS
 	if err != nil {
 		return err
 	}
-	vm := m.fm[op.SplitSupervoxel]
-	newvm, changed := vm.modify(vid, label)
-	if changed {
-		m.fm[op.SplitSupervoxel] = newvm
+	m.setMapping(vid, op.SplitSupervoxel, label)
+	m.setMapping(vid, op.RemainSupervoxel, label)
+	m.setMapping(vid, op.Supervoxel, 0)
+	rec := proto.SupervoxelSplitOp{
+		Mutid:       op.MutID,
+		Supervoxel:  op.Supervoxel,
+		Remainlabel: op.RemainSupervoxel,
+		Splitlabel:  op.SplitSupervoxel,
 	}
-	vm = m.fm[op.RemainSupervoxel]
-	newvm, changed = vm.modify(vid, label)
-	if changed {
-		m.fm[op.RemainSupervoxel] = newvm
-	}
+	m.splits[vid] = append(m.splits[vid], rec)
 	m.Unlock()
-	original := labels.Set{
+
+	if err := labels.LogSupervoxelSplit(d, v, op); err != nil {
+		return err
+	}
+
+	mapOp := labels.MappingOp{
+		MutID:  op.MutID,
+		Mapped: 0,
+		Original: labels.Set{
+			op.Supervoxel: struct{}{},
+		},
+	}
+	if err := labels.LogMapping(d, v, mapOp); err != nil {
+		return fmt.Errorf("unable to log the mapping of deleted supervoxel %d: %v", op.Supervoxel, err)
+	}
+	newlabels := labels.Set{
 		op.SplitSupervoxel:  struct{}{},
 		op.RemainSupervoxel: struct{}{},
 	}
-	mapOp := labels.MappingOp{
+	mapOp = labels.MappingOp{
 		MutID:    op.MutID,
 		Mapped:   label,
-		Original: original,
+		Original: newlabels,
 	}
 	return labels.LogMapping(d, v, mapOp)
 }

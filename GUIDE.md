@@ -40,11 +40,11 @@ Setup
 
 [miniconda]: https://conda.io/miniconda.html
 
-2. Install `conda-build`:
+2. Install `conda-build` and `anaconda-client`:
 
     ```
     $ source activate root
-    $ conda install conda-build
+    $ conda install conda-build anaconda-client
     ```
 
 3. Add `flyem-forge` and `conda-forge` to your `.condarc` file:
@@ -86,6 +86,8 @@ Build and Test
     $ make dvid
 
     $ make test
+    
+    $ make install # Optional: Install bin/dvid into dvid-devel environment
 
 
 Releases
@@ -93,21 +95,70 @@ Releases
 
 For each platform (Mac and Linux):
 
-1. Tag a release; build the conda package:
+1. Fetch the latest tags:
+
+    ```
+    $ git fetch --tags origin
+    ```
+
+   Or make your own release tag:
 
     ```
     $ git tag -a 'v0.8.20' -m "This is release v0.8.20"
     $ git push --tags origin
-    $ conda build scripts/conda-recipe
     ```
 
-2. Generate a release distribution:
+2. Build the conda package and upload it to the `flyem-forge` channel on `http://anaconda.org`:
+
+    ```
+    $ conda build scripts/conda-recipe
+    $ anaconda upload -u flyem-forge $(conda info --base)/linux-64/dvid-0.8.20-0.tar.bz2 # Mac
+    $ anaconda upload -u flyem-forge $(conda info --base)/osx-64/dvid-0.8.20-0.tar.bz2 # Linux
+    ```
+
+   Note: For maximum Linux compatibility, consider building within a Docker container, such as `condaforge/linux-anvil`:
+   
+   <details>
+   
+   <summary>Click here to see Docker container commands</summary>
+   
+   ```
+   ## Pull and start the container:
+   $ docker pull condaforge/linux-anvil
+   $ docker run -i -t --name dvid-build condaforge/linux-anvil
+   
+   ## In the container:
+   [conda@0709a0f996e7 ~]$ conda config --add channels flyem-forge
+   [conda@0709a0f996e7 ~]$ git clone https://github.com/janelia-flyem/dvid
+   [conda@0709a0f996e7 ~]$ cd dvid
+   [conda@0709a0f996e7 dvid]$ conda build scripts/conda-recipe
+   ...
+   [conda@0709a0f996e7 dvid]$ anaconda upload /opt/conda/conda-bld/linux-64/dvid-0.8.20-0.tar.bz2
+   
+
+   ## For your next build, you can skip the initial configuration
+   ## if you re-attach to the container as you left it:
+   $ docker start dvid-build
+   $ docker attach dvid-build
+   
+   [conda@0709a0f996e7 ~]$ cd dvid
+   [conda@0709a0f996e7 dvid]$ git fetch --tags origin
+   [conda@0709a0f996e7 dvid]$ git pull origin master
+   [conda@0709a0f996e7 dvid]$ conda build scripts/conda-recipe
+   ...
+   [conda@0709a0f996e7 dvid]$ anaconda upload /opt/conda/conda-bld/linux-64/dvid-0.8.21-0.tar.bz2
+   ```
+   
+   </details>
+
+3. Generate a release distribution:
 
     ```
     $ ./scripts/make-release-distribution.sh
+    $ ls dvid-0.8.20-dist-mac.tar.bz2 # <--- Distribution tarball includes dvid and all dependencies
     ```
 
-Then [draft a GitHub release.][creating-releases]
+4. [Draft a GitHub release.][creating-releases]
 
 [creating-releases]: https://help.github.com/articles/creating-releases
 

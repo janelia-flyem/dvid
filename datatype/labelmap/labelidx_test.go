@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -31,6 +32,26 @@ func TestIngest(t *testing.T) {
 	original := createLabelTestVolume(t, root, "labels")
 	if err := datastore.BlockOnUpdating(root, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	for label := uint64(1); label <= 4; label++ {
+		indexURL := fmt.Sprintf("%snode/%s/labels/index/%d", server.WebAPIPath, root, label)
+		serialization := server.TestHTTP(t, "GET", indexURL, nil)
+		idx := new(labels.Index)
+		if err := idx.Unmarshal(serialization); err != nil {
+			t.Fatalf("Unable to GET index/%d: %v\n", label, err)
+		}
+		if idx.Label != label {
+			t.Fatalf("Expected index for label %d, got label %d index\n", label, idx.Label)
+		}
+		supervoxels := idx.GetSupervoxels()
+		if len(supervoxels) != 1 {
+			t.Fatalf("Expected index for label %d to have 1 supervoxel, got %d\n", label, len(supervoxels))
+		}
+		_, ok := supervoxels[label]
+		if !ok {
+			t.Errorf("Expeced index for label %d to have supervoxel %d, but wasn't present", label, label)
+		}
 	}
 
 	// commit and create child version
@@ -74,6 +95,24 @@ func TestIngest(t *testing.T) {
 	}
 	mappingReq := fmt.Sprintf("%snode/%s/labels/mappings", server.WebAPIPath, child1)
 	server.TestHTTP(t, "POST", mappingReq, bytes.NewBuffer(serialization))
+
+	mappingData := server.TestHTTP(t, "GET", mappingReq, nil)
+	lines := strings.Split(strings.TrimSpace(string(mappingData)), "\n")
+	if len(lines) != 3 {
+		t.Errorf("expected 3 lines for mapping, got %d lines\n", len(lines))
+	} else {
+		expected := map[uint64]uint64{1: 7, 2: 7, 3: 8}
+		for i, line := range lines {
+			var supervoxel, label uint64
+			fmt.Sscanf(line, "%d %d", &supervoxel, &label)
+			expectedLabel, found := expected[supervoxel]
+			if !found {
+				t.Errorf("got unknown mapping in line %d: %d -> %d\n", i, supervoxel, label)
+			} else if expectedLabel != label {
+				t.Errorf("expected supervoxel %d -> label %d, got %d\n", supervoxel, expectedLabel, label)
+			}
+		}
+	}
 
 	idx1 := body1.getIndex(t)
 	idx2 := body2.getIndex(t)
@@ -166,7 +205,7 @@ func TestIngest(t *testing.T) {
 	}
 }
 
-func writeBlock(t *testing.T, buf *bytes.Buffer, serialization []byte, blockCoord dvid.Point3d) {
+func writeTestBlock(t *testing.T, buf *bytes.Buffer, serialization []byte, blockCoord dvid.Point3d) {
 	var gzipOut bytes.Buffer
 	zw := gzip.NewWriter(&gzipOut)
 	if _, err := zw.Write(serialization); err != nil {
@@ -175,7 +214,7 @@ func writeBlock(t *testing.T, buf *bytes.Buffer, serialization []byte, blockCoor
 	zw.Flush()
 	zw.Close()
 	gzipped := gzipOut.Bytes()
-	writeInt32(t, buf, int32(len(gzipped)))
+	writeTestInt32(t, buf, int32(len(gzipped)))
 	fmt.Printf("Wrote %d gzipped block bytes (down from %d bytes) for block %s\n", len(gzipped), len(serialization), blockCoord)
 	n, err := buf.Write(gzipped)
 	if err != nil {
@@ -221,9 +260,9 @@ func TestIngest2(t *testing.T) {
 	var data [6]testData
 	var buf bytes.Buffer
 	for i, blockCoord := range blockCoords {
-		writeInt32(t, &buf, blockCoord[0])
-		writeInt32(t, &buf, blockCoord[1])
-		writeInt32(t, &buf, blockCoord[2])
+		writeTestInt32(t, &buf, blockCoord[0])
+		writeTestInt32(t, &buf, blockCoord[1])
+		writeTestInt32(t, &buf, blockCoord[2])
 		if i < len(testFiles) {
 			data[i] = loadTestData(t, testFiles[i])
 		} else {
@@ -242,7 +281,7 @@ func TestIngest2(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unable to MarshalBinary block: %v\n", err)
 		}
-		writeBlock(t, &buf, serialization, blockCoord)
+		writeTestBlock(t, &buf, serialization, blockCoord)
 	}
 
 	apiStr := fmt.Sprintf("%snode/%s/labels/blocks?noindexing=true", server.WebAPIPath, uuid)
@@ -258,18 +297,18 @@ func TestIngest2(t *testing.T) {
 	buf.Reset()
 	prevRecs := len(testFiles) + 2
 	for i, blockCoord := range blockCoords {
-		writeInt32(t, &buf, blockCoord[0])
-		writeInt32(t, &buf, blockCoord[1])
-		writeInt32(t, &buf, blockCoord[2])
+		writeTestInt32(t, &buf, blockCoord[0])
+		writeTestInt32(t, &buf, blockCoord[1])
+		writeTestInt32(t, &buf, blockCoord[2])
 		if i < prevRecs {
 			serialization, err := data[i].b.MarshalBinary()
 			if err != nil {
 				t.Fatalf("unable to MarshalBinary block: %v\n", err)
 			}
-			writeBlock(t, &buf, serialization, blockCoord)
+			writeTestBlock(t, &buf, serialization, blockCoord)
 		} else {
 			emptySlice := []byte{38, 247} // random bytes
-			writeBlock(t, &buf, emptySlice, blockCoord)
+			writeTestBlock(t, &buf, emptySlice, blockCoord)
 		}
 	}
 	apiStr = fmt.Sprintf("%snode/%s/labels/blocks?noindexing=true", server.WebAPIPath, uuid)
@@ -278,10 +317,10 @@ func TestIngest2(t *testing.T) {
 	buf.Reset()
 	for i := int32(0); i < 3; i++ {
 		bcoord := dvid.Point3d{i * 10, i * 11, i * 12}
-		writeInt32(t, &buf, bcoord[0])
-		writeInt32(t, &buf, bcoord[1])
-		writeInt32(t, &buf, bcoord[2])
-		writeBlock(t, &buf, []byte{}, bcoord)
+		writeTestInt32(t, &buf, bcoord[0])
+		writeTestInt32(t, &buf, bcoord[1])
+		writeTestInt32(t, &buf, bcoord[2])
+		writeTestBlock(t, &buf, []byte{}, bcoord)
 	}
 	apiStr = fmt.Sprintf("%snode/%s/labels/blocks?noindexing=true", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "POST", apiStr, &buf)
@@ -289,10 +328,10 @@ func TestIngest2(t *testing.T) {
 	buf.Reset()
 	for i := int32(0); i < 3; i++ {
 		bcoord := dvid.Point3d{i * 10, i * 11, i * 12}
-		writeInt32(t, &buf, bcoord[0])
-		writeInt32(t, &buf, bcoord[1])
-		writeInt32(t, &buf, bcoord[2])
-		writeInt32(t, &buf, 0)
+		writeTestInt32(t, &buf, bcoord[0])
+		writeTestInt32(t, &buf, bcoord[1])
+		writeTestInt32(t, &buf, bcoord[2])
+		writeTestInt32(t, &buf, 0)
 	}
 	apiStr = fmt.Sprintf("%snode/%s/labels/blocks?noindexing=true", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "POST", apiStr, &buf)

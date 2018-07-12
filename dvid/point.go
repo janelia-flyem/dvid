@@ -338,12 +338,12 @@ func (p Point2d) PointInChunk(size Point) Point {
 	s0 := size.Value(0)
 	s1 := size.Value(1)
 	if p[0] < 0 {
-		p0 = s0 - ((p[0] + 1) % s0) - 1
+		p0 = s0 + ((p[0] + 1) % s0) - 1
 	} else {
 		p0 = p[0] % s0
 	}
 	if p[1] < 0 {
-		p1 = s1 - ((p[1] + 1) % s1) - 1
+		p1 = s1 + ((p[1] + 1) % s1) - 1
 	} else {
 		p1 = p[1] % s1
 	}
@@ -632,17 +632,17 @@ func (p Point3d) PointInChunk(size Point) Point {
 	s1 := size.Value(1)
 	s2 := size.Value(2)
 	if p[0] < 0 {
-		p0 = s0 - ((p[0] + 1) % s0) - 1
+		p0 = s0 + ((p[0] + 1) % s0) - 1
 	} else {
 		p0 = p[0] % s0
 	}
 	if p[1] < 0 {
-		p1 = s1 - ((p[1] + 1) % s1) - 1
+		p1 = s1 + ((p[1] + 1) % s1) - 1
 	} else {
 		p1 = p[1] % s1
 	}
 	if p[2] < 0 {
-		p2 = s2 - ((p[2] + 1) % s2) - 1
+		p2 = s2 + ((p[2] + 1) % s2) - 1
 	} else {
 		p2 = p[2] % s2
 	}
@@ -658,17 +658,17 @@ func (p Point3d) Point3dInChunk(size Point3d) Point3d {
 	s1 := size[1]
 	s2 := size[2]
 	if p[0] < 0 {
-		p0 = s0 - ((p[0] + 1) % s0) - 1
+		p0 = s0 + ((p[0] + 1) % s0) - 1
 	} else {
 		p0 = p[0] % s0
 	}
 	if p[1] < 0 {
-		p1 = s1 - ((p[1] + 1) % s1) - 1
+		p1 = s1 + ((p[1] + 1) % s1) - 1
 	} else {
 		p1 = p[1] % s1
 	}
 	if p[2] < 0 {
-		p2 = s2 - ((p[2] + 1) % s2) - 1
+		p2 = s2 + ((p[2] + 1) % s2) - 1
 	} else {
 		p2 = p[2] % s2
 	}
@@ -1008,7 +1008,7 @@ func (p PointNd) PointInChunk(size Point) Point {
 	for i, _ := range p {
 		s := size.Value(uint8(i))
 		if p[i] < 0 {
-			cp[i] = s - ((p[i] + 1) % s) - 1
+			cp[i] = s + ((p[i] + 1) % s) - 1
 		} else {
 			cp[i] = p[i] % s
 		}

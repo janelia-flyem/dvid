@@ -283,6 +283,9 @@ type Data interface {
 	NewMutationID() uint64
 
 	DataSetter
+
+	IsDeleted() bool
+	SetDeleted(bool) // use true if this data is in process of being deleted
 }
 
 // DataSetter provides interface for setting main properties of Data during

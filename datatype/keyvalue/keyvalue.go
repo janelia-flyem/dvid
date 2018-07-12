@@ -102,8 +102,8 @@ GET  <api URL>/node/<UUID>/<data name>/keyrange/<key1>/<key2>
 
 	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
 	data name     Name of keyvalue data instance.
-	key1          First alphanumeric key in range.
-	key2          Last alphanumeric key in range.
+	key1          Lexicographically lowest alphanumeric key in range.
+	key2          Lexicographically highest alphanumeric key in range.
 
 GET  <api URL>/node/<UUID>/<data name>/key/<key>
 POST <api URL>/node/<UUID>/<data name>/key/<key>

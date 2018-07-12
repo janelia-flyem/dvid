@@ -20,7 +20,7 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 
 	"github.com/coocood/freecache"
-	lz4 "github.com/janelia-flyem/go/golz4"
+	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
 
 const (
@@ -133,6 +133,82 @@ func deleteLabelIndex(ctx *datastore.VersionedCtx, label uint64) error {
 	return nil
 }
 
+func getCachedLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.Index, error) {
+	atomic.AddUint64(&metaAttempts, 1)
+	k := indexKey{data: d, version: v, label: label}
+
+	var err error
+	var idxBytes []byte
+	if indexCache != nil {
+		idxBytes, err = indexCache.Get(k.Bytes())
+		if err != nil && err != freecache.ErrNotFound {
+			return nil, err
+		}
+	}
+	var idx *labels.Index
+	if idxBytes != nil {
+		idx = new(labels.Index)
+		if err = idx.Unmarshal(idxBytes); err != nil {
+			return nil, err
+		}
+		atomic.AddUint64(&metaHits, 1)
+		return idx, nil
+	}
+	idx, err = getLabelIndex(k.VersionedCtx(), label)
+	if err != nil {
+		return nil, err
+	}
+	if idx == nil {
+		return nil, nil
+	}
+	if indexCache != nil {
+		idxBytes, err := idx.Marshal()
+		if err != nil {
+			dvid.Errorf("unable to marshal label %d index for %q: %v\n", label, d.DataName(), err)
+		} else if err := indexCache.Set(k.Bytes(), idxBytes, 0); err != nil {
+			dvid.Errorf("unable to set label %d index cache for %q: %v\n", label, d.DataName(), err)
+		}
+	}
+	if idx.Label != label {
+		dvid.Criticalf("label index for data %q, label %d has internal label value %d\n", d.DataName(), label, idx.Label)
+		idx.Label = label
+	}
+	return idx, nil
+}
+
+func putCachedLabelIndex(d dvid.Data, v dvid.VersionID, idx *labels.Index) error {
+	ctx := datastore.NewVersionedCtx(d, v)
+	if err := putLabelIndex(ctx, idx); err != nil {
+		return err
+	}
+	if indexCache != nil {
+		idxBytes, err := idx.Marshal()
+		if err != nil {
+			return err
+		}
+		k := indexKey{data: d, version: v, label: idx.Label}.Bytes()
+		if err = indexCache.Set(k, idxBytes, 0); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deleteCachedLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) error {
+	ctx := datastore.NewVersionedCtx(d, v)
+	if err := deleteLabelIndex(ctx, label); err != nil {
+		return err
+	}
+	if indexCache != nil {
+		k := indexKey{data: d, version: v, label: label}.Bytes()
+		indexCache.Del(k)
+	}
+	return nil
+}
+
+////////////////////////
+//
+
 ///////////////////////////////////////////////////////////////////////////
 // The following public functions are concurrency-safe and support caching.
 
@@ -148,46 +224,18 @@ func GetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, isSupervoxel boo
 		}
 		if mapping != nil {
 			if mapped, found := mapping.MappedLabel(v, label); found {
+				if mapped == 0 {
+					return nil, fmt.Errorf("cannot get label for supervoxel %d, which has been split and doesn't exist anymore", label)
+				}
 				label = mapped
 			}
 		}
 	}
 
-	atomic.AddUint64(&metaAttempts, 1)
-	k := indexKey{data: d, version: v, label: label}
-
 	shard := label % numIndexShards
 	indexMu[shard].RLock()
-	defer indexMu[shard].RUnlock()
-
-	var err error
-	var idxBytes []byte
-	if indexCache != nil {
-		idxBytes, err = indexCache.Get(k.Bytes())
-		if err != nil && err != freecache.ErrNotFound {
-			return nil, err
-		}
-	}
-	if idxBytes != nil {
-		idx := new(labels.Index)
-		if err := idx.Unmarshal(idxBytes); err != nil {
-			return nil, err
-		}
-		atomic.AddUint64(&metaHits, 1)
-		return idx, nil
-	}
-	idx, err := getLabelIndex(k.VersionedCtx(), label)
-	if err != nil {
-		return nil, err
-	}
-	if indexCache != nil && idx != nil {
-		idxBytes, err := idx.Marshal()
-		if err != nil {
-			dvid.Errorf("unable to marshal label %d index for %q: %v\n", label, d.DataName(), err)
-		} else if err := indexCache.Set(k.Bytes(), idxBytes, 0); err != nil {
-			dvid.Errorf("unable to set label %d index cache for %q: %v\n", label, d.DataName(), err)
-		}
-	}
+	idx, err := getCachedLabelIndex(d, v, label)
+	indexMu[shard].RUnlock()
 	return idx, err
 }
 
@@ -227,6 +275,46 @@ func GetLabelSize(d dvid.Data, v dvid.VersionID, label uint64, isSupervoxel bool
 		return idx.GetSupervoxelCount(label), nil
 	}
 	return idx.NumVoxels(), nil
+}
+
+// GetLabelSizes returns the # of voxels in the given labels.  If isSupervoxel = true, the given
+// labels are interpreted as supervoxel ids and the sizes are of a supervoxel.  If a label doesn't
+// exist, a zero (not error) is returned.
+func GetLabelSizes(d dvid.Data, v dvid.VersionID, labels []uint64, isSupervoxel bool) ([]uint64, error) {
+	var supervoxels []uint64
+	if isSupervoxel {
+		svmap, err := getMapping(d, v)
+		if err != nil {
+			return nil, fmt.Errorf("couldn't get mapping for data %q, version %d: %v", d.DataName(), v, err)
+		}
+		supervoxels = make([]uint64, len(labels))
+		copy(supervoxels, labels)
+
+		labels, err = svmap.MappedLabels(v, labels)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// TODO -- could optimize by doing unique set of labels if supervoxels, since multiple supervoxels
+	// may be in same label.  However, caching might simply remove this optimization issue since label
+	// index will already be cached.
+	sizes := make([]uint64, len(labels))
+	for i, label := range labels {
+		idx, err := GetLabelIndex(d, v, label, false)
+		if err != nil {
+			return nil, err
+		}
+		if idx == nil {
+			sizes[i] = 0
+			continue
+		}
+		if isSupervoxel {
+			sizes[i] = idx.GetSupervoxelCount(supervoxels[i])
+		} else {
+			sizes[i] = idx.NumVoxels()
+		}
+	}
+	return sizes, nil
 }
 
 // GetBoundedIndex gets bounded label index data from storage for a given data instance.
@@ -273,17 +361,9 @@ func GetMultiLabelIndex(d dvid.Data, v dvid.VersionID, lbls labels.Set, bounds d
 func DeleteLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) error {
 	shard := label % numIndexShards
 	indexMu[shard].Lock()
-	defer indexMu[shard].Unlock()
-
-	ctx := datastore.NewVersionedCtx(d, v)
-	if err := deleteLabelIndex(ctx, label); err != nil {
-		return err
-	}
-	if indexCache != nil {
-		k := indexKey{data: d, version: v, label: label}.Bytes()
-		indexCache.Del(k)
-	}
-	return nil
+	err := deleteCachedLabelIndex(d, v, label)
+	indexMu[shard].Unlock()
+	return err
 }
 
 // PutLabelIndex persists a label index data for a given data instance and
@@ -293,273 +373,33 @@ func PutLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, idx *labels.Inde
 	if idx == nil {
 		return DeleteLabelIndex(d, v, label)
 	}
+	shard := label % numIndexShards
+	indexMu[shard].Lock()
+
 	idx.Label = label
-	shard := label % numIndexShards
-	indexMu[shard].Lock()
-	defer indexMu[shard].Unlock()
-
-	ctx := datastore.NewVersionedCtx(d, v)
-	if err := putLabelIndex(ctx, idx); err != nil {
-		return err
-	}
-	idxBytes, err := idx.Marshal()
-	if err != nil {
-		return err
-	}
-	if indexCache != nil {
-		k := indexKey{data: d, version: v, label: label}.Bytes()
-		if err := indexCache.Set(k, idxBytes, 0); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// should be launched as goroutine; locks the index of the split label for duration
-func modifySplitIndex(d dvid.Data, v dvid.VersionID, fromLabel, toLabel uint64, blockCh chan blockSplitCounts, doneCh chan struct{}) {
-	atomic.AddUint64(&metaAttempts, 1)
-	k := indexKey{data: d, version: v, label: fromLabel}
-
-	shard := fromLabel % numIndexShards
-	indexMu[shard].Lock()
-	defer indexMu[shard].Unlock()
-
-	// get the index containing this supervoxel
-	var err error
-	var idxBytes []byte
-	if indexCache != nil {
-		idxBytes, err = indexCache.Get(k.Bytes())
-		if err != nil && err != freecache.ErrNotFound {
-			dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), fromLabel, err)
-			return
-		}
-	}
-	var idx *labels.Index
-	if idxBytes != nil {
-		idx = new(labels.Index)
-		if err := idx.Unmarshal(idxBytes); err != nil {
-			dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), fromLabel, err)
-			return
-		}
-		atomic.AddUint64(&metaHits, 1)
-	} else {
-		idx, err = getLabelIndex(k.VersionedCtx(), fromLabel)
-		if err != nil {
-			dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), fromLabel, err)
-			return
-		}
-	}
-
-	// modify index of split label to remove overwritten supervoxel counts
-	deleted := make(map[uint64]map[uint64]uint32)
-	getFromChannel := true
-	for getFromChannel {
-		select {
-		case removed := <-blockCh:
-			for supervoxel, voxelsRemoved := range removed.deleted {
-				zyx, err := labels.IZYXStringToBlockIndex(removed.bcoord)
-				if err != nil {
-					dvid.Errorf("unable to convert block %s to block index: %v\n", removed.bcoord, err)
-					continue
-				}
-				svc, found := deleted[zyx]
-				if !found {
-					svc = make(map[uint64]uint32)
-				}
-				svc[supervoxel] = voxelsRemoved
-				deleted[zyx] = svc
-			}
-		case <-doneCh:
-			getFromChannel = false
-		}
-	}
-
-	sidx := new(labels.Index)
-	sidx.Label = toLabel
-	sidx.Blocks = make(map[uint64]*proto.SVCount, len(deleted))
-
-	for zyx, deletedCounts := range deleted {
-		cursvc, found := idx.Blocks[zyx]
-		if !found || cursvc == nil || len(cursvc.Counts) == 0 {
-			dvid.Errorf("block %s was overwritten in split of label %d yet this block was not in the index!\n", labels.BlockIndexToIZYXString(zyx))
-			continue
-		}
-		var splitVoxels uint32
-		for supervoxel, deletedVoxels := range deletedCounts {
-			splitVoxels += deletedVoxels
-			numVoxels, found := cursvc.Counts[supervoxel]
-			if !found {
-				dvid.Errorf("block %s had %d voxels written over supervoxel %d in label %d split yet this supervoxel was not in the index!\n", labels.BlockIndexToIZYXString(zyx), deletedVoxels, supervoxel, fromLabel)
-				continue
-			}
-			if numVoxels < deletedVoxels {
-				dvid.Errorf("block %s had %d voxels written over supervoxel %d in label %d split yet this supervoxel only had %d voxels from index!\n", labels.BlockIndexToIZYXString(zyx), deletedVoxels, supervoxel, fromLabel, numVoxels)
-				continue
-			}
-			numVoxels -= deletedVoxels
-			if numVoxels == 0 {
-				delete(cursvc.Counts, supervoxel)
-			} else {
-				cursvc.Counts[supervoxel] = numVoxels
-			}
-		}
-		splitsvc := new(proto.SVCount)
-		splitsvc.Counts = map[uint64]uint32{toLabel: splitVoxels}
-		sidx.Blocks[zyx] = splitsvc
-	}
-
-	// store the modified label index that remains after the split
-	ctx := datastore.NewVersionedCtx(d, v)
-	if err := putLabelIndex(ctx, idx); err != nil {
-		dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), fromLabel, err)
-		return
-	}
-	if indexCache != nil {
-		idxBytes, err = idx.Marshal()
-		if err != nil {
-			dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), fromLabel, err)
-			return
-		}
-		k := indexKey{data: d, version: v, label: fromLabel}.Bytes()
-		if err := indexCache.Set(k, idxBytes, 0); err != nil {
-			dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), fromLabel, err)
-			return
-		}
-	}
-
-	// store the new label index corresponding to the split
-	if err = putLabelIndex(ctx, sidx); err != nil {
-		return
-	}
-	if indexCache != nil {
-		idxBytes, err = sidx.Marshal()
-		if err != nil {
-			dvid.Errorf("create new split index for data %q, label %d: %v\n", d.DataName(), toLabel, err)
-			return
-		}
-		k := indexKey{data: d, version: v, label: toLabel}.Bytes()
-		if err := indexCache.Set(k, idxBytes, 0); err != nil {
-			dvid.Errorf("index cache set for data %q, label %d: %v\n", d.DataName(), toLabel, err)
-			return
-		}
-	}
-}
-
-// SplitSupervoxelIndex modifies the label index for a given supervoxel, returning the slice of blocks
-// that were modified.  NOTE: This assumes the split RLEs are accurate because they are not tested
-// at the voxel level as being a subset of the supervoxel.
-func SplitSupervoxelIndex(d dvid.Data, v dvid.VersionID, op labels.SplitSupervoxelOp) (dvid.IZYXSlice, error) {
-	mapping, err := getMapping(d, v)
-	if err != nil {
-		return nil, err
-	}
-	label := op.Supervoxel
-	mapped, found := mapping.MappedLabel(v, op.Supervoxel)
-	if found {
-		label = mapped
-	}
-
-	atomic.AddUint64(&metaAttempts, 1)
-	k := indexKey{data: d, version: v, label: label}
-
-	shard := label % numIndexShards
-	indexMu[shard].Lock()
-	defer indexMu[shard].Unlock()
-
-	// get the index containing this supervoxel
-	var idxBytes []byte
-	if indexCache != nil {
-		idxBytes, err = indexCache.Get(k.Bytes())
-		if err != nil && err != freecache.ErrNotFound {
-			return nil, err
-		}
-	}
-	var idx *labels.Index
-	if idxBytes != nil {
-		idx = new(labels.Index)
-		if err := idx.Unmarshal(idxBytes); err != nil {
-			return nil, err
-		}
-		atomic.AddUint64(&metaHits, 1)
-	} else {
-		idx, err = getLabelIndex(k.VersionedCtx(), label)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// modify the index to reflect old supervoxel -> two new supervoxels.
-	var svblocks dvid.IZYXSlice
-	for zyx, svc := range idx.Blocks {
-		origNumVoxels, found := svc.Counts[op.Supervoxel]
-		if found { // split supervoxel is in this block
-			delete(svc.Counts, op.Supervoxel)
-			izyx := labels.BlockIndexToIZYXString(zyx)
-			svblocks = append(svblocks, izyx)
-			rles, found := op.Split[izyx]
-			if found { // part of split
-				splitNumVoxels, _ := rles.Stats()
-				svc.Counts[op.SplitSupervoxel] = uint32(splitNumVoxels)
-				svc.Counts[op.RemainSupervoxel] = origNumVoxels - uint32(splitNumVoxels)
-			} else { // part of remainder
-				svc.Counts[op.RemainSupervoxel] = origNumVoxels
-			}
-		}
-	}
-
-	// store the modified index
-	ctx := datastore.NewVersionedCtx(d, v)
-	if err := putLabelIndex(ctx, idx); err != nil {
-		return nil, err
-	}
-	if indexCache != nil {
-		idxBytes, err = idx.Marshal()
-		if err != nil {
-			return nil, err
-		}
-		k := indexKey{data: d, version: v, label: label}.Bytes()
-		if err := indexCache.Set(k, idxBytes, 0); err != nil {
-			return nil, err
-		}
-	}
-	return svblocks, nil
+	err := putCachedLabelIndex(d, v, idx)
+	indexMu[shard].Unlock()
+	return err
 }
 
 // CleaveIndex modifies the label index to remove specified supervoxels and create another
 // label index for this cleaved body.
-func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
-	atomic.AddUint64(&metaAttempts, 1)
-	k := indexKey{data: d, version: v, label: op.Target}
-
+func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp, info dvid.ModInfo) error {
 	shard := op.Target % numIndexShards
 	indexMu[shard].Lock()
 	defer indexMu[shard].Unlock()
 
-	// get the index containing this supervoxel
-	var err error
-	var idxBytes []byte
-	if indexCache != nil {
-		idxBytes, err = indexCache.Get(k.Bytes())
-		if err != nil && err != freecache.ErrNotFound {
-			return err
-		}
-	}
-	var idx *labels.Index
-	if idxBytes != nil {
-		idx = new(labels.Index)
-		if err := idx.Unmarshal(idxBytes); err != nil {
-			return err
-		}
-		atomic.AddUint64(&metaHits, 1)
-	} else {
-		idx, err = getLabelIndex(k.VersionedCtx(), op.Target)
-		if err != nil {
-			return err
-		}
+	idx, err := getCachedLabelIndex(d, v, op.Target)
+	if err != nil {
+		return err
 	}
 	if idx == nil {
 		return fmt.Errorf("cannot cleave non-existent label %d", op.Target)
 	}
+	idx.LastMutId = op.MutID
+	idx.LastModUser = info.User
+	idx.LastModTime = info.Time
+	idx.LastModApp = info.App
 
 	supervoxels := idx.GetSupervoxels()
 	for _, supervoxel := range op.CleavedSupervoxels {
@@ -574,104 +414,183 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
 
 	// create a new label index to contain the cleaved supervoxels.
 	// we don't have to worry about mutex here because it's a new index.
-	ctx := datastore.NewVersionedCtx(d, v)
 	cidx := idx.Cleave(op.CleavedLabel, op.CleavedSupervoxels)
-	if err := putLabelIndex(ctx, cidx); err != nil {
+	if err := putCachedLabelIndex(d, v, cidx); err != nil {
 		return err
 	}
-	if err := putLabelIndex(ctx, idx); err != nil {
-		return err
-	}
-	if indexCache != nil {
-		idxBytes, err = cidx.Marshal()
-		if err != nil {
-			return err
-		}
-		k := indexKey{data: d, version: v, label: op.CleavedLabel}.Bytes()
-		if err := indexCache.Set(k, idxBytes, 0); err != nil {
-			return err
-		}
-
-		idxBytes, err = idx.Marshal()
-		if err != nil {
-			return err
-		}
-		k = indexKey{data: d, version: v, label: op.Target}.Bytes()
-		if err := indexCache.Set(k, idxBytes, 0); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return putCachedLabelIndex(d, v, idx)
 }
 
 // ChangeLabelIndex applies changes to a label's index and then stores the result.
 // Supervoxel size changes for blocks should be passed into the function.  The passed
 // SupervoxelDelta can contain more supervoxels than the label index.
 func ChangeLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, delta labels.SupervoxelChanges) error {
-	atomic.AddUint64(&metaAttempts, 1)
-	k := indexKey{data: d, version: v, label: label}
-
 	shard := label % numIndexShards
 	indexMu[shard].Lock()
 	defer indexMu[shard].Unlock()
 
-	// get the index
-	var err error
-	var idxBytes []byte
-	if indexCache != nil {
-		idxBytes, err = indexCache.Get(k.Bytes())
-		if err != nil && err != freecache.ErrNotFound {
-			return err
-		}
+	idx, err := getCachedLabelIndex(d, v, label)
+	if err != nil {
+		return err
 	}
-	var idx *labels.Index
-	if idxBytes != nil {
+	if idx == nil {
 		idx = new(labels.Index)
-		if err := idx.Unmarshal(idxBytes); err != nil {
-			return err
-		}
-		atomic.AddUint64(&metaHits, 1)
-	} else {
-		idx, err = getLabelIndex(k.VersionedCtx(), label)
-		if err != nil {
-			return err
-		}
-		if idx == nil {
-			idx = new(labels.Index)
-			idx.Label = label
-		}
+		idx.Label = label
 	}
 
-	// Modify the label index
 	if err := idx.ModifyBlocks(label, delta); err != nil {
 		return err
 	}
 
-	// Persist the label index changes.
-	ctx := datastore.NewVersionedCtx(d, v)
-	if len(idx.Blocks) == 0 { // Delete this label's index
-		if err := deleteLabelIndex(ctx, label); err != nil {
-			return err
+	if len(idx.Blocks) == 0 {
+		return deleteCachedLabelIndex(d, v, label)
+	}
+	return putCachedLabelIndex(d, v, idx)
+}
+
+func (d *Data) verifyMappings(ctx *datastore.VersionedCtx, supervoxels, mapped []uint64) (verified []uint64, err error) {
+	if len(supervoxels) != len(mapped) {
+		return nil, fmt.Errorf("length of supervoxels list (%d) not equal to length of provided mappings (%d)", len(supervoxels), len(mapped))
+	}
+	curMapping := make(map[uint64]uint64)
+	wasVerified := make(map[uint64]bool)
+	for i, supervoxel := range supervoxels {
+		curMapping[supervoxel] = mapped[i]
+		if supervoxel != 0 {
+			wasVerified[supervoxel] = false
 		}
-		if indexCache != nil {
-			k := indexKey{data: d, version: v, label: label}.Bytes()
-			indexCache.Del(k)
+	}
+	bodyids := make(labels.Set)
+	for _, label := range mapped {
+		if label != 0 {
+			bodyids[label] = struct{}{}
 		}
-	} else {
-		if err = putLabelIndex(ctx, idx); err != nil {
-			return err
+	}
+
+	for label := range bodyids {
+		shard := label % numIndexShards
+		indexMu[shard].RLock()
+		idx, err := getCachedLabelIndex(d, ctx.VersionID(), label)
+		indexMu[shard].RUnlock()
+		if err != nil {
+			return nil, err
 		}
-		if indexCache != nil && idx != nil {
-			idxBytes, err = idx.Marshal()
-			if err != nil {
-				return err
+		bodySupervoxels := idx.GetSupervoxels()
+		for supervoxel := range wasVerified {
+			if _, found := bodySupervoxels[supervoxel]; found {
+				if curMapping[supervoxel] != label {
+					return nil, fmt.Errorf("found supervoxel %d with supposed mapping to %d in label %d index", supervoxel, curMapping[supervoxel], label)
+				}
+				wasVerified[supervoxel] = true
 			}
-			k := indexKey{data: d, version: v, label: label}.Bytes()
-			if err := indexCache.Set(k, idxBytes, 0); err != nil {
-				return err
+		}
+	}
+
+	verified = make([]uint64, len(supervoxels))
+	for i := range mapped {
+		if wasVerified[supervoxels[i]] {
+			verified[i] = mapped[i]
+		} else {
+			verified[i] = 0
+		}
+	}
+	return
+}
+
+// computes supervoxel split on a label index, returning the split index and the slice of blocks
+// that were modified.
+func (d *Data) splitSupervoxelIndex(v dvid.VersionID, info dvid.ModInfo, op labels.SplitSupervoxelOp, idx *labels.Index) (dvid.IZYXSlice, error) {
+	idx.LastMutId = op.MutID
+	idx.LastModUser = info.User
+	idx.LastModTime = info.Time
+	idx.LastModApp = info.App
+
+	// modify the index to reflect old supervoxel -> two new supervoxels.
+	var svblocks dvid.IZYXSlice
+	for zyx, svc := range idx.Blocks {
+		origNumVoxels, found := svc.Counts[op.Supervoxel]
+		if found { // split supervoxel is in this block
+			delete(svc.Counts, op.Supervoxel)
+			izyx := labels.BlockIndexToIZYXString(zyx)
+			svblocks = append(svblocks, izyx)
+			rles, found := op.Split[izyx]
+			if found { // part of split
+				splitNumVoxels, _ := rles.Stats()
+				svc.Counts[op.SplitSupervoxel] = uint32(splitNumVoxels)
+				if splitNumVoxels > uint64(origNumVoxels) {
+					return nil, fmt.Errorf("tried to split %d voxels from supervoxel %d, but label index only has %d voxels", splitNumVoxels, op.Supervoxel, origNumVoxels)
+				}
+				if splitNumVoxels != uint64(origNumVoxels) {
+					svc.Counts[op.RemainSupervoxel] = origNumVoxels - uint32(splitNumVoxels)
+				}
+			} else { // part of remainder
+				svc.Counts[op.RemainSupervoxel] = origNumVoxels
 			}
 		}
+	}
+	return svblocks, nil
+}
+
+// SplitIndex modifies the split label's index and creates a new index for the split portion.
+func (d *Data) splitIndex(v dvid.VersionID, info dvid.ModInfo, op labels.SplitOp, idx *labels.Index, splitMap dvid.BlockRLEs, blockSplits blockSplitsMap) error {
+	idx.LastMutId = op.MutID
+	idx.LastModUser = info.User
+	idx.LastModTime = info.Time
+	idx.LastModApp = info.App
+
+	sidx := new(labels.Index)
+	sidx.LastMutId = op.MutID
+	sidx.LastModUser = info.User
+	sidx.LastModTime = info.Time
+	sidx.LastModApp = info.App
+	sidx.Label = op.NewLabel
+	sidx.Blocks = make(map[uint64]*proto.SVCount, len(blockSplits))
+
+	for zyx, indexsvc := range idx.Blocks {
+		splitCount, inSplitBlock := blockSplits[zyx]
+		var splitsvc *proto.SVCount
+		if inSplitBlock {
+			splitsvc = new(proto.SVCount)
+			splitsvc.Counts = make(map[uint64]uint32, len(splitCount))
+		}
+		for supervoxel, svOrigCount := range indexsvc.Counts {
+			var svWasSplit bool
+			var svSplitCount labels.SVSplitCount
+			if inSplitBlock {
+				svSplitCount, svWasSplit = splitCount[supervoxel]
+				if svWasSplit {
+					if svSplitCount.Voxels > svOrigCount {
+						return fmt.Errorf("block %s had %d voxels written over supervoxel %d in label %d split yet this supervoxel only had %d voxels from index", labels.BlockIndexToIZYXString(zyx), svSplitCount.Voxels, supervoxel, op.Target, svOrigCount)
+					}
+					splitsvc.Counts[svSplitCount.Split] = svSplitCount.Voxels
+					if svOrigCount > svSplitCount.Voxels {
+						indexsvc.Counts[svSplitCount.Remain] = svOrigCount - svSplitCount.Voxels
+					}
+					delete(indexsvc.Counts, supervoxel)
+				}
+			}
+			if !svWasSplit {
+				// see if split anywhere
+				svsplit, found := op.SplitMap[supervoxel]
+				if found {
+					indexsvc.Counts[svsplit.Remain] = svOrigCount
+					delete(indexsvc.Counts, supervoxel)
+				}
+			}
+		}
+		if inSplitBlock {
+			sidx.Blocks[zyx] = splitsvc
+		}
+		if len(indexsvc.Counts) == 0 {
+			delete(idx.Blocks, zyx)
+		}
+	}
+
+	if err := putCachedLabelIndex(d, v, idx); err != nil {
+		return fmt.Errorf("modify split index for data %q, label %d: %v", d.DataName(), op.Target, err)
+	}
+	if err := putCachedLabelIndex(d, v, sidx); err != nil {
+		return fmt.Errorf("create new split index for data %q, label %d: %v", d.DataName(), op.NewLabel, err)
 	}
 	return nil
 }
@@ -689,11 +608,11 @@ func (d *Data) handleBlockMutate(v dvid.VersionID, ch chan blockChange, mut Muta
 		bcoord: mut.BCoord,
 	}
 	if d.IndexedLabels {
-		if mut.Prev == nil {
-			dvid.Infof("block mutate %s has no previous block\n", mut.Prev)
-		} else {
-			dvid.Infof("block mutate %s: block labels %v\n", mut.BCoord, mut.Prev.Labels)
-		}
+		// if mut.Prev == nil {
+		// 	dvid.Infof("block mutate %s has no previous block\n", mut.Prev)
+		// } else {
+		// 	dvid.Infof("block mutate %s: prev labels %v\n", mut.BCoord, mut.Prev.Labels)
+		// }
 		bc.delta = mut.Data.CalcNumLabels(mut.Prev)
 	}
 	ch <- bc
@@ -749,9 +668,16 @@ func (d *Data) aggregateBlockChanges(v dvid.VersionID, svmap *SVMap, ch <-chan b
 		}
 		svmap.RUnlock()
 	}
+	go func() {
+		if err := d.updateMaxLabel(v, maxLabel); err != nil {
+			dvid.Errorf("max label change during block aggregation for %q: %v\n", d.DataName(), err)
+		}
+	}()
 	if d.IndexedLabels {
 		for label := range labelset {
-			ChangeLabelIndex(d, v, label, svChanges)
+			if err := ChangeLabelIndex(d, v, label, svChanges); err != nil {
+				dvid.Errorf("indexing label %d: %v\n", label, err)
+			}
 		}
 	}
 }
@@ -1445,45 +1371,51 @@ func (d *Data) writeSVCounts(f *os.File, outPath string, v dvid.VersionID) {
 	timedLog.Infof("Finished counting supervoxels in %d blocks and sent to output file %q", numBlocks, outPath)
 }
 
-func (d *Data) writeMappings(f *os.File, outPath string, v dvid.VersionID) {
+func (d *Data) writeFileMappings(f *os.File, outPath string, v dvid.VersionID) {
+	if err := d.writeMappings(f, v); err != nil {
+		dvid.Errorf("error writing mapping to file %q: %v\n", outPath, err)
+		return
+	}
+	if err := f.Close(); err != nil {
+		dvid.Errorf("problem closing file %q: %v\n", outPath, err)
+	}
+}
+
+func (d *Data) writeMappings(w io.Writer, v dvid.VersionID) error {
 	timedLog := dvid.NewTimeLog()
 
 	svm, err := getMapping(d, v)
 	if err != nil {
-		dvid.Errorf("unable to retrieve mappings for data %q, version %d: %v\n", d.DataName(), v, err)
-		return
+		return fmt.Errorf("unable to retrieve mappings for data %q, version %d: %v", d.DataName(), v, err)
 	}
 	ancestry, err := svm.getLockedAncestry(v)
 	if err != nil {
-		dvid.Errorf("unable to get ancestry for data %q, version %d: %v\n", d.DataName(), v, err)
-		return
+		return fmt.Errorf("unable to get ancestry for data %q, version %d: %v", d.DataName(), v, err)
 	}
 	svm.RLock()
 	defer svm.RUnlock()
 	if len(svm.fm) == 0 {
 		dvid.Infof("no mappings found for data %q\n", d.DataName())
-		return
+		return nil
 	}
 	var numMappings, numErrors uint64
 	for supervoxel, vm := range svm.fm {
 		label, present := vm.value(ancestry)
 		if present {
 			numMappings++
-			if supervoxel != label {
+			if supervoxel != label && label != 0 {
 				line := fmt.Sprintf("%d %d\n", supervoxel, label)
-				if _, err := f.WriteString(line); err != nil {
+				if _, err := w.Write([]byte(line)); err != nil {
 					numErrors++
 					if numErrors < 100 {
-						dvid.Errorf("Unable to write data for mapping of supervoxel %d -> %d, data %q: %v\n", supervoxel, label, d.DataName(), err)
+						return fmt.Errorf("unable to write data for mapping of supervoxel %d -> %d, data %q: %v", supervoxel, label, d.DataName(), err)
 					}
 				}
 			}
 		}
 	}
-	if err = f.Close(); err != nil {
-		dvid.Errorf("problem closing file %q: %v\n", outPath, err)
-	}
-	timedLog.Infof("Finished writing %d mappings (%d errors) for data %q, version %d to output file %q", numMappings, numErrors, d.DataName(), v, outPath)
+	timedLog.Infof("Finished writing %d mappings (%d errors) for data %q, version %d", numMappings, numErrors, d.DataName(), v)
+	return nil
 }
 
 func (d *Data) indexThread(f *os.File, mu *sync.Mutex, wg *sync.WaitGroup, chunkCh chan *storage.Chunk) {

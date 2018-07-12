@@ -37,6 +37,7 @@ import (
 	_ "github.com/janelia-flyem/dvid/datatype/labelvol"
 	_ "github.com/janelia-flyem/dvid/datatype/multichan16"
 	_ "github.com/janelia-flyem/dvid/datatype/roi"
+	_ "github.com/janelia-flyem/dvid/datatype/tarsupervoxels"
 )
 
 var (
@@ -267,18 +268,24 @@ func DoServe(cmd dvid.Command) error {
 	if configPath == "" {
 		return fmt.Errorf("serve command must be followed by the path to the TOML configuration file")
 	}
-	instanceConfig, logConfig, backend, kafka, err := server.LoadConfig(configPath)
+	tc, backend, err := server.LoadConfig(configPath)
 	if err != nil {
-		return fmt.Errorf("Error loading configuration file %q: %v\n", configPath, err)
+		return fmt.Errorf("error loading configuration file %q: %v", configPath, err)
 	}
-	logConfig.SetLogger()
+	tc.Logging.SetLogger()
 
-	kafka.Initialize()
+	if err := tc.Kafka.Initialize(); err != nil {
+		return err
+	}
+
+	if err := tc.Server.Initialize(); err != nil {
+		return err
+	}
 
 	// Initialize storage and datastore layer
 	initMetadata, err := storage.Initialize(cmd.Settings(), backend)
 	if err != nil {
-		return fmt.Errorf("Unable to initialize storage: %v\n", err)
+		return fmt.Errorf("unable to initialize storage: %v", err)
 	}
 
 	// lock metadata
@@ -290,13 +297,13 @@ func DoServe(cmd dvid.Command) error {
 		transdb.LockKey(key)
 	}
 
-	if err := datastore.Initialize(initMetadata, instanceConfig); err != nil {
+	if err := datastore.Initialize(initMetadata, tc.Server.DatastoreInstanceConfig()); err != nil {
 		if hastrans {
 			var ctx storage.MetadataContext
 			key := ctx.ConstructKey(storage.NewTKey(datastore.ServerLockKey, nil))
 			transdb.UnlockKey(key)
 		}
-		return fmt.Errorf("Unable to initialize datastore: %v\n", err)
+		return fmt.Errorf("unable to initialize datastore: %v", err)
 	}
 	if hastrans {
 		var ctx storage.MetadataContext

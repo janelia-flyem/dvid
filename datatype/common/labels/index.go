@@ -88,6 +88,30 @@ func BlockIndexToIZYXString(zyx uint64) dvid.IZYXString {
 	return dvid.ChunkPoint3d{x, y, z}.ToIZYXString()
 }
 
+// StringDump returns a description of the data within the Index.
+// If showMutationInfo is true, the mutation ID and information about
+// modification is also printed.
+func (idx Index) StringDump(showMutationInfo bool) string {
+	s := fmt.Sprintf("\nLabel: %d\n", idx.Label)
+	if showMutationInfo {
+		s += fmt.Sprintf("Last Mutation ID: %d\n", idx.LastMutId)
+		s += fmt.Sprintf("Last Modification Time: %s\n", idx.LastModTime)
+		s += fmt.Sprintf("Last Modification User: %s\n", idx.LastModUser)
+		s += fmt.Sprintf("Last Modification App:  %s\n\n", idx.LastModApp)
+	}
+
+	s += fmt.Sprintf("Total blocks: %d\n", len(idx.Blocks))
+	for zyx, svc := range idx.Blocks {
+		izyxStr := BlockIndexToIZYXString(zyx)
+		s += fmt.Sprintf("Block %s:\n", izyxStr)
+		for sv, count := range svc.Counts {
+			s += fmt.Sprintf("  Supervoxel %10d: %d voxels\n", sv, count)
+		}
+		s += fmt.Sprintf("\n")
+	}
+	return s
+}
+
 // NumVoxels returns the number of voxels for the Index.
 func (idx Index) NumVoxels() uint64 {
 	if len(idx.Blocks) == 0 {
@@ -174,7 +198,7 @@ func (idx *Index) LimitToSupervoxel(supervoxel uint64) (*Index, error) {
 	}
 	sidx := new(Index)
 	sidx.Label = idx.Label
-	sidx.LastMutid = idx.LastMutid
+	sidx.LastMutId = idx.LastMutId
 	sidx.LastModTime = idx.LastModTime
 	sidx.LastModUser = idx.LastModUser
 	sidx.Blocks = make(map[uint64]*proto.SVCount)
@@ -182,6 +206,10 @@ func (idx *Index) LimitToSupervoxel(supervoxel uint64) (*Index, error) {
 		if svc != nil && len(svc.Counts) != 0 {
 			count, found := svc.Counts[supervoxel]
 			if found {
+				if count == 0 {
+					dvid.Debugf("ignoring block %s for supervoxel %d because zero count\n", BlockIndexToIZYXString(zyx), supervoxel)
+					continue
+				}
 				sidx.Blocks[zyx] = &proto.SVCount{Counts: map[uint64]uint32{supervoxel: count}}
 			}
 		}
@@ -208,8 +236,26 @@ func (idx *Index) GetProcessedBlockIndices(scale uint8, bounds dvid.Bounds) (dvi
 				return nil, fmt.Errorf("error decoding block %v: %v", izyx, err)
 			}
 			if bounds.Block.Outside(blockPt) {
+				// dvid.Infof("block pt %s considered OUTSIDE bounds (%v)\n", blockPt, bounds.Block)
 				continue
 			}
+			// dvid.Infof("block pt %s considered INSIDE bounds (%v)\n", blockPt, bounds.Block)
+		}
+		svc := idx.Blocks[zyx]
+		if svc == nil || svc.Counts == nil {
+			dvid.Debugf("ignoring block %s for label %d because of nil Counts\n", izyx, idx.Label)
+			continue
+		}
+		var ok bool
+		for _, count := range svc.Counts {
+			if count > 0 {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			dvid.Debugf("ignoring block %s for label %d because all counts are zero: %v\n", izyx, idx.Label, svc.Counts)
+			continue
 		}
 		indices[totBlocks] = izyx
 		totBlocks++
