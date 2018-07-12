@@ -222,8 +222,5 @@ func (b *Batch) Commit() error {
 		return fmt.Errorf(`Too many errors during bulk upload to Swift, %d of %d deletes / %d of %d puts not completed`, len(deletes), len(b.deletes), len(puts), len(b.puts))
 	}
 
-	// Debug stats. TODO: Remove
-	dvid.Infof("Bulk commit done: %d deletes, %d uploads: %s\n", len(b.deletes), len(b.puts), time.Since(start))
-
 	return nil
 }

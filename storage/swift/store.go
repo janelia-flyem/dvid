@@ -56,6 +56,8 @@ func (s *Store) Equal(config dvid.StoreConfig) bool {
 		"user":      s.conn.UserName,
 		"key":       s.conn.ApiKey,
 		"auth":      s.conn.AuthUrl,
+		"project":   s.conn.Tenant,
+		"domain":    s.conn.TenantDomain,
 		"container": s.container,
 	} {
 		v, ok, err := config.GetString(param)
@@ -76,10 +78,13 @@ func NewStore(config dvid.StoreConfig) (*Store, bool, error) {
 
 	// Get configuration values.
 	var err error
-	configString := func(param string) (string, error) {
+	configString := func(param string, required bool) (string, error) {
 		value, ok, e := config.GetString(param)
 		if !ok {
-			return "", fmt.Errorf(`Configuration parameter "%s" missing`)
+			if required {
+				return "", fmt.Errorf(`Configuration parameter "%s" missing`)
+			}
+			return "", nil
 		}
 		if e != nil {
 			return "", fmt.Errorf(`Error retrieving configuration parameter "%s" (may not be a string): %s`, e)
@@ -89,19 +94,30 @@ func NewStore(config dvid.StoreConfig) (*Store, bool, error) {
 		}
 		return value, nil
 	}
-	s.conn.UserName, err = configString("user")
+	s.conn.UserName, err = configString("user", true)
 	if err != nil {
 		return nil, false, err
 	}
-	s.conn.ApiKey, err = configString("key")
+	s.conn.ApiKey, err = configString("key", true)
 	if err != nil {
 		return nil, false, err
 	}
-	s.conn.AuthUrl, err = configString("auth")
+	s.conn.AuthUrl, err = configString("auth", true)
 	if err != nil {
 		return nil, false, err
 	}
-	s.container, err = configString("container")
+	s.conn.Tenant, err = configString("project", true)
+	if err != nil {
+		return nil, false, err
+	}
+	if s.conn.Tenant != "" {
+		s.conn.AuthVersion = 3
+	}
+	s.conn.TenantDomain, err = configString("domain", true)
+	if err != nil {
+		return nil, false, err
+	}
+	s.container, err = configString("container", true)
 	if err != nil {
 		return nil, false, err
 	}
@@ -119,6 +135,7 @@ func NewStore(config dvid.StoreConfig) (*Store, bool, error) {
 		if err = s.conn.ContainerCreate(s.container, nil); err != nil {
 			return nil, false, fmt.Errorf(`Cannot create Swift container "%s": %s`, s.container, err)
 		}
+		dvid.Infof("Created new container \"%s\"\n", s.container)
 	} else if err != nil {
 		return nil, false, fmt.Errorf(`Unable to check if Swift container "%s" exists: %s`, s.container, err)
 	}
@@ -136,9 +153,9 @@ func NewStore(config dvid.StoreConfig) (*Store, bool, error) {
 
 // objectNames queries Swift for a range of keys and returns the found keys.
 func (s *Store) objectNames(from, to storage.Key) (keys []storage.Key, err error) {
-	// We're waiting for a fix to https://github.com/ncw/swift/issues/113 so we can
-	// use ObjectNamesAll() again in range requests. But even without the fix, we
-	// should be fine as the default limit is 10,000 results.
+	// A fix for ncw/swift is needed to make this function 100% correct. See
+	// https://github.com/ncw/swift/issues/113 for details. But even without the
+	// fix, we don't expect major errors as the default limit is 10,000 results.
 
 	marker := encodeKey(from)
 	endMarker := encodeKey(to)
