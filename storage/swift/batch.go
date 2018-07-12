@@ -173,7 +173,6 @@ func (b *Batch) Commit() error {
 	}
 
 	// Start the worker queues.
-	start := time.Now()
 	var wg sync.WaitGroup
 	for worker := 0; worker < maxConcurrentOperations; worker++ {
 		wg.Add(1)
