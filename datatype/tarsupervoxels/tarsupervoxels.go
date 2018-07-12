@@ -389,7 +389,13 @@ func (d *Data) getSupervoxelGoroutine(db storage.KeyValueDB, ctx *datastore.Vers
 			data, err = db.Get(ctx, tk)
 		}
 		if err != nil {
+			dvid.Errorf("supervoxel %d tarfile: %v\n", supervoxel, err)
 			outCh <- fileData{err: err}
+			continue
+		}
+		if len(data) == 0 {
+			dvid.Errorf("supervoxel %d tarfile is empty, skipping...\n", supervoxel)
+			outCh <- fileData{}
 			continue
 		}
 		hdr := &tar.Header{
@@ -437,6 +443,7 @@ func (d *Data) sendTarfile(w http.ResponseWriter, uuid dvid.UUID, label uint64) 
 		svs := svlist[handler]
 		svs = append(svs, supervoxel)
 		svlist[handler] = svs
+		i++
 	}
 
 	done := make(chan struct{})
@@ -451,9 +458,6 @@ func (d *Data) sendTarfile(w http.ResponseWriter, uuid dvid.UUID, label uint64) 
 	defer tw.Close()
 	for i := 0; i < len(supervoxels); i++ {
 		fd := <-outCh
-		if fd.err != nil {
-			return err
-		}
 		if fd.header != nil {
 			if err := tw.WriteHeader(fd.header); err != nil {
 				return err
