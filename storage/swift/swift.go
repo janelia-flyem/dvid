@@ -1,3 +1,5 @@
+// +build swift
+
 package swift
 
 import "github.com/janelia-flyem/dvid/storage"
