@@ -114,14 +114,7 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 	if err != nil {
 		return err
 	}
-	// reverse the order since GetAncestry returns from current version to root,
-	// and we want mappings to accumulate in time order.
-	n := len(ancestors)
-	rootToCurrent := make([]dvid.VersionID, n)
-	for i, v := range ancestors {
-		rootToCurrent[n-1-i] = v
-	}
-	for _, ancestor := range rootToCurrent {
+	for _, ancestor := range ancestors {
 		vid, found := svm.versions[ancestor]
 		if found {
 			return nil // we have already loaded this version and its ancestors
