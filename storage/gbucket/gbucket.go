@@ -1117,6 +1117,9 @@ func (db *GBucket) getKeysInRangeRaw(ctx storage.Context, minKey, maxKey storage
 	// filter keys that fall into range
 	object_attr, done := object_list.Next()
 	for done != iterator.Done {
+		if done != nil {
+		   return []storage.Key(keys), nil
+		}
 		decstr, err := hex.DecodeString(object_attr.Name)
 		if err != nil {
 			return nil, err
