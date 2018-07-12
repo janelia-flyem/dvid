@@ -158,6 +158,7 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 							Splitlabel:  svsplit.Splitlabel,
 						}
 						splits = append(splits, rec)
+						svm.setMapping(vid, supervoxel, 0)
 					}
 					svm.splits[vid] = splits
 				case proto.SupervoxelSplitType:
@@ -174,6 +175,7 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 						Splitlabel:  op.Splitlabel,
 					}
 					svm.splits[vid] = append(svm.splits[vid], rec)
+					svm.setMapping(vid, op.Supervoxel, 0)
 				default:
 				}
 				wg.Done()
