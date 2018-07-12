@@ -80,4 +80,7 @@ go get github.com/optiopay/kafka
 # freecache
 go get github.com/coocood/freecache
 
+# Openstack Swift
+go get github.com/ncw/swift
+
 echo "Done fetching third-party go sources."

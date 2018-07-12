@@ -30,7 +30,7 @@ if (NOT EXISTS ${BUILDEM_REPO_DIR}/python.cmake)
         GIT_REPOSITORY https://github.com/janelia-flyem/buildem.git
         UPDATE_COMMAND ""
         PATCH_COMMAND ""
-        CONFIGURE_COMMAND "" 
+        CONFIGURE_COMMAND ""
         BUILD_COMMAND ""
         BUILD_IN_SOURCE 1
         INSTALL_COMMAND ""
@@ -82,7 +82,7 @@ else ()
 
     # This is the default local storage backend.
     set (DVID_BACKEND "basholeveldb" CACHE TYPE STRING)
-        
+
     message ("Using DVID_BACKEND: ${DVID_BACKEND}")
 
     # Make sure we have list of all Go package dependencies that we are go getting.
@@ -125,6 +125,9 @@ else ()
         elseif ("${BACKEND}" STREQUAL "gbucket")
             set (DVID_DEP_GO_PACKAGES   ${DVID_DEP_GO_PACKAGES} gcloud)
             message ("Installing Google's Bucket store.")
+        elseif ("${BACKEND}" STREQUAL "swift")
+            set (DVID_DEP_GO_PACKAGES   ${DVID_DEP_GO_PACKAGES} swift)
+            message ("Installing Openstack Swift key-value store.")
         elseif ("${BACKEND}" STREQUAL "filestore")
             set (DVID_DEP_GO_PACKAGES   ${DVID_DEP_GO_PACKAGES} gcloud)
             message ("Installing support for filestore engine.")
@@ -152,17 +155,17 @@ else ()
     # add_custom_target (goprotobuf
     #     ${BUILDEM_ENV_STRING} go get ${GO_GET} -u github.com/golang/protobuf/{proto,protoc-gen-go}
     #     COMMENT     "Adding goprotobuf support...")
-    
+
     add_custom_target (gojsonschema
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/janelia-flyem/gojsonschema
         COMMENT     "Adding gojsonschema library...")
 
 		add_custom_target (kafka
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/optiopay/kafka 
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/optiopay/kafka
         COMMENT     "Adding kafka library...")
 
 	add_custom_target (freecache
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/coocood/freecache 
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/coocood/freecache
         COMMENT     "Adding freecache library...")
 
     add_custom_target (goji
@@ -201,7 +204,11 @@ else ()
         COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} google.golang.org/grpc
         COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/golang/protobuf/proto
         COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/golang/protobuf/protoc-gen-go
-        COMMENT     "Adding gcloud packages...")  
+        COMMENT     "Adding gcloud packages...")
+
+    add_custom_target (swift
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/ncw/swift
+        COMMENT     "Adding swift library...")
 
     add_custom_target (gorpc
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/valyala/gorpc
@@ -211,14 +218,14 @@ else ()
         COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/gogo/protobuf/proto
         COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/gogo/protobuf/gogoproto
         COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/gogo/protobuf/protoc-gen-gogoslick
-        COMMENT     "Adding gogo protobuf packages...")  
+        COMMENT     "Adding gogo protobuf packages...")
 
     add_custom_target (nrsc
         ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/nrsc
         DEPENDS     gopackages
         WORKING_DIRECTORY $ENV{GOPATH}/src/github.com/janelia-flyem/go/nrsc/nrsc
         COMMENT     "Building nrsc resource compiler...")
-    
+
     if (${DVID_FUSE})
         add_custom_target (gofuse
             ${BUILDEM_ENV_STRING} go get ${GO_GET} bazil.org/fuse
@@ -236,8 +243,8 @@ else ()
 
     # Compile command to generate DVID source code version info.
     add_custom_target (dvid-gen-version
-        ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid-gen-version 
-        -v -tags '${DVID_BACKEND}' cmd/gen-version/main.go 
+        ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid-gen-version
+        -v -tags '${DVID_BACKEND}' cmd/gen-version/main.go
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT     "Compiling and installing dvid version generation command...")
 
@@ -250,13 +257,13 @@ else ()
 
     # Build DVID with chosen backend
     add_custom_target (dvid
-        ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
-        -v -tags '${DVID_BACKEND}' cmd/dvid/main.go 
+        ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid
+        -v -tags '${DVID_BACKEND}' cmd/dvid/main.go
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS     ${DVID_BACKEND_DEPEND} ${DVID_DEP_GO_PACKAGES} dvid-code-gen dvid-backup dvid-transfer
         COMMENT     "Compiling and installing dvid executable...")
 
-    # # Build DVID with embedded console 
+    # # Build DVID with embedded console
     # add_custom_target (dvid
     #     ${BUILDEM_ENV_STRING} nrsc ${BUILDEM_BIN_DIR}/dvid dvid-console
     #     WORKING_DIRECTORY   ${BUILDEM_DIR}/src
@@ -268,41 +275,41 @@ else ()
                        ${DVID_GO}/datatype/... ${DVID_GO}/tests_integration)
 
    add_custom_target (test
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -tags '${DVID_BACKEND}' 
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -tags '${DVID_BACKEND}'
             ${DVID_PACKAGES})
 
    add_custom_target (test-verbose
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -v -tags '${DVID_BACKEND}' 
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -v -tags '${DVID_BACKEND}'
             ${DVID_PACKAGES})
 
    add_custom_target (test-labelvol
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -v -tags '${DVID_BACKEND}' 
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -v -tags '${DVID_BACKEND}'
             ${DVID_GO}/datatype/labelvol)
 
    add_custom_target (coverage
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -cover -tags '${DVID_BACKEND}' 
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -cover -tags '${DVID_BACKEND}'
             ${DVID_PACKAGES})
 
    # Add benchmarking
    add_custom_target (test-bench
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -bench -i -tags '${DVID_BACKEND}' 
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -bench -i -tags '${DVID_BACKEND}'
             ${DVID_GO}/test ${DVID_GO}/dvid ${DVID_GO}/datastore)
 
    add_custom_target (bench
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -bench -tags '${DVID_BACKEND}' 
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -bench -tags '${DVID_BACKEND}'
             ${DVID_PACKAGES}
         DEPENDS test-bench)
 
-    # Build backup command 
+    # Build backup command
     add_custom_target (dvid-backup
-        ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid-backup 
-        -v -tags '${DVID_BACKEND}' cmd/backup/main.go 
+        ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid-backup
+        -v -tags '${DVID_BACKEND}' cmd/backup/main.go
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT     "Compiling and installing dvid backup command...")
 
-    # Build transfer command 
+    # Build transfer command
     add_custom_target (dvid-transfer
-        ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build  -o ${BUILDEM_BIN_DIR}/dvid-transfer 
+        ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build  -o ${BUILDEM_BIN_DIR}/dvid-transfer
         -v -tags '${DVID_BACKEND}' cmd/transfer/*.go
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT     "Compiling and installing dvid transfer command...")
@@ -312,15 +319,15 @@ else ()
     add_custom_target (mkdir-distro
         COMMAND ${CMAKE_COMMAND} -E make_directory ${DISTRO_DIR}
         DEPENDS dvid-console-dist
-        COMMENT     "Creating dvid distro directory in ${BUILDEM_DIR} ...")  
-    
-    # Unpack dvid console web app 
+        COMMENT     "Creating dvid distro directory in ${BUILDEM_DIR} ...")
+
+    # Unpack dvid console web app
     add_custom_target (console-distro
         COMMAND ${CMAKE_COMMAND} -E make_directory ${DISTRO_DIR}
         COMMAND ${CMAKE_COMMAND} -E tar zxf ${BUILDEM_DIR}/src/dvid-console-1.13.1.tar.gz
         WORKING_DIRECTORY ${DISTRO_DIR}
         DEPENDS mkdir-distro
-        COMMENT     "Creating dvid console in distro...")  
+        COMMENT     "Creating dvid console in distro...")
 
     # Build binary distribution
     if (${APPLE})
@@ -334,12 +341,12 @@ else ()
         COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/dist/README ${DISTRO_DIR}/README
         COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/config-simple.toml ${DISTRO_DIR}/config-simple.toml
         COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/config-full.toml ${DISTRO_DIR}/config-full.toml
-        COMMAND ${CMAKE_COMMAND} -E copy_directory ${BUILDEM_BIN_DIR} ${DISTRO_DIR}/bin 
-        COMMAND ${CMAKE_COMMAND} -E copy_directory ${BUILDEM_LIB_DIR} ${DISTRO_DIR}/lib 
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${BUILDEM_BIN_DIR} ${DISTRO_DIR}/bin
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${BUILDEM_LIB_DIR} ${DISTRO_DIR}/lib
         COMMAND ${CMAKE_COMMAND} -E tar cfz dvid-release.tar.gz dvid-distro
         WORKING_DIRECTORY ${BUILDEM_DIR}
         DEPENDS     console-distro
-        COMMENT     "Creating binary distro...")  
+        COMMENT     "Creating binary distro...")
 
 
     ###############################################################################
