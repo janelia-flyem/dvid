@@ -14,9 +14,9 @@ checkout:
 dependencies:
   override:
     - mkdir -p $GOPATH/src/github.com/janelia-flyem/dvid/build
-    - cd $GOPATH/src/github.com/janelia-flyem/dvid/build && cmake -D BUILDEM_DIR=$BUILDEM_DIR ..
+    - cd $GOPATH/src/github.com/janelia-flyem/dvid/build && cmake -D BUILDEM_DIR=$BUILDEM_DIR -D DVID_BACKEND="basholeveldb;gbucket;filestore" ..
     - cd $GOPATH/src/github.com/janelia-flyem/dvid/build && make
-    - cd $GOPATH/src/github.com/janelia-flyem/dvid/build && cmake -D BUILDEM_DIR=$BUILDEM_DIR ..
+    - cd $GOPATH/src/github.com/janelia-flyem/dvid/build && cmake -D BUILDEM_DIR=$BUILDEM_DIR -D DVID_BACKEND="basholeveldb;gbucket;filestore" ..
     - cd $GOPATH/src/github.com/janelia-flyem/dvid/build && make VERBOSE=1 dvid
 
 test:
