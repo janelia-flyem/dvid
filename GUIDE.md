@@ -117,9 +117,10 @@ For each platform (Mac and Linux):
 2. Build the conda package and upload it to the `flyem-forge` channel on `http://anaconda.org`:
 
     ```
+    $ source activate base
     $ conda build scripts/conda-recipe
-    $ anaconda upload -u flyem-forge $(conda info --base)/conda-bld/linux-64/dvid-0.8.20-0.tar.bz2 # Mac
-    $ anaconda upload -u flyem-forge $(conda info --base)/conda-bld/osx-64/dvid-0.8.20-0.tar.bz2 # Linux
+    $ anaconda upload -u flyem-forge $(conda info --base)/conda-bld/osx-64/dvid-0.8.20-0.tar.bz2 # Mac
+    $ anaconda upload -u flyem-forge $(conda info --base)/conda-bld/linux-64/dvid-0.8.20-0.tar.bz2 # Linux
     ```
 
    Note: For maximum Linux compatibility, consider building within a Docker container, such as `condaforge/linux-anvil`:
