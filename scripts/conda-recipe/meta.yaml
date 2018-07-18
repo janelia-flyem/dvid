@@ -156,3 +156,8 @@ source:
   - git_url: https://github.com/coocood/freecache
     git_tag: master
     folder:  src/github.com/coocood/freecache
+
+    # Openstack Swift
+  - git_url: https://github.com/ncw/swift
+    git_tag: master
+    folder:  src/github.com/ncw/swift
