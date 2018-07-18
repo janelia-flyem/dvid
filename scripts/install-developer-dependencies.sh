@@ -14,10 +14,15 @@ fi
 
 THIS_SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-cd ${THIS_SCRIPT_DIR}
-CONDA_PYTHON=$(conda info --root)/bin/python
-${CONDA_PYTHON} _install_compiled_dependencies.py
+# Install conda dependencies
+# (This assumes that the most recent dvid package has up-to-date requirements)
+echo "Installing conda dependencies..."
+CMD="conda install --only-deps dvid"
+echo $CMD
+$CMD
 
-./get-go-dependencies.sh
+# Install go library dependencies
+echo "Installing go libraries..."
+${THIS_SCRIPT_DIR}/get-go-dependencies.sh
 
 echo "DONE."
