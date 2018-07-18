@@ -28,7 +28,6 @@ requirements:
     - lz4
 
   run:
-  # TODO: dvid-console should be packaged in conda and included as a dependency here, right?
     - snappy
     - basholeveldb
     - lz4
@@ -157,3 +156,8 @@ source:
   - git_url: https://github.com/coocood/freecache
     git_tag: master
     folder:  src/github.com/coocood/freecache
+
+    # Openstack Swift
+  - git_url: https://github.com/ncw/swift
+    git_tag: master
+    folder:  src/github.com/ncw/swift

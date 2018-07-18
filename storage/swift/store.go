@@ -84,15 +84,15 @@ func NewStore(config dvid.StoreConfig) (*Store, bool, error) {
 		value, ok, e := config.GetString(param)
 		if !ok {
 			if required {
-				return "", fmt.Errorf(`Configuration parameter "%s" missing`)
+				return "", fmt.Errorf(`Configuration parameter "%s" missing`, param)
 			}
 			return "", nil
 		}
 		if e != nil {
-			return "", fmt.Errorf(`Error retrieving configuration parameter "%s" (may not be a string): %s`, e)
+			return "", fmt.Errorf(`Error retrieving configuration parameter "%s" (may not be a string): %s`, param, e)
 		}
 		if value == "" {
-			return "", errors.New(`Configuration parameter "%s" must not be empty`)
+			return "", fmt.Errorf(`Configuration parameter "%s" must not be empty`, param)
 		}
 		return value, nil
 	}
