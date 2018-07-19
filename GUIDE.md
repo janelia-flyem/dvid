@@ -158,7 +158,8 @@ For each platform (Mac and Linux):
    
    </details>
 
-3. Generate a release distribution:
+3. Generate a release distribution.
+   (This doesn't build dvid again; it uses the conda package you uploaded in the previous step.)
 
     ```
     $ ./scripts/make-release-distribution.sh
