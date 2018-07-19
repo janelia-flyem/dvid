@@ -71,10 +71,14 @@ bin/dvid-transfer: $(shell find cmd/transfer -name "*.go")
 ##
 ## TEST
 ##
-DVID_GO = "github.com/janelia-flyem/dvid"
+DVID_GO = github.com/janelia-flyem/dvid
 DVID_PACKAGES = ${DVID_GO}/dvid/... ${DVID_GO}/storage/... ${DVID_GO}/datastore ${DVID_GO}/server ${DVID_GO}/datatype/... ${DVID_GO}/tests_integration
 
-test: dvid
+ifdef PACKAGES
+	DVID_PACKAGES = ${DVID_GO}/${PACKAGES}
+endif
+
+test: dvid 
 	go test -tags "${DVID_BACKENDS}" ${DVID_PACKAGES}
 
 test-verbose: dvid
