@@ -370,8 +370,7 @@ type Data struct {
 	kvStore  dvid.Store // key-value store
 	logStore dvid.Store // append-only log
 
-	// an atomic operation ID used for non-persistent operations like coordinating
-	// multiple sync deltas.
+	// an atomic operation ID monotonically incremented per data instance
 	mutID uint64
 
 	// true if deleted (or in processing of deleting)

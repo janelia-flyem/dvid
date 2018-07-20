@@ -6,6 +6,7 @@ package tarsupervoxels
 import (
 	"archive/tar"
 	"bytes"
+	"crypto/md5"
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
@@ -125,9 +126,15 @@ DEL  <api URL>/node/<UUID>/<data name>/supervoxel/<id>
 	label         The supervoxel id.
 
 GET  <api URL>/node/<UUID>/<data name>/tarfile/<label> 
+HEAD <api URL>/node/<UUID>/<data name>/tarfile/<label> 
 
-	Returns a tarfile of all supervoxel data that has been mapped to the given label.
-	File names within the tarfile will be the supervoxel id without extension.  
+	GET returns a tarfile of all supervoxel data that has been mapped to the given label.
+	File names within the tarfile will be the supervoxel id without extension.  HTTP status
+	code 400 (Bad Request) is returned if no such label exists or there was an error.
+
+	HEAD returns 200 if there would be files in the tarfile (i.e., the body exists and at
+	least one supervoxel has stored data).  HTTP status code 400 (Bad Request) is returned 
+	if no such label exists or there was an error.
 
 	Example: 
 
@@ -140,6 +147,25 @@ GET  <api URL>/node/<UUID>/<data name>/tarfile/<label>
 	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
 	data name     Name of tarsupervoxels data instance.
 	label         The label (body) id.
+	
+GET  <api URL>/node/<UUID>/<data name>/exists 
+
+	Returns the existence of data associated with supervoxels.  Expects JSON
+	for the list of supervoxels in the body of the request:
+
+	[ 1, 2, 3, ... ]
+
+	Returns JSON for the existence of data stored for each of the above supervoxels:
+
+	[ true, false, true, ... ]
+
+	Arguments:
+	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	data name     Name of tarsupervoxels instance.
+
+	Query-string Options:
+
+	hash          MD5 hash of request body content in hexidecimal string format.
 	
 POST <api URL>/node/<UUID>/<data name>/load
 
@@ -411,6 +437,141 @@ func (d *Data) getSupervoxelGoroutine(db storage.KeyValueDB, ctx *datastore.Vers
 	}
 }
 
+// if hash is not empty, make sure it is hash of data.
+func checkContentHash(hash string, data []byte) error {
+	if hash == "" {
+		return nil
+	}
+	hexHash := fmt.Sprintf("%x", md5.Sum(data))
+	if hexHash != hash {
+		return fmt.Errorf("content hash incorrect.  expected %s, got %s", hash, hexHash)
+	}
+	return nil
+}
+
+func (d *Data) handleExistence(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) {
+	// GET <api URL>/node/<UUID>/<data name>/exists
+	if strings.ToLower(r.Method) != "get" {
+		server.BadRequest(w, r, "exists query must be a GET request")
+		return
+	}
+	data, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		server.BadRequest(w, r, "Bad GET request body for exists query: %v", err)
+		return
+	}
+	queryStrings := r.URL.Query()
+	hash := queryStrings.Get("hash")
+	if err := checkContentHash(hash, data); err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	var supervoxels []uint64
+	if err := json.Unmarshal(data, &supervoxels); err != nil {
+		server.BadRequest(w, r, fmt.Sprintf("Bad exists request JSON: %v", err))
+		return
+	}
+
+	db, err := datastore.GetKeyValueDB(d)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	checker, isChecker := db.(storage.KeyValueChecker)
+	ctx, err := d.getRootContext(uuid)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+
+	w.Header().Set("Content-type", "application/json")
+	fmt.Fprintf(w, "[")
+	sep := false
+	for _, supervoxel := range supervoxels {
+		if sep {
+			fmt.Fprintf(w, ",")
+		}
+		tk, err := NewTKey(supervoxel, d.Extension)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if isChecker {
+			dataPresent, err := checker.Exists(ctx, tk)
+			if err != nil || !dataPresent {
+				fmt.Fprintf(w, "false")
+			} else {
+				fmt.Fprintf(w, "true")
+			}
+		} else {
+			data, err := db.Get(ctx, tk)
+			if err != nil || len(data) == 0 {
+				fmt.Fprintf(w, "false")
+			} else {
+				fmt.Fprintf(w, "true")
+			}
+		}
+		sep = true
+	}
+	fmt.Fprintf(w, "]")
+}
+
+func (d *Data) checkTarfile(w http.ResponseWriter, uuid dvid.UUID, label uint64) error {
+	db, err := datastore.GetKeyValueDB(d)
+	if err != nil {
+		return err
+	}
+	checker, isChecker := db.(storage.KeyValueChecker)
+	ldata := d.getSyncedLabels()
+	if ldata == nil {
+		return fmt.Errorf("data %q is not synced with any labelmap instance", d.DataName())
+	}
+	ctx, err := d.getRootContext(uuid)
+	if err != nil {
+		return err
+	}
+	v, err := datastore.VersionFromUUID(uuid)
+	if err != nil {
+		return err
+	}
+	supervoxels, err := ldata.GetSupervoxels(v, label)
+	if err != nil {
+		return err
+	}
+	if len(supervoxels) == 0 {
+		return fmt.Errorf("label %d has no supervoxels", label)
+	}
+	var dataPresent bool
+	for supervoxel := range supervoxels {
+		tk, err := NewTKey(supervoxel, d.Extension)
+		if err != nil {
+			return err
+		}
+		if isChecker {
+			dataPresent, err = checker.Exists(ctx, tk)
+			if err != nil {
+				return err
+			}
+			if dataPresent {
+				break
+			}
+		} else {
+			data, err := db.Get(ctx, tk)
+			if err != nil {
+				return err
+			}
+			if len(data) != 0 {
+				dataPresent = true
+				break
+			}
+		}
+	}
+	if !dataPresent {
+		return fmt.Errorf("no supervoxel data found for label %d", label)
+	}
+	return nil
+}
+
 func (d *Data) sendTarfile(w http.ResponseWriter, uuid dvid.UUID, label uint64) error {
 	db, err := datastore.GetKeyValueDB(d)
 	if err != nil {
@@ -583,12 +744,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		comment = fmt.Sprintf("HTTP POST load on data %q", d.DataName())
 
+	case "exists":
+		d.handleExistence(uuid, w, r)
+		comment = fmt.Sprintf("HTTP GET exists of data %q", d.DataName())
+
 	case "tarfile":
-		if action != "get" {
-			server.BadRequest(w, r, "only GET action is support for the 'tarfile' endpoint")
-		}
 		if len(parts) < 5 {
-			server.BadRequest(w, r, "expect uint64 to follow 'tarfile' endpoint")
+			server.BadRequest(w, r, "expect uint64 to follow /tarfile endpoint")
 			return
 		}
 		label, err := strconv.ParseUint(parts[4], 10, 64)
@@ -600,11 +762,23 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used")
 			return
 		}
-		if err := d.sendTarfile(w, uuid, label); err != nil {
-			server.BadRequest(w, r, "can't send tarfile for label %d: %v", label, err)
+		switch action {
+		case "get":
+			if err := d.sendTarfile(w, uuid, label); err != nil {
+				server.BadRequest(w, r, "can't send tarfile for label %d: %v", label, err)
+				return
+			}
+			comment = fmt.Sprintf("HTTP GET tarfile on data %q, label %d", d.DataName(), label)
+		case "head":
+			if err := d.checkTarfile(w, uuid, label); err != nil {
+				server.BadRequest(w, r, "can't check existence of tarfile for label %d: %v", label, err)
+				return
+			}
+			comment = fmt.Sprintf("HTTP HEAD tarfile on data %q, label %d", d.DataName(), label)
+		default:
+			server.BadRequest(w, r, "only GET and HEAD actions are support for the 'tarfile' endpoint")
 			return
 		}
-		comment = fmt.Sprintf("HTTP GET tarfile on data %q, label %d", d.DataName(), label)
 
 	case "supervoxel":
 		if len(parts) < 5 {

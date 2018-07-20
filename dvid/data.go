@@ -279,7 +279,8 @@ type Data interface {
 	// KVStore returns the key-value store used for this data.
 	KVStore() (Store, error)
 
-	// Returns a concurrency-friendly unique operations ID for this Data.  Resets to 1 when server is restarted.
+	// Returns a concurrency-friendly unique operations ID for this Data.
+	// Resets to 1 when server is restarted.
 	NewMutationID() uint64
 
 	DataSetter

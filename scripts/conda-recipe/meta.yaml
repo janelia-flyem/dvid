@@ -43,8 +43,8 @@ source:
     git_tag: master
     folder: src/github.com/janelia-flyem/go
     # Includes many:
-    #   basholeveldb cron freetype-go go-humanize go-nanomsg go-uuid
-    #   go.image gocheck goexif goji golz4-updated gomdb hyperleveldb
+    #   basholeveldb cron freetype-go go-humanize go-uuid
+    #   go.image gocheck goexif goji golz4-updated 
     #   levigo lru lumberjack msgp murmur3 nrsc profiler resize semver
     #   toml uuid
 
@@ -141,11 +141,6 @@ source:
   - git_url: https://github.com/boltdb/bolt
     git_tag: master
     folder:  src/github.com/boltdb/bolt
-
-  # gomdb
-  - git_url: https://github.com/DocSavage/gomdb
-    git_tag: master
-    folder:  src/github.com/DocSavage/gomdb
 
   # kafka
   - git_url: https://github.com/optiopay/kafka

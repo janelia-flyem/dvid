@@ -443,6 +443,45 @@ func (db *LevelDB) metadataExists() (bool, error) {
 	return false, nil
 }
 
+// ---- KeyValueChecker interface ------
+
+// Exists returns true if the key exists.
+func (db *LevelDB) Exists(ctx storage.Context, tk storage.TKey) (found bool, err error) {
+	if db == nil {
+		return false, fmt.Errorf("Can't call Exists() on nil LevelDB")
+	}
+	if db.options == nil {
+		return false, fmt.Errorf("Can't call Exists() on db with nil options: %v", db)
+	}
+	if ctx == nil {
+		return false, fmt.Errorf("Received nil context in Exists()")
+	}
+	dvid.StartCgo()
+	ro := levigo.NewReadOptions()
+	it := db.ldb.NewIterator(ro)
+	defer func() {
+		it.Close()
+		dvid.StopCgo()
+	}()
+
+	var key storage.Key
+	if ctx.Versioned() {
+		vctx, ok := ctx.(storage.VersionedCtx)
+		if !ok {
+			return false, fmt.Errorf("Bad Exists(): context is versioned but doesn't fulfill interface: %v", ctx)
+		}
+		v := vctx.VersionID()
+		key = vctx.ConstructKeyVersion(tk, v)
+	} else {
+		key = ctx.ConstructKey(tk)
+	}
+	it.Seek(key)
+	if it.Valid() && bytes.Compare(it.Key(), key) == 0 {
+		return true, nil
+	}
+	return false, nil
+}
+
 // ---- OrderedKeyValueGetter interface ------
 
 // Get returns a value given a key.

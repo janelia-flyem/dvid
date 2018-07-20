@@ -206,6 +206,11 @@ type KeyValueTimestampGetter interface {
 	GetWithTimestamp(ctx Context, k TKey) ([]byte, time.Time, error)
 }
 
+type KeyValueChecker interface {
+	// Exists returns true if the given key is present
+	Exists(ctx Context, k TKey) (bool, error)
+}
+
 type KeyValueGetter interface {
 	// Get returns a value given a key.
 	Get(ctx Context, k TKey) ([]byte, error)

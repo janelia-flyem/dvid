@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -36,9 +37,9 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 	return datastore.NewTestRepo()
 }
 
-func TestTarballRoundTrip(t *testing.T) {
+func testTarball(t *testing.T, storetype storage.Alias) {
 	testConfig := server.TestConfig{
-		KVStoresMap: storage.DataMap{"tarsupervoxels": "filestore"},
+		KVStoresMap: storage.DataMap{"tarsupervoxels": storetype},
 	}
 	if err := server.OpenTest(testConfig); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
@@ -102,6 +103,33 @@ func TestTarballRoundTrip(t *testing.T) {
 	apiStr = fmt.Sprintf("%snode/%s/%s/supervoxel/64", server.WebAPIPath, uuid, tarsvname)
 	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString("This is the data for supervoxel 64."))
 
+	// Check existence through HEAD
+	apiStr = fmt.Sprintf("%snode/%s/%s/tarfile/80", server.WebAPIPath, uuid, tarsvname)
+	server.TestBadHTTP(t, "HEAD", apiStr, nil)
+
+	apiStr = fmt.Sprintf("%snode/%s/%s/tarfile/10", server.WebAPIPath, uuid, tarsvname) // was merged
+	server.TestBadHTTP(t, "HEAD", apiStr, nil)
+
+	apiStr = fmt.Sprintf("%snode/%s/%s/tarfile/60", server.WebAPIPath, uuid, tarsvname)
+	server.TestHTTP(t, "HEAD", apiStr, nil)
+
+	// Check existence through /exists endpoint
+	apiStr = fmt.Sprintf("%snode/%s/%s/exists", server.WebAPIPath, uuid, tarsvname)
+	r := server.TestHTTP(t, "GET", apiStr, bytes.NewBufferString("[81, 10, 60]"))
+	var existences []bool
+	if err := json.Unmarshal(r, &existences); err != nil {
+		t.Fatalf("error trying to unmarshal existence list: %v\n", err)
+	}
+	expectedList := []bool{false, true, true}
+	if len(existences) != 3 {
+		t.Fatalf("expected 3 existences returned, got %d: %v\n", len(existences), existences)
+	}
+	for i, existence := range existences {
+		if expectedList[i] != existence {
+			t.Fatalf("expected existence %d to be %t, got %t\n", i, expectedList[i], existence)
+		}
+	}
+
 	// Get tarball for body.
 	expected := labels.NewSet(30, 10, 15, 18, 19, 20, 21, 64)
 	apiStr = fmt.Sprintf("%snode/%s/%s/tarfile/30", server.WebAPIPath, uuid, tarsvname)
@@ -144,4 +172,9 @@ func TestTarballRoundTrip(t *testing.T) {
 	if string(data) != "This is the data for supervoxel 17." {
 		t.Fatalf("got bad supervoxel 17 data: %s\n", string(data))
 	}
+}
+
+func TestTarballRoundTrip(t *testing.T) {
+	testTarball(t, "filestore")
+	testTarball(t, "basholeveldb")
 }
