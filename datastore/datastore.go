@@ -617,7 +617,7 @@ func GetStorageDetails() (map[string]StorageStats, error) {
 				}
 				numKeys++
 				if numKeys%100000 == 0 {
-					timedLog.Infof("Storage details for store %s, processing key %d", numKeys)
+					timedLog.Infof("Storage details for store %s, processing key %d", store, numKeys)
 				}
 				instanceID, versionID, _, err := storage.DataKeyToLocalIDs(kv.K)
 				if err != nil {

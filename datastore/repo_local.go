@@ -601,7 +601,7 @@ func (m *repoManager) loadVersion0() error {
 		// If updates had to be made, save the migrated repo metadata.
 		if saveRepo {
 			dvid.Infof("Re-saved repo with root %s due to migrations.\n", r.uuid)
-			if err := r.save(); err != nil {
+			if err := r.saveToStore(m.store); err != nil {
 				return err
 			}
 		}
@@ -2276,6 +2276,16 @@ func (r *repoT) notifySubscribers(e SyncEvent, m SyncMessage) error {
 }
 
 func (r *repoT) save() error {
+	if manager == nil {
+		return fmt.Errorf("cannot use repo.save() before manager is initialized")
+	}
+	return r.saveToStore(manager.store)
+}
+
+func (r *repoT) saveToStore(db storage.OrderedKeyValueDB) error {
+	if db == nil {
+		return fmt.Errorf("cannot save repo to nil store")
+	}
 	r.RLock()
 	compression, err := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
 	if err != nil {
@@ -2289,7 +2299,7 @@ func (r *repoT) save() error {
 	r.RUnlock()
 
 	var ctx storage.MetadataContext
-	return manager.store.Put(ctx, storage.NewTKey(repoKey, tk), serialization)
+	return db.Put(ctx, storage.NewTKey(repoKey, tk), serialization)
 }
 
 // deletes a Repo from the datastore
