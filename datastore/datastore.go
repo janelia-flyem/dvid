@@ -699,6 +699,8 @@ func GetStorageDetails() (map[string]StorageStats, error) {
 		wg.Wait()
 
 		timedLog.Infof("Finished storage details for store %s: %d keys", store, numKeys)
+		dvid.Infof("\nStore %d stats:\n", store)
+		dvid.Infof("%s\n", stats.String())
 		statsByStore[string(alias)] = stats
 	}
 

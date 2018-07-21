@@ -410,15 +410,13 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			datastore.AddToRepoLog(uuid, []string{cmd.String()})
 
 		case "storage-details":
-			var stats map[string]datastore.StorageStats
-			stats, err = datastore.GetStorageDetails()
-			if err != nil {
-				return
-			}
-			for store, storeStats := range stats {
-				reply.Text += fmt.Sprintf("\nStore: %s\n", store)
-				reply.Text += storeStats.String()
-			}
+			go func() {
+				_, err := datastore.GetStorageDetails()
+				if err != nil {
+					dvid.Errorf("storage-details: %v\n", err)
+				}
+			}()
+			reply.Text = "Started storage details dump in log..."
 
 		case "migrate":
 			var source, oldStoreName string
