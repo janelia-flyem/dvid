@@ -63,6 +63,10 @@ DANGEROUS COMMANDS (only available via command line)
 
 EXPERIMENTAL COMMANDS
 
+	repo <UUID> storage-details
+
+		Print information on leaf/interior nodes.
+
 	repo <UUID> migrate <instance name> <old store config nickname> <settings...>
     
         Migrates all data from an old store (specified by the nickname in TOML file)
@@ -404,6 +408,17 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			}
 			reply.Text = fmt.Sprintf("Parents %v merged into node %s\n", parents, child)
 			datastore.AddToRepoLog(uuid, []string{cmd.String()})
+
+		case "storage-details":
+			var stats map[string]datastore.StorageStats
+			stats, err = datastore.GetStorageDetails()
+			if err != nil {
+				return
+			}
+			for store, storeStats := range stats {
+				reply.Text += fmt.Sprintf("\nStore: %s\n", store)
+				reply.Text += storeStats.String()
+			}
 
 		case "migrate":
 			var source, oldStoreName string

@@ -114,6 +114,15 @@ type RequestCtx interface {
 	SetRequestID(id string)
 }
 
+// DataKeyRange returns the min and max Key across all data keys.
+func DataKeyRange() (minKey, maxKey Key) {
+	var minID, maxID dvid.InstanceID
+	minID, maxID = 0, dvid.MaxInstanceID
+	minKey = append([]byte{dataKeyPrefix}, minID.Bytes()...)
+	maxKey = append([]byte{dataKeyPrefix}, maxID.Bytes()...)
+	return minKey, maxKey
+}
+
 const (
 	// MarkData is a byte indicating real data stored and should be the last byte of any
 	// versioned key.
@@ -273,7 +282,7 @@ func (ctx MetadataContext) RequestID() string {
 	return ""
 }
 
-// KeyToLocalIDs parses a key under a DataContext and returns instance, version and client ids.
+// DataKeyToLocalIDs parses a key and returns instance, version and client ids.
 func DataKeyToLocalIDs(k Key) (dvid.InstanceID, dvid.VersionID, dvid.ClientID, error) {
 	if k[0] != dataKeyPrefix {
 		return 0, 0, 0, fmt.Errorf("Cannot extract local IDs from a non-DataContext key")
@@ -530,7 +539,6 @@ func (ctx *DataContext) UnversionedKey(tk TKey) (Key, dvid.VersionID, error) {
 }
 
 func MergeKey(unvKey Key, verKey []byte) Key {
-
 	return Key(append([]byte(unvKey), verKey...))
 }
 

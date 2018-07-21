@@ -1071,7 +1071,7 @@ func loadHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func serverStorageHandler(w http.ResponseWriter, r *http.Request) {
-	jsonStr, err := datastore.GetStorageBreakdown()
+	jsonStr, err := datastore.GetStorageSummary()
 	if err != nil {
 		BadRequest(w, r, err)
 		return

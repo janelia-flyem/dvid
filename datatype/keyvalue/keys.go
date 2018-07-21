@@ -18,6 +18,15 @@ const (
 	keyStandard = 177
 )
 
+// DescribeTKeyClass returns a string explanation of what a particular TKeyClass
+// is used for.  Implements the datastore.TKeyClassDescriber interface.
+func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
+	if tkc == keyStandard {
+		return "keyvalue generic key"
+	}
+	return "unknown keyvalue key"
+}
+
 // NewTKey returns the "key" key component.
 func NewTKey(key string) (storage.TKey, error) {
 	return storage.NewTKey(keyStandard, append([]byte(key), 0)), nil

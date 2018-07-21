@@ -15,7 +15,7 @@ const (
 	// keyUnknown should never be used and is a check for corrupt or incorrectly set keys
 	keyUnknown storage.TKeyClass = iota
 
-	// keyLabelBlockRLE have keys of form 'b+s' and have a sparse volume
+	// keyLabelBlockRLE have keys ordered by label + block coord, and have a sparse volume
 	// encoding for its value. They are also useful for returning all blocks
 	// intersected by a label.
 	keyLabelBlockRLE = 227
@@ -24,6 +24,21 @@ const (
 
 	keyRepoLabelMax = 229
 )
+
+// DescribeTKeyClass returns a string explanation of what a particular TKeyClass
+// is used for.  Implements the datastore.TKeyClassDescriber interface.
+func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
+	switch tkc {
+	case keyLabelBlockRLE:
+		return "labelvol label + block coord key"
+	case keyLabelMax:
+		return "labelvol label max key"
+	case keyRepoLabelMax:
+		return "labelvol repo label max key"
+	default:
+	}
+	return "unknown labelvol key"
+}
 
 // NewTKey returns a TKey for storing a "label + spatial index", where
 // the spatial index references a block that contains a voxel with the given label.

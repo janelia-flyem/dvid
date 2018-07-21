@@ -1243,7 +1243,7 @@ func TestArbitrarySplit(t *testing.T) {
 			split = append(split, dvid.NewRLE(dvid.Point3d{x, y, z}, 40))
 		}
 	}
-	x = 50  // 10 x 10 x 10 notch in (0, 1, 0) block just in LabelA area
+	x = 50 // 10 x 10 x 10 notch in (0, 1, 0) block just in LabelA area
 	for z = 32; z < 42; z++ {
 		for y = 64; y < 74; y++ {
 			split = append(split, dvid.NewRLE(dvid.Point3d{x, y, z}, 10))
@@ -1989,6 +1989,13 @@ func TestMergeCleave(t *testing.T) {
 	// make sure you can't cleave all supervoxels from a label
 	reqStr = fmt.Sprintf("%snode/%s/labels/cleave/4", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "POST", reqStr, bytes.NewBufferString("[4]"))
+
+	// Check storage stats
+	stats, err := datastore.GetStorageDetails()
+	if err != nil {
+		t.Fatalf("error getting storage details: %v\n", err)
+	}
+	dvid.Infof("storage details: %s\n", stats)
 }
 
 func TestMultiscaleMergeCleave(t *testing.T) {

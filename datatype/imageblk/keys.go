@@ -23,6 +23,15 @@ const (
 	metaKeyClass = 24
 )
 
+// DescribeTKeyClass returns a string explanation of what a particular TKeyClass
+// is used for.  Implements the datastore.TKeyClassDescriber interface.
+func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
+	if tkc == keyImageBlock {
+		return "imageblk block coord key"
+	}
+	return "unknown imageblk key"
+}
+
 // NewTKeyByCoord returns a TKey for a block coord in string format.
 func NewTKeyByCoord(izyx dvid.IZYXString) storage.TKey {
 	return storage.NewTKey(keyImageBlock, []byte(izyx))
