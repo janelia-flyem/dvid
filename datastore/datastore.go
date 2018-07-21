@@ -588,6 +588,7 @@ func (stats StorageStats) String() string {
 
 // GetStorageDetails scans all key-value stores and returns detailed stats per instances.
 func GetStorageDetails() (map[string]StorageStats, error) {
+	timedLog := dvid.NewTimeLog()
 	stores, err := storage.AllStores()
 	if err != nil {
 		return nil, err
@@ -606,12 +607,17 @@ func GetStorageDetails() (map[string]StorageStats, error) {
 		wg := new(sync.WaitGroup)
 		wg.Add(1)
 		ch := make(chan *storage.KeyValue, 1000)
+		var numKeys uint64
 		go func(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 			for {
 				kv := <-ch
 				if kv == nil {
 					wg.Done()
 					return
+				}
+				numKeys++
+				if numKeys%100000 == 0 {
+					timedLog.Infof("Storage details for store %s, processing key %d", numKeys)
 				}
 				instanceID, versionID, _, err := storage.DataKeyToLocalIDs(kv.K)
 				if err != nil {
@@ -692,8 +698,10 @@ func GetStorageDetails() (map[string]StorageStats, error) {
 		}
 		wg.Wait()
 
+		timedLog.Infof("Finished storage details for store %s: %d keys", store, numKeys)
 		statsByStore[string(alias)] = stats
 	}
+
 	return statsByStore, nil
 }
 
