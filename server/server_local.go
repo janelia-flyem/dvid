@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -238,6 +239,7 @@ type ServerConfig struct {
 
 	AllowTiming  bool   // If true, returns * for Timing-Allow-Origin in response headers.
 	StartWebhook string // http address that should be called when server is started up.
+	StartJaneliaConfig string // like StartWebhook, but with Janelia-specific behavior
 
 	IIDGen   string `toml:"instance_id_gen"`
 	IIDStart uint32 `toml:"instance_id_start"`
@@ -254,9 +256,10 @@ func (sc ServerConfig) DatastoreInstanceConfig() datastore.InstanceConfig {
 
 // Initialize POSTs data to any set webhook indicating the server configuration.
 func (sc ServerConfig) Initialize() error {
-	if sc.StartWebhook == "" {
+	if sc.StartWebhook == "" && sc.StartJaneliaConfig == "" {
 		return nil
 	}
+
 	data := map[string]string{
 		"Host":         sc.Host,
 		"Note":         sc.Note,
@@ -267,19 +270,35 @@ func (sc ServerConfig) Initialize() error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest("POST", sc.StartWebhook, bytes.NewBuffer(jsonBytes))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
+	if sc.StartWebhook != "" {
+		req, err := http.NewRequest("POST", sc.StartWebhook, bytes.NewBuffer(jsonBytes))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("called webhook specified in TOML (%q) and received bad status code: %d", sc.StartWebhook, resp.StatusCode)
+		}
 	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("called webhook specified in TOML (%q) and received bad status code: %d", sc.StartWebhook, resp.StatusCode)
+
+	if sc.StartJaneliaConfig != "" {
+		// Janelia specific startup webhook; this format matches what's expected
+		//	by our local config server
+		// new: format like config server wants
+		resp, err := http.PostForm(sc.StartJaneliaConfig, url.Values{"config": {string(jsonBytes)}})
+		if err != nil {
+		    return err
+		}
+		if resp.StatusCode != http.StatusOK {
+		    return fmt.Errorf("called webhook specified in TOML (%q) and received bad status code: %d", sc.StartWebhook, resp.StatusCode)
+		}
 	}
 	return nil
 }
