@@ -19,6 +19,15 @@ const (
 	keyStandard = 133
 )
 
+// DescribeTKeyClass returns a string explanation of what a particular TKeyClass
+// is used for.  Implements the datastore.TKeyClassDescriber interface.
+func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
+	if tkc == keyStandard {
+		return "supervoxel data filename key"
+	}
+	return "unknown tarsupervoxels key"
+}
+
 // NewTKey returns the type-specific key corresponding to a supervoxel id in
 // simple ASCII bytes.
 func NewTKey(supervoxel uint64, ext string) (storage.TKey, error) {

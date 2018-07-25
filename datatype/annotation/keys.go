@@ -26,6 +26,21 @@ const (
 	keyBlock = 72
 )
 
+// DescribeTKeyClass returns a string explanation of what a particular TKeyClass
+// is used for.  Implements the datastore.TKeyClassDescriber interface.
+func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
+	switch tkc {
+	case keyTag:
+		return "annotation tag key"
+	case keyLabel:
+		return "annotation label key"
+	case keyBlock:
+		return "annotation block coord key"
+	default:
+	}
+	return "unknown annotation key"
+}
+
 // NewTagTKey returns a TKey for a given tag.
 func NewTagTKey(tag Tag) (storage.TKey, error) {
 	if len(tag) == 0 {

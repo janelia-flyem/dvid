@@ -315,6 +315,12 @@ func (d *Data) IsMutationRequest(action, endpoint string) bool {
 	return d.Data.IsMutationRequest(action, endpoint) // default for rest.
 }
 
+// DescribeTKeyClass returns a string explanation of what a particular TKeyClass
+// is used for.  Implements the datastore.TKeyClassDescriber interface.
+func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
+	return "ROI block + span key"
+}
+
 // CopyPropertiesFrom copies the data instance-specific properties from a given
 // data instance into the receiver's properties.  Fulfills the datastore.PropertyCopier interface.
 func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSpec) error {

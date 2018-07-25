@@ -29,6 +29,23 @@ const (
 	keyRepoLabelMax = 238
 )
 
+// DescribeTKeyClass returns a string explanation of what a particular TKeyClass
+// is used for.  Implements the datastore.TKeyClassDescriber interface.
+func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
+	switch tkc {
+	case keyLabelBlock:
+		return "labelarray scale + block coord key"
+	case keyLabelIndex:
+		return "labelarray label index key"
+	case keyLabelMax:
+		return "labelarray label max key"
+	case keyRepoLabelMax:
+		return "labelarray repo label max key"
+	default:
+	}
+	return "unknown labelarray key"
+}
+
 var (
 	maxLabelTKey     = storage.NewTKey(keyLabelMax, nil)
 	maxRepoLabelTKey = storage.NewTKey(keyRepoLabelMax, nil)

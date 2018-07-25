@@ -25,6 +25,19 @@ const (
 	keyTypeLabel = 98
 )
 
+// DescribeTKeyClass returns a string explanation of what a particular TKeyClass
+// is used for.  Implements the datastore.TKeyClassDescriber interface.
+func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
+	switch tkc {
+	case keyTypeLabel:
+		return "labelsz index type + label key"
+	case keyTypeSizeLabel:
+		return "labelsz index type + size + label key"
+	default:
+	}
+	return "unknown labelsz key"
+}
+
 const (
 	UnknownIndex IndexType = iota
 	PostSyn                // Post-synaptic element

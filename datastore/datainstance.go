@@ -201,6 +201,11 @@ type DataService interface {
 	// ServeHTTP handles HTTP requests in the context of a particular version.
 	ServeHTTP(dvid.UUID, *VersionedCtx, http.ResponseWriter, *http.Request)
 
+	// DescribeTKeyClass explains in a string what a particular TKeyClass
+	// is used for.  For example, one class of TKey for the label data types is the block-indexed
+	// voxel values.
+	DescribeTKeyClass(storage.TKeyClass) string
+
 	// PushData handles DVID-to-DVID transmission of key-value pairs, optionally
 	// delimited by type-specific filter specifications (e.g., "roi:roiname,uuid")
 	// and a set of versions.  DataService implementations can automatically embed
@@ -873,6 +878,13 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 	}
 
 	return nil
+}
+
+// DescribeTKeyClass returns a string explanation of what a particular TKeyClass
+// is used for.  This will be overriden in data types, but if not, this provides
+// a fallback for all data types.
+func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
+	return fmt.Sprintf("generic %s key", d.TypeName())
 }
 
 // PushData is the base implementation of pushing data instance key-value pairs

@@ -78,11 +78,15 @@ ifdef PACKAGES
 	DVID_PACKAGES = ${DVID_GO}/${PACKAGES}
 endif
 
+ifdef TEST
+	SPECIFIC_TEST = -test.run ${TEST}
+endif
+
 test: dvid 
-	go test -tags "${DVID_BACKENDS}" ${DVID_PACKAGES}
+	go test ${SPECIFIC_TEST} -tags "${DVID_BACKENDS}" ${DVID_PACKAGES}
 
 test-verbose: dvid
-	go test -v -tags "${DVID_BACKENDS}" ${DVID_PACKAGES}
+	go test -v ${SPECIFIC_TEST} -tags "${DVID_BACKENDS}" ${DVID_PACKAGES}
 
 # Coverage (does this repeat the test step above?)
 coverage: dvid

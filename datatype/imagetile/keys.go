@@ -24,6 +24,12 @@ import (
 //	keyTileCoord = 177
 //)
 
+// DescribeTKeyClass returns a string explanation of what a particular TKeyClass
+// is used for.  Implements the datastore.TKeyClassDescriber interface.
+func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
+	return "imagetile generic key"
+}
+
 type TileReq struct {
 	tile  dvid.ChunkPoint3d
 	plane dvid.DataShape

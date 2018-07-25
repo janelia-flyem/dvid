@@ -562,8 +562,153 @@ func DeleteConflicts(uuid dvid.UUID, data DataService, oldParents, newParents []
 	return nil
 }
 
-// GetStorageBreakdown returns JSON for all the data instances in the stores.
-func GetStorageBreakdown() (string, error) {
+type KeyStats struct {
+	LeafKV, IntKV       uint64 // # of kv pairs in leaf and interior nodes, respectively
+	LeafBytes, IntBytes uint64 // # of bytes in leaf and interior nodes, respectively
+}
+
+type InstanceStats map[string]KeyStats // index is description of tkey class
+
+type StorageStats map[string]InstanceStats
+
+func (stats StorageStats) String() string {
+	var out string
+	for name, istats := range stats {
+		out += fmt.Sprintf("\nData instance: %s\n", name)
+		for keyType, keyStats := range istats {
+			out += fmt.Sprintf("-- %s:\n", keyType)
+			out += fmt.Sprintf("   KVs in leafs:    %d\n", keyStats.LeafKV)
+			out += fmt.Sprintf("   KVs in interior: %d\n", keyStats.IntKV)
+			out += fmt.Sprintf("   Bytes in leafs:    %d\n", keyStats.LeafBytes)
+			out += fmt.Sprintf("   Bytes in interior: %d\n", keyStats.IntBytes)
+		}
+	}
+	return out
+}
+
+// GetStorageDetails scans all key-value stores and returns detailed stats per instances.
+func GetStorageDetails() (map[string]StorageStats, error) {
+	timedLog := dvid.NewTimeLog()
+	stores, err := storage.AllStores()
+	if err != nil {
+		return nil, err
+	}
+	isLeaf := make(map[dvid.VersionID]bool)
+
+	statsByStore := make(map[string]StorageStats, len(stores))
+	for alias, store := range stores {
+		stats := make(StorageStats)
+		db, ok := store.(storage.OrderedKeyValueGetter)
+		if !ok {
+			dvid.Infof("unable to get storage details for store %s: not ordered kv\n", store)
+			continue
+		}
+
+		wg := new(sync.WaitGroup)
+		wg.Add(1)
+		ch := make(chan *storage.KeyValue, 1000)
+		var numKeys uint64
+		go func(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
+			for {
+				kv := <-ch
+				if kv == nil {
+					wg.Done()
+					return
+				}
+				numKeys++
+				if numKeys%100000 == 0 {
+					timedLog.Infof("Storage details for store %s, processing key %d", store, numKeys)
+				}
+				instanceID, versionID, _, err := storage.DataKeyToLocalIDs(kv.K)
+				if err != nil {
+					dvid.Infof("error trying to parse data key %x: %v\n", kv.K, err)
+					continue
+				}
+				// get uuid and repo and find out if it's leaf
+				d, err := manager.getDataByInstanceID(instanceID)
+				if err != nil {
+					dvid.Errorf("got key with instance id %d that has no associated data: %v\n", instanceID, err)
+					continue
+				}
+				leaf, wasSeen := isLeaf[versionID]
+				if !wasSeen {
+					uuid, found := manager.versionToUUID[versionID]
+					if !found {
+						dvid.Errorf("got key with version %d and no uuid mapping: skipping\n", versionID)
+						continue
+					}
+					repo, found := manager.repos[uuid]
+					if !found {
+						dvid.Errorf("got key with version %d, uuid %s, but no repo!\n", versionID, uuid)
+						continue
+					}
+					repo.RLock()
+					if repo.dag == nil {
+						dvid.Errorf("repo %s has a nil dag: skipping\n", repo.uuid)
+						repo.RUnlock()
+						continue
+					}
+					node, found := repo.dag.nodes[versionID]
+					repo.RUnlock()
+					if !found {
+						dvid.Errorf("version %d not found in dag nodes, skipping\n", versionID)
+						continue
+					}
+					if len(node.children) > 0 {
+						leaf = false
+						isLeaf[versionID] = false
+					} else {
+						leaf = true
+						isLeaf[versionID] = true
+					}
+				}
+				tk, err := storage.TKeyFromKey(kv.K)
+				if err != nil {
+					dvid.Errorf("bad tkey extraction: %v\n", kv.K)
+					continue
+				}
+				if len(tk) == 0 {
+					dvid.Errorf("bad tkey with no length, skipping key %s\n", kv.K)
+					continue
+				}
+				tkclass := storage.TKeyClass(tk[0])
+				desc := d.DescribeTKeyClass(tkclass)
+				dataid := fmt.Sprintf("%s-%s", d.RootUUID(), d.DataName())
+				istats := stats[dataid]
+				if istats == nil {
+					istats = make(map[string]KeyStats)
+				}
+				kstats := istats[desc]
+				if leaf {
+					kstats.LeafKV++
+					kstats.LeafBytes += uint64(len(kv.V))
+				} else {
+					kstats.IntKV++
+					kstats.IntBytes += uint64(len(kv.V))
+				}
+				istats[desc] = kstats
+				stats[dataid] = istats
+			}
+		}(wg, ch)
+
+		minKey, maxKey := storage.DataKeyRange()
+		keysOnly := false
+		if err = db.RawRangeQuery(minKey, maxKey, keysOnly, ch, nil); err != nil {
+			return nil, err
+		}
+		wg.Wait()
+
+		timedLog.Infof("Finished storage details for store %s: %d keys", store, numKeys)
+		dvid.Infof("\nStore %d stats:\n", store)
+		dvid.Infof("%s\n", stats.String())
+		statsByStore[string(alias)] = stats
+	}
+
+	return statsByStore, nil
+}
+
+// GetStorageSummary returns JSON for all the data instances in the stores.
+func GetStorageSummary() (string, error) {
 	stores, err := storage.AllStores()
 	if err != nil {
 		return "", err
