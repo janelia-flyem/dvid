@@ -30,6 +30,7 @@ func TestStartWebhook(t *testing.T) {
 		t.Fatalf("bad TOML configuration: %v\n", err)
 	}
 
+	// test handler for standard start webhook
 	var sent []byte
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var err error
@@ -41,12 +42,39 @@ func TestStartWebhook(t *testing.T) {
 	defer ts.Close()
 	tomlCfg.Server.StartWebhook = ts.URL
 
+
+	// test handler for Janelia-specific start webhook
+    var data string
+    ts2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        var err error
+
+        err = r.ParseForm()
+        if err != nil {
+            t.Fatalf("couldn't parse posted form from StartJaneliaConfig: %v\n", err)
+        }
+
+        data = r.PostFormValue("config")
+        if len(data) == 0 {
+            t.Fatalf("no data sent to StartJaneliaConfig: %v\n", err)
+        }
+    }))
+    defer ts2.Close()
+    tomlCfg.Server.StartJaneliaConfig = ts2.URL
+
+    // check server startup
 	if err := tc.Server.Initialize(); err != nil {
 		t.Fatalf("couldn't initialize server: %v\n", err)
 	}
+
+	// check standard webhook
 	if string(sent) != `{"HTTP Address":"localhost:8000","Host":"mygreatserver.test.com","Note":"You can put anything you want in here and have it available via /api/server/note.\nMultiple lines!\n","RPC Address":"localhost:8001"}` {
 		t.Fatalf("Expected server info to be sent to webhook, but received this instead:\n%s\n", string(sent))
 	}
+
+	// check Janelia webhook
+    if data != `{"HTTP Address":"localhost:8000","Host":"mygreatserver.test.com","Note":"You can put anything you want in here and have it available via /api/server/note.\nMultiple lines!\n","RPC Address":"localhost:8001"}` {
+        t.Fatalf("Expected server info to be sent to Janelia webhook, but received this instead:\n%s\n", data)
+    }
 
 	// check if there's no recipient for webhook.
 	tomlCfg.Server.StartWebhook = "http://mybadurl:2718"
