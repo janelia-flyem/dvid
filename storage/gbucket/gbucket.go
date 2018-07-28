@@ -85,11 +85,14 @@ const (
 	// value versioning
 	VALUEVERSION = 1.2
 
+	// version where multi-bucket is disabled
+	DISMULTIBUCKET = 1.3
+
 	// Repo root bucket name
 	REPONAME = "-dvidrepo-"
 
 	// current version of gbucket (must be >1 byte string)
-	CURVER = "1.2"
+	CURVER = "1.3"
 
 	// first gbucket version (must be >1 byte string)
 	ORIGVER = "1.0"
@@ -229,7 +232,7 @@ func (e *Engine) newGBucket(config dvid.StoreConfig) (*GBucket, bool, error) {
 	gb.vsize = 4
 
 	// check version enables repo
-	if gb.version >= MULTIBUCKET {
+	if gb.version < DISMULTIBUCKET && gb.version >= MULTIBUCKET {
 		gb.repo2bucket = make(map[string]*api.BucketHandle)
 		// TODO: pre-populate based on custom repo names
 	}
@@ -332,7 +335,7 @@ func (db *GBucket) bucketHandle(ctx storage.Context) (*api.BucketHandle, error) 
 	if err != nil {
 		return nil, err
 	}
-	if string(rootuuid) == "" || db.version < MULTIBUCKET {
+	if string(rootuuid) == "" || db.version < MULTIBUCKET || db.version >= DISMULTIBUCKET {
 		// unversioned context should be sent to master bucket
 		return db.bucket, nil
 	}
@@ -1118,7 +1121,7 @@ func (db *GBucket) getKeysInRangeRaw(ctx storage.Context, minKey, maxKey storage
 	object_attr, done := object_list.Next()
 	for done != iterator.Done {
 		if done != nil {
-		   return []storage.Key(keys), nil
+			return []storage.Key(keys), nil
 		}
 		decstr, err := hex.DecodeString(object_attr.Name)
 		if err != nil {
