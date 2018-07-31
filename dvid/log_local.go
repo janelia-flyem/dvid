@@ -39,16 +39,61 @@ func (c *LogConfig) SetLogger() {
 
 // --- Logger implementation ----
 
+// Debug writes directly to logger at DEBUG level.
+func (slog stdLogger) Debug(s string) {
+	if logger.Logger != nil {
+		logger.Write([]byte(" DEBUG " + s))
+	} else {
+		log.Printf(" DEBUG " + s)
+	}
+}
+
+// Info writes directly to logger at INFO level
+func (slog stdLogger) Info(s string) {
+	if logger.Logger != nil {
+		logger.Write([]byte(" INFO " + s))
+	} else {
+		log.Printf(" INFO " + s)
+	}
+}
+
+// Warning writes directly to logger at INFO level
+func (slog stdLogger) Warning(s string) {
+	if logger.Logger != nil {
+		logger.Write([]byte(" WARNING " + s))
+	} else {
+		log.Printf(" WARNING " + s)
+	}
+}
+
+// Error writes directly to logger at ERROR level
+func (slog stdLogger) Error(s string) {
+	if logger.Logger != nil {
+		logger.Write([]byte(" ERROR " + s))
+	} else {
+		log.Printf(" ERROR " + s)
+	}
+}
+
+// Critical writes directly to logger at CRITICAL level
+func (slog stdLogger) Critical(s string) {
+	if logger.Logger != nil {
+		logger.Write([]byte(" CRITICAL " + s))
+	} else {
+		log.Printf(" CRITICAL " + s)
+	}
+}
+
 // Debugf formats its arguments analogous to fmt.Printf and records the text as a log
 // message at Debug level.
 func (slog stdLogger) Debugf(format string, args ...interface{}) {
-	log.Printf("   DEBUG "+format, args...)
+	log.Printf(" DEBUG "+format, args...)
 }
 
 // Infof is like Debugf, but at Info level and will be written regardless if not in
 // verbose mode.
 func (slog stdLogger) Infof(format string, args ...interface{}) {
-	log.Printf("    INFO "+format, args...)
+	log.Printf(" INFO "+format, args...)
 }
 
 // Warningf is like Debugf, but at Warning level.
@@ -58,57 +103,12 @@ func (slog stdLogger) Warningf(format string, args ...interface{}) {
 
 // Errorf is like Debugf, but at Error level.
 func (slog stdLogger) Errorf(format string, args ...interface{}) {
-	log.Printf("  ERROR "+format, args...)
+	log.Printf(" ERROR "+format, args...)
 }
 
 // Criticalf is like Debugf, but at Critical level.
 func (slog stdLogger) Criticalf(format string, args ...interface{}) {
-	log.Printf("CRITICAL "+format, args...)
-}
-
-// Debug writes directly to logger at DEBUG level.
-func (slog stdLogger) Debug(s string) {
-	if logger.Logger != nil {
-		logger.Write([]byte("   DEBUG " + s))
-	} else {
-		log.Printf("   DEBUG " + s)
-	}
-}
-
-// Info writes directly to logger at INFO level
-func (slog stdLogger) Info(s string) {
-	if logger.Logger != nil {
-		logger.Write([]byte("   INFO " + s))
-	} else {
-		log.Printf("   INFO " + s)
-	}
-}
-
-// Warning writes directly to logger at INFO level
-func (slog stdLogger) Warning(s string) {
-	if logger.Logger != nil {
-		logger.Write([]byte("   WARNING " + s))
-	} else {
-		log.Printf("   WARNING " + s)
-	}
-}
-
-// Error writes directly to logger at ERROR level
-func (slog stdLogger) Error(s string) {
-	if logger.Logger != nil {
-		logger.Write([]byte("   ERROR " + s))
-	} else {
-		log.Printf("   ERROR " + s)
-	}
-}
-
-// Critical writes directly to logger at CRITICAL level
-func (slog stdLogger) Critical(s string) {
-	if logger.Logger != nil {
-		logger.Write([]byte("   CRITICAL " + s))
-	} else {
-		log.Printf("   CRITICAL " + s)
-	}
+	log.Printf(" CRITICAL "+format, args...)
 }
 
 func (slog stdLogger) Shutdown() {

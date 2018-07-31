@@ -67,8 +67,24 @@ func Shutdown() {
 // Logger provides a way for the application to log messages at different severities.
 // Implementations will vary if the app is in the cloud or on a local server.
 type Logger interface {
+	// Debug writes a string synchronously without formatting using Debug level.
+	Debug(s string)
+
+	// Info writes a string synchronously without formatting using Info level.
+	Info(s string)
+
+	// Warning writes a string synchronously without formatting using Warning level.
+	Warning(s string)
+
+	// Error writes a string synchronously without formatting using Error level.
+	Error(s string)
+
+	// Critical writes a string synchronously without formatting using Critical level.
+	Critical(s string)
+
 	// Debugf formats its arguments analogous to fmt.Printf and records the text as a log
 	// message at Debug level.  If dvid.Verbose is not true, these logs aren't written.
+	// Messages are sent through a buffered channel to make logging more asynchronous.
 	Debugf(format string, args ...interface{})
 
 	// Infof is like Debugf, but at Info level and will be written regardless if not in
@@ -83,21 +99,6 @@ type Logger interface {
 
 	// Criticalf is like Debugf, but at Critical level.
 	Criticalf(format string, args ...interface{})
-
-	// Debug writes a string without formatting using Debug level.
-	Debug(s string)
-
-	// Info writes a string without formatting using Info level.
-	Info(s string)
-
-	// Warning writes a string without formatting using Warning level.
-	Warning(s string)
-
-	// Error writes a string without formatting using Error level.
-	Error(s string)
-
-	// Critical writes a string without formatting using Critical level.
-	Critical(s string)
 
 	// Shutdown makes sure logs are closed.
 	Shutdown()
@@ -140,6 +141,41 @@ func Errorf(format string, args ...interface{}) {
 func Criticalf(format string, args ...interface{}) {
 	if mode <= CriticalMode {
 		logCh <- logMessage{f: logger.Critical, msg: fmt.Sprintf(format, args...)}
+	}
+}
+
+func timestr() string {
+	t := time.Now()
+	return fmt.Sprintf("%d/%02d/%02d %02d:%02d:%02d", t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
+}
+
+func TimeDebugf(format string, args ...interface{}) {
+	if mode <= DebugMode {
+		logCh <- logMessage{f: logger.Debug, msg: fmt.Sprintf(timestr()+" "+format, args...)}
+	}
+}
+
+func TimeInfof(format string, args ...interface{}) {
+	if mode <= InfoMode {
+		logCh <- logMessage{f: logger.Info, msg: fmt.Sprintf(timestr()+" "+format, args...)}
+	}
+}
+
+func TimeWarningf(format string, args ...interface{}) {
+	if mode <= WarningMode {
+		logCh <- logMessage{f: logger.Warning, msg: fmt.Sprintf(timestr()+" "+format, args...)}
+	}
+}
+
+func TimeErrorf(format string, args ...interface{}) {
+	if mode <= ErrorMode {
+		logCh <- logMessage{f: logger.Error, msg: fmt.Sprintf(timestr()+" "+format, args...)}
+	}
+}
+
+func TimeCriticalf(format string, args ...interface{}) {
+	if mode <= CriticalMode {
+		logCh <- logMessage{f: logger.Critical, msg: fmt.Sprintf(timestr()+" "+format, args...)}
 	}
 }
 

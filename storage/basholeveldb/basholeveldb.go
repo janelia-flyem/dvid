@@ -169,14 +169,14 @@ func (e Engine) newLevelDB(config dvid.StoreConfig) (*LevelDB, bool, error) {
 	// Is there a database already at this path?  If not, create.
 	var created bool
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		dvid.Infof("Database not already at path (%s). Creating directory...\n", path)
+		dvid.TimeInfof("Database not already at path (%s). Creating directory...\n", path)
 		created = true
 		// Make a directory at the path.
 		if err := os.MkdirAll(path, 0744); err != nil {
 			return nil, true, fmt.Errorf("Can't make directory at %s: %v", path, err)
 		}
 	} else {
-		dvid.Infof("Found directory at %s (err = %v)\n", path, err)
+		dvid.TimeInfof("Found directory at %s (err = %v)\n", path, err)
 	}
 
 	// Open the database
@@ -194,7 +194,7 @@ func (e Engine) newLevelDB(config dvid.StoreConfig) (*LevelDB, bool, error) {
 		options:   opt,
 	}
 
-	dvid.Infof("Opening basholeveldb @ path %s\n", path)
+	dvid.TimeInfof("Opening basholeveldb @ path %s\n", path)
 	ldb, err := levigo.Open(path, opt.Options)
 	if err != nil {
 		return nil, false, err
@@ -330,7 +330,7 @@ func getOptions(config dvid.Config) (*leveldbOptions, error) {
 	} else {
 		cacheSize *= dvid.Mega
 	}
-	dvid.Infof("leveldb cache size: %s\n",
+	dvid.TimeInfof("leveldb cache size: %s\n",
 		humanize.Bytes(uint64(cacheSize)))
 	opt.SetLRUCacheSize(cacheSize)
 
@@ -343,7 +343,7 @@ func getOptions(config dvid.Config) (*leveldbOptions, error) {
 	} else {
 		writeBufferSize *= dvid.Mega
 	}
-	dvid.Infof("leveldb write buffer size: %s\n",
+	dvid.TimeInfof("leveldb write buffer size: %s\n",
 		humanize.Bytes(uint64(writeBufferSize)))
 	opt.SetWriteBufferSize(writeBufferSize)
 
@@ -439,7 +439,7 @@ func (db *LevelDB) metadataExists() (bool, error) {
 	if err := it.GetError(); err != nil {
 		return false, err
 	}
-	dvid.Infof("No metadata found for %s...\n", db)
+	dvid.TimeInfof("No metadata found for %s...\n", db)
 	return false, nil
 }
 
@@ -1473,7 +1473,7 @@ type leveldbOptions struct {
 // the next time the database is opened.
 func (opts *leveldbOptions) SetWriteBufferSize(nBytes int) {
 	if nBytes != opts.writeBufferSize {
-		dvid.Debugf("Write buffer set to %d bytes.\n", nBytes)
+		dvid.TimeDebugf("Write buffer set to %d bytes.\n", nBytes)
 		opts.Options.SetWriteBufferSize(nBytes)
 		opts.writeBufferSize = nBytes
 	}
@@ -1506,7 +1506,7 @@ func (opts *leveldbOptions) GetMaxOpenFiles() (nFiles int) {
 // compression is enabled.  This parameter can be changed dynamically.
 func (opts *leveldbOptions) SetBlockSize(nBytes int) {
 	if nBytes != opts.blockSize {
-		dvid.Debugf("Block size set to %d bytes.\n", nBytes)
+		dvid.TimeDebugf("Block size set to %d bytes.\n", nBytes)
 		opts.Options.SetBlockSize(nBytes)
 		opts.blockSize = nBytes
 	}
@@ -1524,7 +1524,7 @@ func (opts *leveldbOptions) SetLRUCacheSize(nBytes int) {
 		if opts.cache != nil {
 			opts.cache.Close()
 		}
-		dvid.Debugf("LRU cache size set to %d bytes.\n", nBytes)
+		dvid.TimeDebugf("LRU cache size set to %d bytes.\n", nBytes)
 		opts.cache = levigo.NewLRUCache(nBytes)
 		opts.nLRUCacheBytes = nBytes
 		opts.Options.SetCache(opts.cache)

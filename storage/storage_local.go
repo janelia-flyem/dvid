@@ -243,7 +243,7 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 		}
 		store, created, err := NewStore(dbconfig)
 		if err != nil {
-			dvid.Errorf("dbconfig: %v\n", dbconfig)
+			dvid.TimeErrorf("dbconfig: %v\n", dbconfig)
 			return false, fmt.Errorf("bad store %q: %v", alias, err)
 		}
 		if alias == backend.Metadata {
@@ -278,9 +278,9 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 		manager.metadataStore = manager.defaultKV
 		createdMetadata = createdDefault
 	}
-	dvid.Infof("Default kv store: %s\n", manager.defaultKV)
-	dvid.Infof("Default log store: %s\n", manager.defaultLog)
-	dvid.Infof("Metadata store: %s\n", manager.metadataStore)
+	dvid.TimeInfof("Default kv store: %s\n", manager.defaultKV)
+	dvid.TimeInfof("Default log store: %s\n", manager.defaultLog)
+	dvid.TimeInfof("Metadata store: %s\n", manager.metadataStore)
 
 	// Setup the groupcache if specified.
 	err = setupGroupcache(backend.Groupcache)

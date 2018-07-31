@@ -237,8 +237,8 @@ type ServerConfig struct {
 	WebClient   string
 	Note        string
 
-	AllowTiming  bool   // If true, returns * for Timing-Allow-Origin in response headers.
-	StartWebhook string // http address that should be called when server is started up.
+	AllowTiming        bool   // If true, returns * for Timing-Allow-Origin in response headers.
+	StartWebhook       string // http address that should be called when server is started up.
 	StartJaneliaConfig string // like StartWebhook, but with Janelia-specific behavior
 
 	IIDGen   string `toml:"instance_id_gen"`
@@ -294,10 +294,10 @@ func (sc ServerConfig) Initialize() error {
 		// new: format like config server wants
 		resp, err := http.PostForm(sc.StartJaneliaConfig, url.Values{"config": {string(jsonBytes)}})
 		if err != nil {
-		    return err
+			return err
 		}
 		if resp.StatusCode != http.StatusOK {
-		    return fmt.Errorf("called webhook specified in TOML (%q) and received bad status code: %d", sc.StartWebhook, resp.StatusCode)
+			return fmt.Errorf("called webhook specified in TOML (%q) and received bad status code: %d", sc.StartWebhook, resp.StatusCode)
 		}
 	}
 	return nil
@@ -405,12 +405,11 @@ func Serve() {
 		tc.Server.RPCAddress = DefaultRPCAddress
 	}
 
-	dvid.Infof("------------------\n")
-	dvid.Infof("DVID code version: %s\n", gitVersion)
-	dvid.Infof("Serving HTTP on %s (host alias %q)\n", tc.Server.HTTPAddress, tc.Server.Host)
-	dvid.Infof("Serving command-line use via RPC %s\n", tc.Server.RPCAddress)
-	dvid.Infof("Using web client files from %s\n", tc.Server.WebClient)
-	dvid.Infof("Using %d of %d logical CPUs for DVID.\n", dvid.NumCPU, runtime.NumCPU())
+	dvid.TimeInfof("DVID code version: %s\n", gitVersion)
+	dvid.TimeInfof("Serving HTTP on %s (host alias %q)\n", tc.Server.HTTPAddress, tc.Server.Host)
+	dvid.TimeInfof("Serving command-line use via RPC %s\n", tc.Server.RPCAddress)
+	dvid.TimeInfof("Using web client files from %s\n", tc.Server.WebClient)
+	dvid.TimeInfof("Using %d of %d logical CPUs for DVID.\n", dvid.NumCPU, runtime.NumCPU())
 
 	// Launch the web server
 	go serveHTTP()

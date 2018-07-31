@@ -91,7 +91,7 @@ func Initialize(initMetadata bool, iconfig InstanceConfig) error {
 	// TODO: parallelize metadata init fetches for high-latency backends
 	if initMetadata {
 		// Initialize repo management data in storage
-		dvid.Infof("Initializing repo management data in storage...\n")
+		dvid.TimeInfof("Initializing repo management data in storage...\n")
 		if err := m.putNewIDs(); err != nil {
 			return err
 		}
@@ -104,7 +104,7 @@ func Initialize(initMetadata bool, iconfig InstanceConfig) error {
 		}
 	} else {
 		// Load the repo metadata
-		dvid.Infof("Loading metadata from storage...\n")
+		dvid.TimeInfof("Loading metadata from storage...\n")
 		if err = m.loadMetadata(); err != nil {
 			return fmt.Errorf("Error loading metadata: %v", err)
 		}
@@ -186,7 +186,7 @@ func ReloadMetadata() error {
 	}
 
 	// Load the repo metadata
-	dvid.Infof("Loading metadata from storage...\n")
+	dvid.TimeInfof("Loading metadata from storage...\n")
 	if err = m.loadMetadata(); err != nil {
 		return fmt.Errorf("Error loading metadata: %v", err)
 	}
@@ -463,7 +463,7 @@ func (m *repoManager) loadVersion0() error {
 			dagVersions = append(dagVersions, v)
 			uuid, found := m.versionToUUID[v]
 			if !found {
-				dvid.Errorf("Version id %d found in repo %s (id %d) not in cache map. Adding it...", v, r.uuid, r.id)
+				dvid.TimeErrorf("Version id %d found in repo %s (id %d) not in cache map. Adding it...", v, r.uuid, r.id)
 				m.versionToUUID[v] = node.uuid
 				m.uuidToVersion[node.uuid] = v
 				uuid = node.uuid
@@ -479,33 +479,33 @@ func (m *repoManager) loadVersion0() error {
 			if dataUUID == "" {
 				dataUUID = dvid.NewUUID()
 				dataservice.SetDataUUID(dataUUID)
-				dvid.Infof("Assigned data %q to data UUID %s.\n", dataname, dataservice.DataUUID())
+				dvid.TimeInfof("Assigned data %q to data UUID %s.\n", dataname, dataservice.DataUUID())
 				saveRepo = true
 			}
 
 			migrator, doMigrate := dataservice.(TypeMigrator)
 			if doMigrate {
-				dvid.Infof("Migrating instance %q of type %q to ...\n", dataservice.DataName(), dataservice.TypeName())
+				dvid.TimeInfof("Migrating instance %q of type %q to ...\n", dataservice.DataName(), dataservice.TypeName())
 				dataservice, err = migrator.MigrateData(dagVersions)
 				if err != nil {
 					return fmt.Errorf("Error migrating data instance: %v", err)
 				}
 				r.data[dataname] = dataservice
 				saveRepo = true
-				dvid.Infof("Now instance %q of type %q ...\n", dataservice.DataName(), dataservice.TypeName())
+				dvid.TimeInfof("Now instance %q of type %q ...\n", dataservice.DataName(), dataservice.TypeName())
 			}
 
 			upgrader, upgradable := dataservice.(TypeUpgrader)
 			if upgradable {
 				oldV := dataservice.TypeVersion()
-				dvid.Infof("Upgrading instance %q, type %q from version %s...\n", dataservice.DataName(), dataservice.TypeName(), oldV)
+				dvid.TimeInfof("Upgrading instance %q, type %q from version %s...\n", dataservice.DataName(), dataservice.TypeName(), oldV)
 				upgraded, err := upgrader.UpgradeData()
 				if err != nil {
 					return fmt.Errorf("Error upgrading data instance %q: %v", dataservice.DataName(), err)
 				}
 				if upgraded {
 					saveRepo = true
-					dvid.Infof("Upgraded instance %q, type %q from version %s to %s\n", dataservice.DataName(), dataservice.TypeName(), oldV, dataservice.TypeVersion())
+					dvid.TimeInfof("Upgraded instance %q, type %q from version %s to %s\n", dataservice.DataName(), dataservice.TypeName(), oldV, dataservice.TypeVersion())
 				}
 			}
 
@@ -527,7 +527,7 @@ func (m *repoManager) loadVersion0() error {
 				if err != nil {
 					return err
 				}
-				dvid.Infof("Initialized data handlers for instance %q on repo load.\n", dataservice.DataName())
+				dvid.TimeInfof("Initialized data handlers for instance %q on repo load.\n", dataservice.DataName())
 			}
 		}
 
@@ -543,12 +543,12 @@ func (m *repoManager) loadVersion0() error {
 						if found {
 							subs, err := syncer.GetSyncSubs(syncedData)
 							if err != nil {
-								dvid.Criticalf("Skipping bad sync of data %q to data %q: %v\n", dataservice.DataName(), syncedData.DataName(), err)
+								dvid.TimeCriticalf("Skipping bad sync of data %q to data %q: %v\n", dataservice.DataName(), syncedData.DataName(), err)
 								continue
 							}
 							r.addSyncGraph(subs)
 						} else {
-							dvid.Errorf("Skipping bad sync of %q with missing data uuid %s", dataservice.DataName(), u)
+							dvid.TimeErrorf("Skipping bad sync of %q with missing data uuid %s", dataservice.DataName(), u)
 						}
 					}
 				} else {
@@ -557,7 +557,7 @@ func (m *repoManager) loadVersion0() error {
 					if len(syncNames) == 0 {
 						continue
 					}
-					dvid.Infof("Converting data %q %d legacy sync names to data UUIDs...\n", dataservice.DataName(), len(syncNames))
+					dvid.TimeInfof("Converting data %q %d legacy sync names to data UUIDs...\n", dataservice.DataName(), len(syncNames))
 					syncs := dvid.UUIDSet{}
 					for _, name := range syncNames {
 						// get the dataservice associated with this synced data.
@@ -571,14 +571,14 @@ func (m *repoManager) loadVersion0() error {
 							r.addSyncGraph(subs)
 							// convert the sync names to data UUIDs
 							syncs[syncedData.DataUUID()] = struct{}{}
-							dvid.Infof("  Converted synced data %q to its UUID: %s\n", name, syncedData.DataUUID())
+							dvid.TimeInfof("  Converted synced data %q to its UUID: %s\n", name, syncedData.DataUUID())
 						} else {
-							dvid.Errorf(" Skipping sync of %q with missing data %q for repo @ %s", dataservice.DataName(), name, r.uuid)
+							dvid.TimeErrorf(" Skipping sync of %q with missing data %q for repo @ %s", dataservice.DataName(), name, r.uuid)
 						}
 					}
-					dvid.Infof("After conversion data %q has syncs: %v\n", dataservice.DataName(), syncs)
+					dvid.TimeInfof("After conversion data %q has syncs: %v\n", dataservice.DataName(), syncs)
 					dataservice.SetSync(syncs)
-					dvid.Infof("After calling SetSync we get back: %v\n", syncer.SyncedData())
+					dvid.TimeInfof("After calling SetSync we get back: %v\n", syncer.SyncedData())
 					saveRepo = true
 				}
 			}
@@ -600,7 +600,7 @@ func (m *repoManager) loadVersion0() error {
 
 		// If updates had to be made, save the migrated repo metadata.
 		if saveRepo {
-			dvid.Infof("Re-saved repo with root %s due to migrations.\n", r.uuid)
+			dvid.TimeInfof("Re-saved repo with root %s due to migrations.\n", r.uuid)
 			if err := r.saveToStore(m.store); err != nil {
 				return err
 			}
@@ -612,7 +612,7 @@ func (m *repoManager) loadVersion0() error {
 
 	for id, uuid := range m.repoToUUID {
 		if m.repos[uuid] == nil {
-			dvid.Infof("Found empty repo id %d (uuid %s)... deleting.\n", id, uuid)
+			dvid.TimeInfof("Found empty repo id %d (uuid %s)... deleting.\n", id, uuid)
 			delete(m.repoToUUID, id)
 			saveCache = true
 		}
@@ -626,20 +626,20 @@ func (m *repoManager) loadVersion0() error {
 	}
 
 	if m.formatVersion != RepoFormatVersion {
-		dvid.Infof("Updated metadata from version %d to version %d\n", m.formatVersion, RepoFormatVersion)
+		dvid.TimeInfof("Updated metadata from version %d to version %d\n", m.formatVersion, RepoFormatVersion)
 		m.formatVersion = RepoFormatVersion
 		if err := m.putData(formatKey, &(m.formatVersion)); err != nil {
 			return err
 		}
 	}
-	dvid.Infof("Loaded %d repositories from metadata store.", len(m.repos))
+	dvid.TimeInfof("Loaded %d repositories from metadata store.\n", len(m.repos))
 
 	// make sure any in-process deletions restart
 	for _, r := range m.repos {
 		for name, data := range r.data {
 			if data.IsDeleted() {
 				if err := r.deleteData(name); err != nil {
-					dvid.Criticalf("tried to restart deletion of data %q but failed: %v\n", name, err)
+					dvid.TimeCriticalf("tried to restart deletion of data %q but failed: %v\n", name, err)
 				}
 			}
 		}
@@ -654,9 +654,9 @@ func (m *repoManager) loadMetadata() error {
 		return fmt.Errorf("Error in loading metadata format version: %v\n", err)
 	}
 	if found {
-		dvid.Infof("Loading metadata with format version %d...\n", m.formatVersion)
+		dvid.TimeInfof("Loading metadata with format version %d...\n", m.formatVersion)
 	} else {
-		dvid.Infof("Loading metadata without format version. Setting it to format version 0.\n")
+		dvid.TimeInfof("Loading metadata without format version. Setting it to format version 0.\n")
 		m.formatVersion = 0
 	}
 
@@ -683,7 +683,7 @@ func (m *repoManager) loadMetadata() error {
 	// always greater than whatever we currently have.  (Corrects issues in metadata from early bug.)
 	for v := range m.versionToUUID {
 		if v > m.versionID {
-			dvid.Errorf("Found data version %d >= current new local version ID %d.  Correcting metadata...\n", v, m.versionID)
+			dvid.TimeErrorf("Found data version %d >= current new local version ID %d.  Correcting metadata...\n", v, m.versionID)
 			m.versionID = v + 1
 			saveIDs = true
 		}
