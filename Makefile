@@ -50,16 +50,16 @@ bin/dvid-gen-version: cmd/gen-version/main.go
 
 # This actually runs the above program; generates version.go
 # The python script here doesn't print anything, but it (potentially) overwrites
-# .last-build-git-sha to force a re-build of server/version.go
+# .last-build-git-description to force a re-build of server/version.go
 # if the git SHA has changed since the last build
 server/version.go: bin/dvid-gen-version \
-				   $(shell python scripts/record-git-sha.py . .last-build-git-sha)
+				   $(shell python scripts/record-git-description.py . .last-build-git-description)
 	bin/dvid-gen-version -o server/version.go
 
 # FIXME: This finds ALL go source files, not just the selection of sources that are needed for dvid.
 DVID_SOURCES = $(shell find . -name "*.go")
 
-bin/dvid: cmd/dvid/main.go server/version.go .last-build-git-sha ${DVID_SOURCES}
+bin/dvid: cmd/dvid/main.go server/version.go .last-build-git-description ${DVID_SOURCES}
 	go build -o bin/dvid -v -tags "${DVID_BACKENDS}" cmd/dvid/main.go
 
 bin/dvid-backup: cmd/backup/main.go
@@ -101,4 +101,4 @@ bench:
 clean:
 	rm -f bin/*
 	rm -f server/version.go
-	rm -f .last-build-git-sha
+	rm -f .last-build-git-description

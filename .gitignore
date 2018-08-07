@@ -5,7 +5,7 @@ build-*
 config.toml
 server/version.go
 .vscode
-.last-build-git-sha
+.last-build-git-description
 bin/
 .project
 .pydevproject
