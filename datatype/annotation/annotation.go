@@ -190,6 +190,26 @@ POST <api URL>/node/<UUID>/<data name>/elements[?<options>]
 
 	kafkalog    Set to "off" if you don't want this mutation logged to kafka.
 
+GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>
+
+	Returns all point annotations within all blocks intersecting the subvolume of given size 
+	with upper left corner at given offset.  The size and offset should be voxels separated by 
+	underscore, e.g., "400_300_200" can describe a 400 x 300 x 200 volume or an offset of (400,300,200).
+
+	Unlike the /elements endpoint, the /blocks endpoint is the fastest way to retrieve
+	all point annotations.  It does not screen points based on the specified subvolume but simply
+	streams all elements in the intersecting blocks.
+
+	The returned stream of data is an object with block coordinate as keys and an array of point
+	annotation elements within that block, meeting the JSON described below.
+
+	Returned JSON:
+
+	{
+		"10,381,28": [ array of point annotation elements ],
+		"11,381,28": [ array of point annotation elements ],
+		...
+	}
 
 POST <api URL>/node/<UUID>/<data name>/move/<from_coord>/<to_coord>[?<options>]
 
@@ -1532,6 +1552,58 @@ func (d *Data) GetTagJSON(ctx *datastore.VersionedCtx, tag Tag, addRels bool) (j
 	return
 }
 
+// StreamBlocks returns synapse elements for a given subvolume of image space.
+func (d *Data) StreamBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, ext *dvid.Extents3d) error {
+	store, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return err
+	}
+	blockSize := d.blockSize()
+	begBlockCoord, endBlockCoord := ext.BlockRange(blockSize)
+
+	d.RLock()
+	defer d.RUnlock()
+
+	if _, err := w.Write([]byte("{")); err != nil {
+		return err
+	}
+	numBlocks := 0
+	for blockZ := begBlockCoord[2]; blockZ <= endBlockCoord[2]; blockZ++ {
+		for blockY := begBlockCoord[1]; blockY <= endBlockCoord[1]; blockY++ {
+			begTKey := NewBlockTKey(dvid.ChunkPoint3d{begBlockCoord[0], blockY, blockZ})
+			endTKey := NewBlockTKey(dvid.ChunkPoint3d{endBlockCoord[0], blockY, blockZ})
+			err = store.ProcessRange(ctx, begTKey, endTKey, nil, func(chunk *storage.Chunk) error {
+				bcoord, err := DecodeBlockTKey(chunk.K)
+				if err != nil {
+					return err
+				}
+				if len(chunk.V) == 0 {
+					return nil
+				}
+				s := fmt.Sprintf(`"%d,%d,%d":`, bcoord[0], bcoord[1], bcoord[2])
+				if numBlocks > 0 {
+					s = "," + s
+				}
+				if _, err := w.Write([]byte(s)); err != nil {
+					return err
+				}
+				if _, err := w.Write(chunk.V); err != nil {
+					return err
+				}
+				numBlocks++
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := w.Write([]byte("}")); err != nil {
+		return err
+	}
+	return nil
+}
+
 // GetRegionSynapses returns synapse elements for a given subvolume of image space.
 func (d *Data) GetRegionSynapses(ctx *datastore.VersionedCtx, ext *dvid.Extents3d) (Elements, error) {
 	store, err := datastore.GetOrderedKeyValueDB(d)
@@ -1543,37 +1615,41 @@ func (d *Data) GetRegionSynapses(ctx *datastore.VersionedCtx, ext *dvid.Extents3
 	blockSize := d.blockSize()
 	begBlockCoord, endBlockCoord := ext.BlockRange(blockSize)
 
-	begTKey := NewBlockTKey(begBlockCoord)
-	endTKey := NewBlockTKey(endBlockCoord)
-
 	d.RLock()
 	defer d.RUnlock()
 
-	// Iterate through all synapse elements block k/v, making sure the elements are also within the given subvolume.
+	// Iterate through all synapse elements block k/v, making sure the elements are also
+	// within the given subvolume.
 	var elements Elements
-	err = store.ProcessRange(ctx, begTKey, endTKey, nil, func(chunk *storage.Chunk) error {
-		bcoord, err := DecodeBlockTKey(chunk.K)
-		if err != nil {
-			return err
-		}
-		if !ext.BlockWithin(blockSize, bcoord) {
-			return nil
-		}
-		// Deserialize the JSON value into a slice of elements
-		var blockElems Elements
-		if err := json.Unmarshal(chunk.V, &blockElems); err != nil {
-			return err
-		}
-		// Iterate through elements, screening on extents before adding to region elements.
-		for _, elem := range blockElems {
-			if ext.VoxelWithin(elem.Pos) {
-				elements = append(elements, elem)
+	for blockZ := begBlockCoord[2]; blockZ <= endBlockCoord[2]; blockZ++ {
+		for blockY := begBlockCoord[1]; blockY <= endBlockCoord[1]; blockY++ {
+			begTKey := NewBlockTKey(dvid.ChunkPoint3d{begBlockCoord[0], blockY, blockZ})
+			endTKey := NewBlockTKey(dvid.ChunkPoint3d{endBlockCoord[0], blockY, blockZ})
+			err = store.ProcessRange(ctx, begTKey, endTKey, nil, func(chunk *storage.Chunk) error {
+				bcoord, err := DecodeBlockTKey(chunk.K)
+				if err != nil {
+					return err
+				}
+				if !ext.BlockWithin(blockSize, bcoord) {
+					return nil
+				}
+				// Deserialize the JSON value into a slice of elements
+				var blockElems Elements
+				if err := json.Unmarshal(chunk.V, &blockElems); err != nil {
+					return err
+				}
+				// Iterate through elements, screening on extents before adding to region elements.
+				for _, elem := range blockElems {
+					if ext.VoxelWithin(elem.Pos) {
+						elements = append(elements, elem)
+					}
+				}
+				return nil
+			})
+			if err != nil {
+				return nil, err
 			}
 		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
 	}
 	return elements, nil
 }
@@ -2286,6 +2362,32 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 		default:
 			server.BadRequest(w, r, "Only GET action is available on 'roi' endpoint.")
+			return
+		}
+
+	case "blocks":
+		switch action {
+		case "get":
+			// GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>
+			if len(parts) < 6 {
+				server.BadRequest(w, r, "Expect size and offset to follow 'blocks' in GET request")
+				return
+			}
+			sizeStr, offsetStr := parts[4], parts[5]
+			ext3d, err := dvid.NewExtents3dFromStrings(offsetStr, sizeStr, "_")
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			w.Header().Set("Content-type", "application/json")
+			if err = d.StreamBlocks(ctx, w, ext3d); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			timedLog.Infof("HTTP %s: synapse elements in blocks intersecting subvolume (size %s, offset %s) (%s)", r.Method, sizeStr, offsetStr, r.URL)
+
+		default:
+			server.BadRequest(w, r, "Only GET action is available on 'blocks' endpoint.")
 			return
 		}
 
