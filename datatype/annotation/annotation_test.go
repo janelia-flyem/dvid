@@ -1333,6 +1333,10 @@ func TestSupervoxelSplit(t *testing.T) {
 	}
 	buf := getBytesRLE(t, rles)
 
+	if err := datastore.BlockOnUpdating(uuid, dvid.InstanceName(labelName)); err != nil {
+		t.Fatalf("Error blocking on labels updating: %v\n", err)
+	}
+
 	// Submit the supervoxel split
 	reqStr := fmt.Sprintf("%snode/%s/%s/split-supervoxel/3", server.WebAPIPath, uuid, labelName)
 	r := server.TestHTTP(t, "POST", reqStr, buf)
