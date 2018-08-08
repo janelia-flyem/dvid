@@ -36,7 +36,7 @@ Developer Guide
 Setup
 -----
 
-1. Install [`conda`][miniconda].
+1. Install [`conda`][miniconda].  Some OSes do not have bunzip2 pre-installed so this may be required through `sudo apt-get install bzip2`.
 
 [miniconda]: https://conda.io/miniconda.html
 
