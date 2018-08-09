@@ -647,6 +647,9 @@ func (d *Data) ingestTarfile(r *http.Request, uuid dvid.UUID) error {
 		if err == io.EOF {
 			break
 		}
+		if err != nil {
+			return err
+		}
 		var supervoxel uint64
 		var ext string
 		n, err := fmt.Sscanf(hdr.Name, "%d.%s", &supervoxel, &ext)
