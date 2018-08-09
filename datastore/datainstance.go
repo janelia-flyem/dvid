@@ -338,6 +338,10 @@ func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
 	return nil
 }
 
+// PropertyTKeyClass is the TKeyClass reserved for data instance properties, and should
+// be reserved in each data type implementation.
+const PropertyTKeyClass = 1
+
 // Data is the base struct of repo-specific data instances.  It should be embedded
 // in a datatype's DataService implementation and handle datastore-wide key partitioning.
 type Data struct {

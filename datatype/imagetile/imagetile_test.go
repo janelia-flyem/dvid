@@ -311,7 +311,11 @@ func TestTileCheck(t *testing.T) {
 	ty = (101 * 32) / 512
 	tile := dvid.ChunkPoint3d{tx, ty, 101 * 32}
 	scale := Scaling(0)
-	tkv := &storage.TKeyValue{K: NewTKey(tile, dvid.XY, scale)}
+	tk, err := NewTKey(tile, dvid.XY, scale)
+	if err != nil {
+		t.Errorf("bad tkey: %v\n", err)
+	}
+	tkv := &storage.TKeyValue{K: tk}
 	skip, err := f.Check(tkv)
 	if err != nil {
 		t.Errorf("Error on Check of key %q: %v\n", tkv.K, err)
@@ -321,7 +325,11 @@ func TestTileCheck(t *testing.T) {
 	}
 
 	tile = dvid.ChunkPoint3d{tx, ty, 106 * 32}
-	tkv = &storage.TKeyValue{K: NewTKey(tile, dvid.XY, scale)}
+	tk, err = NewTKey(tile, dvid.XY, scale)
+	if err != nil {
+		t.Errorf("bad tkey: %v\n", err)
+	}
+	tkv = &storage.TKeyValue{K: tk}
 	skip, err = f.Check(tkv)
 	if err != nil {
 		t.Errorf("Error on Check of key %q: %v\n", tkv.K, err)
@@ -333,7 +341,11 @@ func TestTileCheck(t *testing.T) {
 	tx = (205 * 32) / 512
 	ty = (121 * 32) / 512
 	tile = dvid.ChunkPoint3d{tx, ty, 101 * 32}
-	tkv = &storage.TKeyValue{K: NewTKey(tile, dvid.XY, scale)}
+	tk, err = NewTKey(tile, dvid.XY, scale)
+	if err != nil {
+		t.Errorf("bad tkey: %v\n", err)
+	}
+	tkv = &storage.TKeyValue{K: tk}
 	skip, err = f.Check(tkv)
 	if err != nil {
 		t.Errorf("Error on Check of key %q: %v\n", tkv.K, err)
@@ -345,7 +357,11 @@ func TestTileCheck(t *testing.T) {
 	tx = (225 * 32) / 512
 	ty = (101 * 32) / 512
 	tile = dvid.ChunkPoint3d{tx, ty, 101 * 32}
-	tkv = &storage.TKeyValue{K: NewTKey(tile, dvid.XY, scale)}
+	tk, err = NewTKey(tile, dvid.XY, scale)
+	if err != nil {
+		t.Errorf("bad tkey: %v\n", err)
+	}
+	tkv = &storage.TKeyValue{K: tk}
 	skip, err = f.Check(tkv)
 	if err != nil {
 		t.Errorf("Error on Check of key %q: %v\n", tkv.K, err)

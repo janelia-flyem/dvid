@@ -7,6 +7,7 @@ package labelvol
 import (
 	"encoding/binary"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
@@ -14,6 +15,9 @@ import (
 const (
 	// keyUnknown should never be used and is a check for corrupt or incorrectly set keys
 	keyUnknown storage.TKeyClass = iota
+
+	// reserved type-specific key for metadata
+	keyProperties = datastore.PropertyTKeyClass
 
 	// keyLabelBlockRLE have keys ordered by label + block coord, and have a sparse volume
 	// encoding for its value. They are also useful for returning all blocks

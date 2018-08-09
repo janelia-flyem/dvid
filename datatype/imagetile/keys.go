@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
@@ -17,17 +18,94 @@ import (
 // TODO -- Introduce imagetile key type to allow for expansion in future.  Since we currently
 // have datasets using old keys, hold off on upgrade until a breaking change is introduced for all keys.
 
-//const (
-//	// keyUnknown should never be used and is a check for corrupt or incorrectly set keys
-//	keyUnknown storage.TKeyClass = iota
-//
-//	keyTileCoord = 177
-//)
+const (
+	// keyUnknown should never be used and is a check for corrupt or incorrectly set keys
+	keyUnknown storage.TKeyClass = iota
+
+	// reserved type-specific key for metadata
+	keyProperties = datastore.PropertyTKeyClass
+
+	// key = legacy 2d tile
+	keyTile2d = 2
+
+	// key = legacy 3d tile
+	keyTile3d = 3
+)
+
+func describeTKeyClass(tkc storage.TKeyClass) string {
+	switch tkc {
+	case keyTile2d:
+		return "imagetile 2d tile key"
+	case keyTile3d:
+		return "imagetile 3d tile key"
+	default:
+		return "unknown imagetile key class"
+	}
+}
 
 // DescribeTKeyClass returns a string explanation of what a particular TKeyClass
 // is used for.  Implements the datastore.TKeyClassDescriber interface.
 func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
-	return "imagetile generic key"
+	return describeTKeyClass(tkc)
+}
+
+// NewTKey returns an imagetile-specific key component based on the components of a tile request.
+func NewTKey(tile dvid.ChunkPoint3d, plane dvid.DataShape, scale Scaling) (tk storage.TKey, err error) {
+	var tkc storage.TKeyClass
+	switch plane.TotalDimensions() {
+	case 2:
+		tkc = keyTile2d
+	case 3:
+		tkc = keyTile3d
+	default:
+		err = fmt.Errorf("imagetile only supports 2d and 3d tiles at this time")
+		return
+	}
+	var buf bytes.Buffer
+
+	planeBytes := plane.Bytes() // only necessary to handle legacy case before introduction of TKeyClass
+	buf.Write(planeBytes[1:])
+	buf.WriteByte(byte(scale))
+	buf.WriteByte(byte(3))
+	idx := dvid.IndexZYX(tile)
+	buf.Write(idx.Bytes())
+	return storage.NewTKey(tkc, buf.Bytes()), nil
+}
+
+// NewTKeyByTileReq returns an imagetile-specific key component based on a tile request.
+func NewTKeyByTileReq(req TileReq) (storage.TKey, error) {
+	return NewTKey(req.tile, req.plane, req.scale)
+}
+
+// DecodeTKey returns the components of a tile request based on an imagetile-specific key component.
+func DecodeTKey(tk storage.TKey) (tile dvid.ChunkPoint3d, plane dvid.DataShape, scale Scaling, err error) {
+	var tkc storage.TKeyClass
+	tkc, err = tk.Class()
+	if err != nil {
+		return
+	}
+	switch tkc {
+	case keyTile2d:
+	case keyTile3d:
+	default:
+		err = fmt.Errorf("bad imagetile key: %s", describeTKeyClass(tkc))
+		return
+	}
+	dataShapeBytes := make([]byte, dvid.DataShapeBytes)
+	dataShapeBytes[0] = byte(tkc)
+	tkbytes, _ := tk.ClassBytes(tkc)
+	copy(dataShapeBytes[1:], tkbytes[:dvid.DataShapeBytes-1])
+	plane, err = dvid.BytesToDataShape(dataShapeBytes)
+	if err != nil {
+		return
+	}
+	scale = Scaling(tkbytes[dvid.DataShapeBytes-1])
+	var idx dvid.IndexZYX
+	if err = idx.IndexFromBytes(tkbytes[dvid.DataShapeBytes+1:]); err != nil {
+		return
+	}
+	tile = dvid.ChunkPoint3d(idx)
+	return
 }
 
 type TileReq struct {
@@ -64,39 +142,4 @@ func (d *Data) ParseTileReq(r *http.Request, parts []string) (TileReq, error) {
 
 func NewTileReq(tile dvid.ChunkPoint3d, plane dvid.DataShape, scale Scaling) TileReq {
 	return TileReq{tile, plane, scale}
-}
-
-// NewTKeyByTileReq returns an imagetile-specific key component based on a tile request.
-func NewTKeyByTileReq(req TileReq) storage.TKey {
-	return NewTKey(req.tile, req.plane, req.scale)
-}
-
-// NewTKey returns an imagetile-specific key component based on the components of a tile request.
-func NewTKey(tile dvid.ChunkPoint3d, plane dvid.DataShape, scale Scaling) storage.TKey {
-	var buf bytes.Buffer
-	buf.Write(plane.Bytes())
-	buf.WriteByte(byte(scale))
-	buf.WriteByte(byte(3))
-	idx := dvid.IndexZYX(tile)
-	buf.Write(idx.Bytes())
-	return buf.Bytes()
-}
-
-// DecodeTKey returns the components of a tile request based on an imagetile-specific key component.
-func DecodeTKey(tk storage.TKey) (tile dvid.ChunkPoint3d, plane dvid.DataShape, scale Scaling, err error) {
-	if len(tk) < 21 {
-		err = fmt.Errorf("imagetile-specific key component has too few bytes (%d)", len(tk))
-		return
-	}
-	plane, err = dvid.BytesToDataShape(tk[0:dvid.DataShapeBytes])
-	if err != nil {
-		return
-	}
-	scale = Scaling(tk[dvid.DataShapeBytes])
-	var idx dvid.IndexZYX
-	if err = idx.IndexFromBytes(tk[dvid.DataShapeBytes+2:]); err != nil {
-		return
-	}
-	tile = dvid.ChunkPoint3d(idx)
-	return
 }

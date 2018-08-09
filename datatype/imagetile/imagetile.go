@@ -924,7 +924,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		case "get":
 			var err error
 			var hexkey string
-			if hexkey, err = d.GetTileKey(ctx, w, r, parts); err != nil {
+			if hexkey, err = d.getTileKey(ctx, w, r, parts); err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
@@ -1088,7 +1088,11 @@ func (d *Data) PostTile(ctx storage.Context, w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		return fmt.Errorf("Cannot open imagetile store: %v\n", err)
 	}
-	return db.Put(ctx, NewTKeyByTileReq(req), data)
+	tk, err := NewTKeyByTileReq(req)
+	if err != nil {
+		return err
+	}
+	return db.Put(ctx, tk, data)
 }
 
 // ServeTile returns a tile with appropriate Content-Type set.
@@ -1150,13 +1154,16 @@ func (d *Data) ServeTile(ctx storage.Context, w http.ResponseWriter, r *http.Req
 	return nil
 }
 
-// GetTileKey returns the internal key as a hexadecimal string
-func (d *Data) GetTileKey(ctx storage.Context, w http.ResponseWriter, r *http.Request, parts []string) (string, error) {
+// getTileKey returns the internal key as a hexadecimal string
+func (d *Data) getTileKey(ctx storage.Context, w http.ResponseWriter, r *http.Request, parts []string) (string, error) {
 	req, err := d.ParseTileReq(r, parts)
 	if err != nil {
 		return "", err
 	}
-	tk := NewTKeyByTileReq(req)
+	tk, err := NewTKeyByTileReq(req)
+	if err != nil {
+		return "", err
+	}
 	key := ctx.ConstructKey(tk)
 	return fmt.Sprintf("%x", key), nil
 }
@@ -1218,7 +1225,11 @@ func (d *Data) getTileData(ctx storage.Context, req TileReq) ([]byte, error) {
 	}
 
 	// Retrieve the tile data from datastore
-	data, err := db.Get(ctx, NewTKeyByTileReq(req))
+	tk, err := NewTKeyByTileReq(req)
+	if err != nil {
+		return nil, err
+	}
+	data, err := db.Get(ctx, tk)
 	if err != nil {
 		return nil, fmt.Errorf("Error trying to GET from datastore: %v", err)
 	}
@@ -1323,7 +1334,8 @@ func (d *Data) putTileFunc(versionID dvid.VersionID) (outFunc, error) {
 
 		switch d.Encoding {
 		case LZ4:
-			compression, err := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
+			var compression dvid.Compression
+			compression, err = dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
 			if err != nil {
 				return err
 			}
@@ -1336,7 +1348,12 @@ func (d *Data) putTileFunc(versionID dvid.VersionID) (outFunc, error) {
 		if err != nil {
 			return err
 		}
-		return db.Put(ctx, NewTKeyByTileReq(req), data)
+		var tk storage.TKey
+		tk, err = NewTKeyByTileReq(req)
+		if err != nil {
+			return err
+		}
+		return db.Put(ctx, tk, data)
 	}, nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
@@ -15,6 +16,9 @@ import (
 const (
 	// keyUnknown should never be used and is a check for corrupt or incorrectly set keys
 	keyUnknown storage.TKeyClass = iota
+
+	// reserved type-specific key for metadata
+	keyProperties = datastore.PropertyTKeyClass
 
 	// key is tag id.  value is serialization of the tag name and all synaptic elements it contains.
 	keyTag = 70

@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
@@ -15,6 +16,9 @@ import (
 const (
 	// keyUnknown should never be used and is a check for corrupt or incorrectly set keys
 	keyUnknown storage.TKeyClass = 0
+
+	// reserved type-specific key for metadata
+	keyProperties = datastore.PropertyTKeyClass
 
 	// key = scale + block coord
 	keyLabelBlock = 186
@@ -36,6 +40,8 @@ const (
 // is used for.  Implements the datastore.TKeyClassDescriber interface.
 func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
 	switch tkc {
+	case keyProperties:
+		return "labelmap properties key"
 	case keyLabelBlock:
 		return "labelmap scale + block coord key"
 	case keyLabelIndex:

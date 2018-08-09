@@ -7,12 +7,16 @@ package keyvalue
 import (
 	"fmt"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/storage"
 )
 
 const (
 	// keyUnknown should never be used and is a check for corrupt or incorrectly set keys
 	keyUnknown storage.TKeyClass = iota
+
+	// reserved type-specific key for metadata
+	keyProperties = datastore.PropertyTKeyClass
 
 	// the byte id for a standard key of a keyvalue
 	keyStandard = 177

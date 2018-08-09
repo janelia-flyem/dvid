@@ -7,6 +7,7 @@ package labelblk
 import (
 	"fmt"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
@@ -14,6 +15,9 @@ import (
 const (
 	// keyUnknown should never be used and is a check for corrupt or incorrectly set keys
 	keyUnknown storage.TKeyClass = 0
+
+	// reserved type-specific key for metadata
+	keyProperties = datastore.PropertyTKeyClass
 
 	// since we are reusing imageblk read code, need to use the same key.
 	keyLabelBlock = 23

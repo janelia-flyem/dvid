@@ -7,6 +7,7 @@ package imageblk
 import (
 	"fmt"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
@@ -15,21 +16,28 @@ const (
 	// keyUnknown should never be used and is a check for corrupt or incorrectly set keys
 	keyUnknown storage.TKeyClass = iota
 
+	// reserved type-specific key for metadata
+	keyProperties = datastore.PropertyTKeyClass
+
 	// use different id from other label-type keys to improve odds that any bad use of
 	// arbitrary key decoding will result in error.
 	keyImageBlock = 23
 
-	// designates where meta data is stored
+	// legacy key class where extents property is stored
 	metaKeyClass = 24
 )
 
 // DescribeTKeyClass returns a string explanation of what a particular TKeyClass
 // is used for.  Implements the datastore.TKeyClassDescriber interface.
 func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
-	if tkc == keyImageBlock {
+	switch tkc {
+	case keyProperties:
+		return "imageblk properties key"
+	case keyImageBlock:
 		return "imageblk block coord key"
+	default:
+		return "unknown imageblk key"
 	}
-	return "unknown imageblk key"
 }
 
 // NewTKeyByCoord returns a TKey for a block coord in string format.
