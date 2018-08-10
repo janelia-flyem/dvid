@@ -129,12 +129,14 @@ GET  <api URL>/node/<UUID>/<data name>/tarfile/<label>
 HEAD <api URL>/node/<UUID>/<data name>/tarfile/<label> 
 
 	GET returns a tarfile of all supervoxel data that has been mapped to the given label.
-	File names within the tarfile will be the supervoxel id without extension.  HTTP status
-	code 400 (Bad Request) is returned if no such label exists or there was an error.
+	File names within the tarfile will be the supervoxel id and an extension.  HTTP status
+	code 400 (Bad Request) is returned if no such label exists or there was an error.  If
+	a supervoxel's data does not exist, a file will be returned named "X.missing" where X
+	is the supervoxel id.
 
-	HEAD returns 200 if there would be files in the tarfile (i.e., the body exists and at
-	least one supervoxel has stored data).  HTTP status code 400 (Bad Request) is returned 
-	if no such label exists or there was an error.
+	HEAD returns 200 if the body exists and all supervoxels have stored data, even if it is
+	a zero length value.  HTTP status code 400 (Bad Request) is returned if no such label 
+	exists, or one of the label's supervoxels has no associated data, or there was an error.
 
 	Example: 
 
@@ -414,14 +416,16 @@ func (d *Data) getSupervoxelGoroutine(db storage.KeyValueDB, ctx *datastore.Vers
 		} else {
 			data, err = db.Get(ctx, tk)
 		}
-		if err != nil {
+		// the store should return data = nil if not written, and data = []byte{} (len 0) if empty.
+		if err != nil || data == nil {
 			dvid.Errorf("supervoxel %d tarfile: %v\n", supervoxel, err)
-			outCh <- fileData{err: err}
-			continue
-		}
-		if len(data) == 0 {
-			dvid.Errorf("supervoxel %d tarfile is empty, skipping...\n", supervoxel)
-			outCh <- fileData{}
+			hdr := &tar.Header{
+				Name:    fmt.Sprintf("%d.missing", supervoxel),
+				Size:    0,
+				Mode:    0755,
+				ModTime: modTime,
+			}
+			outCh <- fileData{err: err, header: hdr}
 			continue
 		}
 		hdr := &tar.Header{

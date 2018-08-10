@@ -76,10 +76,13 @@ func testTarball(t *testing.T, storetype storage.Alias) {
 	apiStr = fmt.Sprintf("%snode/%s/labels/merge", server.WebAPIPath, uuid)
 	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString("[30, 10, 15, 18, 19, 20, 21, 64]"))
 
-	// Add tarball data for first 63 supervoxels.
+	// Add tarball data for first 63 supervoxels except for 15.
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	for i := uint64(1); i <= 63; i++ {
+		if i == 15 {
+			continue
+		}
 		data := fmt.Sprintf("This is the data for supervoxel %d.", i)
 		hdr := &tar.Header{
 			Name: fmt.Sprintf("%d.dat", i),
@@ -112,6 +115,9 @@ func testTarball(t *testing.T, storetype storage.Alias) {
 
 	apiStr = fmt.Sprintf("%snode/%s/%s/tarfile/60", server.WebAPIPath, uuid, tarsvname)
 	server.TestHTTP(t, "HEAD", apiStr, nil)
+
+	apiStr = fmt.Sprintf("%snode/%s/%s/tarfile/30", server.WebAPIPath, uuid, tarsvname)
+	server.TestBadHTTP(t, "HEAD", apiStr, nil) // doesn't have supervoxel 15
 
 	// Check existence through /exists endpoint
 	apiStr = fmt.Sprintf("%snode/%s/%s/exists", server.WebAPIPath, uuid, tarsvname)
@@ -154,15 +160,21 @@ func testTarball(t *testing.T, storetype storage.Alias) {
 		if _, err := fmt.Sscanf(hdr.Name, "%d.%s", &supervoxel, &ext); err != nil {
 			t.Fatalf("can't parse tar file name %q: %v\n", hdr.Name, err)
 		}
-		if ext != "dat" {
-			t.Fatalf("bad extension for tar file name %q\n", hdr.Name)
+		if supervoxel == 15 {
+			if ext != "missing" {
+				t.Fatalf("expected 15.missing but got %q\n", hdr.Name)
+			}
+		} else {
+			if ext != "dat" {
+				t.Fatalf("bad extension for tar file name %q\n", hdr.Name)
+			}
+			got := string(svdata.Bytes())
+			if got != fmt.Sprintf("This is the data for supervoxel %d.", supervoxel) {
+				t.Fatalf(`expected "This is the data for supervoxel %d.", got %q`, supervoxel, got)
+			}
 		}
 		if _, found := expected[supervoxel]; !found {
 			t.Fatalf("got back supervoxel %d in tarfile, which is not in set %s\n", supervoxel, expected)
-		}
-		got := string(svdata.Bytes())
-		if got != fmt.Sprintf("This is the data for supervoxel %d.", supervoxel) {
-			t.Fatalf(`expected "This is the data for supervoxel %d.", got %q`, supervoxel, got)
 		}
 	}
 
@@ -172,6 +184,29 @@ func testTarball(t *testing.T, storetype storage.Alias) {
 	if string(data) != "This is the data for supervoxel 17." {
 		t.Fatalf("got bad supervoxel 17 data: %s\n", string(data))
 	}
+
+	buf.Reset()
+	tw = tar.NewWriter(&buf)
+	value15 := fmt.Sprintf("This is the data for supervoxel %d.", 15)
+	hdr := &tar.Header{
+		Name: fmt.Sprintf("%d.dat", 15),
+		Mode: 0755,
+		Size: int64(len(value15)),
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		t.Fatalf("unable to write tar file header for supervoxel %d: %v\n", 15, err)
+	}
+	if _, err := tw.Write([]byte(value15)); err != nil {
+		t.Fatalf("unable to write data for sueprvoxel %d: %v\n", 15, err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("bad tar file close: %v\n", err)
+	}
+	apiStr = fmt.Sprintf("%snode/%s/%s/load", server.WebAPIPath, uuid, tarsvname)
+	server.TestHTTP(t, "POST", apiStr, &buf)
+
+	apiStr = fmt.Sprintf("%snode/%s/%s/tarfile/30", server.WebAPIPath, uuid, tarsvname)
+	server.TestHTTP(t, "HEAD", apiStr, nil) // now has every supervoxel including 15
 }
 
 func TestTarballRoundTrip(t *testing.T) {
