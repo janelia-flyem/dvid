@@ -541,18 +541,18 @@ func (d *Data) checkTarfile(w http.ResponseWriter, uuid dvid.UUID, label uint64)
 	if len(supervoxels) == 0 {
 		return fmt.Errorf("label %d has no supervoxels", label)
 	}
-	var dataPresent bool
+	allPresent := true
 	for supervoxel := range supervoxels {
 		tk, err := NewTKey(supervoxel, d.Extension)
 		if err != nil {
 			return err
 		}
 		if isChecker {
-			dataPresent, err = checker.Exists(ctx, tk)
+			allPresent, err = checker.Exists(ctx, tk)
 			if err != nil {
 				return err
 			}
-			if dataPresent {
+			if !allPresent {
 				break
 			}
 		} else {
@@ -560,14 +560,14 @@ func (d *Data) checkTarfile(w http.ResponseWriter, uuid dvid.UUID, label uint64)
 			if err != nil {
 				return err
 			}
-			if len(data) != 0 {
-				dataPresent = true
+			if len(data) == 0 {
+				allPresent = false
 				break
 			}
 		}
 	}
-	if !dataPresent {
-		return fmt.Errorf("no supervoxel data found for label %d", label)
+	if !allPresent {
+		return fmt.Errorf("not all supervoxel data available for label %d", label)
 	}
 	return nil
 }
