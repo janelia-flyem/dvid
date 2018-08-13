@@ -78,11 +78,6 @@ var (
 	// where index 0 = current time bin.
 	interactiveOps = make([]int, 60)
 
-	// MaxInteractiveOpsBeforeBlock specifies the number of interactive requests
-	// per minute that are allowed before batch-like computation (e.g., loading
-	// of voxel volumes) is blocked.
-	MaxInteractiveOpsBeforeBlock = 3
-
 	// ActiveHandlers is maximum number of active handlers over last second.
 	ActiveHandlers int
 
@@ -211,10 +206,13 @@ func GotInteractiveRequest() {
 }
 
 // BlockOnInteractiveRequests will block this goroutine until the number of interactive
-// requests dips below MaxInteractiveOpsBeforeBlock.
+// requests dips below InteractiveOpsBeforeBlock in server configuration.
 func BlockOnInteractiveRequests(caller ...string) {
+	if tc.Server.InteractiveOpsBeforeBlock == 0 {
+		return
+	}
 	for {
-		if InteractiveOpsPer2Min < MaxInteractiveOpsBeforeBlock {
+		if InteractiveOpsPer2Min < tc.Server.InteractiveOpsBeforeBlock {
 			return
 		}
 		if len(caller) != 0 {

@@ -243,6 +243,8 @@ type ServerConfig struct {
 
 	IIDGen   string `toml:"instance_id_gen"`
 	IIDStart uint32 `toml:"instance_id_start"`
+
+	InteractiveOpsBeforeBlock int // # of interactive ops in 2 min period before batch processing is blocked.  Zero value = no blocking.
 }
 
 // DatastoreInstanceConfig returns data instance configuration necessary to
