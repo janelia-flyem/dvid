@@ -140,7 +140,6 @@ func testTarball(t *testing.T, storetype storage.Alias) {
 	expected := labels.NewSet(30, 10, 15, 18, 19, 20, 21, 64)
 	apiStr = fmt.Sprintf("%snode/%s/%s/tarfile/30", server.WebAPIPath, uuid, tarsvname)
 	data := server.TestHTTP(t, "GET", apiStr, nil)
-
 	buf2 := bytes.NewBuffer(data)
 	tr := tar.NewReader(buf2)
 	for {
