@@ -197,7 +197,7 @@ func (fs *fileStore) filepathFromTKey(ctx storage.Context, tk storage.TKey) (dir
 	if len(hexHash) < 5 {
 		hexHash += strings.Repeat("0", 5-len(hexHash))
 	}
-	dirpath = filepath.Join(fs.path, hexHash[0:2], hexHash[2:4], hexHash[4:])
+	dirpath = filepath.Join(fs.path, hexHash[0:2], hexHash[2:4], hexHash[4:5])
 
 	v := ctx.VersionID()
 	filename = fmt.Sprintf("v%d", v)
