@@ -3213,7 +3213,7 @@ func (d *Data) handleLabels(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 	}
 	fmt.Fprintf(w, "]")
 
-	timedLog.Infof("HTTP GET batch label-at-point query (%s)", r.URL)
+	timedLog.Infof("HTTP GET batch label-at-point query of %d points (%s)", r.URL, len(coords))
 }
 
 func (d *Data) handleMapping(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
@@ -3270,7 +3270,7 @@ func (d *Data) handleMapping(ctx *datastore.VersionedCtx, w http.ResponseWriter,
 	}
 	fmt.Fprintf(w, "]")
 
-	timedLog.Infof("HTTP GET batch mapping query (%s)", r.URL)
+	timedLog.Infof("HTTP GET batch mapping query of %d labels (%s)", len(labels), r.URL)
 }
 
 func (d *Data) handleSupervoxelSplits(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
