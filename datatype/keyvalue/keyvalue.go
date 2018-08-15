@@ -4,6 +4,7 @@
 package keyvalue
 
 import (
+	"archive/tar"
 	"bytes"
 	"encoding/gob"
 	"encoding/json"
@@ -135,26 +136,30 @@ DEL  <api URL>/node/<UUID>/<data name>/key/<key>
 		"UUID": <UUID on which POST was done>
 	}
 
+GET <api URL>/node/<UUID>/<data name>/keyvalues[?jsontar=true]
 POST <api URL>/node/<UUID>/<data name>/keyvalues
 
-	Allows bulk-loading of keyvalue data using a protobuf-encoded payload.  
+	Allows batch query or ingest of data. 
 
-	Arguments:
-
-	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-	data name     Name of keyvalue data instance.
-
-	The POSTed data should be the serialization of a protobuf KeyValues message defined by 
-	the following protobuf3 definitions:
+	KeyValue data needs to be serialized in a format defined by the following protobuf3 definitions:
 
 		message KeyValue {
 			string key = 1;
 			bytes value = 2;
 		}
+
+		message Keys {
+			repeated string keys = 1;
+		}
 		
 		message KeyValues {
 			repeated KeyValue kvs = 1;
 		}
+	
+	For GET, the query body must include a Keys serialization and a KeyValues serialization is
+	returned.
+
+	For POST, the query body must include a KeyValues serialization.
 	
 	POSTs will be logged as a series of Kafka JSON messages, each with the format equivalent
 	to the single POST /key:
@@ -164,6 +169,16 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 		"Bytes": <number of bytes in data>,
 		"UUID": <UUID on which POST was done>
 	}
+
+	Arguments:
+
+	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	data name     Name of keyvalue data instance.
+
+	GET Query-string Options:
+
+	jsontar		If set to any value for GET, query body must be JSON array of string keys
+				and the returned data will be a tarfile with keys as file names.
 `
 
 func init() {
@@ -505,15 +520,24 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		comment = fmt.Sprintf("HTTP GET keyrange [%q, %q]", keyBeg, keyEnd)
 
 	case "keyvalues":
-		if action != "post" {
-			server.BadRequest(w, r, "only POST action is supported for the 'keyvalues' endpoint")
+		switch action {
+		case "get":
+			numKeys, writtenBytes, err := d.handleKeyValues(w, r, uuid, ctx)
+			if err != nil {
+				server.BadRequest(w, r, "GET /keyvalues on %d keys, data %q: %v", numKeys, d.DataName(), err)
+				return
+			}
+			comment = fmt.Sprintf("HTTP GET keyvalues on %d keys, %d bytes, data %q", numKeys, writtenBytes, d.DataName())
+		case "post":
+			if err := d.handleIngest(r, uuid, ctx); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			comment = fmt.Sprintf("HTTP POST keyvalues on data %q", d.DataName())
+		default:
+			server.BadRequest(w, r, "key endpoint does not support %q HTTP verb", action)
 			return
 		}
-		if err := d.handleIngest(r, uuid, ctx); err != nil {
-			server.BadRequest(w, r, err)
-			return
-		}
-		comment = fmt.Sprintf("HTTP POST keyvalues on data %q", d.DataName())
 
 	case "key":
 		if len(parts) < 5 {
@@ -588,6 +612,84 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	}
 
 	timedLog.Infof(comment)
+}
+
+func (d *Data) handleKeyValues(w http.ResponseWriter, r *http.Request, uuid dvid.UUID, ctx *datastore.VersionedCtx) (numKeys, writtenBytes int, err error) {
+	jsontar := (r.URL.Query().Get("jsontar") != "")
+	var data []byte
+	data, err = ioutil.ReadAll(r.Body)
+	if err != nil {
+		return
+	}
+	var serialization []byte
+	var found bool
+	if jsontar { // read JSON key array, write tar file.
+		var keys []string
+		if err = json.Unmarshal(data, &keys); err != nil {
+			return
+		}
+		numKeys = len(keys)
+
+		var buf bytes.Buffer
+		tw := tar.NewWriter(&buf)
+		defer tw.Close()
+
+		var val []byte
+		for _, key := range keys {
+			if val, found, err = d.GetData(ctx, key); err != nil {
+				return
+			}
+			if !found {
+				val = nil
+			}
+			hdr := &tar.Header{
+				Name: key,
+				Size: int64(len(val)),
+				Mode: 0755,
+			}
+			if err = tw.WriteHeader(hdr); err != nil {
+				return
+			}
+			if _, err = tw.Write(val); err != nil {
+				return
+			}
+		}
+		w.Header().Set("Content-type", "application/tar")
+		serialization = buf.Bytes()
+
+	} else { // protobuf3 by default
+		var keys Keys
+		if err = keys.Unmarshal(data); err != nil {
+			return
+		}
+		numKeys = len(keys.Keys)
+		var val []byte
+		var kvs KeyValues
+		kvs.Kvs = make([]*KeyValue, numKeys)
+		for i, key := range keys.Keys {
+			if val, found, err = d.GetData(ctx, key); err != nil {
+				return
+			}
+			if !found {
+				val = nil
+			}
+			kvs.Kvs[i] = &KeyValue{
+				Key:   key,
+				Value: val,
+			}
+		}
+		if serialization, err = kvs.Marshal(); err != nil {
+			return
+		}
+		w.Header().Set("Content-type", "application/octet-stream")
+	}
+	if writtenBytes, err = w.Write(serialization); err != nil {
+		return
+	}
+	if writtenBytes != len(serialization) {
+		err = fmt.Errorf("unable to write all %d bytes of serialized keyvalues: only %d bytes written", len(serialization), writtenBytes)
+	}
+	return
 }
 
 func (d *Data) handleIngest(r *http.Request, uuid dvid.UUID, ctx *datastore.VersionedCtx) error {

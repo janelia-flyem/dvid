@@ -9,6 +9,7 @@
 
 	It has these top-level messages:
 		KeyValue
+		Keys
 		KeyValues
 */
 package keyvalue
@@ -58,13 +59,28 @@ func (m *KeyValue) GetValue() []byte {
 	return nil
 }
 
+type Keys struct {
+	Keys []string `protobuf:"bytes,1,rep,name=keys" json:"keys,omitempty"`
+}
+
+func (m *Keys) Reset()                    { *m = Keys{} }
+func (*Keys) ProtoMessage()               {}
+func (*Keys) Descriptor() ([]byte, []int) { return fileDescriptorIngest, []int{1} }
+
+func (m *Keys) GetKeys() []string {
+	if m != nil {
+		return m.Keys
+	}
+	return nil
+}
+
 type KeyValues struct {
 	Kvs []*KeyValue `protobuf:"bytes,1,rep,name=kvs" json:"kvs,omitempty"`
 }
 
 func (m *KeyValues) Reset()                    { *m = KeyValues{} }
 func (*KeyValues) ProtoMessage()               {}
-func (*KeyValues) Descriptor() ([]byte, []int) { return fileDescriptorIngest, []int{1} }
+func (*KeyValues) Descriptor() ([]byte, []int) { return fileDescriptorIngest, []int{2} }
 
 func (m *KeyValues) GetKvs() []*KeyValue {
 	if m != nil {
@@ -75,6 +91,7 @@ func (m *KeyValues) GetKvs() []*KeyValue {
 
 func init() {
 	proto.RegisterType((*KeyValue)(nil), "keyvalue.KeyValue")
+	proto.RegisterType((*Keys)(nil), "keyvalue.Keys")
 	proto.RegisterType((*KeyValues)(nil), "keyvalue.KeyValues")
 }
 func (this *KeyValue) Equal(that interface{}) bool {
@@ -101,6 +118,35 @@ func (this *KeyValue) Equal(that interface{}) bool {
 	}
 	if !bytes.Equal(this.Value, that1.Value) {
 		return false
+	}
+	return true
+}
+func (this *Keys) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	that1, ok := that.(*Keys)
+	if !ok {
+		that2, ok := that.(Keys)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		return this == nil
+	} else if this == nil {
+		return false
+	}
+	if len(this.Keys) != len(that1.Keys) {
+		return false
+	}
+	for i := range this.Keys {
+		if this.Keys[i] != that1.Keys[i] {
+			return false
+		}
 	}
 	return true
 }
@@ -141,6 +187,16 @@ func (this *KeyValue) GoString() string {
 	s = append(s, "&keyvalue.KeyValue{")
 	s = append(s, "Key: "+fmt.Sprintf("%#v", this.Key)+",\n")
 	s = append(s, "Value: "+fmt.Sprintf("%#v", this.Value)+",\n")
+	s = append(s, "}")
+	return strings.Join(s, "")
+}
+func (this *Keys) GoString() string {
+	if this == nil {
+		return "nil"
+	}
+	s := make([]string, 0, 5)
+	s = append(s, "&keyvalue.Keys{")
+	s = append(s, "Keys: "+fmt.Sprintf("%#v", this.Keys)+",\n")
 	s = append(s, "}")
 	return strings.Join(s, "")
 }
@@ -190,6 +246,39 @@ func (m *KeyValue) MarshalTo(dAtA []byte) (int, error) {
 		i++
 		i = encodeVarintIngest(dAtA, i, uint64(len(m.Value)))
 		i += copy(dAtA[i:], m.Value)
+	}
+	return i, nil
+}
+
+func (m *Keys) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *Keys) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if len(m.Keys) > 0 {
+		for _, s := range m.Keys {
+			dAtA[i] = 0xa
+			i++
+			l = len(s)
+			for l >= 1<<7 {
+				dAtA[i] = uint8(uint64(l)&0x7f | 0x80)
+				l >>= 7
+				i++
+			}
+			dAtA[i] = uint8(l)
+			i++
+			i += copy(dAtA[i:], s)
+		}
 	}
 	return i, nil
 }
@@ -247,6 +336,18 @@ func (m *KeyValue) Size() (n int) {
 	return n
 }
 
+func (m *Keys) Size() (n int) {
+	var l int
+	_ = l
+	if len(m.Keys) > 0 {
+		for _, s := range m.Keys {
+			l = len(s)
+			n += 1 + l + sovIngest(uint64(l))
+		}
+	}
+	return n
+}
+
 func (m *KeyValues) Size() (n int) {
 	var l int
 	_ = l
@@ -279,6 +380,16 @@ func (this *KeyValue) String() string {
 	s := strings.Join([]string{`&KeyValue{`,
 		`Key:` + fmt.Sprintf("%v", this.Key) + `,`,
 		`Value:` + fmt.Sprintf("%v", this.Value) + `,`,
+		`}`,
+	}, "")
+	return s
+}
+func (this *Keys) String() string {
+	if this == nil {
+		return "nil"
+	}
+	s := strings.Join([]string{`&Keys{`,
+		`Keys:` + fmt.Sprintf("%v", this.Keys) + `,`,
 		`}`,
 	}, "")
 	return s
@@ -389,6 +500,85 @@ func (m *KeyValue) Unmarshal(dAtA []byte) error {
 			if m.Value == nil {
 				m.Value = []byte{}
 			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipIngest(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthIngest
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *Keys) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowIngest
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: Keys: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: Keys: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Keys", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowIngest
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthIngest
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Keys = append(m.Keys, string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -600,16 +790,18 @@ var (
 func init() { proto.RegisterFile("ingest.proto", fileDescriptorIngest) }
 
 var fileDescriptorIngest = []byte{
-	// 173 bytes of a gzipped FileDescriptorProto
+	// 194 bytes of a gzipped FileDescriptorProto
 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xe2, 0xe2, 0xc9, 0xcc, 0x4b, 0x4f,
 	0x2d, 0x2e, 0xd1, 0x2b, 0x28, 0xca, 0x2f, 0xc9, 0x17, 0xe2, 0xc8, 0x4e, 0xad, 0x2c, 0x4b, 0xcc,
 	0x29, 0x4d, 0x55, 0x32, 0xe2, 0xe2, 0xf0, 0x4e, 0xad, 0x0c, 0x03, 0xb1, 0x85, 0x04, 0xb8, 0x98,
 	0xb3, 0x53, 0x2b, 0x25, 0x18, 0x15, 0x18, 0x35, 0x38, 0x83, 0x40, 0x4c, 0x21, 0x11, 0x2e, 0x56,
-	0xb0, 0x32, 0x09, 0x26, 0x05, 0x46, 0x0d, 0x9e, 0x20, 0x08, 0x47, 0xc9, 0x90, 0x8b, 0x13, 0xa6,
-	0xa7, 0x58, 0x48, 0x85, 0x8b, 0x39, 0xbb, 0xac, 0x58, 0x82, 0x51, 0x81, 0x59, 0x83, 0xdb, 0x48,
-	0x48, 0x0f, 0x66, 0xb0, 0x1e, 0x4c, 0x45, 0x10, 0x48, 0xda, 0x49, 0xe7, 0xc2, 0x43, 0x39, 0x86,
-	0x1b, 0x0f, 0xe5, 0x18, 0x3e, 0x3c, 0x94, 0x63, 0x6c, 0x78, 0x24, 0xc7, 0xb8, 0xe2, 0x91, 0x1c,
-	0xe3, 0x89, 0x47, 0x72, 0x8c, 0x17, 0x1e, 0xc9, 0x31, 0x3e, 0x78, 0x24, 0xc7, 0xf8, 0xe2, 0x91,
-	0x1c, 0xc3, 0x87, 0x47, 0x72, 0x8c, 0x13, 0x1e, 0xcb, 0x31, 0x24, 0xb1, 0x81, 0x5d, 0x69, 0x0c,
-	0x08, 0x00, 0x00, 0xff, 0xff, 0x75, 0x69, 0x6a, 0x3b, 0xb5, 0x00, 0x00, 0x00,
+	0xb0, 0x32, 0x09, 0x26, 0x05, 0x46, 0x0d, 0x9e, 0x20, 0x08, 0x47, 0x49, 0x8a, 0x8b, 0xc5, 0x3b,
+	0xb5, 0xb2, 0x58, 0x48, 0x88, 0x8b, 0x25, 0x3b, 0xb5, 0xb2, 0x58, 0x82, 0x51, 0x81, 0x59, 0x83,
+	0x33, 0x08, 0xcc, 0x56, 0x32, 0xe4, 0xe2, 0x84, 0x99, 0x57, 0x2c, 0xa4, 0xc2, 0xc5, 0x9c, 0x5d,
+	0x06, 0x91, 0xe7, 0x36, 0x12, 0xd2, 0x83, 0x59, 0xaa, 0x07, 0x53, 0x11, 0x04, 0x92, 0x76, 0xd2,
+	0xb9, 0xf0, 0x50, 0x8e, 0xe1, 0xc6, 0x43, 0x39, 0x86, 0x0f, 0x0f, 0xe5, 0x18, 0x1b, 0x1e, 0xc9,
+	0x31, 0xae, 0x78, 0x24, 0xc7, 0x78, 0xe2, 0x91, 0x1c, 0xe3, 0x85, 0x47, 0x72, 0x8c, 0x0f, 0x1e,
+	0xc9, 0x31, 0xbe, 0x78, 0x24, 0xc7, 0xf0, 0xe1, 0x91, 0x1c, 0xe3, 0x84, 0xc7, 0x72, 0x0c, 0x49,
+	0x6c, 0x60, 0x1f, 0x18, 0x03, 0x02, 0x00, 0x00, 0xff, 0xff, 0x4f, 0x41, 0xbb, 0x42, 0xd1, 0x00,
+	0x00, 0x00,
 }

@@ -1,9 +1,11 @@
 package keyvalue
 
 import (
+	"archive/tar"
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 	"sync"
@@ -459,7 +461,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 			key1, key2, string(returnValue))
 	}
 
-	// Check values from batch POST
+	// Check values from batch POST using individual key gets
 	for i := 0; i < 5; i++ {
 		k := fmt.Sprintf("batchkey-%d", i)
 		keyreq := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), k)
@@ -470,6 +472,80 @@ func TestKeyvalueVersioning(t *testing.T) {
 		for j := 0; j < i+10; j++ {
 			if returnValue[j] != byte(i*20+j) {
 				t.Fatalf("Expected byte %d of key %q to have value %d, got %d instead\n", i, k, i*20+j, int(returnValue[j]))
+			}
+		}
+	}
+
+	// Check some values from batch POST using GET /keyvalues?jsontar=true
+	getreq1 := fmt.Sprintf("%snode/%s/%s/keyvalues?jsontar=true", server.WebAPIPath, uuid, data.DataName())
+	tardata := server.TestHTTP(t, "GET", getreq1, bytes.NewBufferString(`["batchkey-0","batchkey-1","batchkey-4"]`))
+	tarbuf := bytes.NewBuffer(tardata)
+	tr := tar.NewReader(tarbuf)
+	expectedKeys := []string{"batchkey-0", "batchkey-1", "batchkey-4"}
+	keyNum := 0
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("error parsing tar: %v\n", err)
+		}
+		if hdr.Name != expectedKeys[keyNum] {
+			t.Fatalf("expected for key %d %q, got %q", keyNum, expectedKeys[keyNum], hdr.Name)
+		}
+		var i int
+		if _, err = fmt.Sscanf(hdr.Name, "batchkey-%d", &i); err != nil {
+			t.Fatalf("error parsing tar file hdr %q: %v\n", hdr.Name, err)
+		}
+		var val bytes.Buffer
+		if _, err := io.Copy(&val, tr); err != nil {
+			t.Fatalf("error reading tar data: %v\n", err)
+		}
+		returnValue := val.Bytes()
+		if len(returnValue) != i+10 {
+			t.Errorf("Expected batch POST key %q to have value with %d bytes, got %d instead\n", hdr.Name, i+10, len(returnValue))
+		}
+		for j := 0; j < i+10; j++ {
+			if returnValue[j] != byte(i*20+j) {
+				t.Fatalf("Expected byte %d of key %q to have value %d, got %d instead\n", i, hdr.Name, i*20+j, int(returnValue[j]))
+			}
+		}
+		keyNum++
+	}
+
+	// Check some values from batch POST using GET /keyvalues (protobuf3)
+	getreq2 := fmt.Sprintf("%snode/%s/%s/keyvalues", server.WebAPIPath, uuid, data.DataName())
+	expectedKeys = []string{"batchkey-1", "batchkey-2", "batchkey-3"}
+	pbufKeys := Keys{
+		Keys: expectedKeys,
+	}
+	keysSerialization, err := pbufKeys.Marshal()
+	if err != nil {
+		t.Fatalf("couldn't serialized protobuf keys: %v\n", err)
+	}
+	keyvaluesSerialization := server.TestHTTP(t, "GET", getreq2, bytes.NewBuffer(keysSerialization))
+	var pbKVs KeyValues
+	if err := pbKVs.Unmarshal(keyvaluesSerialization); err != nil {
+		t.Fatalf("couldn't unmarshal keyvalues protobuf: %v\n", err)
+	}
+	if len(pbKVs.Kvs) != 3 {
+		t.Fatalf("expected 3 kv pairs returned, got %d\n", len(pbKVs.Kvs))
+	}
+	for keyNum, kv := range pbKVs.Kvs {
+		if kv.Key != expectedKeys[keyNum] {
+			t.Fatalf("expected for key %d %q, got %q", keyNum, expectedKeys[keyNum], kv.Key)
+		}
+		var i int
+		if _, err = fmt.Sscanf(kv.Key, "batchkey-%d", &i); err != nil {
+			t.Fatalf("error parsing key %d %q: %v\n", keyNum, kv.Key, err)
+		}
+		if len(kv.Value) != i+10 {
+			t.Errorf("Expected batch POST key %q to have value with %d bytes, got %d instead\n", kv.Key, i+10, len(kv.Value))
+		}
+		for j := 0; j < i+10; j++ {
+			if kv.Value[j] != byte(i*20+j) {
+				t.Fatalf("Expected byte %d of key %q to have value %d, got %d instead\n", i, kv.Key, i*20+j, int(kv.Value[j]))
 			}
 		}
 	}
