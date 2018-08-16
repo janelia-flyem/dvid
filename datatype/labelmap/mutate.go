@@ -194,6 +194,17 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 	d.StartUpdate()
 	defer d.StopUpdate()
 
+	if err = CleaveIndex(d, v, op, info); err != nil {
+		return
+	}
+	if err = addCleaveToMapping(d, v, op); err != nil {
+		return
+	}
+	if err = labels.LogCleave(d, v, op); err != nil {
+		return
+	}
+
+	// notify syncs after processing because downstream sync might rely on changes
 	op := labels.CleaveOp{
 		MutID:              mutID,
 		Target:             label,
@@ -204,16 +215,6 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 	msg := datastore.SyncMessage{labels.CleaveLabelEvent, v, op}
 	if err = datastore.NotifySubscribers(evt, msg); err != nil {
 		err = fmt.Errorf("can't notify subscribers for event %v: %v", evt, err)
-		return
-	}
-
-	if err = CleaveIndex(d, v, op, info); err != nil {
-		return
-	}
-	if err = addCleaveToMapping(d, v, op); err != nil {
-		return
-	}
-	if err = labels.LogCleave(d, v, op); err != nil {
 		return
 	}
 

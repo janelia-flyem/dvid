@@ -532,9 +532,9 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 	return nil
 }
 
-// group the given elements into labels based on associated label data.  This can be used on all of a current
-// label's elements after a cleave since the RLEs are not known.
-func (d *Data) relabelElements(v dvid.VersionID, target uint64, blockElems map[dvid.IZYXString]ElementsNR) (labelElems LabelElements, delta DeltaModifyElements, err error) {
+// group the given elements into labels based on associated label data.  This can be used on all of a
+// current label's elements after a cleave since the RLEs are not known.
+func (d *Data) cleaveElements(v dvid.VersionID, target uint64, blockElems map[dvid.IZYXString]ElementsNR) (labelElems LabelElements, delta DeltaModifyElements, err error) {
 	labelData := d.getSyncedLabels()
 	if labelData == nil {
 		err = fmt.Errorf("no synced labels for annotation %q, skipping label-aware denormalization", d.DataName())
@@ -597,7 +597,7 @@ func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, o
 	if err != nil {
 		return err
 	}
-	labelElements, delta, err := d.relabelElements(v, op.Target, blockElems)
+	labelElements, delta, err := d.cleaveElements(v, op.Target, blockElems)
 	if err != nil {
 		return err
 	}
