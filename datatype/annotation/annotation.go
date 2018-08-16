@@ -167,7 +167,7 @@ GET <api URL>/node/<UUID>/<data name>/elements/<size>/<offset>
 	at given offset.  The size and offset should be voxels separated by underscore, e.g.,
 	"400_300_200" can describe a 400 x 300 x 200 volume or an offset of (400,300,200).
 
-	The returned point annotations will be an array of elements.
+	The returned point annotations will be an array of elements with relationships.
 
 POST <api URL>/node/<UUID>/<data name>/elements[?<options>]
 
@@ -198,7 +198,7 @@ GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>
 
 	Unlike the /elements endpoint, the /blocks endpoint is the fastest way to retrieve
 	all point annotations.  It does not screen points based on the specified subvolume but simply
-	streams all elements in the intersecting blocks.
+	streams all elements (including relationships) in the intersecting blocks.
 
 	The returned stream of data is an object with block coordinate as keys and an array of point
 	annotation elements within that block, meeting the JSON described below.
