@@ -347,8 +347,6 @@ func (svm *SVMap) MappedLabels(v dvid.VersionID, supervoxels []uint64) (mapped [
 	found = make([]bool, len(supervoxels))
 	mapped = make([]uint64, len(supervoxels))
 	copy(mapped, supervoxels)
-	dvid.Infof("     mapped: %v\n", mapped)
-	dvid.Infof("supervoxels: %v\n", supervoxels)
 
 	if svm == nil {
 		return
@@ -370,7 +368,6 @@ func (svm *SVMap) MappedLabels(v dvid.VersionID, supervoxels []uint64) (mapped [
 		}
 	}
 	svm.RUnlock()
-	dvid.Infof("     mapped: %v\n", mapped)
 	return
 }
 

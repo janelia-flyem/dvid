@@ -481,7 +481,6 @@ func (d *Data) verifyMappings(ctx *datastore.VersionedCtx, supervoxels, mapped [
 			return nil, err
 		}
 		svpresent := idx.SupervoxelsPresent(bodysvs)
-		dvid.Infof("body %d had supervoxels: %v\n", label, svpresent)
 		for supervoxel, present := range svpresent {
 			wasVerified[supervoxel] = present
 		}
@@ -491,61 +490,6 @@ func (d *Data) verifyMappings(ctx *datastore.VersionedCtx, supervoxels, mapped [
 	for i, label := range mapped {
 		if found[i] || wasVerified[supervoxels[i]] {
 			verified[i] = label
-		} else {
-			verified[i] = 0
-		}
-	}
-	return
-}
-
-func (d *Data) verifyMappingsOld(ctx *datastore.VersionedCtx, supervoxels, mapped []uint64, found []bool) (verified []uint64, err error) {
-	numSupervoxels := len(supervoxels)
-	if numSupervoxels != len(mapped) {
-		return nil, fmt.Errorf("length of supervoxels list (%d) not equal to length of provided mappings (%d)", numSupervoxels, len(mapped))
-	}
-	bodyids := make(labels.Set)
-	curMapping := make(map[uint64]uint64, numSupervoxels)
-	wasVerified := make(map[uint64]bool, numSupervoxels)
-	for i, supervoxel := range supervoxels {
-		curMapping[supervoxel] = mapped[i]
-		if found[i] || supervoxel == 0 {
-			wasVerified[supervoxel] = true
-		} else if mapped[i] != 0 {
-			bodyids[mapped[i]] = struct{}{}
-			wasVerified[supervoxel] = false
-		}
-	}
-	dvid.Infof("curMapping: %v\n", curMapping)
-	dvid.Infof("wasVerified: %v\n", wasVerified)
-	dvid.Infof("body ids: %v\n", bodyids)
-
-	for label := range bodyids {
-		shard := label % numIndexShards
-		indexMu[shard].RLock()
-		idx, err := getCachedLabelIndex(d, ctx.VersionID(), label)
-		indexMu[shard].RUnlock()
-		if err != nil {
-			return nil, err
-		}
-		bodySupervoxels := idx.GetSupervoxels()
-		dvid.Infof("body %d had supervoxels: %s\n", label, bodySupervoxels)
-		for supervoxel, alreadyVerified := range wasVerified {
-			if alreadyVerified {
-				continue
-			}
-			if _, found := bodySupervoxels[supervoxel]; found {
-				if curMapping[supervoxel] != label {
-					return nil, fmt.Errorf("found supervoxel %d with supposed mapping to %d in label %d index", supervoxel, curMapping[supervoxel], label)
-				}
-				wasVerified[supervoxel] = true
-			}
-		}
-	}
-
-	verified = make([]uint64, numSupervoxels)
-	for i := range mapped {
-		if wasVerified[supervoxels[i]] {
-			verified[i] = mapped[i]
 		} else {
 			verified[i] = 0
 		}
