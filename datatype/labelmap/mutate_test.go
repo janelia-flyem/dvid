@@ -2224,7 +2224,7 @@ func TestMultiscaleMergeCleave(t *testing.T) {
 	}
 	for i, sent := range sentLabels {
 		if mapping[sent] != gotLabels[i] {
-			t.Errorf("expected GET /mapping to return label %d in position %d, got %d back\n", mapping[sent], i, gotLabels[i])
+			t.Fatalf("expected GET /mapping to return label %d in position %d, got %d back\n", mapping[sent], i, gotLabels[i])
 		}
 	}
 

@@ -194,6 +194,12 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 	d.StartUpdate()
 	defer d.StopUpdate()
 
+	op := labels.CleaveOp{
+		MutID:              mutID,
+		Target:             label,
+		CleavedLabel:       cleaveLabel,
+		CleavedSupervoxels: cleaveSupervoxels,
+	}
 	if err = CleaveIndex(d, v, op, info); err != nil {
 		return
 	}
@@ -205,12 +211,6 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 	}
 
 	// notify syncs after processing because downstream sync might rely on changes
-	op := labels.CleaveOp{
-		MutID:              mutID,
-		Target:             label,
-		CleavedLabel:       cleaveLabel,
-		CleavedSupervoxels: cleaveSupervoxels,
-	}
 	evt := datastore.SyncEvent{d.DataUUID(), labels.CleaveLabelEvent}
 	msg := datastore.SyncMessage{labels.CleaveLabelEvent, v, op}
 	if err = datastore.NotifySubscribers(evt, msg); err != nil {

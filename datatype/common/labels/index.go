@@ -128,6 +128,33 @@ func (idx Index) NumVoxels() uint64 {
 	return numVoxels
 }
 
+// SupervoxelsPresent checks whether each label from a Set are within the index.
+func (idx *Index) SupervoxelsPresent(supervoxels Set) (present map[uint64]bool) {
+	present = make(map[uint64]bool, len(supervoxels))
+	toCheck := make(Set, len(supervoxels))
+	for supervoxel := range supervoxels {
+		present[supervoxel] = false
+		toCheck[supervoxel] = struct{}{}
+	}
+	if idx == nil || len(idx.Blocks) == 0 || len(toCheck) == 0 {
+		return
+	}
+	for _, svc := range idx.Blocks {
+		if svc != nil && svc.Counts != nil {
+			for sv := range svc.Counts {
+				if _, found := toCheck[sv]; found {
+					present[sv] = true
+					delete(toCheck, sv)
+					if len(toCheck) == 0 {
+						return
+					}
+				}
+			}
+		}
+	}
+	return
+}
+
 // GetSupervoxels returns a set of supervoxels within the receiver Index.
 func (idx *Index) GetSupervoxels() Set {
 	if idx == nil || len(idx.Blocks) == 0 {

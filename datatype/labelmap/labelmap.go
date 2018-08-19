@@ -3245,13 +3245,13 @@ func (d *Data) handleMapping(ctx *datastore.VersionedCtx, w http.ResponseWriter,
 		server.BadRequest(w, r, "couldn't get mapping for data %q, version %d: %v", d.DataName(), ctx.VersionID(), err)
 		return
 	}
-	labels, err := svmap.MappedLabels(ctx.VersionID(), supervoxels)
+	labels, found, err := svmap.MappedLabels(ctx.VersionID(), supervoxels)
 	if err != nil {
 		server.BadRequest(w, r, err)
 		return
 	}
 	if queryStrings.Get("nolookup") != "true" {
-		labels, err = d.verifyMappings(ctx, supervoxels, labels)
+		labels, err = d.verifyMappings(ctx, supervoxels, labels, found)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return

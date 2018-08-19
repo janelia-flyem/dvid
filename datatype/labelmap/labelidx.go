@@ -290,7 +290,7 @@ func GetLabelSizes(d dvid.Data, v dvid.VersionID, labels []uint64, isSupervoxel 
 		supervoxels = make([]uint64, len(labels))
 		copy(supervoxels, labels)
 
-		labels, err = svmap.MappedLabels(v, labels)
+		labels, _, err = svmap.MappedLabels(v, labels)
 		if err != nil {
 			return nil, err
 		}
@@ -448,24 +448,76 @@ func ChangeLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, delta labels.
 	return putCachedLabelIndex(d, v, idx)
 }
 
-func (d *Data) verifyMappings(ctx *datastore.VersionedCtx, supervoxels, mapped []uint64) (verified []uint64, err error) {
-	if len(supervoxels) != len(mapped) {
-		return nil, fmt.Errorf("length of supervoxels list (%d) not equal to length of provided mappings (%d)", len(supervoxels), len(mapped))
+// given supervoxels with given mapping and whether they were actually in in-memory SVMap, check
+// label indices to see if supervoxels really are present in assigned bodies.
+func (d *Data) verifyMappings(ctx *datastore.VersionedCtx, supervoxels, mapped []uint64, found []bool) (verified []uint64, err error) {
+	numSupervoxels := len(supervoxels)
+	if numSupervoxels != len(mapped) {
+		return nil, fmt.Errorf("length of supervoxels list (%d) not equal to length of provided mappings (%d)", numSupervoxels, len(mapped))
 	}
-	curMapping := make(map[uint64]uint64)
-	wasVerified := make(map[uint64]bool)
+	if numSupervoxels != len(found) {
+		return nil, fmt.Errorf("length of supervoxels list (%d) not equal to length of provided found mappings (%d)", numSupervoxels, len(found))
+	}
+	bodySupervoxels := make(map[uint64]labels.Set)
+	for i, supervoxel := range supervoxels {
+		if supervoxel != 0 && !found[i] { // we are uncertain whether this is a real or implicit supervoxel that may not exist
+			bodysvs, bodyfound := bodySupervoxels[mapped[i]]
+			if !bodyfound {
+				bodysvs = labels.Set{supervoxel: struct{}{}}
+			} else {
+				bodysvs[supervoxel] = struct{}{}
+			}
+			bodySupervoxels[mapped[i]] = bodysvs
+		}
+	}
+
+	wasVerified := make(map[uint64]bool, numSupervoxels)
+	for label, bodysvs := range bodySupervoxels {
+		shard := label % numIndexShards
+		indexMu[shard].RLock()
+		idx, err := getCachedLabelIndex(d, ctx.VersionID(), label)
+		indexMu[shard].RUnlock()
+		if err != nil {
+			return nil, err
+		}
+		svpresent := idx.SupervoxelsPresent(bodysvs)
+		dvid.Infof("body %d had supervoxels: %v\n", label, svpresent)
+		for supervoxel, present := range svpresent {
+			wasVerified[supervoxel] = present
+		}
+	}
+
+	verified = make([]uint64, numSupervoxels)
+	for i, label := range mapped {
+		if found[i] || wasVerified[supervoxels[i]] {
+			verified[i] = label
+		} else {
+			verified[i] = 0
+		}
+	}
+	return
+}
+
+func (d *Data) verifyMappingsOld(ctx *datastore.VersionedCtx, supervoxels, mapped []uint64, found []bool) (verified []uint64, err error) {
+	numSupervoxels := len(supervoxels)
+	if numSupervoxels != len(mapped) {
+		return nil, fmt.Errorf("length of supervoxels list (%d) not equal to length of provided mappings (%d)", numSupervoxels, len(mapped))
+	}
+	bodyids := make(labels.Set)
+	curMapping := make(map[uint64]uint64, numSupervoxels)
+	wasVerified := make(map[uint64]bool, numSupervoxels)
 	for i, supervoxel := range supervoxels {
 		curMapping[supervoxel] = mapped[i]
-		if supervoxel != 0 {
+		if found[i] || supervoxel == 0 {
+			wasVerified[supervoxel] = true
+		} else if mapped[i] != 0 {
+			bodyids[mapped[i]] = struct{}{}
 			wasVerified[supervoxel] = false
 		}
 	}
-	bodyids := make(labels.Set)
-	for _, label := range mapped {
-		if label != 0 {
-			bodyids[label] = struct{}{}
-		}
-	}
+	dvid.Infof("curMapping: %v\n", curMapping)
+	dvid.Infof("wasVerified: %v\n", wasVerified)
+	dvid.Infof("body ids: %v\n", bodyids)
 
 	for label := range bodyids {
 		shard := label % numIndexShards
@@ -476,7 +528,11 @@ func (d *Data) verifyMappings(ctx *datastore.VersionedCtx, supervoxels, mapped [
 			return nil, err
 		}
 		bodySupervoxels := idx.GetSupervoxels()
-		for supervoxel := range wasVerified {
+		dvid.Infof("body %d had supervoxels: %s\n", label, bodySupervoxels)
+		for supervoxel, alreadyVerified := range wasVerified {
+			if alreadyVerified {
+				continue
+			}
 			if _, found := bodySupervoxels[supervoxel]; found {
 				if curMapping[supervoxel] != label {
 					return nil, fmt.Errorf("found supervoxel %d with supposed mapping to %d in label %d index", supervoxel, curMapping[supervoxel], label)
@@ -486,7 +542,7 @@ func (d *Data) verifyMappings(ctx *datastore.VersionedCtx, supervoxels, mapped [
 		}
 	}
 
-	verified = make([]uint64, len(supervoxels))
+	verified = make([]uint64, numSupervoxels)
 	for i := range mapped {
 		if wasVerified[supervoxels[i]] {
 			verified[i] = mapped[i]

@@ -343,38 +343,43 @@ func (svm *SVMap) MappedLabel(v dvid.VersionID, label uint64) (uint64, bool) {
 }
 
 // MappedLabels returns an array of mapped labels, which could be the same as the passed slice.
-func (svm *SVMap) MappedLabels(v dvid.VersionID, supervoxels []uint64) ([]uint64, error) {
+func (svm *SVMap) MappedLabels(v dvid.VersionID, supervoxels []uint64) (mapped []uint64, found []bool, err error) {
+	found = make([]bool, len(supervoxels))
+	mapped = make([]uint64, len(supervoxels))
+	copy(mapped, supervoxels)
+	dvid.Infof("     mapped: %v\n", mapped)
+	dvid.Infof("supervoxels: %v\n", supervoxels)
+
 	if svm == nil {
-		return supervoxels, nil
+		return
 	}
 	ancestry, err := svm.getLockedAncestry(v)
 	if err != nil {
-		return nil, fmt.Errorf("unable to get ancestry for version %d: %v", v, err)
+		return nil, nil, fmt.Errorf("unable to get ancestry for version %d: %v", v, err)
 	}
 	svm.RLock()
 	if len(svm.fm) == 0 {
 		svm.RUnlock()
-		return supervoxels, nil
+		return
 	}
-	mapped := make([]uint64, len(supervoxels))
 	for i, supervoxel := range supervoxels {
-		label, found := svm.mapLabel(supervoxel, ancestry)
-		if found {
+		label, wasMapped := svm.mapLabel(supervoxel, ancestry)
+		if wasMapped {
 			mapped[i] = label
-		} else {
-			mapped[i] = supervoxel
+			found[i] = wasMapped
 		}
 	}
 	svm.RUnlock()
-	return mapped, nil
+	dvid.Infof("     mapped: %v\n", mapped)
+	return
 }
 
 // GetMappedLabels returns an array of mapped labels, which could be the same as the passed slice,
 // for the given version of the data instance.
-func (d *Data) GetMappedLabels(v dvid.VersionID, supervoxels []uint64) ([]uint64, error) {
-	svmap, err := getMapping(d, v)
-	if err != nil {
-		return nil, fmt.Errorf("couldn't get mapping for data %q, version %d: %v", d.DataName(), v, err)
+func (d *Data) GetMappedLabels(v dvid.VersionID, supervoxels []uint64) (mapped []uint64, found []bool, err error) {
+	var svmap *SVMap
+	if svmap, err = getMapping(d, v); err != nil {
+		return
 	}
 	return svmap.MappedLabels(v, supervoxels)
 }

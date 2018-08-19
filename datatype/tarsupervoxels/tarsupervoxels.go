@@ -249,7 +249,7 @@ func GetByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 
 type mappedLabelType interface {
 	GetSupervoxels(dvid.VersionID, uint64) (labels.Set, error)
-	GetMappedLabels(dvid.VersionID, []uint64) ([]uint64, error)
+	GetMappedLabels(dvid.VersionID, []uint64) (mapped []uint64, found []bool, err error)
 	DataName() dvid.InstanceName
 }
 
