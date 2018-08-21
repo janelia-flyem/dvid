@@ -643,7 +643,7 @@ type blockChange struct {
 // goroutine(s) that aggregates supervoxel changes across blocks for one mutation, then calls
 // mutex-guarded label index mutation routine.
 func (d *Data) aggregateBlockChanges(v dvid.VersionID, svmap *SVMap, ch <-chan blockChange) {
-	ancestry, err := svmap.getLockedAncestry(v)
+	ancestry, err := svmap.getAncestry(v)
 	if err != nil {
 		dvid.Criticalf("unable to get ancestry for data %q, version %d: %v\n", d.DataName(), v, err)
 		return
@@ -1388,7 +1388,7 @@ func (d *Data) writeMappings(w io.Writer, v dvid.VersionID) error {
 	if err != nil {
 		return fmt.Errorf("unable to retrieve mappings for data %q, version %d: %v", d.DataName(), v, err)
 	}
-	ancestry, err := svm.getLockedAncestry(v)
+	ancestry, err := svm.getAncestry(v)
 	if err != nil {
 		return fmt.Errorf("unable to get ancestry for data %q, version %d: %v", d.DataName(), v, err)
 	}
@@ -1414,7 +1414,7 @@ func (d *Data) writeMappings(w io.Writer, v dvid.VersionID) error {
 			}
 		}
 	}
-	timedLog.Infof("Finished writing %d mappings (%d errors) for data %q, version %d", numMappings, numErrors, d.DataName(), v)
+	timedLog.Infof("Finished retrieving %d mappings (%d errors) for data %q, version %d", numMappings, numErrors, d.DataName(), v)
 	return nil
 }
 

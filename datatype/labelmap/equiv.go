@@ -93,11 +93,13 @@ func (vm vmap) modify(vid uint8, toLabel uint64) (out vmap, changed bool) {
 // SVMap is a version-aware supervoxel map that tries to be memory efficient and
 // allows up to 256 versions per SVMap instance.  Splits are also cached by version.
 type SVMap struct {
-	fm          map[uint64]vmap            // forward map from supervoxel to agglomerated (body) id
-	versions    map[dvid.VersionID]uint8   // versions that have been initialized
-	versionsRev map[uint8]dvid.VersionID   // reverse map for byte -> version
-	ancestry    map[dvid.VersionID][]uint8 // cache of ancestry other than current version
+	fm          map[uint64]vmap          // forward map from supervoxel to agglomerated (body) id
+	versions    map[dvid.VersionID]uint8 // versions that have been initialized
+	versionsRev map[uint8]dvid.VersionID // reverse map for byte -> version
 	numVersions uint8
+
+	ancestry   map[dvid.VersionID][]uint8 // cache of ancestry other than current version
+	ancestryMu sync.RWMutex
 
 	splits map[uint8][]proto.SupervoxelSplitOp
 
@@ -193,8 +195,9 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 // getAncestry returns a slice of short version ids that actually have mappings,
 // from current version to root along ancestry.  Since all ancestors are immutable,
 // we can cache the ancestor slice and check if we should add current short version id.
-// This possible mutation requires a Lock on the receiver from outside or use getLockedAncestry().
 func (svm *SVMap) getAncestry(v dvid.VersionID) ([]uint8, error) {
+	svm.ancestryMu.Lock()
+	defer svm.ancestryMu.Unlock()
 	if svm.ancestry == nil {
 		svm.ancestry = make(map[dvid.VersionID][]uint8)
 	}
@@ -222,8 +225,8 @@ func (svm *SVMap) getAncestry(v dvid.VersionID) ([]uint8, error) {
 // SupervoxelSplitsJSON returns a JSON string giving all the supervoxel splits from
 // this version to the root.
 func (svm *SVMap) SupervoxelSplitsJSON(v dvid.VersionID) (string, error) {
-	svm.Lock()
-	defer svm.Unlock()
+	svm.RLock()
+	defer svm.RUnlock()
 	ancestry, err := svm.getAncestry(v)
 	if err != nil {
 		return "", err
@@ -253,14 +256,6 @@ func (svm *SVMap) SupervoxelSplitsJSON(v dvid.VersionID) (string, error) {
 	return "[" + strings.Join(items, ",") + "]", nil
 }
 
-// getAncestry with a receiver lock built-in.
-func (svm *SVMap) getLockedAncestry(v dvid.VersionID) (ancestry []uint8, err error) {
-	svm.Lock()
-	ancestry, err = svm.getAncestry(v)
-	svm.Unlock()
-	return
-}
-
 // returns a short version or creates one if it didn't exist before.
 func (svm *SVMap) createShortVersion(v dvid.VersionID) (uint8, error) {
 	vid, found := svm.versions[v]
@@ -279,9 +274,10 @@ func (svm *SVMap) createShortVersion(v dvid.VersionID) (uint8, error) {
 // returns true if the given version is likely to have some mappings.
 // provides receiver locking within.
 func (svm *SVMap) exists(v dvid.VersionID) bool {
-	svm.Lock() // need write lock due to possible caching in getAncestry()
-	defer svm.Unlock()
-	if len(svm.fm) == 0 {
+	svm.RLock()
+	fmSize := len(svm.fm)
+	svm.RUnlock()
+	if fmSize == 0 {
 		return false
 	}
 	ancestry, err := svm.getAncestry(v)
@@ -328,13 +324,12 @@ func (svm *SVMap) MappedLabel(v dvid.VersionID, label uint64) (uint64, bool) {
 		return label, false
 	}
 	vm, found := svm.fm[label]
+	svm.RUnlock()
 	if !found {
-		svm.RUnlock()
 		return label, false
 	}
-	svm.RUnlock()
 
-	ancestry, err := svm.getLockedAncestry(v)
+	ancestry, err := svm.getAncestry(v)
 	if err != nil {
 		dvid.Criticalf("unable to get ancestry for version %d: %v\n", v, err)
 		return label, false
@@ -351,7 +346,7 @@ func (svm *SVMap) MappedLabels(v dvid.VersionID, supervoxels []uint64) (mapped [
 	if svm == nil {
 		return
 	}
-	ancestry, err := svm.getLockedAncestry(v)
+	ancestry, err := svm.getAncestry(v)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to get ancestry for version %d: %v", v, err)
 	}
