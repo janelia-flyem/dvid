@@ -512,6 +512,7 @@ func addCleaveToMapping(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error
 	m.Lock()
 	vid, err := m.createShortVersion(v)
 	if err != nil {
+		m.Unlock()
 		return err
 	}
 	supervoxelSet := make(labels.Set, len(op.CleavedSupervoxels))
@@ -544,6 +545,7 @@ func addSupervoxelSplitToMapping(d dvid.Data, v dvid.VersionID, op labels.SplitS
 	m.Lock()
 	vid, err := m.createShortVersion(v)
 	if err != nil {
+		m.Unlock()
 		return err
 	}
 	m.setMapping(vid, op.SplitSupervoxel, label)

@@ -375,7 +375,6 @@ func PutLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, idx *labels.Inde
 	}
 	shard := label % numIndexShards
 	indexMu[shard].Lock()
-
 	idx.Label = label
 	err := putCachedLabelIndex(d, v, idx)
 	indexMu[shard].Unlock()
@@ -652,7 +651,6 @@ func (d *Data) aggregateBlockChanges(v dvid.VersionID, svmap *SVMap, ch <-chan b
 	svChanges := make(labels.SupervoxelChanges)
 	var maxLabel uint64
 	for change := range ch {
-		svmap.RLock()
 		for supervoxel, delta := range change.delta {
 			blockChanges, found := svChanges[supervoxel]
 			if !found {
@@ -663,10 +661,11 @@ func (d *Data) aggregateBlockChanges(v dvid.VersionID, svmap *SVMap, ch <-chan b
 			if supervoxel > maxLabel {
 				maxLabel = supervoxel
 			}
+			svmap.RLock()
 			label, _ := svmap.mapLabel(supervoxel, ancestry)
+			svmap.RUnlock()
 			labelset[label] = struct{}{}
 		}
-		svmap.RUnlock()
 	}
 	go func() {
 		if err := d.updateMaxLabel(v, maxLabel); err != nil {
