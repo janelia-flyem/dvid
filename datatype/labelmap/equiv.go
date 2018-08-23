@@ -402,6 +402,13 @@ func getMapping(d dvid.Data, v dvid.VersionID) (*SVMap, error) {
 		iMap.maps[d.DataUUID()] = m
 	}
 	iMap.Unlock()
+
+	m.RLock()
+	_, found = m.versions[v]
+	m.RUnlock()
+	if found {
+		return m, nil // we have already loaded this version and its ancestors
+	}
 	if err := m.initToVersion(d, v); err != nil {
 		return nil, err
 	}

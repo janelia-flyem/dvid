@@ -3926,7 +3926,7 @@ func (d *Data) handleSizes(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 	}
 	fmt.Fprintf(w, "]")
 
-	timedLog.Infof("HTTP GET batch sizes query (%s)", r.URL)
+	timedLog.Infof("HTTP GET batch sizes query of %d labels (%s)", len(sizes), r.URL)
 }
 
 func (d *Data) handleSparsevolSize(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
