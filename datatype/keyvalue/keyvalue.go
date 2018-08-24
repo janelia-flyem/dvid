@@ -632,7 +632,6 @@ func (d *Data) handleKeyValues(w http.ResponseWriter, r *http.Request, uuid dvid
 
 		var buf bytes.Buffer
 		tw := tar.NewWriter(&buf)
-		defer tw.Close()
 
 		var val []byte
 		for _, key := range keys {
@@ -654,6 +653,7 @@ func (d *Data) handleKeyValues(w http.ResponseWriter, r *http.Request, uuid dvid
 				return
 			}
 		}
+		tw.Close()
 		w.Header().Set("Content-type", "application/tar")
 		serialization = buf.Bytes()
 

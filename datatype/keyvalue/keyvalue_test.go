@@ -3,6 +3,7 @@ package keyvalue
 import (
 	"archive/tar"
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -398,16 +399,22 @@ func TestKeyvalueVersioning(t *testing.T) {
 	server.TestHTTP(t, "POST", key2req, strings.NewReader(value2))
 
 	// Use the batch POST
+	payloadSize := 1000
 	var kvs KeyValues
 	kvs.Kvs = make([]*KeyValue, 5)
+	var payload [5][]byte
 	for i := 0; i < 5; i++ {
-		data := make([]byte, i+10)
-		for j := 0; j < i+10; j++ {
-			data[j] = byte(i*20 + j)
+		payload[i] = make([]byte, i*payloadSize+10)
+		n, err := rand.Read(payload[i])
+		if n != i*payloadSize+10 {
+			t.Fatalf("couldn't create payload %d\n", i)
+		}
+		if err != nil {
+			t.Fatalf("couldn't create payload %d: %v\n", i, err)
 		}
 		kvs.Kvs[i] = &KeyValue{
 			Key:   fmt.Sprintf("batchkey-%d", i),
-			Value: data,
+			Value: payload[i],
 		}
 	}
 	serialization, err := kvs.Marshal()
@@ -466,13 +473,11 @@ func TestKeyvalueVersioning(t *testing.T) {
 		k := fmt.Sprintf("batchkey-%d", i)
 		keyreq := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), k)
 		returnValue := server.TestHTTP(t, "GET", keyreq, nil)
-		if len(returnValue) != i+10 {
+		if len(returnValue) != i*payloadSize+10 {
 			t.Errorf("Expected batch POST key %q to have value with %d bytes, got %d instead\n", k, i+10, len(returnValue))
 		}
-		for j := 0; j < i+10; j++ {
-			if returnValue[j] != byte(i*20+j) {
-				t.Fatalf("Expected byte %d of key %q to have value %d, got %d instead\n", i, k, i*20+j, int(returnValue[j]))
-			}
+		if !bytes.Equal(payload[i], returnValue) {
+			t.Fatalf("bad response for key %q\n", k)
 		}
 	}
 
@@ -503,15 +508,52 @@ func TestKeyvalueVersioning(t *testing.T) {
 			t.Fatalf("error reading tar data: %v\n", err)
 		}
 		returnValue := val.Bytes()
-		if len(returnValue) != i+10 {
-			t.Errorf("Expected batch POST key %q to have value with %d bytes, got %d instead\n", hdr.Name, i+10, len(returnValue))
+		if len(returnValue) != i*payloadSize+10 {
+			t.Errorf("Expected batch POST key %q to have value with %d bytes, got %d instead\n", hdr.Name, i*payloadSize+10, len(returnValue))
 		}
-		for j := 0; j < i+10; j++ {
-			if returnValue[j] != byte(i*20+j) {
-				t.Fatalf("Expected byte %d of key %q to have value %d, got %d instead\n", i, hdr.Name, i*20+j, int(returnValue[j]))
-			}
+		if !bytes.Equal(payload[i], returnValue) {
+			t.Fatalf("bad response for key %q\n", hdr.Name)
 		}
 		keyNum++
+	}
+	if keyNum != 3 {
+		t.Fatalf("Got %d keys when there should have been 3\n", keyNum)
+	}
+	tardata = server.TestHTTP(t, "GET", getreq1, bytes.NewBufferString(`["batchkey-3"]`))
+	tarbuf = bytes.NewBuffer(tardata)
+	tr = tar.NewReader(tarbuf)
+	expectedKeys = []string{"batchkey-3"}
+	keyNum = 0
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("error parsing tar: %v\n", err)
+		}
+		if hdr.Name != expectedKeys[keyNum] {
+			t.Fatalf("expected for key %d %q, got %q", keyNum, expectedKeys[keyNum], hdr.Name)
+		}
+		var i int
+		if _, err = fmt.Sscanf(hdr.Name, "batchkey-%d", &i); err != nil {
+			t.Fatalf("error parsing tar file hdr %q: %v\n", hdr.Name, err)
+		}
+		var val bytes.Buffer
+		if _, err := io.Copy(&val, tr); err != nil {
+			t.Fatalf("error reading tar data: %v\n", err)
+		}
+		returnValue := val.Bytes()
+		if len(returnValue) != i*payloadSize+10 {
+			t.Errorf("Expected batch POST key %q to have value with %d bytes, got %d instead\n", hdr.Name, i*payloadSize+10, len(returnValue))
+		}
+		if !bytes.Equal(payload[i], returnValue) {
+			t.Fatalf("bad response for key %q\n", hdr.Name)
+		}
+		keyNum++
+	}
+	if keyNum != 1 {
+		t.Fatalf("Got %d keys when there should have been 1\n", keyNum)
 	}
 
 	// Check some values from batch POST using GET /keyvalues (protobuf3)
@@ -540,13 +582,11 @@ func TestKeyvalueVersioning(t *testing.T) {
 		if _, err = fmt.Sscanf(kv.Key, "batchkey-%d", &i); err != nil {
 			t.Fatalf("error parsing key %d %q: %v\n", keyNum, kv.Key, err)
 		}
-		if len(kv.Value) != i+10 {
-			t.Errorf("Expected batch POST key %q to have value with %d bytes, got %d instead\n", kv.Key, i+10, len(kv.Value))
+		if len(kv.Value) != i*payloadSize+10 {
+			t.Errorf("Expected batch POST key %q to have value with %d bytes, got %d instead\n", kv.Key, i*payloadSize+10, len(kv.Value))
 		}
-		for j := 0; j < i+10; j++ {
-			if kv.Value[j] != byte(i*20+j) {
-				t.Fatalf("Expected byte %d of key %q to have value %d, got %d instead\n", i, kv.Key, i*20+j, int(kv.Value[j]))
-			}
+		if !bytes.Equal(payload[i], kv.Value) {
+			t.Fatalf("bad response for key %q\n", kv.Key)
 		}
 	}
 
@@ -670,9 +710,9 @@ func TestKeyvalueVersioning(t *testing.T) {
 	}
 
 	// Apply the automatic conflict resolution using ordering.
-	payload := fmt.Sprintf(`{"data":["versiontest"],"parents":[%q,%q],"note":"automatic resolved merge"}`, uuid5, uuid4)
+	resolveNote := fmt.Sprintf(`{"data":["versiontest"],"parents":[%q,%q],"note":"automatic resolved merge"}`, uuid5, uuid4)
 	resolveReq := fmt.Sprintf("%srepo/%s/resolve", server.WebAPIPath, uuid4)
-	returnValue = server.TestHTTP(t, "POST", resolveReq, bytes.NewBufferString(payload))
+	returnValue = server.TestHTTP(t, "POST", resolveReq, bytes.NewBufferString(resolveNote))
 	resolveResp := struct {
 		Child dvid.UUID `json:"child"`
 	}{}
