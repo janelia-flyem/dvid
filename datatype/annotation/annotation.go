@@ -229,11 +229,14 @@ POST <api URL>/node/<UUID>/<data name>/move/<from_coord>/<to_coord>[?<options>]
 	kafkalog    Set to "off" if you don't want this mutation logged to kafka.
 
 		
-POST <api URL>/node/<UUID>/<data name>/reload
+POST <api URL>/node/<UUID>/<data name>/reload[?inmemory=true]
 
 	Forces asynchornous denormalization of all annotations for labels and tags.  Can be 
 	used to initialize a newly added sync.  Note that the annotation will be locked until
 	the denormalization is finished with a log message.
+
+	If a query string "?inmemory=true" is used, a faster in-memory reload is done assuming
+	the server has enough memory to hold all annotations in memory.
 
 ------
 
@@ -1365,6 +1368,49 @@ func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, batch storage.Bat
 	return nil
 }
 
+// lookup labels for given elements and add them to label element map
+func (d *Data) addLabelElements(v dvid.VersionID, labelE map[uint64]ElementsNR, bcoord dvid.ChunkPoint3d, elems Elements) (int, error) {
+	labelData := d.getSyncedLabels()
+	if labelData == nil {
+		return 0, fmt.Errorf("no synced labels for annotation %q", d.DataName())
+	}
+
+	// Compute the strides (in bytes)
+	blockSize := d.blockSize()
+	bX := blockSize[0] * 8
+	bY := blockSize[1] * bX
+	blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * 8)
+
+	// Get the labels for this block
+	labels, err := labelData.GetLabelBytes(v, bcoord)
+	if err != nil {
+		return 0, err
+	}
+	if len(labels) == 0 {
+		return 0, nil
+	}
+	if len(labels) != blockBytes {
+		return 0, fmt.Errorf("expected %d bytes in %q label block %s, got %d instead.  aborting", blockBytes, d.DataName(), bcoord, len(labels))
+	}
+
+	// Add annotations by label
+	var nonzeroElems int
+	for _, elem := range elems {
+		pt := elem.Pos.Point3dInChunk(blockSize)
+		i := pt[2]*bY + pt[1]*bX + pt[0]*8
+		label := binary.LittleEndian.Uint64(labels[i : i+8])
+		if label != 0 {
+			le := labelE[label]
+			le = append(le, elem.ElementNR)
+			labelE[label] = le
+			nonzeroElems++
+		} else {
+			dvid.Infof("Annotation %s was at voxel with label 0\n", elem.Pos)
+		}
+	}
+	return nonzeroElems, nil
+}
+
 // stores synaptic elements arranged by label, replacing any
 // elements at same position.
 func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Batch, be map[dvid.IZYXString]Elements) error {
@@ -1976,6 +2022,165 @@ func (d *Data) storeLabels(batcher storage.KeyValueBatcher, ctx *datastore.Versi
 	return nil
 }
 
+func (d *Data) deleteDenormalizations(ctx *datastore.VersionedCtx) error {
+	store, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return fmt.Errorf("annotation %q had error initializing store: %v", d.DataName(), err)
+	}
+
+	timedLog := dvid.NewTimeLog()
+	dvid.Infof("Deleting label kv denormalizations for annotation %q...\n", d.DataName())
+	minLabelTKey := storage.MinTKey(keyLabel)
+	maxLabelTKey := storage.MaxTKey(keyLabel)
+	if err := store.DeleteRange(ctx, minLabelTKey, maxLabelTKey); err != nil {
+		return fmt.Errorf("unable to delete label denormalization for annotations %q: %v", d.DataName(), err)
+	}
+	timedLog.Infof("Finished deletion of label kv denormalizations for annotation %q", d.DataName())
+
+	timedLog = dvid.NewTimeLog()
+	dvid.Infof("Deleting tag kv denormalizations for annotation %q...\n", d.DataName())
+	minTagTKey := storage.MinTKey(keyTag)
+	maxTagTKey := storage.MaxTKey(keyTag)
+	if err := store.DeleteRange(ctx, minTagTKey, maxTagTKey); err != nil {
+		return fmt.Errorf("unable to delete tag denormalization for annotations %q: %v", d.DataName(), err)
+	}
+	timedLog.Infof("Finished deletion of tag kv denormalizations for annotation %q", d.DataName())
+	return nil
+}
+
+// Do in-memory resync of all keyBlock kv pairs, forcing the label and tag denormalizations.
+func (d *Data) resyncInMemory(ctx *datastore.VersionedCtx) {
+	store, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		dvid.Errorf("Annotation %q had error initializing store: %v\n", d.DataName(), err)
+		return
+	}
+
+	d.StartUpdate()
+	d.Lock()
+	defer func() {
+		d.Unlock()
+		d.StopUpdate()
+	}()
+	if err := d.deleteDenormalizations(ctx); err != nil {
+		dvid.Errorf("Can't delete denormalizations: %v\n", err)
+		return
+	}
+
+	var totBlocks, totElemErrs, totLabelE, totTagE int
+
+	labelE := make(map[uint64]ElementsNR)
+	tagE := make(map[Tag]ElementsNR)
+
+	minTKey := storage.MinTKey(keyBlock)
+	maxTKey := storage.MaxTKey(keyBlock)
+
+	timedLog := dvid.NewTimeLog()
+	err = store.ProcessRange(ctx, minTKey, maxTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+		if c == nil {
+			return fmt.Errorf("received nil chunk in reload for data %q", d.DataName())
+		}
+		if c.V == nil {
+			return nil
+		}
+		chunkPt, err := DecodeBlockTKey(c.K)
+		if err != nil {
+			return fmt.Errorf("couldn't decode chunk key %v for data %q", c.K, d.DataName())
+		}
+		totBlocks++
+		var elems Elements
+		if err := json.Unmarshal(c.V, &elems); err != nil {
+			return fmt.Errorf("couldn't unmarshal elements for data %q", d.DataName())
+		}
+		if len(elems) == 0 {
+			return nil
+		}
+
+		for _, elem := range elems {
+			// Check element is in correct block
+			elemChunkPt := elem.Pos.Chunk(d.blockSize()).(dvid.ChunkPoint3d)
+			if !chunkPt.Equals(elemChunkPt) {
+				dvid.Errorf("Element at %s found in incorrect block %s: %v\n", elem.Pos, elemChunkPt, elem)
+				totElemErrs++
+			}
+			// Add to Tag elements
+			if len(elem.Tags) > 0 {
+				for _, tag := range elem.Tags {
+					te := tagE[tag]
+					te = append(te, elem.ElementNR)
+					totTagE++
+					tagE[tag] = te
+				}
+			}
+		}
+		elemsAdded, err := d.addLabelElements(ctx.VersionID(), labelE, chunkPt, elems)
+		if err != nil {
+			return err
+		}
+		totLabelE += elemsAdded
+
+		if totBlocks%1000 == 0 {
+			timedLog.Infof("Loaded %d blocks of annotations (%d elements in %d labels / %d elements in %d tags), errors %d", totBlocks, totLabelE, len(labelE), totTagE, len(tagE), totElemErrs)
+		}
+		return nil
+	})
+	if err != nil {
+		dvid.Errorf("Error in reload of data %q: %v\n", d.DataName(), err)
+	}
+	timedLog.Infof("Completed loading %d blocks of annotations (%d elements in %d labels / %d elements in %d tags), errors %d", totBlocks, totLabelE, len(labelE), totTagE, len(tagE), totElemErrs)
+
+	// Write label elements
+	dvid.Infof("Writing elements for %d labels ...", len(labelE))
+	var numLabelErrs, numLabels int
+	for label, elems := range labelE {
+		val, err := json.Marshal(elems)
+		if err != nil {
+			dvid.Errorf("problem with marshaling elements for label %q: %v\n", label, err)
+			numLabelErrs++
+			continue
+		}
+		tk := NewLabelTKey(label)
+		if err := store.Put(ctx, tk, val); err != nil {
+			dvid.Errorf("problem storing label %q elements: %v\n", label, err)
+			numLabelErrs++
+		}
+		numLabels++
+		if numLabels%1000 == 0 {
+			timedLog.Infof("Stored %d/%d label denormalizations", numLabels, len(labelE))
+		}
+	}
+	timedLog.Infof("Finished label denormalization of %d labels with %d label elements (%d errors)", numLabels, totLabelE, numLabelErrs)
+
+	// Write tagged elements
+	dvid.Infof("Writing elements for %d tags ...", len(tagE))
+	var numTagErrs, numTags int
+	for tag, elems := range tagE {
+		tk, err := NewTagTKey(tag)
+		if err != nil {
+			dvid.Errorf("problem with tag key tkey for tag %q: %v\n", tag, err)
+			numTagErrs++
+			continue
+		}
+		val, err := json.Marshal(elems)
+		if err != nil {
+			dvid.Errorf("problem with marshaling elements for tag %q: %v\n", tag, err)
+			numTagErrs++
+			continue
+		}
+		if err := store.Put(ctx, tk, val); err != nil {
+			dvid.Errorf("problem storing tag %q elements: %v\n", tag, err)
+			numTagErrs++
+		}
+		numTags++
+		if numTags%1000 == 0 {
+			timedLog.Infof("Stored %d/%d tag denormalizations", numTags, len(tagE))
+		}
+	}
+	timedLog.Infof("Finished tag denormalization of %d tags with %d tag elements (%d errors)", numTags, totTagE, numTagErrs)
+
+	timedLog.Infof("Completed denormalizing %d blocks of annotations (%d elements in %d labels / %d elements in %d tags), errors %d", totBlocks, totLabelE, len(labelE), totTagE, len(tagE), totElemErrs+numLabelErrs+numTagErrs)
+}
+
 // Get all keyBlock kv pairs, forcing the label and tag denormalizations.
 func (d *Data) resync(ctx *datastore.VersionedCtx) {
 	timedLog := dvid.NewTimeLog()
@@ -1993,27 +2198,17 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 
 	d.StartUpdate()
 	d.Lock()
-
-	minLabelTKey := storage.MinTKey(keyLabel)
-	maxLabelTKey := storage.MaxTKey(keyLabel)
-	if err := store.DeleteRange(ctx, minLabelTKey, maxLabelTKey); err != nil {
-		dvid.Errorf("Unable to delete label denormalization for annotations %q: %v\n", d.DataName(), err)
+	defer func() {
 		d.Unlock()
 		d.StopUpdate()
-		return
-	}
-
-	minTagTKey := storage.MinTKey(keyTag)
-	maxTagTKey := storage.MaxTKey(keyTag)
-	if err := store.DeleteRange(ctx, minTagTKey, maxTagTKey); err != nil {
-		dvid.Errorf("Unable to delete tag denormalization for annotations %q: %v\n", d.DataName(), err)
-		d.Unlock()
-		d.StopUpdate()
+	}()
+	if err := d.deleteDenormalizations(ctx); err != nil {
+		dvid.Errorf("Can't delete denormalizations: %v\n", err)
 		return
 	}
 
 	var numBlockE, numTagE int
-	var totBlockE, totTagE int
+	var totMoved, totBlockE, totTagE int
 
 	blockE := make(map[dvid.IZYXString]Elements)
 	tagE := make(map[Tag]Elements)
@@ -2041,9 +2236,6 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 			return nil
 		}
 
-		blockE[chunkPt.ToIZYXString()] = elems
-		numBlockE += len(elems)
-
 		// Iterate through elements, organizing them into blocks and tags.
 		// Note: we do not check for redundancy and guarantee uniqueness at this stage.
 		blockFixBatch := batcher.NewBatch(ctx)
@@ -2052,12 +2244,8 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 			// Check element is in correct block
 			elemChunkPt := elem.Pos.Chunk(d.blockSize()).(dvid.ChunkPoint3d)
 			if !chunkPt.Equals(elemChunkPt) {
-				dvid.Criticalf("Fixing element at %s found in block %s: %v\n", elem.Pos, elemChunkPt, elem)
+				dvid.Criticalf("Bad element at %s found in block %s: %v\n", elem.Pos, elemChunkPt, elem)
 				deleteElems[i] = struct{}{}
-				actualTk := NewBlockTKey(elemChunkPt)
-				if err := d.modifyElements(ctx, blockFixBatch, actualTk, Elements{elem}); err != nil {
-					return err
-				}
 			}
 			// Append to tags if present
 			if len(elem.Tags) > 0 {
@@ -2082,7 +2270,12 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 			if err := blockFixBatch.Commit(); err != nil {
 				return fmt.Errorf("bad batch commit in fixing block keyvalues for data %q: %v", d.DataName(), err)
 			}
+			elems = fixed
+			totMoved += len(deleteElems)
 		}
+		blockE[chunkPt.ToIZYXString()] = elems
+		numBlockE += len(elems)
+
 		if numTagE > 1000 {
 			if err := d.storeTags(batcher, ctx, tagE); err != nil {
 				return err
@@ -2098,6 +2291,7 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 			totBlockE += numBlockE
 			numBlockE = 0
 			blockE = make(map[dvid.IZYXString]Elements)
+			timedLog.Infof("Loaded %d blocks of annotations (%d elements), moved %d", len(blockE), totBlockE, totMoved)
 		}
 
 		return nil
@@ -2117,14 +2311,16 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 			dvid.Errorf("Error writing final set of label elements of data %q: %v", err)
 		}
 	}
-	d.Unlock()
-	d.StopUpdate()
 
 	timedLog.Infof("Completed asynchronous annotation %q reload of %d block and %d tag elements.", d.DataName(), totBlockE, totTagE)
 }
 
-func (d *Data) ReloadData(ctx *datastore.VersionedCtx) {
-	go d.resync(ctx)
+func (d *Data) ReloadData(ctx *datastore.VersionedCtx, inMemory bool) {
+	if inMemory {
+		go d.resyncInMemory(ctx)
+	} else {
+		go d.resync(ctx)
+	}
 	dvid.Infof("Started reload of annotations %q...\n", d.DataName())
 }
 
@@ -2484,11 +2680,12 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 	case "reload":
 		// POST <api URL>/node/<UUID>/<data name>/reload
+		inMemory := r.URL.Query().Get("inmemory") == "true"
 		if action != "post" {
 			server.BadRequest(w, r, "Only POST action is available on 'reload' endpoint.")
 			return
 		}
-		d.ReloadData(ctx)
+		d.ReloadData(ctx, inMemory)
 
 	default:
 		server.BadAPIRequest(w, r, d)
