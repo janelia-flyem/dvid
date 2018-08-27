@@ -2207,7 +2207,7 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 		return
 	}
 
-	var numBlockE, numTagE int
+	var numBlocks, numBlockE, numTagE int
 	var totMoved, totBlockE, totTagE int
 
 	blockE := make(map[dvid.IZYXString]Elements)
@@ -2235,6 +2235,7 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 		if len(elems) == 0 {
 			return nil
 		}
+		numBlocks++
 
 		// Iterate through elements, organizing them into blocks and tags.
 		// Note: we do not check for redundancy and guarantee uniqueness at this stage.
@@ -2291,7 +2292,7 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 			totBlockE += numBlockE
 			numBlockE = 0
 			blockE = make(map[dvid.IZYXString]Elements)
-			timedLog.Infof("Loaded %d blocks of annotations (%d elements), moved %d", len(blockE), totBlockE, totMoved)
+			timedLog.Infof("Loaded %d blocks of annotations (%d elements), moved %d", numBlocks, totBlockE, totMoved)
 		}
 
 		return nil

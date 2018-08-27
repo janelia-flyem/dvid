@@ -130,9 +130,11 @@ HEAD <api URL>/node/<UUID>/<data name>/tarfile/<label>
 
 	GET returns a tarfile of all supervoxel data that has been mapped to the given label.
 	File names within the tarfile will be the supervoxel id and an extension.  HTTP status
-	code 400 (Bad Request) is returned if no such label exists or there was an error.  If
-	a supervoxel's data does not exist, a file will be returned named "X.missing" where X 
-	is the supervoxel id.
+	code 400 (Bad Request) is returned if no such label exists.  If a supervoxel's data does 
+	not exist, a file will be returned named "X.missing" where X is the supervoxel id.
+	Note that HTTP status code 200 (OK) is usually returned if the streaming response
+	has been initiated, and if an error occurs during the return, there will be an ill-formed
+	tar file.  This is a tradeoff to allow streaming response.
 
 	HEAD returns 200 if the body exists and all supervoxels have stored data, even if it is
 	a zero length value.  HTTP status code 400 (Bad Request) is returned if no such label 
@@ -419,16 +421,20 @@ func (d *Data) getSupervoxelGoroutine(db storage.KeyValueDB, ctx *datastore.Vers
 		} else {
 			data, err = db.Get(ctx, tk)
 		}
+
 		// the store should return data = nil if not written, and data = []byte{} (len 0) if empty.
-		if err != nil || data == nil {
-			if err == nil {
-				err = fmt.Errorf("supervoxel %d tarfile missing", supervoxel)
-			}
+		if err != nil {
 			outCh <- fileData{err: err}
 			continue
 		}
+		var ext string
+		if data == nil {
+			ext = "missing"
+		} else {
+			ext = d.Extension
+		}
 		hdr := &tar.Header{
-			Name:    fmt.Sprintf("%d.%s", supervoxel, d.Extension),
+			Name:    fmt.Sprintf("%d.%s", supervoxel, ext),
 			Size:    int64(len(data)),
 			Mode:    0755,
 			ModTime: modTime,
@@ -774,7 +780,6 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		switch action {
 		case "get":
 			if err := d.sendTarfile(w, uuid, label); err != nil {
-				dvid.Infof("Error received: %v", err)
 				server.BadRequest(w, r, "can't send tarfile for label %d: %v", label, err)
 				return
 			}

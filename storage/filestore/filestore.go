@@ -220,7 +220,11 @@ func (fs *fileStore) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 		return nil, err
 	}
 	fpath := filepath.Join(dirpath, filename)
-	return ioutil.ReadFile(fpath)
+	data, err := ioutil.ReadFile(fpath)
+	if err != nil && os.IsNotExist(err) {
+		return nil, nil // just return nil data
+	}
+	return data, err
 }
 
 // ---- KeyValueTimestampGetter interface -----
@@ -238,6 +242,9 @@ func (fs *fileStore) GetWithTimestamp(ctx storage.Context, tk storage.TKey) (dat
 	fpath := filepath.Join(dirpath, filename)
 	var f *os.File
 	if f, err = os.Open(fpath); err != nil {
+		if os.IsNotExist(err) {
+			err = nil // just return nil data
+		}
 		return
 	}
 	defer f.Close()

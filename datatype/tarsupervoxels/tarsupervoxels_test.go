@@ -142,6 +142,7 @@ func testTarball(t *testing.T, storetype storage.Alias) {
 	data := server.TestHTTP(t, "GET", apiStr, nil)
 	buf2 := bytes.NewBuffer(data)
 	tr := tar.NewReader(buf2)
+	var numFiles int
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -175,6 +176,10 @@ func testTarball(t *testing.T, storetype storage.Alias) {
 		if _, found := expected[supervoxel]; !found {
 			t.Fatalf("got back supervoxel %d in tarfile, which is not in set %s\n", supervoxel, expected)
 		}
+		numFiles++
+	}
+	if numFiles != 8 {
+		t.Fatalf("Only got %d files instead of expected 8\n", numFiles)
 	}
 
 	// Test single GET.
