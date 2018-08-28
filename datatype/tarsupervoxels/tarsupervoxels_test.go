@@ -136,6 +136,13 @@ func testTarball(t *testing.T, storetype storage.Alias) {
 		}
 	}
 
+	// Check missing through /missing endpoint
+	apiStr = fmt.Sprintf("%snode/%s/%s/missing/30", server.WebAPIPath, uuid, tarsvname)
+	missingResp := server.TestHTTP(t, "GET", apiStr, nil)
+	if string(missingResp) != "[15]" {
+		t.Fatalf("For GET /missing/30, expected %q, got %q\n", "[15]", missingResp)
+	}
+
 	// Get tarball for body.
 	expected := labels.NewSet(30, 10, 15, 18, 19, 20, 21, 64)
 	apiStr = fmt.Sprintf("%snode/%s/%s/tarfile/30", server.WebAPIPath, uuid, tarsvname)

@@ -154,6 +154,27 @@ HEAD <api URL>/node/<UUID>/<data name>/tarfile/<label>
 	data name     Name of tarsupervoxels data instance.
 	label         The label (body) id.
 
+GET  <api URL>/node/<UUID>/<data name>/missing/<label> 
+
+	Returns a JSON array of all of the label's supervoxels with missing data:
+
+	[181739,3819485677]
+
+	If none of the label's supervoxels are missing, it returns an empty array "[]".
+
+	Example: 
+
+	GET <api URL>/node/3f8c/supervoxel-meshes/missing/18473948
+
+	The "Content-type" of the HTTP response is "application/json".
+
+	Arguments:
+
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of tarsupervoxels data instance.
+	label         The label (body) id.
+
+
 
 GET  <api URL>/node/<UUID>/<data name>/exists 
 
@@ -493,12 +514,12 @@ func (d *Data) handleExistence(uuid dvid.UUID, w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	w.Header().Set("Content-type", "application/json")
-	fmt.Fprintf(w, "[")
+	buf := new(bytes.Buffer)
+	fmt.Fprintf(buf, "[")
 	sep := false
 	for _, supervoxel := range supervoxels {
 		if sep {
-			fmt.Fprintf(w, ",")
+			fmt.Fprintf(buf, ",")
 		}
 		tk, err := NewTKey(supervoxel, d.Extension)
 		if err != nil {
@@ -508,21 +529,85 @@ func (d *Data) handleExistence(uuid dvid.UUID, w http.ResponseWriter, r *http.Re
 		if isChecker {
 			dataPresent, err := checker.Exists(ctx, tk)
 			if err != nil || !dataPresent {
-				fmt.Fprintf(w, "false")
+				fmt.Fprintf(buf, "false")
 			} else {
-				fmt.Fprintf(w, "true")
+				fmt.Fprintf(buf, "true")
 			}
 		} else {
 			data, err := db.Get(ctx, tk)
 			if err != nil || len(data) == 0 {
-				fmt.Fprintf(w, "false")
+				fmt.Fprintf(buf, "false")
 			} else {
-				fmt.Fprintf(w, "true")
+				fmt.Fprintf(buf, "true")
 			}
 		}
 		sep = true
 	}
-	fmt.Fprintf(w, "]")
+	fmt.Fprintf(buf, "]")
+
+	w.Header().Set("Content-type", "application/json")
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		server.BadRequest(w, r, err)
+	}
+}
+
+func (d *Data) handleMissing(uuid dvid.UUID, w http.ResponseWriter, label uint64) error {
+	// GET <api URL>/node/<UUID>/<data name>/missing/<label>
+	db, err := datastore.GetKeyValueDB(d)
+	if err != nil {
+		return err
+	}
+	ldata := d.getSyncedLabels()
+	if ldata == nil {
+		return fmt.Errorf("data %q is not synced with any labelmap instance", d.DataName())
+	}
+	ctx, err := d.getRootContext(uuid)
+	if err != nil {
+		return err
+	}
+	v, err := datastore.VersionFromUUID(uuid)
+	if err != nil {
+		return err
+	}
+	supervoxels, err := ldata.GetSupervoxels(v, label)
+	if err != nil {
+		return err
+	}
+	if len(supervoxels) == 0 {
+		return fmt.Errorf("label %d has no supervoxels", label)
+	}
+	checker, isChecker := db.(storage.KeyValueChecker)
+
+	var missing []string
+	for supervoxel := range supervoxels {
+		tk, err := NewTKey(supervoxel, d.Extension)
+		if err != nil {
+			return err
+		}
+		if isChecker {
+			dataPresent, err := checker.Exists(ctx, tk)
+			if err != nil {
+				return err
+			}
+			if !dataPresent {
+				missing = append(missing, fmt.Sprintf("%d", supervoxel))
+			}
+		} else {
+			data, err := db.Get(ctx, tk)
+			if err != nil {
+				return err
+			}
+			if len(data) == 0 {
+				missing = append(missing, fmt.Sprintf("%d", supervoxel))
+			}
+		}
+	}
+	out := "[" + strings.Join(missing, ",") + "]"
+	w.Header().Set("Content-type", "application/json")
+	if _, err := w.Write([]byte(out)); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (d *Data) checkTarfile(w http.ResponseWriter, uuid dvid.UUID, label uint64) error {
@@ -762,6 +847,26 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "exists":
 		d.handleExistence(uuid, w, r)
 		comment = fmt.Sprintf("HTTP GET exists of data %q", d.DataName())
+
+	case "missing":
+		if len(parts) < 5 {
+			server.BadRequest(w, r, "expect uint64 to follow /missing endpoint")
+			return
+		}
+		label, err := strconv.ParseUint(parts[4], 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if label == 0 {
+			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used")
+			return
+		}
+		if err := d.handleMissing(uuid, w, label); err != nil {
+			server.BadRequest(w, r, "can't get missing supervoxels: %v", err)
+			return
+		}
+		comment = fmt.Sprintf("HTTP GET missing supervoxels of label %d, data %q", label, d.DataName())
 
 	case "tarfile":
 		if len(parts) < 5 {
