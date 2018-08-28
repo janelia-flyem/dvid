@@ -1828,7 +1828,7 @@ func (m *repoManager) setSync(d dvid.Data, syncs dvid.UUIDSet, replace bool) err
 	r.Lock()
 	tm := time.Now()
 	r.updated = tm
-	msg := fmt.Sprintf("Data instance %q set to sync wtih %s", d.DataName(), newSyncs)
+	msg := fmt.Sprintf("Data instance %q set to sync with %s", d.DataName(), newSyncs)
 	message := fmt.Sprintf("%s  %s", tm.Format(time.RFC3339), msg)
 	r.log = append(r.log, message)
 	r.Unlock()

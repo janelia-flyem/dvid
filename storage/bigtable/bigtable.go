@@ -166,7 +166,7 @@ func NewAdminClient(bt *BigTable) (adminClient *api.AdminClient, err error) {
 
 func NewClient(bt *BigTable) (client *api.Client, err error) {
 	if bt.testing {
-		testSrv, err := bttest.NewServer() //TODO close the testSrv if neccesary
+		testSrv, err := bttest.NewServer() //TODO close the testSrv if necessary
 		if err != nil {
 			return nil, fmt.Errorf("Unable to create bigTable local test server. %v", err)
 		}
@@ -973,7 +973,7 @@ func encodeKey(k []byte) string {
 func decodeKey(b64key string) ([]byte, error) {
 
 	//Columns contains the family name as a prefix, ex: versions:AAAAAQAAAAA=
-	//If ther eis no such a prefix the string is return unmodified
+	//If there is no such a prefix the string is return unmodified
 	b64key = strings.TrimPrefix(b64key, fmt.Sprintf("%s:", familyName))
 
 	key, err := base64.URLEncoding.DecodeString(b64key)

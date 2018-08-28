@@ -48,7 +48,7 @@ $ dvid repo <UUID> new roi <data name> <settings...>
 
     Arguments:
 
-    UUID           Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID           Hexadecimal string with enough characters to uniquely identify a version node.
     data name      Name of data to create, e.g., "medulla"
     settings       Configuration settings in "key=value" format separated by spaces.
 
@@ -83,7 +83,7 @@ POST <api URL>/node/<UUID>/<data name>/info
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of roi data.
 
 
@@ -113,7 +113,7 @@ DEL  <api URL>/node/<UUID>/<data name>/roi
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of ROI data to save/modify or get.
 
 GET <api URL>/node/<UUID>/<data name>/mask/0_1_2/<size>/<offset>

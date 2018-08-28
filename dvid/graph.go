@@ -21,7 +21,7 @@ type VertexPairID struct {
 	Vertex2 VertexID
 }
 
-// GraphElement defines fundametal data common to both vertices and edges
+// GraphElement defines fundamental data common to both vertices and edges
 type GraphElement struct {
 	Properties ElementProperties
 	Weight     float64

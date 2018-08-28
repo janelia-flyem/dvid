@@ -47,7 +47,7 @@ $ dvid repo <UUID> new labelsz <data name> <settings...>
 
     Arguments:
 
-    UUID           Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID           Hexadecimal string with enough characters to uniquely identify a version node.
     data name      Name of data to create, e.g., "labelrankings"
     settings       Configuration settings in "key=value" format separated by spaces.
 
@@ -79,7 +79,7 @@ POST <api URL>/node/<UUID>/<data name>/info
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of labelsz data.
 
 

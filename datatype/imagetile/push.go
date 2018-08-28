@@ -15,7 +15,7 @@ func (d *Data) PushData(p *datastore.PushSession) error {
 	return datastore.PushData(d, p)
 }
 
-// --- dvid.Filterer implementatino -----
+// --- dvid.Filterer implementation -----
 
 // NewFilter returns a Filter for use with a push of key-value pairs.
 func (d *Data) NewFilter(fs storage.FilterSpec) (storage.Filter, error) {

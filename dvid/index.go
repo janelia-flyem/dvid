@@ -580,7 +580,7 @@ func (d *DirtyBlocks) incr(iv InstanceVersion, block IZYXString) {
 func (d *DirtyBlocks) decr(iv InstanceVersion, block IZYXString) {
 	cnts, found := d.dirty[iv]
 	if !found || cnts == nil {
-		Errorf("decremented non-existant count for block %s, version %v\n", block, iv)
+		Errorf("decremented non-existent count for block %s, version %v\n", block, iv)
 		return
 	}
 	cnts.Decr(block)

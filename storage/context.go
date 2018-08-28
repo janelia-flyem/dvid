@@ -171,7 +171,7 @@ func TKeyFromKey(key Key) (TKey, error) {
 		return TKey(key[1:]), nil
 	case dataKeyPrefix:
 		start := 1 + dvid.InstanceIDSize
-		end := len(key) - dvid.VersionIDSize - dvid.ClientIDSize - 1 // substract version, client, and tombstone
+		end := len(key) - dvid.VersionIDSize - dvid.ClientIDSize - 1 // subtract version, client, and tombstone
 		return TKey(key[start:end]), nil
 	default:
 		return nil, fmt.Errorf("Cannot extract type-specific key component from key type %v", key[0])
@@ -188,7 +188,7 @@ func SplitKey(k Key) (unversioned Key, versioned Key, err error) {
 		unversioned = k
 		versioned = make([]byte, 0)
 	case dataKeyPrefix:
-		start := len(k) - dvid.VersionIDSize - dvid.ClientIDSize - 1 // substract version, client, and tombstone
+		start := len(k) - dvid.VersionIDSize - dvid.ClientIDSize - 1 // subtract version, client, and tombstone
 		unversioned = k[:start]
 		versioned = k[start:len(k)]
 	default:
@@ -458,7 +458,7 @@ func (ctx *DataContext) VersionFromKey(key Key) (dvid.VersionID, error) {
 	if len(key) < dvid.InstanceIDSize+dvid.VersionIDSize+dvid.ClientIDSize+2 { // TKey must be 0 or larger.
 		return 0, fmt.Errorf("Cannot extract version from DataKey that is only %d bytes", len(key))
 	}
-	start := len(key) - dvid.VersionIDSize - dvid.ClientIDSize - 1 // substract version, client, and tombstone
+	start := len(key) - dvid.VersionIDSize - dvid.ClientIDSize - 1 // subtract version, client, and tombstone
 	return dvid.VersionIDFromBytes(key[start : start+dvid.VersionIDSize]), nil
 }
 
@@ -473,7 +473,7 @@ func (ctx *DataContext) ClientFromKey(key Key) (dvid.ClientID, error) {
 	if len(key) < dvid.InstanceIDSize+dvid.VersionIDSize+dvid.ClientIDSize+2 { // TKey must be 0 or larger.
 		return 0, fmt.Errorf("Cannot extract client from DataKey that is only %d bytes", len(key))
 	}
-	start := len(key) - dvid.ClientIDSize - 1 // substract client, and tombstone
+	start := len(key) - dvid.ClientIDSize - 1 // subtract client, and tombstone
 	return dvid.ClientIDFromBytes(key[start : start+dvid.ClientIDSize]), nil
 }
 

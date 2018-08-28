@@ -51,7 +51,7 @@ $ dvid repo <UUID> new googlevoxels <data name> <settings...>
 
     Arguments:
 
-    UUID           Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID           Hexadecimal string with enough characters to uniquely identify a version node.
     data name      Name of data to create, e.g., "mygrayscale"
     settings       Configuration settings in "key=value" format separated by spaces.
 
@@ -102,7 +102,7 @@ GET  <api URL>/node/<UUID>/<data name>/info
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of googlevoxels data.
 
 
@@ -117,7 +117,7 @@ GET  <api URL>/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>[?optio
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
                     Slice strings ("xy", "xz", or "yz") are also accepted.
@@ -155,7 +155,7 @@ GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?qu
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     dims          The axes of data extraction in form "i_j_k,..."  
                     Slice strings ("xy", "xz", or "yz") are also accepted.

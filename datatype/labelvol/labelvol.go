@@ -60,7 +60,7 @@ $ dvid repo <UUID> new labelvol <data name> <settings...>
 
     Arguments:
 
-    UUID           Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID           Hexadecimal string with enough characters to uniquely identify a version node.
     data name      Name of data to create, e.g., "sparsevols"
     settings       Configuration settings in "key=value" format separated by spaces.
 
@@ -114,7 +114,7 @@ POST <api URL>/node/<UUID>/<data name>/info
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of labelvol data.
 
 
@@ -209,7 +209,7 @@ GET <api URL>/node/<UUID>/<data name>/sparsevol-by-point/<coord>
 	
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of mapping data.
     coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
 

@@ -1796,7 +1796,7 @@ func repoResolveHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// If we have any new nodes to accomodate deletions, commit them.
+	// If we have any new nodes with deletions, commit them.
 	for i, oldUUID := range oldParents {
 		if newParents[i] != oldUUID {
 			err := datastore.Commit(newParents[i], "Version for deleting conflicts before merge", nil)

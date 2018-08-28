@@ -192,7 +192,7 @@ func (db *GraphKeyValueDB) serializeVertex(vert dvid.GraphVertex) []byte {
 		start += 1
 	}
 
-	// encode DVID related info (currenlty compression is disabled)
+	// encode DVID related info (currently compression is disabled)
 	compression, _ := dvid.NewCompression(dvid.Uncompressed, dvid.DefaultCompression)
 	finalbuf, _ := dvid.SerializeData(buf, compression, dvid.NoChecksum)
 
@@ -241,7 +241,7 @@ func (db *GraphKeyValueDB) serializeEdge(edge dvid.GraphEdge) []byte {
 		start += 1
 	}
 
-	// encode DVID related info (currenlty compression is disabled)
+	// encode DVID related info (currently compression is disabled)
 	compression, _ := dvid.NewCompression(dvid.Uncompressed, dvid.DefaultCompression)
 	finalbuf, _ := dvid.SerializeData(buf, compression, dvid.NoChecksum)
 

@@ -47,7 +47,7 @@ $ dvid repo <UUID> new tarsupervoxels <data name> <settings...>
 
 	Arguments:
 
-	UUID           Hexidecimal string with enough characters to uniquely identify a version node.
+	UUID           Hexadecimal string with enough characters to uniquely identify a version node.
 	data name      Name of data to create, e.g., "supervoxel-meshes"
 	settings       Configuration settings in "key=value" format separated by spaces.
 
@@ -78,7 +78,7 @@ POST <api URL>/node/<UUID>/<data name>/info
 
 	Arguments:
 
-	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of tarsupervoxels data instance.
 
 
@@ -121,7 +121,7 @@ DEL  <api URL>/node/<UUID>/<data name>/supervoxel/<id>
 
 	Arguments:
 
-	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of tarsupervoxels data instance.
 	label         The supervoxel id.
 
@@ -150,7 +150,7 @@ HEAD <api URL>/node/<UUID>/<data name>/tarfile/<label>
 
 	Arguments:
 
-	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of tarsupervoxels data instance.
 	label         The label (body) id.
 
@@ -167,7 +167,7 @@ GET  <api URL>/node/<UUID>/<data name>/exists
 	[ true, false, true, ... ]
 
 	Arguments:
-	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of tarsupervoxels instance.
 
 	Query-string Options:
@@ -182,7 +182,7 @@ POST <api URL>/node/<UUID>/<data name>/load
 
 	Arguments:
 
-	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of tarsupervoxels data instance.
 
 `

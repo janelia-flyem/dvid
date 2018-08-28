@@ -564,7 +564,7 @@ func (d *dirtyCache) incr(iv dvid.InstanceVersion, label uint64) {
 func (d *dirtyCache) decr(iv dvid.InstanceVersion, label uint64) {
 	cnts, found := d.dirty[iv]
 	if !found || cnts == nil {
-		dvid.Errorf("decremented non-existant count for label %d, version %v\n", label, iv)
+		dvid.Errorf("decremented non-existent count for label %d, version %v\n", label, iv)
 		return
 	}
 	cnts.Decr(label)

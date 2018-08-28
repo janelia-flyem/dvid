@@ -58,7 +58,7 @@ $ dvid node <UUID> <data name> load <V3D raw filename>
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     filename      Filename of a V3D Raw format file.
 	
@@ -84,7 +84,7 @@ POST <api URL>/node/<UUID>/<data name>/info
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of multichan16 data.
 
 
@@ -99,7 +99,7 @@ POST <api URL>/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data.  Optionally add a numerical suffix for the channel number.
     dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
                     Slice strings ("xy", "xz", or "yz") are also accepted.

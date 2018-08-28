@@ -41,7 +41,7 @@ $ dvid repo <UUID> new keyvalue <data name> <settings...>
 
 	Arguments:
 
-	UUID           Hexidecimal string with enough characters to uniquely identify a version node.
+	UUID           Hexadecimal string with enough characters to uniquely identify a version node.
 	data name      Name of data to create, e.g., "myblobs"
 	settings       Configuration settings in "key=value" format separated by spaces.
 
@@ -84,7 +84,7 @@ POST <api URL>/node/<UUID>/<data name>/info
 
 	Arguments:
 
-	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of keyvalue data instance.
 
 GET  <api URL>/node/<UUID>/<data name>/keys
@@ -101,7 +101,7 @@ GET  <api URL>/node/<UUID>/<data name>/keyrange/<key1>/<key2>
 
 	Arguments:
 
-	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of keyvalue data instance.
 	key1          Lexicographically lowest alphanumeric key in range.
 	key2          Lexicographically highest alphanumeric key in range.
@@ -124,7 +124,7 @@ DEL  <api URL>/node/<UUID>/<data name>/key/<key>
 
 	Arguments:
 
-	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of keyvalue data instance.
 	key           An alphanumeric key.
 	
@@ -172,7 +172,7 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 
 	Arguments:
 
-	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of keyvalue data instance.
 
 	GET Query-string Options:

@@ -53,7 +53,7 @@ $ dvid repo <UUID> new imagetile <data name> <settings...>
 
 	Arguments:
 
-	UUID           Hexidecimal string with enough characters to uniquely identify a version node.
+	UUID           Hexadecimal string with enough characters to uniquely identify a version node.
 	data name      Name of data to create, e.g., "mygrayscale"
 	settings       Configuration settings in "key=value" format separated by spaces.
 
@@ -87,7 +87,7 @@ $ dvid -stdin node <UUID> <data name> generate [settings] < config.json
 
 	Arguments:
 
-	UUID            Hexidecimal string with enough characters to uniquely identify a version node.
+	UUID            Hexadecimal string with enough characters to uniquely identify a version node.
 	data name       Name of data to create, e.g., "mygrayscale".
 	settings        Optional file name of tile specifications for tile generation.
 
@@ -161,7 +161,7 @@ GET  <api URL>/node/<UUID>/<data name>/info
 
 	Arguments:
 
-	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of imagetile data.
 
 
@@ -219,7 +219,7 @@ POST
 
 	Arguments:
 
-	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of data to add.
 	dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
 					Slice strings ("xy", "xz", or "yz") are also accepted.
@@ -248,7 +248,7 @@ GET  <api URL>/node/<UUID>/<data name>/tilekey/<dims>/<scaling>/<tile coord>
 
 	Arguments:
 
-	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of data to add.
 	dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
 					Slice strings ("xy", "xz", or "yz") are also accepted.
@@ -270,7 +270,7 @@ GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
 	Arguments:
 
-	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of data to add.
 	dims          The axes of data extraction in form i_j.  Example: "0_2" can be XZ.
 					Slice strings ("xy", "xz", or "yz") are also accepted.
@@ -294,7 +294,7 @@ GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format
 
 	Arguments:
 
-	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of data to add.
 	dims          The axes of data extraction in form i_j.  Example: "0_2" can be XZ.
 					Slice strings ("xy", "xz", or "yz") are also accepted.

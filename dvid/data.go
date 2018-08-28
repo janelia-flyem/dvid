@@ -305,7 +305,7 @@ type DataSetter interface {
 	SetSync(UUIDSet)
 }
 
-// Axis enumerates differnt types of axis (x, y, z, time, etc)
+// Axis enumerates different types of axis (x, y, z, time, etc)
 type Axis uint8
 
 const (

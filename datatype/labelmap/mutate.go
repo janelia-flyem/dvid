@@ -82,7 +82,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		return fmt.Errorf("can't get block indices of to merge target label %d: %v", op.Target, err)
 	}
 	if targetIdx == nil {
-		return fmt.Errorf("can't merge into a non-existant label %d", op.Target)
+		return fmt.Errorf("can't merge into a non-existent label %d", op.Target)
 	}
 	mergeIdx, err := GetMultiLabelIndex(d, v, op.Merged, dvid.Bounds{})
 	if err != nil {

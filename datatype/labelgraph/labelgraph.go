@@ -117,7 +117,7 @@ POST <api URL>/node/<UUID>/<data name>/info
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of voxels data.
 
 
@@ -149,7 +149,7 @@ DELETE  <api URL>/node/<UUID>/<data name>/subgraph
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add/retrieve.
 
     Query-string Options:
@@ -167,7 +167,7 @@ POST  <api URL>/node/<UUID>/<data name>/merge/[nohistory]
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add/retrieve.
 
 
@@ -177,7 +177,7 @@ POST  <api URL>/node/<UUID>/<data name>/undomerge
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add/retrieve.
 
 
@@ -191,7 +191,7 @@ GET  <api URL>/node/<UUID>/<data name>/neighbors/<vertex>
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add/retrieve.
     vertex        ID of vertex
 
@@ -208,7 +208,7 @@ POST  <api URL>/node/<UUID>/<data name>/weight
     
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add/retrieve.
 
 
@@ -243,7 +243,7 @@ POST (really PUT)  <api URL>/node/<UUID>/<data name>/propertytransaction/<edges|
     
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add/retrieve.
     property           Name of the property
 
@@ -259,7 +259,7 @@ DELETE  <api URL>/node/<UUID>/<data name>/property/<vertex>/<key>
     
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add/retrieve.
     vertex        ID of vertex
     key           Name of the property
@@ -276,7 +276,7 @@ DELETE <api URL>/node/<UUID>/<data name>/property/<vertex1>/<vertex2>/<key>
     
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add/retrieve.
     vertex1       ID of vertex1
     vertex2       ID of vertex2

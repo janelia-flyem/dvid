@@ -306,7 +306,7 @@ func (db *GBucket) backgroundRequestHandler() {
 		// add to job queue
 		db.activeOps <- nil
 
-		// if succesfully added, signal requester
+		// if successfully added, signal requester
 		request <- jobid
 		jobid += 1
 	}

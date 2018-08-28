@@ -61,7 +61,7 @@ $ dvid repo <UUID> new labelarray <data name> <settings...>
 
     Arguments:
 
-    UUID            Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID            Hexadecimal string with enough characters to uniquely identify a version node.
     data name       Name of data to create, e.g., "superpixels"
     settings        Configuration settings in "key=value" format separated by spaces.
 
@@ -85,7 +85,7 @@ $ dvid node <UUID> <data name> load <offset> <image glob> <settings...>
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
     image glob    Filenames of label images, preferably in quotes, e.g., "foo-xy-*.png"
@@ -106,7 +106,7 @@ $ dvid node <UUID> <data name> composite <uint8 data name> <new rgba8 data name>
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
 	
 	
@@ -153,7 +153,7 @@ POST <api URL>/node/<UUID>/<data name>/info
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of voxels data.
 
 POST  <api URL>/node/<UUID>/<data name>/resolution
@@ -237,7 +237,7 @@ GET  <api URL>/node/<UUID>/<data name>/specificblocks[?queryopts]
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
 
     Query-string Options:
@@ -270,7 +270,7 @@ GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
                     Slice strings ("xy", "xz", or "yz") are also accepted.
@@ -316,7 +316,7 @@ GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?qu
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     dims          The axes of data extraction in form "i_j_k,..."  
                     Slice strings ("xy", "xz", or "yz") are also accepted.
@@ -354,7 +354,7 @@ POST <api URL>/node/<UUID>/<data name>/raw/0_1_2/<size>/<offset>[?queryopts]
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     size          Size in voxels along each dimension specified in <dims>.
     offset        Gives coordinate of first voxel using dimensionality of data.
@@ -385,7 +385,7 @@ GET  <api URL>/node/<UUID>/<data name>/pseudocolor/<dims>/<size>/<offset>[?query
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     dims          The axes of data extraction.  Example: "0_2" can be XZ.
                     Slice strings ("xy", "xz", or "yz") are also accepted.
@@ -407,7 +407,7 @@ GET <api URL>/node/<UUID>/<data name>/label/<coord>[?queryopts]
 	{ "Label": 23 }
 	
     Arguments:
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of label data.
     coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
 
@@ -427,7 +427,7 @@ GET <api URL>/node/<UUID>/<data name>/labels[?queryopts]
 	[ 23, 911, ...]
 	
     Arguments:
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of label data.
 
     Query-string Options:
@@ -482,7 +482,7 @@ GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     size          Size in voxels along each dimension specified in <dims>.
     offset        Gives coordinate of first voxel using dimensionality of data.
@@ -563,7 +563,7 @@ POST <api URL>/node/<UUID>/<data name>/blocks[?queryopts]
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
 
     Query-string Options:
@@ -706,7 +706,7 @@ GET <api URL>/node/<UUID>/<data name>/sparsevol-by-point/<coord>
 	
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of mapping data.
     coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
 
@@ -1376,7 +1376,7 @@ func (d *Data) persistMaxLabel(v dvid.VersionID) error {
 		return err
 	}
 	if len(d.MaxLabel) == 0 {
-		return fmt.Errorf("bad attempt to save non-existant max label for version %d\n", v)
+		return fmt.Errorf("bad attempt to save non-existent max label for version %d\n", v)
 	}
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint64(buf, d.MaxLabel[v])
@@ -2885,7 +2885,7 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 	downscale := queryStrings.Get("downres") == "true"
 	if strings.ToLower(r.Method) == "get" {
 		if len(parts) < 6 {
-			server.BadRequest(w, r, "must specifiy size and offset with GET /blocks endpoint")
+			server.BadRequest(w, r, "must specify size and offset with GET /blocks endpoint")
 			return
 		}
 		sizeStr, offsetStr := parts[4], parts[5]

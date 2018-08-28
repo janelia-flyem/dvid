@@ -53,7 +53,7 @@ $ dvid repo <UUID> new imageblk <data name> <settings...>
 
     Arguments:
 
-    UUID           Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID           Hexadecimal string with enough characters to uniquely identify a version node.
     type name      Data type name, e.g., "uint8"
     data name      Name of data to create, e.g., "mygrayscale"
     settings       Configuration settings in "key=value" format separated by spaces.
@@ -76,7 +76,7 @@ $ dvid node <UUID> <data name> load <offset> <image glob>
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
     image glob    Filenames of images, e.g., foo-xy-*.png
@@ -94,7 +94,7 @@ $ dvid node <UUID> <data name> put remote <plane> <offset> <image glob>
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     dims          The axes of data extraction in form "i,j,k,..."  Example: "0,2" can be XZ.
                     Slice strings ("xy", "xz", or "yz") are also accepted.
@@ -134,7 +134,7 @@ POST <api URL>/node/<UUID>/<data name>/info
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of voxels data.
 
 
@@ -195,7 +195,7 @@ GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
                     Slice strings ("xy", "xz", or "yz") are also accepted.
@@ -257,7 +257,7 @@ GET  <api URL>/node/<UUID>/<data name>/specificblocks[?queryopts]
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
 
     Query-string Options:
@@ -311,7 +311,7 @@ GET  <api URL>/node/<UUID>/<data name>/subvolblocks/<size>/<offset>[?queryopts]
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     size          Size in voxels along each dimension specified in <dims>.
     offset        Gives coordinate of first voxel using dimensionality of data.
@@ -349,7 +349,7 @@ GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?qu
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     dims          The axes of data extraction in form "i_j_k,..."  
                     Slice strings ("xy", "xz", or "yz") are also accepted.
@@ -388,7 +388,7 @@ POST <api URL>/node/<UUID>/<data name>/raw/0_1_2/<size>/<offset>[?queryopts]
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     size          Size in voxels along each dimension specified in <dims>.
     offset        Gives coordinate of first voxel using dimensionality of data.
@@ -418,7 +418,7 @@ GET  <api URL>/node/<UUID>/<data name>/arb/<top left>/<top right>/<bottom left>/
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     top left      Real world coordinate (in nanometers) of top left pixel in returned image.
     top right     Real world coordinate of top right pixel.
@@ -454,7 +454,7 @@ POST <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
 
     Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     block coord   The block coordinate of the first block in X_Y_Z format.  Block coordinates
                   can be derived from voxel coordinates by dividing voxel coordinates by

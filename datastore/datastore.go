@@ -381,7 +381,7 @@ func (kvv kvVersions) FindMatch(v dvid.VersionID) (*storage.KeyValue, dvid.Versi
 }
 
 // FindConflicts returns any keys that would conflict for the given parents ordered by priority,
-// where first parent takes most precendence, second parent is second most important, etc.
+// where first parent takes most precedence, second parent is second most important, etc.
 func (kvv kvVersions) FindConflicts(parents []dvid.VersionID) (toDelete map[dvid.VersionID]storage.Key, err error) {
 	if manager == nil {
 		return nil, ErrManagerNotInitialized
@@ -397,7 +397,7 @@ func (kvv kvVersions) FindConflicts(parents []dvid.VersionID) (toDelete map[dvid
 	for _, parentV := range parents {
 		kv, _, err := manager.findMatch(kvv, parentV)
 		if err != nil {
-			return nil, fmt.Errorf("error retrieving k/v with precendence: %v", err)
+			return nil, fmt.Errorf("error retrieving k/v with precedence: %v", err)
 		}
 		if first == nil {
 			if kv != nil && kv.K != nil {
