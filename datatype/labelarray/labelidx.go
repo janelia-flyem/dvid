@@ -836,7 +836,6 @@ func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds 
 	}
 
 	if m != nil && len(m.Blocks) > 0 {
-		dvid.Infof("Found %d blocks for label %d with constituents %s\n", len(m.Blocks), label, members)
 		return true, nil
 	}
 	return false, nil
