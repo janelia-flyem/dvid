@@ -830,7 +830,7 @@ func (d *Data) addBoundedRLEs(izyx dvid.IZYXString, data []byte, lbls labels.Set
 // FoundSparseVol returns true if a sparse volume is found for the given label
 // within the given bounds.
 func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds) (bool, error) {
-	m, members, err := GetMappedLabelIndex(d, ctx.VersionID(), label, 0, bounds)
+	m, _, err := GetMappedLabelIndex(d, ctx.VersionID(), label, 0, bounds)
 	if err != nil {
 		return false, err
 	}
