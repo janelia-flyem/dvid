@@ -13,6 +13,7 @@ import (
 	"io"
 	"io/ioutil"
 	"sort"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/downres"
@@ -63,6 +64,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		"Labels":     lbls,
 		"UUID":       string(versionuuid),
 		"MutationID": mutID,
+		"Timestamp":  time.Now().String(),
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
@@ -139,6 +141,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		"Action":     "merge-complete",
 		"MutationID": mutID,
 		"UUID":       string(versionuuid),
+		"Timestamp":  time.Now().String(),
 	}
 	jsonmsg, _ = json.Marshal(msginfo)
 	return d.ProduceKafkaMsg(jsonmsg)
@@ -185,6 +188,7 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 		"CleavedSupervoxels": cleaveSupervoxels,
 		"MutationID":         mutID,
 		"UUID":               string(versionuuid),
+		"Timestamp":          time.Now().String(),
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
@@ -222,6 +226,7 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 		"Action":     "cleave-complete",
 		"MutationID": mutID,
 		"UUID":       string(versionuuid),
+		"Timestamp":  time.Now().String(),
 	}
 	jsonmsg, _ = json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
@@ -586,6 +591,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 		"MutationID": mutID,
 		"UUID":       string(versionuuid),
 		"SVSplits":   svsplit.Splits,
+		"Timestamp":  time.Now().String(),
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
@@ -640,6 +646,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 		"Action":     "split-complete",
 		"MutationID": mutID,
 		"UUID":       string(versionuuid),
+		"Timestamp":  time.Now().String(),
 	}
 	jsonmsg, _ = json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
@@ -738,6 +745,7 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser
 		"Split":            splitRef,
 		"MutationID":       mutID,
 		"UUID":             string(versionuuid),
+		"Timestamp":        time.Now().String(),
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
@@ -850,6 +858,7 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser
 		"Action":     "split-supervoxel-complete",
 		"MutationID": mutID,
 		"UUID":       string(versionuuid),
+		"Timestamp":  time.Now().String(),
 	}
 	jsonmsg, _ = json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {

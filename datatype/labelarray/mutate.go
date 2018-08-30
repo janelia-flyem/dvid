@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/downres"
@@ -80,6 +81,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 		"Labels":     lbls,
 		"UUID":       string(versionuuid),
 		"MutationID": mutID,
+		"Timestamp":  time.Now().String(),
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
@@ -177,6 +179,7 @@ func (d *Data) processMerge(v dvid.VersionID, mutID uint64, delta labels.DeltaMe
 		"Action":     "merge-complete",
 		"MutationID": mutID,
 		"UUID":       string(versionuuid),
+		"Timestamp":  time.Now().String(),
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	return d.ProduceKafkaMsg(jsonmsg)
@@ -245,6 +248,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 		"Split":      splitRef,
 		"MutationID": mutID,
 		"UUID":       string(versionuuid),
+		"Timestamp":  time.Now().String(),
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
@@ -304,6 +308,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 		"Action":     "split-complete",
 		"MutationID": mutID,
 		"UUID":       string(versionuuid),
+		"Timestamp":  time.Now().String(),
 	}
 	jsonmsg, _ = json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
@@ -368,11 +373,12 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 	mutID := d.NewMutationID()
 	versionuuid, _ := datastore.UUIDFromVersion(v)
 	msginfo := map[string]interface{}{
-		"Action":   "splitcoarse",
-		"Target":   fromLabel,
-		"NewLabel": toLabel,
-		"Split":    splitRef,
-		"UUID":     string(versionuuid),
+		"Action":    "splitcoarse",
+		"Target":    fromLabel,
+		"NewLabel":  toLabel,
+		"Split":     splitRef,
+		"UUID":      string(versionuuid),
+		"Timestamp": time.Now().String(),
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
@@ -430,6 +436,7 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 		"Action":     "splitcoarse-complete",
 		"MutationID": mutID,
 		"UUID":       string(versionuuid),
+		"Timestamp":  time.Now().String(),
 	}
 	jsonmsg, _ = json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {

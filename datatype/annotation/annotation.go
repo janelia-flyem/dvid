@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/labelarray"
@@ -1823,9 +1824,10 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff 
 
 		versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
 		msginfo := map[string]interface{}{
-			"Action":  "element-post",
-			"DataRef": postRef,
-			"UUID":    string(versionuuid),
+			"Action":    "element-post",
+			"DataRef":   postRef,
+			"UUID":      string(versionuuid),
+			"Timestamp": time.Now().String(),
 		}
 		jsonmsg, err := json.Marshal(msginfo)
 		if err != nil {
@@ -1892,9 +1894,10 @@ func (d *Data) DeleteElement(ctx *datastore.VersionedCtx, pt dvid.Point3d, kafka
 	if !kafkaOff {
 		versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
 		msginfo := map[string]interface{}{
-			"Action": "element-delete",
-			"Point":  pt,
-			"UUID":   string(versionuuid),
+			"Action":    "element-delete",
+			"Point":     pt,
+			"UUID":      string(versionuuid),
+			"Timestamp": time.Now().String(),
 		}
 		jsonmsg, err := json.Marshal(msginfo)
 		if err != nil {
@@ -1967,10 +1970,11 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d, k
 	if !kafkaOff {
 		versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
 		msginfo := map[string]interface{}{
-			"Action": "element-move",
-			"From":   from,
-			"To":     to,
-			"UUID":   string(versionuuid),
+			"Action":    "element-move",
+			"From":      from,
+			"To":        to,
+			"UUID":      string(versionuuid),
+			"Timestamp": time.Now().String(),
 		}
 		jsonmsg, err := json.Marshal(msginfo)
 		if err != nil {

@@ -12,6 +12,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -584,10 +585,11 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 			go func() {
 				msginfo := map[string]interface{}{
-					"Action": "postkv",
-					"Key":    keyStr,
-					"Bytes":  len(data),
-					"UUID":   string(uuid),
+					"Action":    "postkv",
+					"Key":       keyStr,
+					"Bytes":     len(data),
+					"UUID":      string(uuid),
+					"Timestamp": time.Now().String(),
 				}
 				jsonmsg, _ := json.Marshal(msginfo)
 				if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
@@ -708,10 +710,11 @@ func (d *Data) handleIngest(r *http.Request, uuid dvid.UUID, ctx *datastore.Vers
 		}
 
 		msginfo := map[string]interface{}{
-			"Action": "postkv",
-			"Key":    kv.Key,
-			"Bytes":  len(kv.Value),
-			"UUID":   string(uuid),
+			"Action":    "postkv",
+			"Key":       kv.Key,
+			"Bytes":     len(kv.Value),
+			"UUID":      string(uuid),
+			"Timestamp": time.Now().String(),
 		}
 		jsonmsg, _ := json.Marshal(msginfo)
 		if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
