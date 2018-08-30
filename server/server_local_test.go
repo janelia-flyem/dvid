@@ -42,26 +42,25 @@ func TestStartWebhook(t *testing.T) {
 	defer ts.Close()
 	tomlCfg.Server.StartWebhook = ts.URL
 
-
 	// test handler for Janelia-specific start webhook
-    var data string
-    ts2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        var err error
+	var data string
+	ts2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
 
-        err = r.ParseForm()
-        if err != nil {
-            t.Fatalf("couldn't parse posted form from StartJaneliaConfig: %v\n", err)
-        }
+		err = r.ParseForm()
+		if err != nil {
+			t.Fatalf("couldn't parse posted form from StartJaneliaConfig: %v\n", err)
+		}
 
-        data = r.PostFormValue("config")
-        if len(data) == 0 {
-            t.Fatalf("no data sent to StartJaneliaConfig: %v\n", err)
-        }
-    }))
-    defer ts2.Close()
-    tomlCfg.Server.StartJaneliaConfig = ts2.URL
+		data = r.PostFormValue("config")
+		if len(data) == 0 {
+			t.Fatalf("no data sent to StartJaneliaConfig: %v\n", err)
+		}
+	}))
+	defer ts2.Close()
+	tomlCfg.Server.StartJaneliaConfig = ts2.URL
 
-    // check server startup
+	// check server startup
 	if err := tc.Server.Initialize(); err != nil {
 		t.Fatalf("couldn't initialize server: %v\n", err)
 	}
@@ -72,9 +71,9 @@ func TestStartWebhook(t *testing.T) {
 	}
 
 	// check Janelia webhook
-    if data != `{"HTTP Address":"localhost:8000","Host":"mygreatserver.test.com","Note":"You can put anything you want in here and have it available via /api/server/note.\nMultiple lines!\n","RPC Address":"localhost:8001"}` {
-        t.Fatalf("Expected server info to be sent to Janelia webhook, but received this instead:\n%s\n", data)
-    }
+	if data != `{"HTTP Address":"localhost:8000","Host":"mygreatserver.test.com","Note":"You can put anything you want in here and have it available via /api/server/note.\nMultiple lines!\n","RPC Address":"localhost:8001"}` {
+		t.Fatalf("Expected server info to be sent to Janelia webhook, but received this instead:\n%s\n", data)
+	}
 
 	// check if there's no recipient for webhook.
 	tomlCfg.Server.StartWebhook = "http://mybadurl:2718"
@@ -134,6 +133,18 @@ func TestParseConfig(t *testing.T) {
 	kafkaCfg := tomlCfg.Kafka
 	if len(kafkaCfg.Servers) != 2 || kafkaCfg.Servers[0] != "http://foo.bar.com:1234" || kafkaCfg.Servers[1] != "http://foo2.bar.com:1234" {
 		t.Errorf("Bad Kafka config: %v\n", kafkaCfg)
+	}
+
+	if len(tomlCfg.Mirror) != 1 {
+		t.Errorf("Bad mirror config: %v\n", tomlCfg.Mirror)
+	}
+	spec := dvid.DataSpecifier(`"labels:99ef22cd85f143f58a623bd22aad0ef7"`)
+	mirrorCfg, found := tomlCfg.Mirror[spec]
+	if !found {
+		t.Fatalf("did not find expected mirror configuration for %s: %v\n", spec, tomlCfg.Mirror)
+	}
+	if len(mirrorCfg.Servers) != 2 || mirrorCfg.Servers[0] != "http://mirror1.janelia.org:7000" || mirrorCfg.Servers[1] != "http://mirror2.janelia.org:7000" {
+		t.Fatalf("bad parsed mirror servers: %v\n", mirrorCfg)
 	}
 }
 

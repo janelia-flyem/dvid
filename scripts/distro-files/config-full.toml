@@ -128,3 +128,12 @@ gb = 60  # 60 GB if we have a beefy server
 host = "http://10.0.0.1:8003"
 peers = ["http://10.0.0.2:8002", "http://10.0.0.3:8002"]  # currently not used
 instances = ["graytiles:99ef22cd85f143f58a623bd22aad0ef7"]
+
+# Mirror support sets up echoing of POST requests to remote dvid servers.  
+# Mirroring can be limited to specified instances under the caveat that this 
+# can cause remote identical UUIDs to have partially mutated data instead of fully 
+# mirrored data.  This can be useful for load splitting where batch processes can
+# hit the mirror for the given instances.
+[mirror]
+	[mirror."labels:99ef22cd85f143f58a623bd22aad0ef7"]
+	servers = ["http://mirror1.janelia.org:7000", "http://mirror2.janelia.org:7000"]

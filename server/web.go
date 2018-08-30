@@ -6,6 +6,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -877,10 +878,10 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 			BadRequest(w, r, err)
 			return
 		}
+		method := strings.ToLower(r.Method)
 
 		// handle all blobstore requests
 		if c.URLParams["keyword"] == "blobstore" {
-			method := strings.ToLower(r.Method)
 			switch method {
 			case "get":
 				url := r.URL.Path[len(WebAPIPath):]
@@ -967,6 +968,30 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 		if config != nil && config.AllowTiming() {
 			w.Header().Set("Timing-Allow-Origin", "*")
 		}
+
+		if method == "post" {
+			mirrors := instanceMirrors(dataname, uuid)
+			if len(mirrors) > 0 {
+				buf, err := ioutil.ReadAll(r.Body)
+				if err != nil {
+					BadRequest(w, r, "unable to read POST for mirroring: %v", err)
+					return
+				}
+				r.Body = ioutil.NopCloser(bytes.NewBuffer(buf))
+				for _, hostAndPort := range mirrors {
+					url := "http://" + hostAndPort + r.URL.Path
+					dvid.Infof("echoing POST: %s\n", url)
+					contentType := r.Header.Get("Content-Type")
+					resp, err := http.Post(url, contentType, bytes.NewBuffer(buf))
+					if err != nil {
+						dvid.Errorf("problem echoing POST (%s): %v\n", url, err)
+					} else {
+						dvid.Infof("echoed POST: %s (status %d)\n", url, resp.StatusCode)
+					}
+				}
+			}
+		}
+
 		data.ServeHTTP(uuid, ctx, w, r)
 	}
 	return http.HandlerFunc(fn)

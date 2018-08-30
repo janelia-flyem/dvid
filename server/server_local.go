@@ -117,6 +117,7 @@ type tomlConfig struct {
 	Backend    map[dvid.DataSpecifier]backendConfig
 	Cache      map[string]sizeConfig
 	Groupcache storage.GroupcacheConfig
+	Mirror     map[dvid.DataSpecifier]mirrorConfig
 }
 
 // Some settings in the TOML can be given as relative paths.
@@ -212,6 +213,18 @@ func (c *tomlConfig) AllowTiming() bool {
 func (c *tomlConfig) KafkaServers() []string {
 	if len(c.Kafka.Servers) != 0 {
 		return c.Kafka.Servers
+	}
+	return nil
+}
+
+func instanceMirrors(dataname dvid.InstanceName, uuid dvid.UUID) []string {
+	if len(tc.Mirror) == 0 {
+		return nil
+	}
+	dataspec := dvid.DataSpecifier(`"` + string(dataname) + `:` + string(uuid) + `"`)
+	mirror, found := tc.Mirror[dataspec]
+	if found {
+		return mirror.Servers
 	}
 	return nil
 }
@@ -316,6 +329,10 @@ type backendConfig struct {
 	Log   storage.Alias
 }
 
+type mirrorConfig struct {
+	Servers []string
+}
+
 // LoadConfig loads DVID server configuration from a TOML file.
 func LoadConfig(filename string) (*tomlConfig, *storage.Backend, error) {
 	if filename == "" {
@@ -324,6 +341,7 @@ func LoadConfig(filename string) (*tomlConfig, *storage.Backend, error) {
 	if _, err := toml.DecodeFile(filename, &tc); err != nil {
 		return &tc, nil, fmt.Errorf("could not decode TOML config: %v", err)
 	}
+	dvid.Infof("tomlConfig: %v\n", tc)
 	var err error
 	err = tc.ConvertPathsToAbsolute(filename)
 	if err != nil {
