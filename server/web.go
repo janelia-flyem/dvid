@@ -978,16 +978,18 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 					return
 				}
 				r.Body = ioutil.NopCloser(bytes.NewBuffer(buf))
+				contentType := r.Header.Get("Content-Type")
 				for _, hostAndPort := range mirrors {
-					url := "http://" + hostAndPort + r.URL.Path
-					dvid.Infof("echoing POST: %s\n", url)
-					contentType := r.Header.Get("Content-Type")
-					resp, err := http.Post(url, contentType, bytes.NewBuffer(buf))
-					if err != nil {
-						dvid.Errorf("problem echoing POST (%s): %v\n", url, err)
-					} else {
-						dvid.Infof("echoed POST: %s (status %d)\n", url, resp.StatusCode)
-					}
+					url := hostAndPort + r.URL.Path
+					dvid.Infof("echoing POST asynchronously to %s\n", url)
+					go func(url string) {
+						resp, err := http.Post(url, contentType, bytes.NewBuffer(buf))
+						if err != nil {
+							dvid.Errorf("problem echoing POST (%s): %v\n", url, err)
+						} else {
+							dvid.Infof("echoed POST: %s (status %d)\n", url, resp.StatusCode)
+						}
+					}(url)
 				}
 			}
 		}

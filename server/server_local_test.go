@@ -81,7 +81,6 @@ func TestStartWebhook(t *testing.T) {
 		t.Fatalf("expected error in supplying bad webhook, but got no error!\n")
 	}
 }
-
 func TestServerInfo(t *testing.T) {
 	_, _, err := LoadConfig("../scripts/distro-files/config-full.toml")
 	if err != nil {
