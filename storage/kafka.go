@@ -53,7 +53,7 @@ func KafkaProduceMsg(msg []byte, topic string) error {
 			storeFailedMsg("kafka-"+topic, msg)
 
 			// Notify via email at least once per 10 minutes
-			message := fmt.Sprintf("Error in kafka messaging to topic %q, partition id %q: %v\n", topic, partitionID, err)
+			message := fmt.Sprintf("Error in kafka messaging to topic %q, partition id %d: %v\n", topic, partitionID, err)
 			if err := dvid.SendEmail("Kafka Error", message, nil, "kakfa"); err != nil {
 				dvid.Errorf("couldn't send email about kafka error: %v\n", err)
 			}
