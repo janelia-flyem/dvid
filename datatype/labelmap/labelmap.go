@@ -3213,7 +3213,7 @@ func (d *Data) handleLabels(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 	}
 	fmt.Fprintf(w, "]")
 
-	timedLog.Infof("HTTP GET batch label-at-point query of %d points (%s)", r.URL, len(coords))
+	timedLog.Infof("HTTP GET batch label-at-point query of %d points (%s)", len(coords), r.URL)
 }
 
 func (d *Data) handleMapping(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
