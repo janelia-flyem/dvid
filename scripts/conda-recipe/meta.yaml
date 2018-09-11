@@ -26,6 +26,8 @@ requirements:
     - snappy
     - basholeveldb
     - lz4
+    - pkg-config
+    - librdkafka
 
   run:
     - snappy
@@ -143,9 +145,9 @@ source:
     folder:  src/github.com/boltdb/bolt
 
   # kafka
-  - git_url: https://github.com/optiopay/kafka
+  - git_url: https://github.com/confluentinc/confluent-kafka-go
     git_tag: master
-    folder:  src/github.com/optiopay/kafka
+    folder:  src/github.com/confluentinc/confluent-kafka-go
     
   # freecache
   - git_url: https://github.com/coocood/freecache

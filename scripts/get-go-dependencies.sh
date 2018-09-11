@@ -75,7 +75,7 @@ go get github.com/boltdb/bolt
 go get github.com/DocSavage/gomdb
 
 # kafka
-go get github.com/optiopay/kafka
+go get github.com/confluentinc/confluent-kafka-go/kafka
 
 # freecache
 go get github.com/coocood/freecache

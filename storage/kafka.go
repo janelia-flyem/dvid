@@ -2,14 +2,16 @@ package storage
 
 import (
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/optiopay/kafka"
-	"github.com/optiopay/kafka/proto"
+
+	"github.com/confluentinc/confluent-kafka-go/kafka"
 )
 
-// global broker
-var broker *kafka.Broker
+// global producer
+var kafkaProducer *kafka.Producer
 
 // assume very low throughput needed and therefore always one partition
 const partitionID = 0
@@ -21,40 +23,50 @@ type KafkaConfig struct {
 }
 
 // Initialize intializes kafka connection
-func (c *KafkaConfig) Initialize() error {
+func (c *KafkaConfig) Initialize() (err error) {
 	if c == nil || len(c.Servers) == 0 {
 		dvid.TimeInfof("No Kafka server specified.\n")
 		return nil
 	}
 
-	// create kafka connection
-	conf := kafka.NewBrokerConf("dvid-kafkaclient")
-
-	// note: assume server allows automatic topic creation
-	// when sending a message to a non-existing topic
-	conf.AllowTopicCreation = true
-
-	// connect to kafka cluster
-	var err error
-	broker, err = kafka.Dial(c.Servers, conf)
-	if err != nil {
-		return fmt.Errorf("cannot connect to kafka cluster: %s", err)
+	configMap := &kafka.ConfigMap{
+		"client.id":         "dvid-kafkaclient",
+		"bootstrap.servers": strings.Join(c.Servers, ","),
 	}
-	return nil
+	if kafkaProducer, err = kafka.NewProducer(configMap); err != nil {
+		return
+	}
+
+	go func() {
+		for e := range kafkaProducer.Events() {
+			switch ev := e.(type) {
+			case *kafka.Message:
+				if ev.TopicPartition.Error != nil {
+					dvid.Errorf("Delivery failed to kafka servers: %v\n", ev.TopicPartition)
+				} else {
+					dvid.Debugf("Delivered kafka message to %v\n", ev.TopicPartition)
+				}
+			}
+		}
+	}()
+	return
 }
 
 // KafkaProduceMsg sends a message to kafka
-func KafkaProduceMsg(msg []byte, topic string) error {
-	if broker != nil {
-		producer := broker.Producer(kafka.NewProducerConf())
-		pmsg := &proto.Message{Value: msg}
-		if _, err := producer.Produce(topic, partitionID, pmsg); err != nil {
+func KafkaProduceMsg(value []byte, topic string) error {
+	if kafkaProducer != nil {
+		kafkaMsg := &kafka.Message{
+			TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
+			Value:          value,
+			Timestamp:      time.Now(),
+		}
+		if err := kafkaProducer.Produce(kafkaMsg, nil); err != nil {
 			// Store data in append-only log
-			storeFailedMsg("kafka-"+topic, msg)
+			storeFailedMsg("kafka-"+topic, value)
 
 			// Notify via email at least once per 10 minutes
-			message := fmt.Sprintf("Error in kafka messaging to topic %q, partition id %d: %v\n", topic, partitionID, err)
-			if err := dvid.SendEmail("Kafka Error", message, nil, "kakfa"); err != nil {
+			notification := fmt.Sprintf("Error in kafka messaging to topic %q, partition id %d: %v\n", topic, partitionID, err)
+			if err := dvid.SendEmail("Kafka Error", notification, nil, "kakfa"); err != nil {
 				dvid.Errorf("couldn't send email about kafka error: %v\n", err)
 			}
 
