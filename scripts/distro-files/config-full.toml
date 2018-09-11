@@ -107,6 +107,7 @@ max_log_age = 30   # days
 # messages will be stored in a file named for the topic.
 
 [kafka]
+hostname = "myserver1"  # if set, is first part of topic
 servers = ["http://foo.bar.com:1234", "http://foo2.bar.com:1234"]
 
 # Cache support allows setting datatype-specific caching mechanisms.
