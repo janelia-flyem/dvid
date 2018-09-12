@@ -21,14 +21,23 @@ build:
   number: 0
 
 requirements:
+  # The 'build' environment is for the tools that
+  # are used to build dvid, but are not linked against
+  # or incorporated into the executable in any way.
   build:
     - go
+    - pkg-config
+
+  # The 'host' environment is for libraries that
+  # will be included/linked into dvid.
+  host:
     - snappy
     - basholeveldb
     - lz4
-    - pkg-config
     - librdkafka >=0.11.4
 
+  # The 'run' requirements specify which libraries
+  # are required by dvid at run-time.
   run:
     - snappy
     - basholeveldb

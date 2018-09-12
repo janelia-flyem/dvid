@@ -18,6 +18,7 @@ with open(recipe_yaml, 'r') as f:
     recipe_meta = yaml.load(f)
 
 build_requirements = recipe_meta['requirements']['build']
+build_requirements += recipe_meta['requirements']['host']
 
 print("Installing compiled dependencies...")
 

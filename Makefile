@@ -3,25 +3,34 @@ $(error GOPATH must be defined)
 endif
 
 
+# When building in the context of the conda-recipe,
+# use the "host" PREFIX, (not the "build" env prefix),
+# which is set by conda-build.
+ifdef CONDA_BUILD
+    CONDA_PREFIX = ${PREFIX}
+endif
+
+
 ifndef CONDA_PREFIX
-define ERRMSG
+    define ERRMSG
+    
+    
+    ERROR: Dvid requires an active conda environment, with dependencies already installed.
+           See GUIDE.md for details. Here's the gist of it:
+    
+        $$ conda create -n dvid-devel && source activate dvid-devel
+        $$ ./scripts/install-developer-dependencies.sh
+    
+    
+    endef
 
-
-ERROR: Dvid requires an active conda environment, with dependencies already installed.
-       See GUIDE.md for details. Here's the gist of it:
-
-    $$ conda create -n dvid-devel && source activate dvid-devel
-    $$ ./scripts/install-developer-dependencies.sh
-
-
-endef
-$(error ${ERRMSG} )
+    $(error ${ERRMSG} )
 endif
 
 
 ifndef DVID_BACKENDS
-DVID_BACKENDS = basholeveldb filestore gbucket swift
-$(info Backend not specified. Using default value: DVID_BACKENDS="${DVID_BACKENDS}")
+    DVID_BACKENDS = basholeveldb filestore gbucket swift
+    $(info Backend not specified. Using default value: DVID_BACKENDS="${DVID_BACKENDS}")
 endif
 
 
