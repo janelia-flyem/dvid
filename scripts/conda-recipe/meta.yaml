@@ -27,12 +27,13 @@ requirements:
     - basholeveldb
     - lz4
     - pkg-config
-    - librdkafka
+    - librdkafka >=0.11.4
 
   run:
     - snappy
     - basholeveldb
     - lz4
+    - librdkafka >=0.11.4
     - dvid-web-console
 
 source:
