@@ -39,9 +39,7 @@ requirements:
   # The 'run' requirements specify which libraries
   # are required by dvid at run-time.
   run:
-    - snappy
     - basholeveldb
-    - lz4
     - librdkafka >=0.11.4
     - dvid-web-console
 
