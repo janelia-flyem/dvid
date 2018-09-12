@@ -15,7 +15,7 @@ var (
 	kafkaProducer *kafka.Producer
 
 	// description of host for kafka messaging
-	kafkaHostname string
+	kafkaTopicPrefix string
 )
 
 // assume very low throughput needed and therefore always one partition
@@ -24,8 +24,8 @@ const partitionID = 0
 // KafkaConfig describes kafka servers and an optional local file directory into which
 // failed messages will be stored.
 type KafkaConfig struct {
-	Hostname string // if supplied, will be appended to topic
-	Servers  []string
+	TopicPrefix string // if supplied, will be appended to topic
+	Servers     []string
 }
 
 // Initialize intializes kafka connection
@@ -34,7 +34,7 @@ func (c *KafkaConfig) Initialize() (err error) {
 		dvid.TimeInfof("No Kafka server specified.\n")
 		return nil
 	}
-	kafkaHostname = c.Hostname
+	kafkaTopicPrefix = c.TopicPrefix
 
 	configMap := &kafka.ConfigMap{
 		"client.id":         "dvid-kafkaclient",
@@ -62,8 +62,8 @@ func (c *KafkaConfig) Initialize() (err error) {
 // KafkaProduceMsg sends a message to kafka
 func KafkaProduceMsg(value []byte, topic string) error {
 	if kafkaProducer != nil {
-		if kafkaHostname != "" {
-			topic = kafkaHostname + "-" + topic
+		if kafkaTopicPrefix != "" {
+			topic = kafkaTopicPrefix + "-" + topic
 		}
 		kafkaMsg := &kafka.Message{
 			TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
