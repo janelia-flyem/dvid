@@ -2333,9 +2333,13 @@ func TestMultiscaleMergeCleave(t *testing.T) {
 	r = server.TestHTTP(t, "POST", reqStr, bytes.NewBufferString("[2, 13]"))
 	var jsonVal struct {
 		CleavedLabel uint64
+		MutationID uint64
 	}
 	if err := json.Unmarshal(r, &jsonVal); err != nil {
 		t.Errorf("Unable to get new label from cleave.  Instead got: %v\n", jsonVal)
+	}
+	if jsonVal.MutationID == 0 {
+		t.Errorf("expected Mutation ID from cleave but got zero: %v\n", jsonVal)
 	}
 
 	reqStr = fmt.Sprintf("%snode/%s/labels/maxlabel", server.WebAPIPath, uuid)

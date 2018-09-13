@@ -965,6 +965,11 @@ POST <api URL>/node/<UUID>/<data name>/merge
 
 	[toLabel1, fromLabel1, fromLabel2, fromLabel3, ...]
 
+	Returns JSON:
+	{
+		"MutationID": <unique id for mutation>
+	}
+
 	The first element of the JSON array specifies the label to be used as the merge result.
 	Note that it's computationally more efficient to group a number of merges into the
 	same toLabel as a single merge request instead of multiple merge requests.
@@ -1005,6 +1010,7 @@ POST <api URL>/node/<UUID>/<data name>/cleave/<label>
 
 		{ 
 			"CleavedLabel": <new or optionally assigned label of cleaved portion>,
+			"MutationID": <unique id for mutation>
 		}
 
 
@@ -1033,7 +1039,8 @@ POST <api URL>/node/<UUID>/<data name>/split-supervoxel/<supervoxel>
 
 		{ 
 			"SplitSupervoxel": <new label of split portion>,
-			"RemainSupervoxel": <new label of remainder> 
+			"RemainSupervoxel": <new label of remainder>,
+			"MutationID": <unique id for mutation>
 		}
 
 	This request requires a binary sparse volume in the POSTed body with the following 
@@ -1087,7 +1094,10 @@ POST <api URL>/node/<UUID>/<data name>/split/<label>
 	Splits a portion of a label's voxels into a new supervoxel with a new label.  
 	Returns the following JSON:
 
-		{ "label": <new label> }
+		{ 
+			"label": <new label>,
+			"MutationID": <unique id for mutation>
+		}
 
 	This request requires a binary sparse volume in the POSTed body with the following 
 	encoded RLE format, which is compatible with the format returned by a GET on the 
@@ -4284,13 +4294,13 @@ func (d *Data) handleSplitSupervoxel(ctx *datastore.VersionedCtx, w http.Respons
 		return
 	}
 	info := dvid.GetModInfo(r)
-	splitSupervoxel, remainSupervoxel, err := d.SplitSupervoxel(ctx.VersionID(), supervoxel, r.Body, info)
+	splitSupervoxel, remainSupervoxel, mutID, err := d.SplitSupervoxel(ctx.VersionID(), supervoxel, r.Body, info)
 	if err != nil {
 		server.BadRequest(w, r, fmt.Sprintf("split supervoxel %d -> %d, %d: %v", supervoxel, splitSupervoxel, remainSupervoxel, err))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"SplitSupervoxel": %d, "RemainSupervoxel": %d}`, splitSupervoxel, remainSupervoxel)
+	fmt.Fprintf(w, `{"SplitSupervoxel": %d, "RemainSupervoxel": %d, "MutationID": %d}`, splitSupervoxel, remainSupervoxel, mutID)
 
 	timedLog.Infof("HTTP split supervoxel of supervoxel %d request (%s)", supervoxel, r.URL)
 }
@@ -4317,13 +4327,13 @@ func (d *Data) handleCleave(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 		return
 	}
 	modInfo := dvid.GetModInfo(r)
-	cleaveLabel, err := d.CleaveLabel(ctx.VersionID(), label, modInfo, r.Body)
+	cleaveLabel, mutID, err := d.CleaveLabel(ctx.VersionID(), label, modInfo, r.Body)
 	if err != nil {
 		server.BadRequest(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"CleavedLabel": %d}`, cleaveLabel)
+	fmt.Fprintf(w, `{"CleavedLabel": %d, "MutationID": %d}`, cleaveLabel, mutID)
 
 	timedLog.Infof("HTTP cleave of label %d request (%s)", label, r.URL)
 }
@@ -4350,13 +4360,13 @@ func (d *Data) handleSplit(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 		return
 	}
 	info := dvid.GetModInfo(r)
-	toLabel, err := d.SplitLabels(ctx.VersionID(), fromLabel, r.Body, info)
+	toLabel, mutID, err := d.SplitLabels(ctx.VersionID(), fromLabel, r.Body, info)
 	if err != nil {
 		server.BadRequest(w, r, fmt.Sprintf("split label %d: %v", fromLabel, err))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, "{%q: %d}", "label", toLabel)
+	fmt.Fprintf(w, `{"label": %d, "MutationID": %d}`, toLabel, mutID)
 
 	timedLog.Infof("HTTP split of label %d request (%s)", fromLabel, r.URL)
 }
@@ -4385,10 +4395,13 @@ func (d *Data) handleMerge(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 		return
 	}
 	info := dvid.GetModInfo(r)
-	if err := d.MergeLabels(ctx.VersionID(), mergeOp, info); err != nil {
+	mutID, err := d.MergeLabels(ctx.VersionID(), mergeOp, info)
+	if err != nil {
 		server.BadRequest(w, r, fmt.Sprintf("Error on merge: %v", err))
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"MutationID": %d}`, mutID)
 
 	timedLog.Infof("HTTP merge request (%s)", r.URL)
 }

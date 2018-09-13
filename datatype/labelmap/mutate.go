@@ -41,14 +41,14 @@ type sizeChange struct {
 //
 // labels.MergeEndEvent occurs at end of merge and transmits labels.DeltaMergeEnd struct.
 //
-func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInfo) error {
+func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInfo) (mutID uint64, err error) {
 	dvid.Debugf("Merging %s into label %d ...\n", op.Merged, op.Target)
 
 	d.StartUpdate()
 	defer d.StopUpdate()
 
 	timedLog := dvid.NewTimeLog()
-	mutID := d.NewMutationID()
+	mutID = d.NewMutationID()
 
 	// send kafka merge event to instance-uuid topic
 	// msg: {"action": "merge", "target": targetlabel, "labels": [merge labels]}
@@ -74,25 +74,27 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 	// Signal that we are starting a merge.
 	evt := datastore.SyncEvent{d.DataUUID(), labels.MergeStartEvent}
 	msg := datastore.SyncMessage{labels.MergeStartEvent, v, labels.DeltaMergeStart{op}}
-	if err := datastore.NotifySubscribers(evt, msg); err != nil {
-		return err
+	if err = datastore.NotifySubscribers(evt, msg); err != nil {
+		return
 	}
 
 	// Get all the affected blocks in the merge.
-	targetIdx, err := GetLabelIndex(d, v, op.Target, false)
-	if err != nil {
-		return fmt.Errorf("can't get block indices of to merge target label %d: %v", op.Target, err)
+	var targetIdx, mergeIdx *labels.Index
+	if targetIdx, err = GetLabelIndex(d, v, op.Target, false); err != nil {
+		err = fmt.Errorf("can't get block indices of to merge target label %d: %v", op.Target, err)
+		return
 	}
 	if targetIdx == nil {
-		return fmt.Errorf("can't merge into a non-existent label %d", op.Target)
+		err = fmt.Errorf("can't merge into a non-existent label %d", op.Target)
+		return
 	}
-	mergeIdx, err := GetMultiLabelIndex(d, v, op.Merged, dvid.Bounds{})
-	if err != nil {
-		return fmt.Errorf("can't get block indices of merge labels %s: %v", op.Merged, err)
+	if mergeIdx, err = GetMultiLabelIndex(d, v, op.Merged, dvid.Bounds{}); err != nil {
+		err = fmt.Errorf("can't get block indices of merge labels %s: %v", op.Merged, err)
+		return
 	}
 
-	if err := addMergeToMapping(d, v, mutID, op.Target, mergeIdx); err != nil {
-		return err
+	if err = addMergeToMapping(d, v, mutID, op.Target, mergeIdx); err != nil {
+		return
 	}
 
 	delta := labels.DeltaMerge{
@@ -101,22 +103,22 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		MergedVoxels: mergeIdx.NumVoxels(),
 	}
 	if mergeIdx != nil && len(mergeIdx.Blocks) != 0 {
-		if err := targetIdx.Add(mergeIdx); err != nil {
-			return err
+		if err = targetIdx.Add(mergeIdx); err != nil {
+			return
 		}
 		targetIdx.LastMutId = mutID
 		targetIdx.LastModUser = info.User
 		targetIdx.LastModTime = info.Time
 		targetIdx.LastModApp = info.App
-		if err := PutLabelIndex(d, v, op.Target, targetIdx); err != nil {
-			return err
+		if err = PutLabelIndex(d, v, op.Target, targetIdx); err != nil {
+			return
 		}
 	}
 	for merged := range delta.Merged {
 		DeleteLabelIndex(d, v, merged)
 	}
-	if err := labels.LogMerge(d, v, op); err != nil {
-		return err
+	if err = labels.LogMerge(d, v, op); err != nil {
+		return
 	}
 
 	dvid.Infof("merged label %d: supervoxels %v, %d blocks\n", op.Target, mergeIdx.GetSupervoxels(), len(mergeIdx.Blocks))
@@ -124,8 +126,9 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 	delta.Blocks = targetIdx.GetBlockIndices()
 	evt = datastore.SyncEvent{d.DataUUID(), labels.MergeBlockEvent}
 	msg = datastore.SyncMessage{labels.MergeBlockEvent, v, delta}
-	if err := datastore.NotifySubscribers(evt, msg); err != nil {
-		return fmt.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
+	if err = datastore.NotifySubscribers(evt, msg); err != nil {
+		err = fmt.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
+		return
 	}
 
 	evt = datastore.SyncEvent{d.DataUUID(), labels.MergeEndEvent}
@@ -144,7 +147,8 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		"Timestamp":  time.Now().String(),
 	}
 	jsonmsg, _ = json.Marshal(msginfo)
-	return d.ProduceKafkaMsg(jsonmsg)
+	err = d.ProduceKafkaMsg(jsonmsg)
+	return
 }
 
 // CleaveLabel cleaves a label given supervoxels to be cleaved.  Requires JSON in request body
@@ -154,9 +158,10 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 // given a new label or the one optionally supplied via the "cleavelabel" query string.
 // A cleave label can be specified via the "toLabel" parameter, which if 0 will have an
 // automatic label ID selected for the cleaved body.
-func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r io.ReadCloser) (cleaveLabel uint64, err error) {
+func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r io.ReadCloser) (cleaveLabel, mutID uint64, err error) {
 	if r == nil {
-		return 0, fmt.Errorf("no cleave supervoxels JSON was POSTed")
+		err = fmt.Errorf("no cleave supervoxels JSON was POSTed")
+		return
 	}
 
 	cleaveLabel, err = d.NewLabel(v)
@@ -168,18 +173,21 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 	var data []byte
 	data, err = ioutil.ReadAll(r)
 	if err != nil {
-		return cleaveLabel, fmt.Errorf("bad POSTed data for merge; should be JSON parsable: %v", err)
+		err = fmt.Errorf("bad POSTed data for merge; should be JSON parsable: %v", err)
+		return
 	}
 	if len(data) == 0 {
-		return cleaveLabel, fmt.Errorf("no cleave supervoxels JSON was POSTed")
+		err = fmt.Errorf("no cleave supervoxels JSON was POSTed")
+		return
 	}
 	var cleaveSupervoxels []uint64
 	if err = json.Unmarshal(data, &cleaveSupervoxels); err != nil {
-		return cleaveLabel, fmt.Errorf("bad cleave supervoxels JSON: %v", err)
+		err = fmt.Errorf("bad cleave supervoxels JSON: %v", err)
+		return
 	}
 
 	// send kafka cleave event to instance-uuid topic
-	mutID := d.NewMutationID()
+	mutID = d.NewMutationID()
 	versionuuid, _ := datastore.UUIDFromVersion(v)
 	msginfo := map[string]interface{}{
 		"Action":             "cleave",
@@ -490,7 +498,7 @@ func getAffectedBlocks(idx *labels.Index, svsplit *labels.SVSplitMap) (affectedB
 // to submit for relabeling the smaller portion of any split.  It is assumed that the given split
 // voxels are within the fromLabel set of voxels and will generate unspecified behavior if this is
 // not the case.
-func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, info dvid.ModInfo) (toLabel uint64, err error) {
+func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, info dvid.ModInfo) (toLabel, mutID uint64, err error) {
 	timedLog := dvid.NewTimeLog()
 
 	// Create a new label id for this version that will persist to store
@@ -581,7 +589,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 	}
 
 	// send kafka split event to instance-uuid topic
-	mutID := d.NewMutationID()
+	mutID = d.NewMutationID()
 	versionuuid, _ := datastore.UUIDFromVersion(v)
 	msginfo := map[string]interface{}{
 		"Action":     "split",
@@ -652,15 +660,14 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
 		dvid.Errorf("error on sending split complete op to kafka: %v", err)
 	}
-
-	return toLabel, nil
+	return
 }
 
 // SplitSupervoxel splits a portion of a supervoxel's voxels into two new labels.  The input is a
 // binary sparse volume and should be totally contained by the given supervoxel.  The first
 // returned label is assigned to the split voxels while the second returned label is assigned
 // to the remainder voxels.
-func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser, info dvid.ModInfo) (splitSupervoxel, remainSupervoxel uint64, err error) {
+func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser, info dvid.ModInfo) (splitSupervoxel, remainSupervoxel, mutID uint64, err error) {
 	timedLog := dvid.NewTimeLog()
 
 	// Create new labels for this split that will persist to store
@@ -735,7 +742,7 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser
 	}
 
 	// send kafka split event to instance-uuid topic
-	mutID := d.NewMutationID()
+	mutID = d.NewMutationID()
 	versionuuid, _ := datastore.UUIDFromVersion(v)
 	msginfo := map[string]interface{}{
 		"Action":           "split-supervoxel",
@@ -777,9 +784,8 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser
 	downresMut := downres.NewMutation(d, v, mutID)
 
 	var splitblks dvid.IZYXSlice
-	splitblks, err = d.splitSupervoxelIndex(v, info, op, idx)
-	if err != nil {
-		return splitSupervoxel, remainSupervoxel, err
+	if splitblks, err = d.splitSupervoxelIndex(v, info, op, idx); err != nil {
+		return
 	}
 
 	getLog := dvid.NewTimeLog()
@@ -864,8 +870,7 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
 		dvid.Errorf("error on sending split complete op to kafka: %v", err)
 	}
-
-	return splitSupervoxel, remainSupervoxel, nil
+	return
 }
 
 func (d *Data) restoreOldBlocks(ctx *datastore.VersionedCtx, numBlocks int, blocks []*labels.PositionedBlock) {
