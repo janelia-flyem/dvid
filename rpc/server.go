@@ -164,6 +164,13 @@ func GetSessionHandler(sid SessionID) (SessionHandler, error) {
 
 // StartServer starts an RPC server.
 func StartServer(address string) error {
+	defer func() {
+		if e := recover(); e != nil {
+			msg := fmt.Sprintf("Panic detected on rpc serve thread: %+v\n", e)
+			dvid.ReportPanic(msg)
+		}
+	}()
+
 	gorpc.SetErrorLogger(dvid.Errorf) // Send gorpc errors to appropriate error log.
 
 	s := gorpc.NewTCPServer(address, dispatcher.NewHandlerFunc())

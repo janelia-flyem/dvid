@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -239,6 +240,20 @@ func ReadJSONFile(filename string) (value map[string]interface{}, err error) {
 	return
 }
 
+// ReportPanic prints the message and stack trace to stderr, the log, and via email if
+// an email notifier was setup.
+func ReportPanic(msg string) {
+	buf := make([]byte, 1<<16)
+	size := runtime.Stack(buf, false)
+	stackTrace := "Stack trace:\n" + string(buf[0:size]) + "\n"
+
+	os.Stderr.WriteString(msg + stackTrace)
+	LogImmediately(msg + stackTrace) // bypass log channels.
+	if err := SendEmail("DVID panic report", msg+stackTrace, nil, ""); err != nil {
+		os.Stderr.WriteString(fmt.Sprintf("Couldn't send email notifcation: %v\n", err))
+	}
+}
+
 // SendHTTP sends data after setting an appropriate Content-Type by examining the
 // name and also some byte sniffing.
 func SendHTTP(w http.ResponseWriter, r *http.Request, name string, data []byte) {
@@ -350,9 +365,9 @@ func ByteToUint64(b []byte) (out []uint64, err error) {
 		return nil, fmt.Errorf("bad alignment in dvid.ByteToUint64: uintptr = %d", uintptr(unsafe.Pointer(&b[0])))
 	}
 	if intSize == 32 {
-		return (*[maxSliceSize32]uint64)(unsafe.Pointer(&b[0]))[:len(b)/8 : cap(b)/8], nil
+		return (*[maxSliceSize32]uint64)(unsafe.Pointer(&b[0]))[: len(b)/8 : cap(b)/8], nil
 	}
-	return (*[maxSliceSize64]uint64)(unsafe.Pointer(&b[0]))[:len(b)/8 : cap(b)/8], nil
+	return (*[maxSliceSize64]uint64)(unsafe.Pointer(&b[0]))[: len(b)/8 : cap(b)/8], nil
 }
 
 // ByteToUint32 returns a uint32 slice that reuses the passed byte slice.  NOTE: The passed byte slice
@@ -362,9 +377,9 @@ func ByteToUint32(b []byte) (out []uint32, err error) {
 		return nil, fmt.Errorf("bad len, cap, or alignment of dvid.ByteToUint32 len %d", len(b))
 	}
 	if intSize == 32 {
-		return (*[maxSliceSize32 << 1]uint32)(unsafe.Pointer(&b[0]))[:len(b)/4 : cap(b)/4], nil
+		return (*[maxSliceSize32 << 1]uint32)(unsafe.Pointer(&b[0]))[: len(b)/4 : cap(b)/4], nil
 	}
-	return (*[maxSliceSize64 << 1]uint32)(unsafe.Pointer(&b[0]))[:len(b)/4 : cap(b)/4], nil
+	return (*[maxSliceSize64 << 1]uint32)(unsafe.Pointer(&b[0]))[: len(b)/4 : cap(b)/4], nil
 }
 
 // ByteToUint16 returns a uint16 slice that reuses the passed byte slice.  NOTE: The passed byte slice
@@ -374,9 +389,9 @@ func ByteToUint16(b []byte) (out []uint16, err error) {
 		return nil, fmt.Errorf("bad len, cap, or alignment of dvid.ByteToUint16 len %d", len(b))
 	}
 	if intSize == 32 {
-		return (*[maxSliceSize32 << 2]uint16)(unsafe.Pointer(&b[0]))[:len(b)/2 : cap(b)/2], nil
+		return (*[maxSliceSize32 << 2]uint16)(unsafe.Pointer(&b[0]))[: len(b)/2 : cap(b)/2], nil
 	}
-	return (*[maxSliceSize64 << 2]uint16)(unsafe.Pointer(&b[0]))[:len(b)/2 : cap(b)/2], nil
+	return (*[maxSliceSize64 << 2]uint16)(unsafe.Pointer(&b[0]))[: len(b)/2 : cap(b)/2], nil
 }
 
 // Uint16ToByte returns the underlying byte slice for a uint16 slice.

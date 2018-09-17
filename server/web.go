@@ -703,21 +703,11 @@ func recoverHandler(c *web.C, h http.Handler) http.Handler {
 		reqID := middleware.GetReqID(*c)
 
 		defer func() {
-			if err := recover(); err != nil {
-				buf := make([]byte, 1<<16)
-				size := runtime.Stack(buf, false)
-				stackTrace := string(buf[0:size])
-				message := fmt.Sprintf("Panic detected on request %s:\n%+v\nIP: %v, URL: %s\nStack trace:\n%s\n",
-					reqID, err, r.RemoteAddr, r.URL.Path, stackTrace)
-
-				os.Stderr.WriteString(message)
-				dvid.LogImmediately(message) // bypass log channels.
-
-				if err := dvid.SendEmail("DVID panic report", message, nil, ""); err != nil {
-					dvid.LogImmediately(fmt.Sprintf("Couldn't send email notifcation: %v\n", err))
-				}
-
-				http.Error(w, http.StatusText(500), 500)
+			if e := recover(); e != nil {
+				msg := fmt.Sprintf("Panic detected on request %s:\n%+v\nIP: %v, URL: %s\n",
+					reqID, e, r.RemoteAddr, r.URL.Path)
+				dvid.ReportPanic(msg)
+				http.Error(w, msg, 500)
 			}
 		}()
 
