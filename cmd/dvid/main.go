@@ -121,6 +121,13 @@ func currentDir() string {
 }
 
 func main() {
+	defer func() {
+		if e := recover(); e != nil {
+			msg := fmt.Sprintf("Panic detected on main serve thread: %+v\n", e)
+			dvid.ReportPanic(msg)
+		}
+	}()
+
 	flag.BoolVar(showHelp, "h", false, "Show help message")
 	flag.Usage = usage
 	flag.Parse()
@@ -238,13 +245,6 @@ func DoRepair(cmd dvid.Command) error {
 
 // DoServe opens a datastore then creates both web and rpc servers for the datastore
 func DoServe(cmd dvid.Command) error {
-	defer func() {
-		if e := recover(); e != nil {
-			msg := fmt.Sprintf("Panic detected on main serve thread: %+v\n", e)
-			dvid.ReportPanic(msg)
-		}
-	}()
-
 	// Capture ctrl+c and other interrupts.  Then handle graceful shutdown.
 	stopSig := make(chan os.Signal)
 	go func() {
