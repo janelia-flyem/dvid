@@ -25,19 +25,14 @@ const (
 	// reserved type-specific key for metadata
 	keyProperties = datastore.PropertyTKeyClass
 
-	// key = legacy 2d tile
-	keyTile2d = 2
-
-	// key = legacy 3d tile
-	keyTile3d = 3
+	// key = legacy tile.  Must be 3.
+	keyLegacyTile = 3
 )
 
 func describeTKeyClass(tkc storage.TKeyClass) string {
 	switch tkc {
-	case keyTile2d:
-		return "imagetile 2d tile key"
-	case keyTile3d:
-		return "imagetile 3d tile key"
+	case keyLegacyTile:
+		return "imagetile tile key"
 	default:
 		return "unknown imagetile key class"
 	}
@@ -51,25 +46,17 @@ func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
 
 // NewTKey returns an imagetile-specific key component based on the components of a tile request.
 func NewTKey(tile dvid.ChunkPoint3d, plane dvid.DataShape, scale Scaling) (tk storage.TKey, err error) {
-	var tkc storage.TKeyClass
-	switch plane.TotalDimensions() {
-	case 2:
-		tkc = keyTile2d
-	case 3:
-		tkc = keyTile3d
-	default:
-		err = fmt.Errorf("imagetile only supports 2d and 3d tiles at this time")
-		return
-	}
+	// NOTE: For legacy reasons, first two bytes must be 3 and then 2.  The current storage.TKey
+	// formatting has a TKeyClass for first byte and then 1 for second, but this second byte is only
+	// used for min/max key generation, so using 2 is ok as well.
 	var buf bytes.Buffer
+	buf.Write(plane.Bytes())
 
-	planeBytes := plane.Bytes() // only necessary to handle legacy case before introduction of TKeyClass
-	buf.Write(planeBytes[1:])
 	buf.WriteByte(byte(scale))
 	buf.WriteByte(byte(3))
 	idx := dvid.IndexZYX(tile)
 	buf.Write(idx.Bytes())
-	return storage.NewTKey(tkc, buf.Bytes()), nil
+	return buf.Bytes(), nil
 }
 
 // NewTKeyByTileReq returns an imagetile-specific key component based on a tile request.
@@ -79,29 +66,17 @@ func NewTKeyByTileReq(req TileReq) (storage.TKey, error) {
 
 // DecodeTKey returns the components of a tile request based on an imagetile-specific key component.
 func DecodeTKey(tk storage.TKey) (tile dvid.ChunkPoint3d, plane dvid.DataShape, scale Scaling, err error) {
-	var tkc storage.TKeyClass
-	tkc, err = tk.Class()
+	if len(tk) != 21 {
+		err = fmt.Errorf("expected 21 bytes for imagetile type-specific key, got %d bytes instead", len(tk))
+		return
+	}
+	plane, err = dvid.BytesToDataShape(tk[0:dvid.DataShapeBytes])
 	if err != nil {
 		return
 	}
-	switch tkc {
-	case keyTile2d:
-	case keyTile3d:
-	default:
-		err = fmt.Errorf("bad imagetile key: %s", describeTKeyClass(tkc))
-		return
-	}
-	dataShapeBytes := make([]byte, dvid.DataShapeBytes)
-	dataShapeBytes[0] = byte(tkc)
-	tkbytes, _ := tk.ClassBytes(tkc)
-	copy(dataShapeBytes[1:], tkbytes[:dvid.DataShapeBytes-1])
-	plane, err = dvid.BytesToDataShape(dataShapeBytes)
-	if err != nil {
-		return
-	}
-	scale = Scaling(tkbytes[dvid.DataShapeBytes-1])
+	scale = Scaling(tk[dvid.DataShapeBytes])
 	var idx dvid.IndexZYX
-	if err = idx.IndexFromBytes(tkbytes[dvid.DataShapeBytes+1:]); err != nil {
+	if err = idx.IndexFromBytes(tk[dvid.DataShapeBytes+2:]); err != nil {
 		return
 	}
 	tile = dvid.ChunkPoint3d(idx)
