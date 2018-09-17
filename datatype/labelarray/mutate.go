@@ -588,6 +588,12 @@ func (d *Data) splitIndices(v dvid.VersionID, delta labels.DeltaSplit, deleteBlk
 // and the backend is distributed, we can spawn many mutateBlock() goroutines as long as we uniquely
 // shard blocks across them, so the same block will always be directed to the same goroutine.
 func (d *Data) mutateBlock(ch <-chan procMsg) {
+	defer func() {
+		if e := recover(); e != nil {
+			msg := fmt.Sprintf("Panic detected on labelarray block mutation thread: %+v\n", e)
+			dvid.ReportPanic(msg)
+		}
+	}()
 	for {
 		msg, more := <-ch
 		if !more {

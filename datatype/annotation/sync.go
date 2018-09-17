@@ -217,6 +217,12 @@ func (d *Data) GetSyncSubs(synced dvid.Data) (subs datastore.SyncSubs, err error
 
 // Processes each labelblk change as we get it.
 func (d *Data) processEvents() {
+	defer func() {
+		if e := recover(); e != nil {
+			msg := fmt.Sprintf("Panic detected on annotation sync thread: %+v\n", e)
+			dvid.ReportPanic(msg)
+		}
+	}()
 	batcher, err := datastore.GetKeyValueBatcher(d)
 	if err != nil {
 		dvid.Errorf("handleBlockEvent %v\n", err)

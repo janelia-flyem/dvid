@@ -65,6 +65,12 @@ func (d *Data) GetSyncSubs(synced dvid.Data) (datastore.SyncSubs, error) {
 
 // If annotation elements are added or deleted, adjust the label counts.
 func (d *Data) processEvents() {
+	defer func() {
+		if e := recover(); e != nil {
+			msg := fmt.Sprintf("Panic detected on labelsz sync thread: %+v\n", e)
+			dvid.ReportPanic(msg)
+		}
+	}()
 	batcher, err := datastore.GetKeyValueBatcher(d)
 	if err != nil {
 		dvid.Errorf("Exiting sync goroutine for labelsz %q after annotation modifications: %v\n", d.DataName(), err)
