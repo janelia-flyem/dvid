@@ -280,7 +280,7 @@ type Data interface {
 	KVStore() (Store, error)
 
 	// Returns a concurrency-friendly unique operations ID for this Data.
-	// Resets to 1 when server is restarted.
+	// The ID is monotonically increasing although it is not necessarily sequential.
 	NewMutationID() uint64
 
 	DataSetter

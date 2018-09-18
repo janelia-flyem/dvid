@@ -16,6 +16,7 @@ package datastore
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
@@ -28,8 +29,20 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-// The current repo metadata format version
+// RepoFormatVersion is the current repo metadata format version
 const RepoFormatVersion = 1
+
+// InitialMutationID is the initial mutation ID for all new repositories.
+// It was chosen to be a large number to distinguish between mutations with
+// repo-wide persistent IDs and the legacy data instance-specific mutation IDs
+// that would reset on server restart.
+const InitialMutationID = 1000000000 // billion
+
+// StrideMutationID is a way to minimize cost of persisting mutation IDs for a repo.
+// We persist the current mutation ID plus the stride, so that we don't have to update
+// the persisted mutation ID frequently.  The downside is that there may be jumps
+// in mutation IDs on restarts, since the persisted ID is loaded on next restart.
+const StrideMutationID = 100
 
 // Key space handling for metadata
 const (
@@ -40,6 +53,7 @@ const (
 	repoKey
 	formatKey
 	ServerLockKey // name of key for locking metadata globally
+	mutidKey
 )
 
 // InstanceConfig specifies how new instance IDs are generated
@@ -635,7 +649,11 @@ func (m *repoManager) loadVersion0() error {
 	dvid.TimeInfof("Loaded %d repositories from metadata store.\n", len(m.repos))
 
 	// make sure any in-process deletions restart
-	for _, r := range m.repos {
+	for repoID, root := range m.repoToUUID {
+		r, found := m.repos[root]
+		if !found {
+			return fmt.Errorf("could not find repo %s (repo ID %d)", root, repoID)
+		}
 		for name, data := range r.data {
 			if data.IsDeleted() {
 				if err := r.deleteData(name); err != nil {
@@ -651,7 +669,7 @@ func (m *repoManager) loadMetadata() error {
 	// Check the version of the metadata
 	found, err := m.loadData(formatKey, &(m.formatVersion))
 	if err != nil {
-		return fmt.Errorf("Error in loading metadata format version: %v\n", err)
+		return fmt.Errorf("error in loading metadata format version: %v", err)
 	}
 	if found {
 		dvid.TimeInfof("Loading metadata with format version %d...\n", m.formatVersion)
@@ -666,11 +684,18 @@ func (m *repoManager) loadMetadata() error {
 	default:
 		err = fmt.Errorf("Unknown metadata format %d", m.formatVersion)
 	}
-
 	if err != nil {
 		return err
 	}
-
+	for repoID, root := range m.repoToUUID {
+		r, found := m.repos[root]
+		if !found {
+			return fmt.Errorf("could not find repo %s (repo ID %d)", root, repoID)
+		}
+		if err := r.initMutationID(m.store); err != nil {
+			return err
+		}
+	}
 	saveIDs := false
 
 	// Handle instance ID management
@@ -992,6 +1017,9 @@ func (m *repoManager) newRepo(alias, description string, assign *dvid.UUID, pass
 	if err := r.save(); err != nil {
 		return r, err
 	}
+	if err := r.initMutationID(m.store); err != nil {
+		return r, err
+	}
 	dvid.Infof("Created and saved new repo %q, id %d\n", uuid, id)
 	return r, nil
 }
@@ -1022,7 +1050,11 @@ func (m *repoManager) types() (map[dvid.URLString]TypeService, error) {
 	defer m.repoMutex.RUnlock()
 
 	combinedMap := make(map[dvid.URLString]TypeService)
-	for _, repo := range m.repos {
+	for repoID, root := range m.repoToUUID {
+		repo, found := m.repos[root]
+		if !found {
+			return nil, fmt.Errorf("could not find repo %s (repo ID %d)", root, repoID)
+		}
 		repoMap, err := repo.types()
 		if err != nil {
 			return combinedMap, err
@@ -1995,6 +2027,11 @@ type repoT struct {
 	// subs holds subscriptions to change events for each data instance.
 	// This is not persisted.  It is built on load or modification of syncs.
 	subs map[SyncEvent]SyncSubs
+
+	// an atomic operation ID monotonically incremented per mutation and stored in separate kv
+	mutCurID   uint64
+	mutSavedID uint64
+	mutMu      sync.RWMutex
 }
 
 // newRepo creates a new repository given a UUID, version, and RepoID,
@@ -2218,15 +2255,17 @@ func (r *repoT) GobEncode() ([]byte, error) {
 func (r *repoT) MarshalJSON() (b []byte, err error) {
 	r.RLock()
 	b, err = json.Marshal(struct {
-		Root        dvid.UUID
-		Alias       string
-		Description string
-		Log         []string
-		Properties  map[string]interface{}
-		Data        map[dvid.InstanceName]DataService `json:"DataInstances"`
-		DAG         *dagT
-		Created     time.Time
-		Updated     time.Time
+		Root            dvid.UUID
+		Alias           string
+		Description     string
+		Log             []string
+		Properties      map[string]interface{}
+		Data            map[dvid.InstanceName]DataService `json:"DataInstances"`
+		DAG             *dagT
+		MutationID      uint64
+		SavedMutationID uint64
+		Created         time.Time
+		Updated         time.Time
 	}{
 		r.uuid,
 		r.alias,
@@ -2235,6 +2274,8 @@ func (r *repoT) MarshalJSON() (b []byte, err error) {
 		r.properties,
 		r.data,
 		r.dag,
+		r.mutCurID,
+		r.mutSavedID,
 		r.created,
 		r.updated,
 	})
@@ -2306,9 +2347,61 @@ func (r *repoT) saveToStore(db storage.OrderedKeyValueDB) error {
 func (r *repoT) delete() error {
 	var ctx storage.MetadataContext
 	r.RLock()
-	tkey := storage.NewTKey(repoKey, r.id.Bytes())
+	tk := storage.NewTKey(repoKey, r.id.Bytes())
 	r.RUnlock()
-	return manager.store.Delete(ctx, tkey)
+	return manager.store.Delete(ctx, tk)
+}
+
+func (r *repoT) initMutationID(store storage.KeyValueDB) error {
+	var ctx storage.MetadataContext
+	tk := storage.NewTKey(mutidKey, r.id.Bytes())
+	mutdata, err := store.Get(ctx, tk)
+	if err != nil {
+		return err
+	}
+	if len(mutdata) == 8 {
+		r.mutCurID = binary.LittleEndian.Uint64(mutdata)
+		dvid.Infof("Loaded mutation ID for repo %s: %d\n", r.uuid, r.mutCurID)
+	} else {
+		r.mutCurID = InitialMutationID
+		dvid.Infof("Set mutation ID for repo %s: %d\n", r.uuid, r.mutCurID)
+	}
+	r.mutSavedID = r.mutCurID + StrideMutationID
+	mutdata = make([]byte, 8)
+	binary.LittleEndian.PutUint64(mutdata, r.mutSavedID)
+	if err := store.Put(ctx, tk, mutdata); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *repoT) getMutationID() (mutID uint64) {
+	r.mutMu.RLock()
+	mutID = r.mutCurID
+	r.mutMu.RUnlock()
+	return
+}
+
+func (r *repoT) newMutationID() (mutID uint64) {
+	if manager == nil || manager.store == nil {
+		dvid.Criticalf("Bad new mutation ID request.  Manager or store nil.\n")
+		return
+	}
+	var ctx storage.MetadataContext
+	tk := storage.NewTKey(mutidKey, r.id.Bytes())
+	r.mutMu.Lock()
+	mutID = r.mutCurID
+	r.mutCurID++
+	if r.mutCurID >= r.mutSavedID {
+		r.mutSavedID += StrideMutationID
+		mutdata := make([]byte, 8)
+		binary.LittleEndian.PutUint64(mutdata, r.mutSavedID)
+		if err := manager.store.Put(ctx, tk, mutdata); err != nil {
+			dvid.Criticalf("Unable to persist new mutation ID for repo %s: %v\n", r.uuid, err)
+		}
+	}
+	r.mutMu.Unlock()
+	return
 }
 
 // relatively slow function compared to manager's cache, but can be used for

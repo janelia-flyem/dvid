@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -379,9 +378,6 @@ type Data struct {
 	kvStore  dvid.Store // key-value store
 	logStore dvid.Store // append-only log
 
-	// an atomic operation ID monotonically incremented per data instance
-	mutID uint64
-
 	// true if deleted (or in processing of deleting)
 	deleted bool
 
@@ -589,8 +585,16 @@ func (d *Data) GetReadLog() storage.ReadLog {
 }
 
 func (d *Data) NewMutationID() uint64 {
-	// shouldn't worry about running out of operation IDs during a DVID server's uptime.
-	return atomic.AddUint64(&(d.mutID), 1)
+	if manager == nil {
+		dvid.Criticalf("New mutation ID requested for data %q but manager not initialized!\n", d.DataName())
+		return 0
+	}
+	repo, err := manager.repoFromUUID(d.RootUUID())
+	if err != nil {
+		dvid.Criticalf("New mutation ID requested for data %q but no repo associated with root %s\n", d.DataName(), d.RootUUID())
+		return 0
+	}
+	return repo.newMutationID()
 }
 
 // ---- dvid.DataSetter implementation ----

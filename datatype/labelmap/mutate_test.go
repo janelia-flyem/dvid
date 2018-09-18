@@ -995,7 +995,7 @@ func TestSplitLabel(t *testing.T) {
 
 	reqStr = fmt.Sprintf("%snode/%s/labels/supervoxel-splits", server.WebAPIPath, uuid)
 	r = server.TestHTTP(t, "GET", reqStr, nil)
-	if string(r) != fmt.Sprintf(`["%s",[[2,4,7,6]]]`, uuid) {
+	if string(r) != fmt.Sprintf(`["%s",[[%d,4,7,6]]]`, uuid, datastore.InitialMutationID+1) {
 		t.Fatalf("bad supervoxel-splits JSON return: %s\n", string(r))
 	}
 
@@ -1870,8 +1870,8 @@ func TestMergeCleave(t *testing.T) {
 	if err := json.Unmarshal(r, &infoVal); err != nil {
 		t.Fatalf("unable to get mod info for label 4: %v", err)
 	}
-	if infoVal.MutID != 2 {
-		t.Errorf("expected mutation id %d, got %d\n", 2, infoVal.MutID)
+	if infoVal.MutID != datastore.InitialMutationID+1 {
+		t.Errorf("expected mutation id %d, got %d\n", datastore.InitialMutationID+1, infoVal.MutID)
 	}
 
 	// Check sizes
@@ -1952,7 +1952,7 @@ func TestMergeCleave(t *testing.T) {
 	if err := json.Unmarshal(r, &infoVal); err != nil {
 		t.Fatalf("unable to get mod info for label 4: %v", err)
 	}
-	if infoVal.MutID != 3 || infoVal.App != "myapp" || infoVal.User != "mrsmith" {
+	if infoVal.MutID != datastore.InitialMutationID+2 || infoVal.App != "myapp" || infoVal.User != "mrsmith" {
 		t.Errorf("unexpected last mod info: %v\n", infoVal)
 	}
 
@@ -2333,7 +2333,7 @@ func TestMultiscaleMergeCleave(t *testing.T) {
 	r = server.TestHTTP(t, "POST", reqStr, bytes.NewBufferString("[2, 13]"))
 	var jsonVal struct {
 		CleavedLabel uint64
-		MutationID uint64
+		MutationID   uint64
 	}
 	if err := json.Unmarshal(r, &jsonVal); err != nil {
 		t.Errorf("Unable to get new label from cleave.  Instead got: %v\n", jsonVal)

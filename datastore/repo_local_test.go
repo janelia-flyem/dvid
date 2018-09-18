@@ -5,6 +5,7 @@ package datastore
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -117,6 +118,21 @@ func TestRepoPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	jsonStr := string(jsonBytes)
+	mutidJSON := fmt.Sprintf(`"MutationID":%d`, InitialMutationID)
+	mutidPos := strings.Index(jsonStr, mutidJSON)
+	if mutidPos < 0 {
+		t.Fatalf("Expected repo JSON to include MutationID set to %d, but didn't find it\n", InitialMutationID)
+	}
+	jsonStr = jsonStr[:mutidPos] + jsonStr[mutidPos+len(mutidJSON):]
+
+	mutidJSON = fmt.Sprintf(`"SavedMutationID":%d`, InitialMutationID+StrideMutationID)
+	mutidPos = strings.Index(jsonStr, mutidJSON)
+	if mutidPos < 0 {
+		t.Fatalf("Expected repo JSON to include SavedMutationID set to %d, but didn't find it\n", InitialMutationID+StrideMutationID)
+	}
+	jsonStr = jsonStr[:mutidPos] + jsonStr[mutidPos+len(mutidJSON):]
+
 	// Shutdown and restart.
 	CloseReopenTest()
 	defer CloseTest()
@@ -126,8 +142,24 @@ func TestRepoPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(jsonBytes, jsonBytes2) {
-		t.Errorf("\nRepo metadata JSON changes on close/reopen:\n\nOld:\n%s\n\nNew:\n%s\n", string(jsonBytes), string(jsonBytes2))
+
+	jsonStr2 := string(jsonBytes2)
+	mutidJSON = fmt.Sprintf(`"MutationID":%d`, InitialMutationID+StrideMutationID)
+	mutidPos = strings.Index(jsonStr2, mutidJSON)
+	if mutidPos < 0 {
+		t.Fatalf("Expected repo JSON to include MutationID set to %d, but didn't find it\n", InitialMutationID)
+	}
+	jsonStr2 = jsonStr2[:mutidPos] + jsonStr2[mutidPos+len(mutidJSON):]
+
+	mutidJSON = fmt.Sprintf(`"SavedMutationID":%d`, InitialMutationID+2*StrideMutationID)
+	mutidPos = strings.Index(jsonStr2, mutidJSON)
+	if mutidPos < 0 {
+		t.Fatalf("Expected repo JSON to include SavedMutationID set to %d, but didn't find it\n", InitialMutationID+2*StrideMutationID)
+	}
+	jsonStr2 = jsonStr2[:mutidPos] + jsonStr2[mutidPos+len(mutidJSON):]
+
+	if jsonStr != jsonStr2 {
+		t.Errorf("\nRepo metadata JSON changes on close/reopen:\n\nOld:\n%s\n\nNew:\n%s\n", jsonStr, jsonStr2)
 	}
 }
 
