@@ -50,8 +50,6 @@ func (c *KafkaConfig) Initialize() (err error) {
 			case *kafka.Message:
 				if ev.TopicPartition.Error != nil {
 					dvid.Errorf("Delivery failed to kafka servers: %v\n", ev.TopicPartition)
-				} else {
-					dvid.Debugf("Delivered kafka message to %v\n", ev.TopicPartition)
 				}
 			}
 		}
