@@ -692,16 +692,19 @@ func httpAvailHandler(c *web.C, h http.Handler) http.Handler {
 		if httpUnavailable(w) {
 			return
 		}
+		t0 := time.Now()
+		h.ServeHTTP(w, r)
 		if len(tc.Kafka.Servers) != 0 {
+			t := time.Since(t0)
 			activity := map[string]interface{}{
 				"Method":        r.Method,
 				"RequestURI":    r.RequestURI,
 				"ContentLength": r.ContentLength,
 				"RemoteAddr":    r.RemoteAddr,
+				"Duration":      t.String(),
 			}
 			LogActivityToKafka(activity)
 		}
-		h.ServeHTTP(w, r)
 	}
 	return http.HandlerFunc(fn)
 }
