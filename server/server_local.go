@@ -315,6 +315,18 @@ func (sc ServerConfig) Initialize() error {
 			return fmt.Errorf("called webhook specified in TOML (%q) and received bad status code: %d", sc.StartWebhook, resp.StatusCode)
 		}
 	}
+
+	// create topic for this server's activity.
+	// NOTE: Kafka server must be configured to allow topic creation from
+	// messages sent to a non-existent topic
+	host := DefaultHost
+	if sc.Host != "" {
+		host = sc.Host
+	} else if sc.HTTPAddress != "" {
+		host += "-" + sc.HTTPAddress
+	}
+	kafkaActivityTopic = "dvidactivity-" + host
+
 	return nil
 }
 

@@ -684,12 +684,22 @@ func httpUnavailable(w http.ResponseWriter) bool {
 	return true
 }
 
-// Middleware that prevents any web requests if httpAvail is false.
-// Allows draconian shutdown of server when doing critical reorg of internals.
+// Middleware that prevents any web requests if httpAvail is false, and logs activity
+// to kafka if available.  Allows draconian shutdown of server when doing critical reorg
+// of internals.
 func httpAvailHandler(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		if httpUnavailable(w) {
 			return
+		}
+		if len(tc.Kafka.Servers) != 0 {
+			activity := map[string]interface{}{
+				"Method":        r.Method,
+				"RequestURI":    r.RequestURI,
+				"ContentLength": r.ContentLength,
+				"RemoteAddr":    r.RemoteAddr,
+			}
+			LogActivityToKafka(activity)
 		}
 		h.ServeHTTP(w, r)
 	}

@@ -128,6 +128,9 @@ var (
 	// configuration for a platform-specific server
 	config Config
 
+	// kafka topic to publish activity for this server
+	kafkaActivityTopic string
+
 	initialized bool
 
 	// signals when we should shutdown server.
@@ -315,4 +318,17 @@ func Shutdown() {
 	rpc.Shutdown()
 	dvid.Shutdown()
 	shutdownCh <- struct{}{}
+}
+
+// LogActivityToKafka publishes activity to a kafka topic
+func LogActivityToKafka(activity map[string]interface{}) {
+	go func() {
+		jsonmsg, err := json.Marshal(activity)
+		if err != nil {
+			dvid.Errorf("unable to marshal activity for kafka logging: %v\n", err)
+		}
+		if err := storage.KafkaProduceMsg(jsonmsg, kafkaActivityTopic); err != nil {
+			dvid.Errorf("unable to publish activity to kafka activity topic: %v\n", err)
+		}
+	}()
 }
