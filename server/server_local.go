@@ -12,10 +12,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 
@@ -325,7 +327,14 @@ func (sc ServerConfig) Initialize() error {
 	} else if sc.HTTPAddress != "" {
 		host += "-" + sc.HTTPAddress
 	}
-	kafkaActivityTopic = "dvidactivity-" + host
+	topic := "dvidactivity-" + host
+
+	// only accept valid characters for kafka topic
+	reg, err := regexp.Compile("[^a-zA-Z0-9\\._\\-]+")
+	if err != nil {
+		log.Fatal(err)
+	}
+	kafkaActivityTopic = reg.ReplaceAllString(topic, "-")
 
 	return nil
 }

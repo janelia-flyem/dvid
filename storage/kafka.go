@@ -78,7 +78,7 @@ func KafkaProduceMsg(value []byte, topic string) error {
 				dvid.Errorf("couldn't send email about kafka error: %v\n", err)
 			}
 
-			return fmt.Errorf("cannot produce message to %s:%d: %s", topic, partitionID, err)
+			return fmt.Errorf("cannot produce message to topic %q, partition %d: %s", topic, partitionID, err)
 		}
 	}
 	return nil
