@@ -684,6 +684,35 @@ func httpUnavailable(w http.ResponseWriter) bool {
 	return true
 }
 
+type wrappedResponseWriter struct {
+	http.ResponseWriter
+	wroteHeader bool
+	status      int
+	bytes       int
+}
+
+func (w *wrappedResponseWriter) WriteHeader(code int) {
+	if !w.wroteHeader {
+		w.status = code
+		w.wroteHeader = true
+		w.ResponseWriter.WriteHeader(code)
+	}
+}
+
+func (w *wrappedResponseWriter) Write(buf []byte) (int, error) {
+	w.WriteHeader(http.StatusOK)
+	n, err := w.ResponseWriter.Write(buf)
+	w.bytes += n
+	return n, err
+}
+
+func wrapResponseWriter(w http.ResponseWriter) *wrappedResponseWriter {
+	wr := wrappedResponseWriter{
+		ResponseWriter: w,
+	}
+	return &wr
+}
+
 // Middleware that prevents any web requests if httpAvail is false, and logs activity
 // to kafka if available.  Allows draconian shutdown of server when doing critical reorg
 // of internals.
@@ -693,15 +722,23 @@ func httpAvailHandler(c *web.C, h http.Handler) http.Handler {
 			return
 		}
 		t0 := time.Now()
-		h.ServeHTTP(w, r)
+		myw := wrapResponseWriter(w)
+		h.ServeHTTP(myw, r)
 		if len(tc.Kafka.Servers) != 0 {
+			user := r.URL.Query().Get("u")
+			app := r.URL.Query().Get("app")
 			t := time.Since(t0)
 			activity := map[string]interface{}{
-				"Method":        r.Method,
-				"RequestURI":    r.RequestURI,
-				"ContentLength": r.ContentLength,
-				"RemoteAddr":    r.RemoteAddr,
-				"Duration":      t.String(),
+				"time":        t0.Unix(),
+				"duration":    t.Seconds(),
+				"status":      myw.status,
+				"user":        user,
+				"client":      app,
+				"method":      r.Method,
+				"uri":         r.RequestURI,
+				"bytes_in":    r.ContentLength,
+				"bytes_out":   myw.bytes,
+				"remote_addr": r.RemoteAddr,
 			}
 			LogActivityToKafka(activity)
 		}
