@@ -730,7 +730,7 @@ func httpAvailHandler(c *web.C, h http.Handler) http.Handler {
 			t := time.Since(t0)
 			activity := map[string]interface{}{
 				"time":        t0.Unix(),
-				"duration":    t.Seconds(),
+				"duration":    t.Seconds() * 1000.0,
 				"status":      myw.status,
 				"user":        user,
 				"client":      app,
