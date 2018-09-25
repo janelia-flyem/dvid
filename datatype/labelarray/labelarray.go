@@ -3148,6 +3148,11 @@ func (d *Data) handleSparsevolSize(ctx *datastore.VersionedCtx, w http.ResponseW
 		server.BadRequest(w, r, "problem getting block indexing on labels %: %v", lbls, err)
 		return
 	}
+	if meta == nil {
+		dvid.Infof("GET sparsevol-size on label %d: not found.\n", label)
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 
 	w.Header().Set("Content-type", "application/octet-stream")
 	fmt.Fprintf(w, "{")
