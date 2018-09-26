@@ -591,7 +591,7 @@ func (d *Data) mutateBlock(ch <-chan procMsg) {
 	defer func() {
 		if e := recover(); e != nil {
 			msg := fmt.Sprintf("Panic detected on labelarray block mutation thread: %+v\n", e)
-			dvid.ReportPanic(msg)
+			dvid.ReportPanic(msg, server.WebServer())
 		}
 	}()
 	for {

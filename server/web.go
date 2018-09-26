@@ -724,7 +724,7 @@ func httpAvailHandler(c *web.C, h http.Handler) http.Handler {
 		t0 := time.Now()
 		myw := wrapResponseWriter(w)
 		h.ServeHTTP(myw, r)
-		if len(tc.Kafka.Servers) != 0 {
+		if KafkaAvailable() {
 			user := r.URL.Query().Get("u")
 			app := r.URL.Query().Get("app")
 			t := time.Since(t0)
@@ -756,7 +756,7 @@ func recoverHandler(c *web.C, h http.Handler) http.Handler {
 			if e := recover(); e != nil {
 				msg := fmt.Sprintf("Panic detected on request %s:\n%+v\nIP: %v, URL: %s\n",
 					reqID, e, r.RemoteAddr, r.URL.Path)
-				dvid.ReportPanic(msg)
+				dvid.ReportPanic(msg, WebServer())
 				http.Error(w, msg, 500)
 			}
 		}()

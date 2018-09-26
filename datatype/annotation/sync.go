@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -12,6 +13,7 @@ import (
 	"github.com/janelia-flyem/dvid/datatype/labelarray"
 	"github.com/janelia-flyem/dvid/datatype/labelmap"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 )
 
@@ -220,7 +222,7 @@ func (d *Data) processEvents() {
 	defer func() {
 		if e := recover(); e != nil {
 			msg := fmt.Sprintf("Panic detected on annotation sync thread: %+v\n", e)
-			dvid.ReportPanic(msg)
+			dvid.ReportPanic(msg, server.WebServer())
 		}
 	}()
 	batcher, err := datastore.GetKeyValueBatcher(d)
@@ -259,45 +261,58 @@ func (d *Data) handleSyncMessage(ctx *datastore.VersionedCtx, msg datastore.Sync
 	d.StartUpdate()
 	defer d.StopUpdate()
 
+	t0 := time.Now()
+	mutation := fmt.Sprintf("sync of data %s: event %s", d.DataName(), msg.Event)
+	var diagnostic string
+	var mutID uint64
+	successful := true
+
 	switch delta := msg.Delta.(type) {
 
 	case imageblk.Block:
 		chunkPt := dvid.ChunkPoint3d(*delta.Index)
 		d.ingestBlock(ctx, chunkPt, delta.Data, batcher)
+		mutID = delta.MutID
 
 	case imageblk.MutatedBlock:
 		chunkPt := dvid.ChunkPoint3d(*delta.Index)
 		d.mutateBlock(ctx, chunkPt, delta.Prev, delta.Data, batcher)
+		mutID = delta.MutID
 
 	case labelarray.IngestedBlock:
 		chunkPt, _ := delta.BCoord.ToChunkPoint3d()
 		data, _ := delta.Data.MakeLabelVolume()
 		d.ingestBlock(ctx, chunkPt, data, batcher)
+		mutID = delta.MutID
 
 	case labelmap.IngestedBlock:
 		chunkPt, _ := delta.BCoord.ToChunkPoint3d()
 		data, _ := delta.Data.MakeLabelVolume()
 		d.ingestBlock(ctx, chunkPt, data, batcher)
+		mutID = delta.MutID
 
 	case labelarray.MutatedBlock:
 		chunkPt, _ := delta.BCoord.ToChunkPoint3d()
 		prev, _ := delta.Prev.MakeLabelVolume()
 		data, _ := delta.Data.MakeLabelVolume()
 		d.mutateBlock(ctx, chunkPt, prev, data, batcher)
+		mutID = delta.MutID
 
 	case labelmap.MutatedBlock:
 		chunkPt, _ := delta.BCoord.ToChunkPoint3d()
 		prev, _ := delta.Prev.MakeLabelVolume()
 		data, _ := delta.Data.MakeLabelVolume()
 		d.mutateBlock(ctx, chunkPt, prev, data, batcher)
+		mutID = delta.MutID
 
 	case labels.DeltaMergeStart:
 		// ignore
 	case labels.DeltaMerge:
 		// process annotation type
-		if err := d.mergeLabels(batcher, msg.Version, delta.MergeOp); err != nil {
-			dvid.Errorf("error on merging labels for data %q: %v\n", d.DataName(), err)
-			return
+		err := d.mergeLabels(batcher, msg.Version, delta.MergeOp)
+		if err != nil {
+			diagnostic = fmt.Sprintf("error on merging labels for data %s: %v", d.DataName(), err)
+			successful = false
 		}
 
 	case labels.DeltaSplitStart:
@@ -305,24 +320,47 @@ func (d *Data) handleSyncMessage(ctx *datastore.VersionedCtx, msg datastore.Sync
 	case labels.DeltaSplit:
 		if delta.Split == nil {
 			// This is a coarse split so can't be mapped data.
-			if err := d.splitLabelsCoarse(batcher, msg.Version, delta); err != nil {
-				dvid.Errorf("error on splitting labels for data %q: %v\n", d.DataName(), err)
+			err := d.splitLabelsCoarse(batcher, msg.Version, delta)
+			if err != nil {
+				diagnostic = fmt.Sprintf("error on splitting labels for data %s: %v", d.DataName(), err)
+				successful = false
 			}
-			return
+		} else {
+			err := d.splitLabels(batcher, msg.Version, delta)
+			if err != nil {
+				diagnostic = fmt.Sprintf("error on splitting labels for data %s: %v", d.DataName(), err)
+				successful = false
+			}
 		}
-		if err := d.splitLabels(batcher, msg.Version, delta); err != nil {
-			dvid.Errorf("error on splitting labels for data %q: %v\n", d.DataName(), err)
-		}
-		return
 
 	case labels.CleaveOp:
-		if err := d.cleaveLabels(batcher, msg.Version, delta); err != nil {
-			dvid.Errorf("error on cleaving label for data %q: %v\n", d.DataName(), err)
-			return
+		err := d.cleaveLabels(batcher, msg.Version, delta)
+		if err != nil {
+			diagnostic = fmt.Sprintf("error on cleaving label for data %s: %v", d.DataName(), err)
+			successful = false
 		}
+		mutID = delta.MutID
 
 	default:
-		dvid.Criticalf("Got unexpected delta: %v\n", msg)
+		diagnostic = fmt.Sprintf("critical error - unexpected delta: %v\n", msg)
+		successful = false
+	}
+
+	if server.KafkaAvailable() {
+		t := time.Since(t0)
+		activity := map[string]interface{}{
+			"time":       t0.Unix(),
+			"duration":   t.Seconds() * 1000.0,
+			"mutation":   mutation,
+			"successful": successful,
+		}
+		if diagnostic != "" {
+			activity["diagnostic"] = diagnostic
+		}
+		if mutID != 0 {
+			activity["mutation_id"] = mutID
+		}
+		server.LogActivityToKafka(activity)
 	}
 }
 

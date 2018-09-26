@@ -244,6 +244,18 @@ func CacheSize(id string) int {
 	return setting.Size * dvid.Mega
 }
 
+// WebServer returns the configured host name from TOML file or, if not specified,
+// the retrieved hostname plus the port of the web server.
+func WebServer() string {
+	host := DefaultHost
+	if tc.Server.Host != "" {
+		host = tc.Server.Host
+	} else if tc.Server.HTTPAddress != "" {
+		host += ":" + tc.Server.HTTPAddress
+	}
+	return host
+}
+
 // ServerConfig holds ports, host name, and other properties of this dvid server.
 type ServerConfig struct {
 	Host        string
@@ -318,18 +330,11 @@ func (sc ServerConfig) Initialize() error {
 		}
 	}
 
-	// create topic for this server's activity.
+	// create topic for this server's activity and only accept valid characters
+	// for kafka topic.
 	// NOTE: Kafka server must be configured to allow topic creation from
 	// messages sent to a non-existent topic
-	host := DefaultHost
-	if sc.Host != "" {
-		host = sc.Host
-	} else if sc.HTTPAddress != "" {
-		host += "-" + sc.HTTPAddress
-	}
-	topic := "dvidactivity-" + host
-
-	// only accept valid characters for kafka topic
+	topic := "dvidactivity-" + WebServer()
 	reg, err := regexp.Compile("[^a-zA-Z0-9\\._\\-]+")
 	if err != nil {
 		log.Fatal(err)
@@ -463,4 +468,12 @@ func Serve() {
 	}()
 
 	<-shutdownCh
+}
+
+// KafkaAvailable returns true if kafka servers are initialized.
+func KafkaAvailable() bool {
+	if len(tc.Kafka.Servers) != 0 {
+		return true
+	}
+	return false
 }

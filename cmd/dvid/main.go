@@ -124,7 +124,7 @@ func main() {
 	defer func() {
 		if e := recover(); e != nil {
 			msg := fmt.Sprintf("Panic detected on main serve thread: %+v\n", e)
-			dvid.ReportPanic(msg)
+			dvid.ReportPanic(msg, server.WebServer())
 		}
 	}()
 

@@ -7,6 +7,7 @@ package rpc
 import (
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -167,7 +168,8 @@ func StartServer(address string) error {
 	defer func() {
 		if e := recover(); e != nil {
 			msg := fmt.Sprintf("Panic detected on rpc serve thread: %+v\n", e)
-			dvid.ReportPanic(msg)
+			hostname, _ := os.Hostname()
+			dvid.ReportPanic(msg, hostname)
 		}
 	}()
 

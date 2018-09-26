@@ -4,10 +4,12 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/annotation"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 )
 
@@ -68,7 +70,7 @@ func (d *Data) processEvents() {
 	defer func() {
 		if e := recover(); e != nil {
 			msg := fmt.Sprintf("Panic detected on labelsz sync thread: %+v\n", e)
-			dvid.ReportPanic(msg)
+			dvid.ReportPanic(msg, server.WebServer())
 		}
 	}()
 	batcher, err := datastore.GetKeyValueBatcher(d)
@@ -145,6 +147,11 @@ func (d *Data) getCounts(ctx *datastore.VersionedCtx, labels map[indexedLabel]in
 }
 
 func (d *Data) modifyElements(ctx *datastore.VersionedCtx, delta annotation.DeltaModifyElements, batcher storage.KeyValueBatcher) {
+	t0 := time.Now()
+	mutation := fmt.Sprintf("sync of labelsz %s", d.DataName())
+	var diagnostic string
+	successful := true
+
 	mods := make(map[indexedLabel]int32)
 	for _, elemPos := range delta.Add {
 		if d.inROI(elemPos.Pos) {
@@ -173,52 +180,67 @@ func (d *Data) modifyElements(ctx *datastore.VersionedCtx, delta annotation.Delt
 	// Get old counts for the modified labels.
 	counts, err := d.getCounts(ctx, mods)
 	if err != nil {
+		diagnostic = fmt.Sprintf("labelsz %s couldn't get counts for modified labels: %v\n", d.DataName(), err)
 		dvid.Errorf("labelsz %q couldn't get counts for modified labels: %v\n", d.DataName(), err)
-		return
+		successful = false
+	} else {
+		// Modify the keys based on the change in counts, then delete or store.
+		batch := batcher.NewBatch(ctx)
+		for il, change := range mods {
+			if change == 0 {
+				continue
+			}
+			i, label, err := decodeIndexedLabel(il)
+			if err != nil {
+				dvid.Criticalf("couldn't decode indexedLabel %s for modify elements sync of %s: %v\n", il, d.DataName(), err)
+				continue
+			}
+
+			// check if we had prior key that needs to be deleted.
+			count, found := counts[il]
+			if found {
+				batch.Delete(NewTypeSizeLabelTKey(i, count, label))
+			}
+
+			// add new count
+			if change < 0 && -change > int32(count) {
+				dvid.Criticalf("labelsz %q received element mod that would subtract %d with only count %d!  Setting floor at 0.\n", d.DataName(), -change, count)
+				change = int32(-count)
+			}
+			newcount := uint32(int32(count) + change)
+
+			// If it's at zero, we've merged or removed it so delete the count.
+			if newcount == 0 {
+				batch.Delete(NewTypeLabelTKey(i, label))
+				batch.Delete(NewTypeSizeLabelTKey(i, newcount, label))
+				continue
+			}
+
+			// store the data.
+			buf := make([]byte, 4)
+			binary.LittleEndian.PutUint32(buf, newcount)
+			batch.Put(NewTypeLabelTKey(i, label), buf)
+			batch.Put(NewTypeSizeLabelTKey(i, newcount, label), nil)
+		}
+
+		if err := batch.Commit(); err != nil {
+			diagnostic = fmt.Sprintf("bad commit in labelsz %s during sync of modify elements: %v\n", d.DataName(), err)
+			dvid.Criticalf("bad commit in labelsz %q during sync of modify elements: %v\n", d.DataName(), err)
+			successful = false
+		}
 	}
-
-	// Modify the keys based on the change in counts, then delete or store.
-	batch := batcher.NewBatch(ctx)
-	for il, change := range mods {
-		if change == 0 {
-			continue
+	if server.KafkaAvailable() {
+		t := time.Since(t0)
+		activity := map[string]interface{}{
+			"time":       t0.Unix(),
+			"duration":   t.Seconds() * 1000.0,
+			"mutation":   mutation,
+			"successful": successful,
 		}
-		i, label, err := decodeIndexedLabel(il)
-		if err != nil {
-			dvid.Criticalf("couldn't decode indexedLabel %s for modify elements sync of %s: %v\n", il, d.DataName(), err)
-			continue
+		if diagnostic != "" {
+			activity["diagnostic"] = diagnostic
 		}
-
-		// check if we had prior key that needs to be deleted.
-		count, found := counts[il]
-		if found {
-			batch.Delete(NewTypeSizeLabelTKey(i, count, label))
-		}
-
-		// add new count
-		if change < 0 && -change > int32(count) {
-			dvid.Criticalf("labelsz %q received element mod that would subtract %d with only count %d!  Setting floor at 0.\n", d.DataName(), -change, count)
-			change = int32(-count)
-		}
-		newcount := uint32(int32(count) + change)
-
-		// If it's at zero, we've merged or removed it so delete the count.
-		if newcount == 0 {
-			batch.Delete(NewTypeLabelTKey(i, label))
-			batch.Delete(NewTypeSizeLabelTKey(i, newcount, label))
-			continue
-		}
-
-		// store the data.
-		buf := make([]byte, 4)
-		binary.LittleEndian.PutUint32(buf, newcount)
-		batch.Put(NewTypeLabelTKey(i, label), buf)
-		batch.Put(NewTypeSizeLabelTKey(i, newcount, label), nil)
-	}
-
-	if err := batch.Commit(); err != nil {
-		dvid.Criticalf("bad commit in labelsz %q during sync of modify elements: %v\n", d.DataName(), err)
-		return
+		server.LogActivityToKafka(activity)
 	}
 }
 

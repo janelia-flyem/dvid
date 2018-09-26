@@ -242,10 +242,10 @@ func ReadJSONFile(filename string) (value map[string]interface{}, err error) {
 
 // ReportPanic prints the message and stack trace to stderr, the log, and via email if
 // an email notifier was setup.
-func ReportPanic(msg string) {
+func ReportPanic(msg, sendingServer string) {
 	buf := make([]byte, 1<<16)
 	size := runtime.Stack(buf, false)
-	stackTrace := "Stack trace:\n" + string(buf[0:size]) + "\n"
+	stackTrace := "Stack trace from " + sendingServer + ":\n" + string(buf[0:size]) + "\n"
 
 	os.Stderr.WriteString(msg + stackTrace)
 	LogImmediately(msg + stackTrace) // bypass log channels.
