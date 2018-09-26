@@ -208,6 +208,10 @@ func (c *tomlConfig) WebClient() string {
 	return c.Server.WebClient
 }
 
+func (c *tomlConfig) WebDefaultFile() string {
+	return c.Server.WebDefaultFile
+}
+
 func (c *tomlConfig) AllowTiming() bool {
 	return c.Server.AllowTiming
 }
@@ -258,11 +262,12 @@ func WebServer() string {
 
 // ServerConfig holds ports, host name, and other properties of this dvid server.
 type ServerConfig struct {
-	Host        string
-	HTTPAddress string
-	RPCAddress  string
-	WebClient   string
-	Note        string
+	Host           string
+	HTTPAddress    string
+	RPCAddress     string
+	WebClient      string
+	WebDefaultFile string
+	Note           string
 
 	AllowTiming        bool   // If true, returns * for Timing-Allow-Origin in response headers.
 	StartWebhook       string // http address that should be called when server is started up.

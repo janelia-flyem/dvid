@@ -48,6 +48,9 @@ type Config interface {
 	// Path to web client files
 	WebClient() string
 
+	// Path to default file within WebClient() path to return if HTTP request doesn't exist
+	WebDefaultFile() string
+
 	// Set timing in HTTP header
 	AllowTiming() bool
 

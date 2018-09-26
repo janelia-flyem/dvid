@@ -6,6 +6,7 @@ host = "mygreatserver.test.com"  # Lets you specify a user-friendly alias for he
 httpAddress = "localhost:8000"
 rpcAddress = "localhost:8001"
 webClient = "/path/to/webclient"
+webDefaultFile = "index.html" # path to optional default file within webClient directory to return.
 
 note = """
 You can put anything you want in here and have it available via /api/server/note.

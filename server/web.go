@@ -1109,6 +1109,17 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
 		dvid.SendHTTP(w, r, path, data)
 	} else {
 		filename := filepath.Join(config.WebClient(), path)
+		redirectURL := config.WebDefaultFile()
+		if len(redirectURL) > 0 {
+			_, err := os.Stat(filename)
+			if os.IsNotExist(err) {
+				if redirectURL[0] != '/' {
+					redirectURL = "/" + redirectURL
+				}
+				http.Redirect(w, r, redirectURL, http.StatusPermanentRedirect)
+				return
+			}
+		}
 		dvid.Debugf("[%s] Serving from webclient directory: %s\n", r.Method, filename)
 		http.ServeFile(w, r, filename)
 	}
