@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -14,8 +16,8 @@ var (
 	// global producer
 	kafkaProducer *kafka.Producer
 
-	// description of host for kafka messaging
-	kafkaTopicPrefix string
+	// the kafka topic for activity logging
+	kafkaActivityTopic string
 )
 
 // assume very low throughput needed and therefore always one partition
@@ -24,24 +26,33 @@ const partitionID = 0
 // KafkaConfig describes kafka servers and an optional local file directory into which
 // failed messages will be stored.
 type KafkaConfig struct {
-	TopicPrefix string // if supplied, will be appended to topic
-	Servers     []string
+	TopicActivity string // if supplied, will be override topic for activity log
+	Servers       []string
 }
 
-// Initialize intializes kafka connection
-func (c *KafkaConfig) Initialize() (err error) {
-	if c == nil || len(c.Servers) == 0 {
-		dvid.TimeInfof("No Kafka server specified.\n")
+// Initialize sets up default activity topic and launches goroutine for handling async kafka messages.
+func (kc KafkaConfig) Initialize(hostID string) error {
+	if len(kc.Servers) == 0 {
 		return nil
 	}
-	kafkaTopicPrefix = c.TopicPrefix
+
+	if kc.TopicActivity != "" {
+		kafkaActivityTopic = kc.TopicActivity
+	} else {
+		kafkaActivityTopic = "dvidactivity-" + hostID
+	}
+	reg, err := regexp.Compile("[^a-zA-Z0-9\\._\\-]+")
+	if err != nil {
+		return err
+	}
+	kafkaActivityTopic = reg.ReplaceAllString(kafkaActivityTopic, "-")
 
 	configMap := &kafka.ConfigMap{
 		"client.id":         "dvid-kafkaclient",
-		"bootstrap.servers": strings.Join(c.Servers, ","),
+		"bootstrap.servers": strings.Join(kc.Servers, ","),
 	}
 	if kafkaProducer, err = kafka.NewProducer(configMap); err != nil {
-		return
+		return err
 	}
 
 	go func() {
@@ -54,15 +65,27 @@ func (c *KafkaConfig) Initialize() (err error) {
 			}
 		}
 	}()
-	return
+	return nil
+}
+
+// LogActivityToKafka publishes activity
+func LogActivityToKafka(activity map[string]interface{}) {
+	if kafkaActivityTopic != "" {
+		go func() {
+			jsonmsg, err := json.Marshal(activity)
+			if err != nil {
+				dvid.Errorf("unable to marshal activity for kafka logging: %v\n", err)
+			}
+			if err := KafkaProduceMsg(jsonmsg, kafkaActivityTopic); err != nil {
+				dvid.Errorf("unable to publish activity to kafka activity topic: %v\n", err)
+			}
+		}()
+	}
 }
 
 // KafkaProduceMsg sends a message to kafka
 func KafkaProduceMsg(value []byte, topic string) error {
 	if kafkaProducer != nil {
-		if kafkaTopicPrefix != "" {
-			topic = kafkaTopicPrefix + "-" + topic
-		}
 		kafkaMsg := &kafka.Message{
 			TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
 			Value:          value,

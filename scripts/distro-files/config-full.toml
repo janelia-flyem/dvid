@@ -6,7 +6,11 @@ host = "mygreatserver.test.com"  # Lets you specify a user-friendly alias for he
 httpAddress = "localhost:8000"
 rpcAddress = "localhost:8001"
 webClient = "/path/to/webclient"
-webDefaultFile = "index.html" # path to optional default file within webClient directory to return.
+
+# only one of the following should be used if the default file path is missing, with webRedirectPath
+# taking priority if both are specified.
+webDefaultFile = "index.html" # contents of this file will be returned for any bad file path; required by dvid-console 3.0+
+webRedirectPath = "/index.html" # if supplied, bad file paths will cause redirection to this path
 
 note = """
 You can put anything you want in here and have it available via /api/server/note.
@@ -108,7 +112,7 @@ max_log_age = 30   # days
 # messages will be stored in a file named for the topic.
 
 [kafka]
-topicprefix = "myserver1"  # if set, is first part of topic
+topicActivity = "allMyActivity"  # optiona: non server-specific topic used for activity.
 servers = ["http://foo.bar.com:1234", "http://foo2.bar.com:1234"]
 
 # Cache support allows setting datatype-specific caching mechanisms.

@@ -740,7 +740,7 @@ func httpAvailHandler(c *web.C, h http.Handler) http.Handler {
 				"bytes_out":   myw.bytes,
 				"remote_addr": r.RemoteAddr,
 			}
-			LogActivityToKafka(activity)
+			storage.LogActivityToKafka(activity)
 		}
 	}
 	return http.HandlerFunc(fn)
@@ -1109,14 +1109,21 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
 		dvid.SendHTTP(w, r, path, data)
 	} else {
 		filename := filepath.Join(config.WebClient(), path)
-		redirectURL := config.WebDefaultFile()
-		if len(redirectURL) > 0 {
+		redirectURL := config.WebRedirectPath()
+		if len(redirectURL) > 0 || config.WebDefaultFile() != "" {
 			_, err := os.Stat(filename)
 			if os.IsNotExist(err) {
-				if redirectURL[0] != '/' {
-					redirectURL = "/" + redirectURL
+				if len(redirectURL) > 0 {
+					if redirectURL[0] != '/' {
+						redirectURL = "/" + redirectURL
+					}
+					dvid.Debugf("[%s] Redirecting bad file (%s) to default path: %s\n", r.Method, filename, redirectURL)
+					http.Redirect(w, r, redirectURL, http.StatusPermanentRedirect)
+				} else {
+					filename = filepath.Join(config.WebClient(), config.WebDefaultFile())
+					dvid.Debugf("[%s] Serving default file from webclient directory: %s\n", r.Method, filename)
+					http.ServeFile(w, r, filename)
 				}
-				http.Redirect(w, r, redirectURL, http.StatusPermanentRedirect)
 				return
 			}
 		}

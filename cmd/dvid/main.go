@@ -281,11 +281,7 @@ func DoServe(cmd dvid.Command) error {
 	}
 	tc.Logging.SetLogger()
 
-	if err := tc.Kafka.Initialize(); err != nil {
-		return err
-	}
-
-	if err := tc.Server.Initialize(); err != nil {
+	if err := tc.Initialize(); err != nil {
 		return err
 	}
 

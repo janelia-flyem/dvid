@@ -240,7 +240,7 @@ func (d *Data) modifyElements(ctx *datastore.VersionedCtx, delta annotation.Delt
 		if diagnostic != "" {
 			activity["diagnostic"] = diagnostic
 		}
-		server.LogActivityToKafka(activity)
+		storage.LogActivityToKafka(activity)
 	}
 }
 

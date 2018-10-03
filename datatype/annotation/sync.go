@@ -360,7 +360,7 @@ func (d *Data) handleSyncMessage(ctx *datastore.VersionedCtx, msg datastore.Sync
 		if mutID != 0 {
 			activity["mutation_id"] = mutID
 		}
-		server.LogActivityToKafka(activity)
+		storage.LogActivityToKafka(activity)
 	}
 }
 

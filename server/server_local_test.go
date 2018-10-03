@@ -61,7 +61,7 @@ func TestStartWebhook(t *testing.T) {
 	tomlCfg.Server.StartJaneliaConfig = ts2.URL
 
 	// check server startup
-	if err := tc.Server.Initialize(); err != nil {
+	if err := tc.Initialize(); err != nil {
 		t.Fatalf("couldn't initialize server: %v\n", err)
 	}
 
@@ -77,7 +77,7 @@ func TestStartWebhook(t *testing.T) {
 
 	// check if there's no recipient for webhook.
 	tomlCfg.Server.StartWebhook = "http://mybadurl:2718"
-	if err := tc.Server.Initialize(); err == nil {
+	if err := tc.Initialize(); err == nil {
 		t.Fatalf("expected error in supplying bad webhook, but got no error!\n")
 	}
 }

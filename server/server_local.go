@@ -12,12 +12,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 
@@ -122,6 +120,59 @@ type tomlConfig struct {
 	Mirror     map[dvid.DataSpecifier]mirrorConfig
 }
 
+// Initialize sets up the server (runs webhook, kafka goroutine, etc).
+func (c *tomlConfig) Initialize() error {
+	if err := c.Kafka.Initialize(WebServer()); err != nil {
+		return err
+	}
+
+	sc := c.Server
+	if sc.StartWebhook == "" && sc.StartJaneliaConfig == "" {
+		return nil
+	}
+
+	data := map[string]string{
+		"Host":         sc.Host,
+		"Note":         sc.Note,
+		"HTTP Address": sc.HTTPAddress,
+		"RPC Address":  sc.RPCAddress,
+	}
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	if sc.StartWebhook != "" {
+		req, err := http.NewRequest("POST", sc.StartWebhook, bytes.NewBuffer(jsonBytes))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("called webhook specified in TOML (%q) and received bad status code: %d", sc.StartWebhook, resp.StatusCode)
+		}
+	}
+
+	if sc.StartJaneliaConfig != "" {
+		// Janelia specific startup webhook; this format matches what's expected
+		//	by our local config server
+		// new: format like config server wants
+		resp, err := http.PostForm(sc.StartJaneliaConfig, url.Values{"config": {string(jsonBytes)}})
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("called webhook specified in TOML (%q) and received bad status code: %d", sc.StartWebhook, resp.StatusCode)
+		}
+	}
+	return nil
+}
+
 // Some settings in the TOML can be given as relative paths.
 // This function converts them in-place to absolute paths,
 // assuming the given paths were relative to the TOML file's own directory.
@@ -208,6 +259,10 @@ func (c *tomlConfig) WebClient() string {
 	return c.Server.WebClient
 }
 
+func (c *tomlConfig) WebRedirectPath() string {
+	return c.Server.WebRedirectPath
+}
+
 func (c *tomlConfig) WebDefaultFile() string {
 	return c.Server.WebDefaultFile
 }
@@ -262,12 +317,13 @@ func WebServer() string {
 
 // ServerConfig holds ports, host name, and other properties of this dvid server.
 type ServerConfig struct {
-	Host           string
-	HTTPAddress    string
-	RPCAddress     string
-	WebClient      string
-	WebDefaultFile string
-	Note           string
+	Host            string
+	HTTPAddress     string
+	RPCAddress      string
+	WebClient       string
+	WebRedirectPath string
+	WebDefaultFile  string
+	Note            string
 
 	AllowTiming        bool   // If true, returns * for Timing-Allow-Origin in response headers.
 	StartWebhook       string // http address that should be called when server is started up.
@@ -286,67 +342,6 @@ func (sc ServerConfig) DatastoreInstanceConfig() datastore.InstanceConfig {
 		Gen:   sc.IIDGen,
 		Start: dvid.InstanceID(sc.IIDStart),
 	}
-}
-
-// Initialize POSTs data to any set webhook indicating the server configuration.
-func (sc ServerConfig) Initialize() error {
-	if sc.StartWebhook == "" && sc.StartJaneliaConfig == "" {
-		return nil
-	}
-
-	data := map[string]string{
-		"Host":         sc.Host,
-		"Note":         sc.Note,
-		"HTTP Address": sc.HTTPAddress,
-		"RPC Address":  sc.RPCAddress,
-	}
-	jsonBytes, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-
-	if sc.StartWebhook != "" {
-		req, err := http.NewRequest("POST", sc.StartWebhook, bytes.NewBuffer(jsonBytes))
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		if err != nil {
-			return err
-		}
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("called webhook specified in TOML (%q) and received bad status code: %d", sc.StartWebhook, resp.StatusCode)
-		}
-	}
-
-	if sc.StartJaneliaConfig != "" {
-		// Janelia specific startup webhook; this format matches what's expected
-		//	by our local config server
-		// new: format like config server wants
-		resp, err := http.PostForm(sc.StartJaneliaConfig, url.Values{"config": {string(jsonBytes)}})
-		if err != nil {
-			return err
-		}
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("called webhook specified in TOML (%q) and received bad status code: %d", sc.StartWebhook, resp.StatusCode)
-		}
-	}
-
-	// create topic for this server's activity and only accept valid characters
-	// for kafka topic.
-	// NOTE: Kafka server must be configured to allow topic creation from
-	// messages sent to a non-existent topic
-	topic := "dvidactivity-" + WebServer()
-	reg, err := regexp.Compile("[^a-zA-Z0-9\\._\\-]+")
-	if err != nil {
-		log.Fatal(err)
-	}
-	kafkaActivityTopic = reg.ReplaceAllString(topic, "-")
-
-	return nil
 }
 
 type sizeConfig struct {

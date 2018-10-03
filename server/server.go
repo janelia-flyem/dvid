@@ -48,7 +48,10 @@ type Config interface {
 	// Path to web client files
 	WebClient() string
 
-	// Path to default file within WebClient() path to return if HTTP request doesn't exist
+	// Path to redirect if HTTP request doesn't exist
+	WebRedirectPath() string
+
+	// Path to file under WebClient() directory.  Its contents will be transmitted if HTTP request doesn't exist
 	WebDefaultFile() string
 
 	// Set timing in HTTP header
@@ -321,17 +324,4 @@ func Shutdown() {
 	rpc.Shutdown()
 	dvid.Shutdown()
 	shutdownCh <- struct{}{}
-}
-
-// LogActivityToKafka publishes activity to a kafka topic
-func LogActivityToKafka(activity map[string]interface{}) {
-	go func() {
-		jsonmsg, err := json.Marshal(activity)
-		if err != nil {
-			dvid.Errorf("unable to marshal activity for kafka logging: %v\n", err)
-		}
-		if err := storage.KafkaProduceMsg(jsonmsg, kafkaActivityTopic); err != nil {
-			dvid.Errorf("unable to publish activity to kafka activity topic: %v\n", err)
-		}
-	}()
 }
