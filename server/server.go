@@ -57,6 +57,9 @@ type Config interface {
 	// Set timing in HTTP header
 	AllowTiming() bool
 
+	// Kafka activity topic, empty if not configured
+	KafkaActivityTopic() string
+
 	// Kafka servers, nil if not configured
 	KafkaServers() []string
 }
@@ -267,6 +270,7 @@ func AboutJSON() (jsonStr string, err error) {
 	kservers := config.KafkaServers()
 	if len(kservers) > 0 {
 		data["Kafka Servers"] = strings.Join(kservers, ",")
+		data["Kafka Activity Topic"] = config.KafkaActivityTopic()
 	}
 	m, err := json.Marshal(data)
 	if err != nil {

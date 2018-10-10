@@ -1762,7 +1762,7 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff 
 	d.Lock()
 	defer d.Unlock()
 
-	dvid.Infof("%d synaptic elements received via POST", len(elems))
+	dvid.Infof("%d synaptic elements received via POST\n", len(elems))
 
 	blockSize := d.blockSize()
 	blockE := make(map[dvid.IZYXString]Elements)

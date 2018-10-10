@@ -278,6 +278,10 @@ func (c *tomlConfig) KafkaServers() []string {
 	return nil
 }
 
+func (c *tomlConfig) KafkaActivityTopic() string {
+	return c.Kafka.TopicActivity
+}
+
 func instanceMirrors(dataname dvid.InstanceName, uuid dvid.UUID) []string {
 	if len(tc.Mirror) == 0 {
 		return nil
