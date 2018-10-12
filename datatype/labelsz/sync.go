@@ -14,7 +14,7 @@ import (
 )
 
 // Number of change messages we can buffer before blocking on sync channel.
-const syncBufferSize = 100
+const syncBufferSize = 1000
 
 // InitDataHandlers launches goroutines to handle each labelblk instance's syncs.
 func (d *Data) InitDataHandlers() error {

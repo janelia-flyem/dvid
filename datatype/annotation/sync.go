@@ -44,7 +44,7 @@ const (
 )
 
 // Number of change messages we can buffer before blocking on sync channel.
-const syncBufferSize = 100
+const syncBufferSize = 1000
 
 type LabelElements map[uint64]ElementsNR
 
