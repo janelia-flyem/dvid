@@ -116,9 +116,12 @@ func TestParseConfig(t *testing.T) {
 		t.Errorf("Expected labelarray cache to be set to 10 (MB), got %d bytes instead\n", sz)
 	}
 
-	instanceCfg := tomlCfg.Server.DatastoreInstanceConfig()
-	if instanceCfg.Gen != "sequential" || instanceCfg.Start != 100 {
-		t.Errorf("Bad instance id retrieval of configuration: %v\n", instanceCfg)
+	datacfg := tomlCfg.Server.DatastoreConfig()
+	if datacfg.InstanceGen != "sequential" || datacfg.InstanceStart != 100 {
+		t.Errorf("Bad instance id retrieval of configuration: %v\n", datacfg)
+	}
+	if datacfg.MutationStart != 1000100000 {
+		t.Errorf("Bad mutation id start retrieval in configuration: %v\n", datacfg)
 	}
 
 	logCfg := tomlCfg.Logging

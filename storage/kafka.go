@@ -18,6 +18,9 @@ var (
 
 	// the kafka topic for activity logging
 	kafkaActivityTopic string
+
+	// topic suffixes per data UUID
+	kafkaTopicSuffixes map[dvid.UUID]string
 )
 
 // assume very low throughput needed and therefore always one partition
@@ -26,14 +29,36 @@ const partitionID = 0
 // KafkaConfig describes kafka servers and an optional local file directory into which
 // failed messages will be stored.
 type KafkaConfig struct {
-	TopicActivity string // if supplied, will be override topic for activity log
+	TopicActivity string   // if supplied, will be override topic for activity log
+	TopicSuffixes []string // optional topic suffixes per data UUID
 	Servers       []string
+}
+
+// KafkaTopicSuffix returns any configured suffix for the given data UUID or the empty string.
+func KafkaTopicSuffix(dataUUID dvid.UUID) string {
+	if len(kafkaTopicSuffixes) == 0 {
+		return ""
+	}
+	suffix, found := kafkaTopicSuffixes[dataUUID]
+	if !found {
+		return ""
+	}
+	return suffix
 }
 
 // Initialize sets up default activity topic and launches goroutine for handling async kafka messages.
 func (kc KafkaConfig) Initialize(hostID string) error {
 	if len(kc.Servers) == 0 {
 		return nil
+	}
+	kafkaTopicSuffixes = make(map[dvid.UUID]string)
+	for _, spec := range kc.TopicSuffixes {
+		parts := strings.Split(spec, ":")
+		if len(parts) != 2 {
+			dvid.Infof("Ignored bad kafka topic suffix specification (expected uuid:suffix): %s\n", spec)
+		} else {
+			kafkaTopicSuffixes[dvid.UUID(parts[0])] = parts[1]
+		}
 	}
 
 	if kc.TopicActivity != "" {

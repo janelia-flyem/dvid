@@ -1076,6 +1076,10 @@ func (d *Data) ProduceKafkaMsg(b []byte) error {
 	rootuuid, _ := d.DAGRootUUID()
 	datauuid := d.DataUUID()
 	topic := "dvidrepo-" + string(rootuuid) + "-data-" + string(datauuid)
+	suffix := storage.KafkaTopicSuffix(d.DataUUID())
+	if suffix != "" {
+		topic += "-" + suffix
+	}
 
 	// send message if kafka initialized
 	return storage.KafkaProduceMsg(b, topic)

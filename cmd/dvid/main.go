@@ -300,7 +300,7 @@ func DoServe(cmd dvid.Command) error {
 		transdb.LockKey(key)
 	}
 
-	if err := datastore.Initialize(initMetadata, tc.Server.DatastoreInstanceConfig()); err != nil {
+	if err := datastore.Initialize(initMetadata, tc.Server.DatastoreConfig()); err != nil {
 		if hastrans {
 			var ctx storage.MetadataContext
 			key := ctx.ConstructKey(storage.NewTKey(datastore.ServerLockKey, nil))

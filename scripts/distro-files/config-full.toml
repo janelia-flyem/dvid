@@ -33,6 +33,8 @@ interactiveOpsBeforeBlock = 10 # Blocks processing routines, e.g., image tile cr
 instance_id_gen = "sequential"
 instance_id_start = 100  # new ids start at least from this.
 
+min_mutation_id_start = 1000100000  # mutation id will start from this or higher
+
 # Email server to use for notifications and server issuing email-based authorization tokens.
 [email]
 notify = ["foo@someplace.edu"] # Who to send email in case of panic
@@ -112,7 +114,11 @@ max_log_age = 30   # days
 # messages will be stored in a file named for the topic.
 
 [kafka]
-topicActivity = "allMyActivity"  # optiona: non server-specific topic used for activity.
+# optional: forces topic name for activity.
+topicActivity = "allMyActivity" 
+# optional: forces topic suffix for instance mutations; each entry is data UUID : suffix.
+topicSuffixes = ["bc95398cb3ae40fcab2529c7bca1ad0d:myGreatDataInstance"]
+
 servers = ["http://foo.bar.com:1234", "http://foo2.bar.com:1234"]
 
 # Cache support allows setting datatype-specific caching mechanisms.

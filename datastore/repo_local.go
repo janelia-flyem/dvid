@@ -56,14 +56,15 @@ const (
 	mutidKey
 )
 
-// InstanceConfig specifies how new instance IDs are generated
-type InstanceConfig struct {
-	Gen   string
-	Start dvid.InstanceID
+// Config specifies new instance and mutation ID generation
+type Config struct {
+	InstanceGen   string
+	InstanceStart dvid.InstanceID
+	MutationStart uint64
 }
 
 // Initialize creates a repositories manager that is handled through package functions.
-func Initialize(initMetadata bool, iconfig InstanceConfig) error {
+func Initialize(initMetadata bool, iconfig Config) error {
 	m := &repoManager{
 		repoToUUID:      make(map[dvid.RepoID]dvid.UUID),
 		versionToUUID:   make(map[dvid.VersionID]dvid.UUID),
@@ -73,16 +74,20 @@ func Initialize(initMetadata bool, iconfig InstanceConfig) error {
 		versionID:       1,
 		iids:            make(map[dvid.InstanceID]DataService),
 		dataByUUID:      make(map[dvid.UUID]DataService),
-		instanceIDGen:   iconfig.Gen,
-		instanceIDStart: iconfig.Start,
+		instanceIDGen:   iconfig.InstanceGen,
+		instanceIDStart: iconfig.InstanceStart,
+		mutationIDStart: InitialMutationID,
 	}
-	if iconfig.Gen == "" {
+	if iconfig.InstanceGen == "" {
 		m.instanceIDGen = "sequential"
 	}
-	if iconfig.Start > 1 {
-		m.instanceID = iconfig.Start
+	if iconfig.InstanceStart > 1 {
+		m.instanceID = iconfig.InstanceStart
 	} else {
 		m.instanceID = 1
+	}
+	if iconfig.MutationStart > m.mutationIDStart {
+		m.mutationIDStart = iconfig.MutationStart
 	}
 
 	var err error
@@ -256,6 +261,9 @@ type repoManager struct {
 	// instance id generation
 	instanceIDGen   string
 	instanceIDStart dvid.InstanceID
+
+	// mutation id generation
+	mutationIDStart uint64
 
 	// Verified metadata storage for ease of use.
 	store storage.OrderedKeyValueDB
@@ -2353,6 +2361,9 @@ func (r *repoT) delete() error {
 }
 
 func (r *repoT) initMutationID(store storage.KeyValueDB) error {
+	if manager == nil || manager.store == nil {
+		return fmt.Errorf("bad init mutation ID: manager or store nil")
+	}
 	var ctx storage.MetadataContext
 	tk := storage.NewTKey(mutidKey, r.id.Bytes())
 	mutdata, err := store.Get(ctx, tk)
@@ -2362,9 +2373,10 @@ func (r *repoT) initMutationID(store storage.KeyValueDB) error {
 	if len(mutdata) == 8 {
 		r.mutCurID = binary.LittleEndian.Uint64(mutdata)
 		dvid.Infof("Loaded mutation ID for repo %s: %d\n", r.uuid, r.mutCurID)
-	} else {
-		r.mutCurID = InitialMutationID
-		dvid.Infof("Set mutation ID for repo %s: %d\n", r.uuid, r.mutCurID)
+	}
+	if r.mutCurID < manager.mutationIDStart {
+		r.mutCurID = manager.mutationIDStart
+		dvid.Infof("Set mutation ID for repo %s to minimum set: %d\n", r.uuid, r.mutCurID)
 	}
 	r.mutSavedID = r.mutCurID + StrideMutationID
 	mutdata = make([]byte, 8)
@@ -2388,7 +2400,6 @@ func (r *repoT) newMutationID() (mutID uint64) {
 		return
 	}
 	var ctx storage.MetadataContext
-	tk := storage.NewTKey(mutidKey, r.id.Bytes())
 	r.mutMu.Lock()
 	mutID = r.mutCurID
 	r.mutCurID++
@@ -2396,6 +2407,7 @@ func (r *repoT) newMutationID() (mutID uint64) {
 		r.mutSavedID += StrideMutationID
 		mutdata := make([]byte, 8)
 		binary.LittleEndian.PutUint64(mutdata, r.mutSavedID)
+		tk := storage.NewTKey(mutidKey, r.id.Bytes())
 		if err := manager.store.Put(ctx, tk, mutdata); err != nil {
 			dvid.Criticalf("Unable to persist new mutation ID for repo %s: %v\n", r.uuid, err)
 		}
