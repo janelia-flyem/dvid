@@ -1032,7 +1032,7 @@ POST <api URL>/node/<UUID>/<data name>/cleave/<label>
 	}
 
 
-POST <api URL>/node/<UUID>/<data name>/split-supervoxel/<supervoxel>
+POST <api URL>/node/<UUID>/<data name>/split-supervoxel/<supervoxel>?<options>
 
 	Splits a portion of a supervoxel into two new supervoxels, both of which will still be mapped
 	to the original label.  Returns the following JSON:
@@ -1088,6 +1088,12 @@ POST <api URL>/node/<UUID>/<data name>/split-supervoxel/<supervoxel>
 			"MutationID": <unique id for mutation>
 			"UUID": <UUID on which split was done>
 		}
+
+	
+	POST Query-string Options:
+
+	split  	Label id that should be used for split voxels.
+	remain  Label id that should be used for remaining (unsplit) voxels.
 
 POST <api URL>/node/<UUID>/<data name>/split/<label>
 
@@ -4273,7 +4279,7 @@ func (d *Data) handleNextlabel(ctx *datastore.VersionedCtx, w http.ResponseWrite
 }
 
 func (d *Data) handleSplitSupervoxel(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
-	// POST <api URL>/node/<UUID>/<data name>/split-supervoxel/<supervoxel>
+	// POST <api URL>/node/<UUID>/<data name>/split-supervoxel/<supervoxel>?<options>
 	if strings.ToLower(r.Method) != "post" {
 		server.BadRequest(w, r, "Split requests must be POST actions.")
 		return
@@ -4282,6 +4288,26 @@ func (d *Data) handleSplitSupervoxel(ctx *datastore.VersionedCtx, w http.Respons
 		server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'split' command")
 		return
 	}
+	queryStrings := r.URL.Query()
+	splitStr := queryStrings.Get("split")
+	remainStr := queryStrings.Get("remain")
+	var err error
+	var split, remain uint64
+	if splitStr != "" {
+		split, err = strconv.ParseUint(splitStr, 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, "bad split query string provided: %s", splitStr)
+			return
+		}
+	}
+	if remainStr != "" {
+		remain, err = strconv.ParseUint(remainStr, 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, "bad remain query string provided: %s", remainStr)
+			return
+		}
+	}
+
 	timedLog := dvid.NewTimeLog()
 
 	supervoxel, err := strconv.ParseUint(parts[4], 10, 64)
@@ -4294,7 +4320,7 @@ func (d *Data) handleSplitSupervoxel(ctx *datastore.VersionedCtx, w http.Respons
 		return
 	}
 	info := dvid.GetModInfo(r)
-	splitSupervoxel, remainSupervoxel, mutID, err := d.SplitSupervoxel(ctx.VersionID(), supervoxel, r.Body, info)
+	splitSupervoxel, remainSupervoxel, mutID, err := d.SplitSupervoxel(ctx.VersionID(), supervoxel, split, remain, r.Body, info)
 	if err != nil {
 		server.BadRequest(w, r, fmt.Sprintf("split supervoxel %d -> %d, %d: %v", supervoxel, splitSupervoxel, remainSupervoxel, err))
 		return

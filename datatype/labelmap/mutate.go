@@ -663,20 +663,23 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 	return
 }
 
-// SplitSupervoxel splits a portion of a supervoxel's voxels into two new labels.  The input is a
-// binary sparse volume and should be totally contained by the given supervoxel.  The first
-// returned label is assigned to the split voxels while the second returned label is assigned
-// to the remainder voxels.
-func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser, info dvid.ModInfo) (splitSupervoxel, remainSupervoxel, mutID uint64, err error) {
+// SplitSupervoxel splits a portion of a supervoxel's voxels into two new labels, which can be
+// optionally set to desired labels if passed in (see splitlabel and remainlabel in parameters).
+// The input is a binary sparse volume and should be totally contained by the given supervoxel.
+// The first returned label is assigned to the split voxels while the second returned label is
+// assigned to the remainder voxels.
+func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabel uint64, r io.ReadCloser, info dvid.ModInfo) (splitSupervoxel, remainSupervoxel, mutID uint64, err error) {
 	timedLog := dvid.NewTimeLog()
 
 	// Create new labels for this split that will persist to store
-	splitSupervoxel, err = d.NewLabel(v)
-	if err != nil {
+	if splitlabel != 0 {
+		splitSupervoxel = splitlabel
+	} else if splitSupervoxel, err = d.NewLabel(v); err != nil {
 		return
 	}
-	remainSupervoxel, err = d.NewLabel(v)
-	if err != nil {
+	if remainlabel != 0 {
+		remainSupervoxel = remainlabel
+	} else if remainSupervoxel, err = d.NewLabel(v); err != nil {
 		return
 	}
 	dvid.Debugf("Splitting subset of label %d into new label %d and renaming remainder to label %d...\n", svlabel, splitSupervoxel, remainSupervoxel)

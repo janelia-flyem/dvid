@@ -1558,7 +1558,7 @@ func TestSupervoxelSplit2(t *testing.T) {
 	}
 	buf.Write(splitBytes)
 
-	apiStr = fmt.Sprintf("%snode/%s/labels/split-supervoxel/%d", server.WebAPIPath, uuid, labelB)
+	apiStr = fmt.Sprintf("%snode/%s/labels/split-supervoxel/%d?split=189417&remain=8506273", server.WebAPIPath, uuid, labelB)
 	server.TestBadHTTP(t, "POST", apiStr, buf)
 
 	// make sure indices and volume is not changed
@@ -1611,6 +1611,9 @@ func TestSupervoxelSplit2(t *testing.T) {
 		t.Errorf("Unable to get new labels from supervoxel split.  Instead got: %v\n", resp)
 	}
 	dvid.Infof("supervoxel split %d -> split %d, remain %d\n", labelB, resp.Split, resp.Remain)
+	if resp.Split != 189417 || resp.Remain != 8506273 {
+		t.Errorf("bad split/remain supervoxel labels: %v\n", resp)
+	}
 
 	// label B index shouldn't have changed
 	splitIndexB := getIndex(t, uuid, "labels", labelB)
