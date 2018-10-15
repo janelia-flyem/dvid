@@ -57,10 +57,14 @@ func (d *Data) DumpMutations(leafUUID dvid.UUID, filename string) (comment strin
 		if data, err = rl.ReadBinary(d.DataUUID(), uuid); err != nil {
 			return
 		}
+		if len(data) == 0 {
+			timedLog.Infof("No mappings found for data %q, version %s", d.DataName(), uuid)
+			continue
+		}
 		if _, err = f.Write(data); err != nil {
 			return
 		}
-		timedLog.Infof("Loaded mappings #%d for data %q, version ID %d", i+1, d.DataName(), ancestor)
+		timedLog.Infof("Loaded mappings #%d for data %q, version ID %s", i+1, d.DataName(), uuid)
 	}
 	err = f.Close()
 	comment = fmt.Sprintf("Completed flattening of %d mutation logs to %s\n", len(ancestors), filename)

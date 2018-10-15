@@ -206,7 +206,11 @@ func (flogs *fileLogs) ReadAll(dataID, version dvid.UUID) ([]storage.LogMessage,
 func (flogs *fileLogs) ReadBinary(dataID, version dvid.UUID) ([]byte, error) {
 	k := string(dataID + "-" + version)
 	filename := filepath.Join(flogs.path, k)
-	return ioutil.ReadFile(filename)
+	data, err := ioutil.ReadFile(filename)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	return data, err
 }
 
 // StreamAll sends log messages down channel, adding one for each message to wait group if provided.
