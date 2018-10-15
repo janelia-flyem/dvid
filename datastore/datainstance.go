@@ -1075,7 +1075,7 @@ func (d *Data) ProduceKafkaMsg(b []byte) error {
 	// messages sent to a non-existent topic
 	rootuuid, _ := d.DAGRootUUID()
 	datauuid := d.DataUUID()
-	topic := "dvidrepo-" + string(rootuuid) + "-data-" + string(datauuid)
+	topic := storage.KafkaTopicPrefix + "dvidrepo-" + string(rootuuid) + "-data-" + string(datauuid)
 	suffix := storage.KafkaTopicSuffix(d.DataUUID())
 	if suffix != "" {
 		topic += "-" + suffix

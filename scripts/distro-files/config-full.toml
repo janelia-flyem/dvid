@@ -116,6 +116,8 @@ max_log_age = 30   # days
 [kafka]
 # optional: forces topic name for activity.
 topicActivity = "allMyActivity" 
+# optional: adds prefix to any mutation logging
+topicPrefix = "postsFromServer1"
 # optional: forces topic suffix for instance mutations; each entry is data UUID : suffix.
 topicSuffixes = ["bc95398cb3ae40fcab2529c7bca1ad0d:myGreatDataInstance"]
 

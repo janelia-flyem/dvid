@@ -674,11 +674,17 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 	// Create new labels for this split that will persist to store
 	if splitlabel != 0 {
 		splitSupervoxel = splitlabel
+		if err = d.updateMaxLabel(v, splitlabel); err != nil {
+			return
+		}
 	} else if splitSupervoxel, err = d.NewLabel(v); err != nil {
 		return
 	}
 	if remainlabel != 0 {
 		remainSupervoxel = remainlabel
+		if err = d.updateMaxLabel(v, remainlabel); err != nil {
+			return
+		}
 	} else if remainSupervoxel, err = d.NewLabel(v); err != nil {
 		return
 	}

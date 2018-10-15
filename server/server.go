@@ -272,6 +272,9 @@ func AboutJSON() (jsonStr string, err error) {
 		data["Kafka Servers"] = strings.Join(kservers, ",")
 		data["Kafka Activity Topic"] = config.KafkaActivityTopic()
 	}
+	if storage.KafkaTopicPrefix != "" {
+		data["Kafka Topic Prefix"] = storage.KafkaTopicPrefix
+	}
 	m, err := json.Marshal(data)
 	if err != nil {
 		return

@@ -768,7 +768,7 @@ func LogRepoOpToKafka(uuid dvid.UUID, b []byte) error {
 	if err != nil {
 		return err
 	}
-	topic := "dvidrepo-" + string(rootuuid) + "-repo-ops"
+	topic := storage.KafkaTopicPrefix + "dvidrepo-" + string(rootuuid) + "-repo-ops"
 
 	// send message if kafka initialized
 	return storage.KafkaProduceMsg(b, topic)

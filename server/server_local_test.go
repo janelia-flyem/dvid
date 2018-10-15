@@ -93,6 +93,7 @@ func TestServerInfo(t *testing.T) {
 	var jsonVal struct {
 		Host         string
 		KafkaServers string `json:"Kafka Servers"`
+		TopicPrefix  string `json:"Kafka Topic Prefix"`
 	}
 	if err := json.Unmarshal([]byte(jsonStr), &jsonVal); err != nil {
 		t.Fatalf("unable to unmarshal JSON (%s): %v\n", jsonStr, err)
@@ -102,6 +103,9 @@ func TestServerInfo(t *testing.T) {
 	}
 	if jsonVal.KafkaServers != "http://foo.bar.com:1234,http://foo2.bar.com:1234" {
 		t.Errorf("expected %q, got %q for kafka servers\n", "http://foo.bar.com:1234,http://foo2.bar.com:1234", jsonVal.KafkaServers)
+	}
+	if jsonVal.TopicPrefix != "postsFromServer1" {
+		t.Errorf("expected kafka topic prefix but got %q\n", jsonVal.TopicPrefix)
 	}
 }
 

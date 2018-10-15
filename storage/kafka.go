@@ -19,7 +19,10 @@ var (
 	// the kafka topic for activity logging
 	kafkaActivityTopic string
 
-	// topic suffixes per data UUID
+	// the kafka topic prefix for mutation logging
+	KafkaTopicPrefix string
+
+	// topic suffixes per data UUID for mutation logging
 	kafkaTopicSuffixes map[dvid.UUID]string
 )
 
@@ -30,6 +33,7 @@ const partitionID = 0
 // failed messages will be stored.
 type KafkaConfig struct {
 	TopicActivity string   // if supplied, will be override topic for activity log
+	TopicPrefix   string   // if supplied, will be prefixed to any mutation logging
 	TopicSuffixes []string // optional topic suffixes per data UUID
 	Servers       []string
 }
@@ -59,6 +63,10 @@ func (kc KafkaConfig) Initialize(hostID string) error {
 		} else {
 			kafkaTopicSuffixes[dvid.UUID(parts[0])] = parts[1]
 		}
+	}
+
+	if kc.TopicPrefix != "" {
+		KafkaTopicPrefix = kc.TopicPrefix
 	}
 
 	if kc.TopicActivity != "" {
