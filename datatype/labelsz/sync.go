@@ -174,8 +174,8 @@ func (d *Data) modifyElements(ctx *datastore.VersionedCtx, delta annotation.Delt
 		}
 	}
 
-	d.Lock()
-	defer d.Unlock()
+	// d.Lock()
+	// defer d.Unlock()
 
 	// Get old counts for the modified labels.
 	counts, err := d.getCounts(ctx, mods)

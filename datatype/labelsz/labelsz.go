@@ -369,8 +369,8 @@ func (d *Data) GetCountElementType(ctx *datastore.VersionedCtx, label uint64, i 
 		return 0, err
 	}
 
-	d.RLock()
-	defer d.RUnlock()
+	// d.RLock()
+	// defer d.RUnlock()
 
 	val, err := store.Get(ctx, NewTypeLabelTKey(i, label))
 	if err != nil {
@@ -404,8 +404,8 @@ func (d *Data) GetTopElementType(ctx *datastore.VersionedCtx, n int, i IndexType
 	begTKey := NewTypeSizeLabelTKey(i, math.MaxUint32-1, 0)
 	endTKey := NewTypeSizeLabelTKey(i, 0, math.MaxUint64)
 
-	d.RLock()
-	defer d.RUnlock()
+	// d.RLock()
+	// defer d.RUnlock()
 
 	// Iterate through the first N kv then abort.
 	shortCircuitErr := fmt.Errorf("Found data, aborting.")
@@ -453,8 +453,8 @@ func (d *Data) GetLabelsByThreshold(ctx *datastore.VersionedCtx, i IndexType, mi
 	begTKey := NewTypeSizeLabelTKey(i, math.MaxUint32-1, 0)
 	endTKey := NewTypeSizeLabelTKey(i, 0, math.MaxUint64)
 
-	d.RLock()
-	defer d.RUnlock()
+	// d.RLock()
+	// defer d.RUnlock()
 
 	// Iterate through sorted size list until we get what we need.
 	shortCircuitErr := fmt.Errorf("Found data, aborting.")
@@ -774,14 +774,14 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 	}
 
 	d.StartUpdate()
-	d.Lock()
+	defer d.StopUpdate()
+	// d.Lock()
+	// defer d.Unlock()
 
 	minTSLTKey := storage.MinTKey(keyTypeSizeLabel)
 	maxTSLTKey := storage.MaxTKey(keyTypeSizeLabel)
 	if err := store.DeleteRange(ctx, minTSLTKey, maxTSLTKey); err != nil {
 		dvid.Errorf("Unable to delete type-size-label denormalization for labelsz %q: %v\n", d.DataName(), err)
-		d.Unlock()
-		d.StopUpdate()
 		return
 	}
 
@@ -789,8 +789,6 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 	maxTypeTKey := storage.MaxTKey(keyTypeLabel)
 	if err := store.DeleteRange(ctx, minTypeTKey, maxTypeTKey); err != nil {
 		dvid.Errorf("Unable to delete type-label denormalization for labelsz %q: %v\n", d.DataName(), err)
-		d.Unlock()
-		d.StopUpdate()
 		return
 	}
 
@@ -823,8 +821,6 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 	if err != nil {
 		dvid.Errorf("Error in reload of labelsz %q: %v\n", d.DataName(), err)
 	}
-	d.Unlock()
-	d.StopUpdate()
 
 	timedLog.Infof("Completed labelsz %q reload of %d labels from annotation %q", d.DataName(), totLabels, annot.DataName())
 }

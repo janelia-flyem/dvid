@@ -1550,8 +1550,8 @@ func (d *Data) ProcessLabelAnnotations(v dvid.VersionID, f func(label uint64, el
 
 // GetLabelJSON returns JSON for synapse elements in a given label.
 func (d *Data) GetLabelJSON(ctx *datastore.VersionedCtx, label uint64, addRels bool) ([]byte, error) {
-	d.RLock()
-	defer d.RUnlock()
+	// d.RLock()
+	// defer d.RUnlock()
 
 	tk := NewLabelTKey(label)
 	if addRels {
@@ -1568,19 +1568,10 @@ func (d *Data) GetLabelJSON(ctx *datastore.VersionedCtx, label uint64, addRels b
 	return json.Marshal(elems)
 }
 
-// GetLabelSynapses returns synapse elements for a given label.
-func (d *Data) GetLabelSynapses(ctx *datastore.VersionedCtx, label uint64) (Elements, error) {
-	d.RLock()
-	defer d.RUnlock()
-
-	tk := NewLabelTKey(label)
-	return d.getExpandedElements(ctx, tk)
-}
-
 // GetTagJSON returns JSON for synapse elements in a given tag.
 func (d *Data) GetTagJSON(ctx *datastore.VersionedCtx, tag Tag, addRels bool) (jsonBytes []byte, err error) {
-	d.RLock()
-	defer d.RUnlock()
+	// d.RLock()
+	// defer d.RUnlock()
 
 	var tk storage.TKey
 	tk, err = NewTagTKey(tag)
@@ -1608,8 +1599,8 @@ func (d *Data) StreamBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 	blockSize := d.blockSize()
 	begBlockCoord, endBlockCoord := ext.BlockRange(blockSize)
 
-	d.RLock()
-	defer d.RUnlock()
+	// d.RLock()
+	// defer d.RUnlock()
 
 	if _, err := w.Write([]byte("{")); err != nil {
 		return err
@@ -1662,8 +1653,8 @@ func (d *Data) GetRegionSynapses(ctx *datastore.VersionedCtx, ext *dvid.Extents3
 	blockSize := d.blockSize()
 	begBlockCoord, endBlockCoord := ext.BlockRange(blockSize)
 
-	d.RLock()
-	defer d.RUnlock()
+	// d.RLock()
+	// defer d.RUnlock()
 
 	// Iterate through all synapse elements block k/v, making sure the elements are also
 	// within the given subvolume.
@@ -1723,8 +1714,8 @@ func (d *Data) GetROISynapses(ctx *datastore.VersionedCtx, roiSpec storage.Filte
 		return nil, err
 	}
 
-	d.RLock()
-	defer d.RUnlock()
+	// d.RLock()
+	// defer d.RUnlock()
 
 	var elements Elements
 	for _, span := range roiSpans {
@@ -1747,9 +1738,9 @@ func (d *Data) GetROISynapses(ctx *datastore.VersionedCtx, roiSpec storage.Filte
 	return elements, nil
 }
 
-// StoreSynapses performs a synchronous store of synapses in JSON format, not
+// StoreElements performs a synchronous store of synapses in JSON format, not
 // returning until the data and its denormalizations are complete.
-func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff bool) error {
+func (d *Data) StoreElements(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff bool) error {
 	jsonBytes, err := ioutil.ReadAll(r)
 	if err != nil {
 		return err
@@ -1759,8 +1750,8 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff 
 		return err
 	}
 
-	d.Lock()
-	defer d.Unlock()
+	// d.Lock()
+	// defer d.Unlock()
 
 	dvid.Infof("%d synaptic elements received via POST\n", len(elems))
 
@@ -1846,8 +1837,8 @@ func (d *Data) DeleteElement(ctx *datastore.VersionedCtx, pt dvid.Point3d, kafka
 	bcoord := pt.Chunk(blockSize).(dvid.ChunkPoint3d)
 	tk := NewBlockTKey(bcoord)
 
-	d.Lock()
-	defer d.Unlock()
+	// d.Lock()
+	// defer d.Unlock()
 
 	elems, err := getElements(ctx, tk)
 	if err != nil {
@@ -1919,8 +1910,8 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d, k
 	toCoord := to.Chunk(blockSize).(dvid.ChunkPoint3d)
 	toTk := NewBlockTKey(toCoord)
 
-	d.Lock()
-	defer d.Unlock()
+	// d.Lock()
+	// defer d.Unlock()
 
 	// Alter all stored versions of this annotation using a batch.
 	store, err := d.KVStore()
@@ -2061,9 +2052,9 @@ func (d *Data) resyncInMemory(ctx *datastore.VersionedCtx) {
 	}
 
 	d.StartUpdate()
-	d.Lock()
+	// d.Lock()
 	defer func() {
-		d.Unlock()
+		// d.Unlock()
 		d.StopUpdate()
 	}()
 	if err := d.deleteDenormalizations(ctx); err != nil {
@@ -2201,9 +2192,9 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 	}
 
 	d.StartUpdate()
-	d.Lock()
+	// d.Lock()
 	defer func() {
-		d.Unlock()
+		// d.Unlock()
 		d.StopUpdate()
 	}()
 	if err := d.deleteDenormalizations(ctx); err != nil {
@@ -2625,7 +2616,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 		case "post":
 			kafkaOff := r.URL.Query().Get("kafkalog") == "off"
-			if err := d.StoreSynapses(ctx, r.Body, kafkaOff); err != nil {
+			if err := d.StoreElements(ctx, r.Body, kafkaOff); err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}

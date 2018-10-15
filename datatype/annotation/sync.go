@@ -519,10 +519,9 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, chunkPt dvid.ChunkPoint3
 }
 
 func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op labels.MergeOp) error {
-	d.Lock()
-	defer d.Unlock()
-
 	d.StartUpdate()
+	defer d.StopUpdate()
+
 	ctx := datastore.NewVersionedCtx(d, v)
 	batch := batcher.NewBatch(ctx)
 
@@ -565,7 +564,6 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 			return fmt.Errorf("unable to commit merge for instance %q: %v", d.DataName(), err)
 		}
 	}
-	d.StopUpdate()
 
 	// Notify any subscribers of label annotation changes.
 	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
@@ -629,8 +627,8 @@ func (d *Data) cleaveElements(v dvid.VersionID, target uint64, blockElems map[dv
 }
 
 func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op labels.CleaveOp) error {
-	d.Lock()
-	defer d.Unlock()
+	// d.Lock()
+	// defer d.Unlock()
 
 	d.StartUpdate()
 	defer d.StopUpdate()
@@ -678,8 +676,8 @@ func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, o
 }
 
 func (d *Data) splitLabelsCoarse(batcher storage.KeyValueBatcher, v dvid.VersionID, op labels.DeltaSplit) error {
-	d.Lock()
-	defer d.Unlock()
+	// d.Lock()
+	// defer d.Unlock()
 
 	d.StartUpdate()
 	defer d.StopUpdate()
@@ -768,8 +766,8 @@ func (d *Data) splitLabelsCoarse(batcher storage.KeyValueBatcher, v dvid.Version
 }
 
 func (d *Data) splitLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op labels.DeltaSplit) error {
-	d.Lock()
-	defer d.Unlock()
+	// d.Lock()
+	// defer d.Unlock()
 
 	d.StartUpdate()
 	defer d.StopUpdate()
