@@ -319,6 +319,12 @@ type dataUpdater interface {
 	Updating() bool
 }
 
+// MutationDumper is a dataservice that suppports the flatten-mutations command via
+// a DumpMutations() function.
+type MutationDumper interface {
+	DumpMutations(versionUUID dvid.UUID, filename string) (comment string, err error)
+}
+
 // BlockOnUpdating blocks until the given data is not updating from syncs or has events
 // waiting in sync channels.  Primarily used during testing.
 func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {

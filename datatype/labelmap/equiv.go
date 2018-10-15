@@ -5,6 +5,7 @@ package labelmap
 import (
 	"encoding/binary"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -14,6 +15,57 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
+
+// DumpMutations makes a log of all mutations from ancestors up to given UUID for
+// the given data UUID.
+func (d *Data) DumpMutations(leafUUID dvid.UUID, filename string) (comment string, err error) {
+	rl := d.GetReadLog()
+	if rl == nil {
+		err = fmt.Errorf("no mutation log was available for data %q", d.DataName())
+		return
+	}
+	var leaf dvid.VersionID
+	leaf, err = datastore.VersionFromUUID(leafUUID)
+	if err != nil {
+		return
+	}
+	var ancestors []dvid.VersionID
+	ancestors, err = datastore.GetAncestry(leaf)
+	if err != nil {
+		return
+	}
+	// reverse it so we go from root to current leaf
+	for i := len(ancestors)/2 - 1; i >= 0; i-- {
+		opp := len(ancestors) - 1 - i
+		ancestors[i], ancestors[opp] = ancestors[opp], ancestors[i]
+	}
+	// open up target log
+	var f *os.File
+	f, err = os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0755)
+	if err != nil {
+		return
+	}
+
+	// go through the ancestors from root to leaf, appending data to target log
+	var uuid dvid.UUID
+	for i, ancestor := range ancestors {
+		if uuid, err = datastore.UUIDFromVersion(ancestor); err != nil {
+			return
+		}
+		timedLog := dvid.NewTimeLog()
+		var data []byte
+		if data, err = rl.ReadBinary(d.DataUUID(), uuid); err != nil {
+			return
+		}
+		if _, err = f.Write(data); err != nil {
+			return
+		}
+		timedLog.Infof("Loaded mappings #%d for data %q, version ID %d", i+1, d.DataName(), ancestor)
+	}
+	err = f.Close()
+	comment = fmt.Sprintf("Completed flattening of %d mutation logs to %s\n", len(ancestors), filename)
+	return
+}
 
 func (d *Data) ingestMappings(ctx *datastore.VersionedCtx, mappings proto.MappingOps) error {
 	m, err := getMapping(d, ctx.VersionID())

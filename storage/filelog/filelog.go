@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
@@ -199,6 +200,13 @@ func (flogs *fileLogs) ReadAll(dataID, version dvid.UUID) ([]storage.LogMessage,
 		fl.Unlock()
 	}
 	return msgs, err
+}
+
+// ReadBinary reads all the data from a given log
+func (flogs *fileLogs) ReadBinary(dataID, version dvid.UUID) ([]byte, error) {
+	k := string(dataID + "-" + version)
+	filename := filepath.Join(flogs.path, k)
+	return ioutil.ReadFile(filename)
 }
 
 // StreamAll sends log messages down channel, adding one for each message to wait group if provided.

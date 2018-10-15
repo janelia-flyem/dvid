@@ -67,6 +67,11 @@ EXPERIMENTAL COMMANDS
 
 		Print information on leaf/interior nodes.
 
+	repo <UUID> flatten-mutations <data UUID> <output filename>
+
+		Makes a log of all mutations from ancestors up to given UUID for
+		the given data UUID.
+
 	repo <UUID> migrate <instance name> <old store config nickname> <settings...>
     
         Migrates all data from an old store (specified by the nickname in TOML file)
@@ -417,6 +422,23 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 				}
 			}()
 			reply.Text = "Started storage details dump in log..."
+
+		case "flatten-mutations":
+			var dataStr, filename string
+			cmd.CommandArgs(3, &dataStr, &filename)
+			var d datastore.DataService
+			d, err = datastore.GetDataByDataUUID(dvid.UUID(dataStr))
+			if err != nil {
+				return
+			}
+			dumper, ok := d.(datastore.MutationDumper)
+			if !ok {
+				reply.Text = fmt.Sprintf("The data UUID %s (name %q) does not support mutation dumping\n", dataStr, d.DataName())
+			}
+			reply.Text, err = dumper.DumpMutations(uuid, filename)
+			if err != nil {
+				return
+			}
 
 		case "migrate":
 			var source, oldStoreName string
