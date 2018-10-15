@@ -1830,6 +1830,116 @@ func TestSplitSupervoxel(t *testing.T) {
 	testSplitSupervoxel(t, true)
 }
 
+func TestCompleteSplitSupervoxel(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	config.Set("BlockSize", "32,32,32") // Previous test data was on 32^3 blocks
+	server.CreateTestInstance(t, uuid, "labelmap", "labels", config)
+
+	// Post supervoxel volume
+	original := createLabelTestVolume(t, uuid, "labels")
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/4", server.WebAPIPath, uuid)
+	encoding := server.TestHTTP(t, "GET", reqStr, nil)
+	body4.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+
+	// Create the sparsevol encoding for split area
+	numspans := len(body4.voxelSpans)
+	rles := make(dvid.RLEs, numspans, numspans)
+	for i, span := range body4.voxelSpans {
+		start := dvid.Point3d{span[2], span[1], span[0]}
+		length := span[3] - span[2] + 1
+		rles[i] = dvid.NewRLE(start, length)
+	}
+
+	// Create the split sparse volume binary
+	buf := new(bytes.Buffer)
+	buf.WriteByte(dvid.EncodingBinary)
+	binary.Write(buf, binary.LittleEndian, uint8(3))         // # of dimensions
+	binary.Write(buf, binary.LittleEndian, byte(0))          // dimension of run (X = 0)
+	buf.WriteByte(byte(0))                                   // reserved for later
+	binary.Write(buf, binary.LittleEndian, uint32(0))        // Placeholder for # voxels
+	binary.Write(buf, binary.LittleEndian, uint32(numspans)) // Placeholder for # spans
+	rleBytes, err := rles.MarshalBinary()
+	if err != nil {
+		t.Errorf("Unable to serialize RLEs: %v\n", err)
+	}
+	buf.Write(rleBytes)
+
+	// Submit the split sparsevol for supervoxel 4 using its entire body
+	reqStr = fmt.Sprintf("%snode/%s/labels/split-supervoxel/4", server.WebAPIPath, uuid)
+	r := server.TestHTTP(t, "POST", reqStr, buf)
+	var jsonVal struct {
+		SplitSupervoxel  uint64
+		RemainSupervoxel uint64
+	}
+	if err := json.Unmarshal(r, &jsonVal); err != nil {
+		t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
+	}
+	if jsonVal.SplitSupervoxel != 5 {
+		t.Errorf("Expected split label to be 5, instead got %d\n", jsonVal.SplitSupervoxel)
+	}
+	if jsonVal.RemainSupervoxel != 6 {
+		t.Errorf("Expected remain label to be 6, instead got %d\n", jsonVal.RemainSupervoxel)
+	}
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	// Make sure retrieved body voxels are same as original
+	retrieved := newTestVolume(128, 128, 128)
+	retrieved.get(t, uuid, "labels", false)
+	if len(retrieved.data) != 8*128*128*128 {
+		t.Errorf("Retrieved post-split volume is incorrect size\n")
+	}
+	if err := original.equals(retrieved); err != nil {
+		t.Errorf("Post-supervoxel split label volume not equal to expected volume: %v\n", err)
+	}
+
+	// Submit the split sparsevol for supervoxel 4 using no RLEs
+	buf = new(bytes.Buffer)
+	buf.WriteByte(dvid.EncodingBinary)
+	binary.Write(buf, binary.LittleEndian, uint8(3))  // # of dimensions
+	binary.Write(buf, binary.LittleEndian, byte(0))   // dimension of run (X = 0)
+	buf.WriteByte(byte(0))                            // reserved for later
+	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # voxels
+	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # spans
+
+	reqStr = fmt.Sprintf("%snode/%s/labels/split-supervoxel/5", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "POST", reqStr, buf)
+	if err := json.Unmarshal(r, &jsonVal); err != nil {
+		t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
+	}
+	if jsonVal.SplitSupervoxel != 7 {
+		t.Errorf("Expected split label to be 5, instead got %d\n", jsonVal.SplitSupervoxel)
+	}
+	if jsonVal.RemainSupervoxel != 8 {
+		t.Errorf("Expected remain label to be 6, instead got %d\n", jsonVal.RemainSupervoxel)
+	}
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	// Make sure retrieved body voxels are same as original
+	retrieved = newTestVolume(128, 128, 128)
+	retrieved.get(t, uuid, "labels", false)
+	if len(retrieved.data) != 8*128*128*128 {
+		t.Errorf("Retrieved post-split volume is incorrect size\n")
+	}
+	if err := original.equals(retrieved); err != nil {
+		t.Errorf("Post-supervoxel split label volume not equal to expected volume: %v\n", err)
+	}
+}
+
 func TestMergeCleave(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)

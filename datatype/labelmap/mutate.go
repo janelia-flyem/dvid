@@ -698,8 +698,7 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 	}
 	splitSize, _ := split.Stats()
 	if splitSize == 0 {
-		err = fmt.Errorf("bad split since split volume was zero voxels")
-		return
+		dvid.Infof("split on supervoxel %d -> %d was given split size of 0\n", svlabel, remainlabel)
 	}
 
 	// read parent label index and do simple check on split size
@@ -731,9 +730,12 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 		return
 	}
 	svSize := idx.GetSupervoxelCount(svlabel)
-	if splitSize >= svSize {
-		err = fmt.Errorf("split volume of %d >= %d of supervoxel %d", splitSize, svSize, svlabel)
+	if splitSize > svSize {
+		err = fmt.Errorf("split volume of %d > %d of supervoxel %d", splitSize, svSize, svlabel)
 		return
+	}
+	if splitSize == svSize {
+		dvid.Infof("split on supervoxel %d -> %d was given split size %d, which is entire supervoxel\n", svlabel, splitlabel, splitSize)
 	}
 
 	// Only do voxel-based mutations one at a time.  This lets us remove handling for block-level concurrency.
