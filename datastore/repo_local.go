@@ -700,7 +700,7 @@ func (m *repoManager) loadMetadata() error {
 		if !found {
 			return fmt.Errorf("could not find repo %s (repo ID %d)", root, repoID)
 		}
-		if err := r.initMutationID(m.store); err != nil {
+		if err := r.initMutationID(m.store, m.mutationIDStart); err != nil {
 			return err
 		}
 	}
@@ -1025,7 +1025,7 @@ func (m *repoManager) newRepo(alias, description string, assign *dvid.UUID, pass
 	if err := r.save(); err != nil {
 		return r, err
 	}
-	if err := r.initMutationID(m.store); err != nil {
+	if err := r.initMutationID(m.store, m.mutationIDStart); err != nil {
 		return r, err
 	}
 	dvid.Infof("Created and saved new repo %q, id %d\n", uuid, id)
@@ -2360,10 +2360,7 @@ func (r *repoT) delete() error {
 	return manager.store.Delete(ctx, tk)
 }
 
-func (r *repoT) initMutationID(store storage.KeyValueDB) error {
-	if manager == nil || manager.store == nil {
-		return fmt.Errorf("bad init mutation ID: manager or store nil")
-	}
+func (r *repoT) initMutationID(store storage.KeyValueDB, mutationIDStart uint64) error {
 	var ctx storage.MetadataContext
 	tk := storage.NewTKey(mutidKey, r.id.Bytes())
 	mutdata, err := store.Get(ctx, tk)
@@ -2374,8 +2371,8 @@ func (r *repoT) initMutationID(store storage.KeyValueDB) error {
 		r.mutCurID = binary.LittleEndian.Uint64(mutdata)
 		dvid.Infof("Loaded mutation ID for repo %s: %d\n", r.uuid, r.mutCurID)
 	}
-	if r.mutCurID < manager.mutationIDStart {
-		r.mutCurID = manager.mutationIDStart
+	if r.mutCurID < mutationIDStart {
+		r.mutCurID = mutationIDStart
 		dvid.Infof("Set mutation ID for repo %s to minimum set: %d\n", r.uuid, r.mutCurID)
 	}
 	r.mutSavedID = r.mutCurID + StrideMutationID
