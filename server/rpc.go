@@ -9,6 +9,7 @@ package server
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -59,6 +60,12 @@ DANGEROUS COMMANDS (only available via command line)
 	repo <UUID> delete <data name> <repo passcode if any>
 
 		Delete the given data instance.
+
+	repo <UUID> delete-class <data name> <type-specific key class> [true|false]
+
+		Deletes a class of type-specific keys for the given data instance.
+		If "true", all versions are deleted for that class of keys, else if
+		"false" only the version corresponding to the given UUID is deleted.
 
 
 EXPERIMENTAL COMMANDS
@@ -294,7 +301,8 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 		var uuidStr, subcommand string
 		cmd.CommandArgs(1, &uuidStr, &subcommand)
 		var uuid dvid.UUID
-		if uuid, _, err = datastore.MatchingUUID(uuidStr); err != nil {
+		var v dvid.VersionID
+		if uuid, v, err = datastore.MatchingUUID(uuidStr); err != nil {
 			return
 		}
 
@@ -511,6 +519,44 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 				return
 			}
 			reply.Text = fmt.Sprintf("Started deletion of data instance %q from repo with root %s\n", dataname, uuid)
+
+		case "delete-class":
+			// Apply a global lock (if relevant) and reloads meta
+			if err = datastore.MetadataUniversalLock(); err != nil {
+				return
+			}
+			defer datastore.MetadataUniversalUnlock()
+
+			var dataname, classStr, versionsStr string
+			cmd.CommandArgs(3, &dataname, &classStr, &versionsStr)
+			var allVersions bool
+			if allVersions, err = strconv.ParseBool(versionsStr); err != nil {
+				return
+			}
+			var classUint64 uint64
+			if classUint64, err = strconv.ParseUint(classStr, 10, 8); err != nil {
+				return
+			}
+			tkclass := storage.TKeyClass(classUint64)
+
+			var d datastore.DataService
+			if d, err = datastore.GetDataByUUIDName(uuid, dvid.InstanceName(dataname)); err != nil {
+				err = fmt.Errorf("Error trying to delete class of kv in %q for UUID %s: %v", dataname, uuid, err)
+				return
+			}
+			var store dvid.Store
+			if store, err = d.KVStore(); err != nil {
+				return
+			}
+			deleter, isDeleter := store.(storage.TKeyClassDeleter)
+			if !isDeleter {
+				reply.Text = fmt.Sprintf("The data instance %q does not support type-specific key class deletions\n", dataname)
+			}
+			ctx := datastore.NewVersionedCtx(d, v)
+			if err = deleter.DeleteTKeyClass(ctx, tkclass, allVersions); err != nil {
+				return
+			}
+			reply.Text = fmt.Sprintf("Finished deletion of type-specific key class %d for data instance %q, version %s (all versions = %t)\n", tkclass, dataname, uuid, allVersions)
 
 		default:
 			err = fmt.Errorf("Unknown command: %q", cmd)

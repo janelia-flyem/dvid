@@ -284,6 +284,11 @@ type OrderedKeyValueSetter interface {
 	DeleteAll(ctx Context, allVersions bool) error
 }
 
+// TKeyClassDeleter is an interface that allows deletion of a class of type-specific keys.
+type TKeyClassDeleter interface {
+	DeleteTKeyClass(ctx Context, tkc TKeyClass, allVersions bool) error
+}
+
 // KeyValueDB provides an interface to the simplest storage API: a key-value store.
 type KeyValueDB interface {
 	dvid.Store

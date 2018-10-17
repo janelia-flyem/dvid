@@ -12,13 +12,10 @@ import (
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
-
-	"github.com/janelia-flyem/go/uuid"
-
 	levigo "github.com/janelia-flyem/go/basholeveldb"
 	humanize "github.com/janelia-flyem/go/go-humanize"
-
 	"github.com/janelia-flyem/go/semver"
+	"github.com/janelia-flyem/go/uuid"
 )
 
 // These constants were guided by Basho documentation and their tuning of leveldb:
@@ -1139,6 +1136,85 @@ func (db *LevelDB) DeleteAll(ctx storage.Context, allVersions bool) error {
 		}
 		return db.deleteSingleVersion(vctx)
 	}
+}
+
+// ---- TKeyClassDeleter interface ------
+
+func (db *LevelDB) DeleteTKeyClass(ctx storage.Context, tkc storage.TKeyClass, allVersions bool) error {
+	if db == nil {
+		return fmt.Errorf("Can't call DeleteTKeyClass() on nil LevelDB")
+	}
+	if ctx == nil {
+		return fmt.Errorf("Received nil context in DeleteTKeyClass()")
+	}
+	vctx, versioned := ctx.(storage.VersionedCtx)
+	if !versioned {
+		return fmt.Errorf("Can't call DeleteTKeyClass with an unversioned context: %s", ctx)
+	}
+	dvid.StartCgo()
+
+	minTKey := storage.MinTKey(tkc)
+	maxTKey := storage.MaxTKey(tkc)
+	minKey, err := vctx.MinVersionKey(minTKey)
+	if err != nil {
+		return err
+	}
+	maxKey, err := vctx.MaxVersionKey(maxTKey)
+	if err != nil {
+		return err
+	}
+
+	const BATCH_SIZE = 10000
+	batch := db.NewBatch(vctx).(*goBatch)
+
+	ro := levigo.NewReadOptions()
+	it := db.ldb.NewIterator(ro)
+	defer func() {
+		it.Close()
+		dvid.StopCgo()
+	}()
+	numKV := 0
+	it.Seek(minKey)
+	deleteVersion := vctx.VersionID()
+	for {
+		if err := it.GetError(); err != nil {
+			return fmt.Errorf("Error iterating during DeleteTKeyClass for %s: %v", vctx, err)
+		}
+		if it.Valid() {
+			itKey := it.Key()
+			storage.StoreKeyBytesRead <- len(itKey)
+			// Did we pass the final key?
+			if bytes.Compare(itKey, maxKey) > 0 {
+				break
+			}
+			_, v, _, err := storage.DataKeyToLocalIDs(itKey)
+			if err != nil {
+				return fmt.Errorf("Error on DeleteTKeyClass: %v", err)
+			}
+			if allVersions || v == deleteVersion {
+				batch.WriteBatch.Delete(itKey)
+				if (numKV+1)%BATCH_SIZE == 0 {
+					if err := batch.Commit(); err != nil {
+						return fmt.Errorf("Error on batch commit of DeleteTKeyClass at key-value pair %d: %v", numKV, err)
+					}
+					batch = db.NewBatch(vctx).(*goBatch)
+					dvid.Debugf("Deleted %d key-value pairs in ongoing DeleteTKeyClass for %s.\n", numKV+1, vctx)
+				}
+				numKV++
+			}
+
+			it.Next()
+		} else {
+			break
+		}
+	}
+	if numKV%BATCH_SIZE != 0 {
+		if err := batch.Commit(); err != nil {
+			return fmt.Errorf("Error on last batch commit of DeleteTKeyClass: %v", err)
+		}
+	}
+	dvid.Debugf("Deleted %d key-value pairs in DeleteTKeyClass for %s.\n", numKV, vctx)
+	return nil
 }
 
 func (db *LevelDB) deleteSingleVersion(vctx storage.VersionedCtx) error {
