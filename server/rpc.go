@@ -551,12 +551,15 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			deleter, isDeleter := store.(storage.TKeyClassDeleter)
 			if !isDeleter {
 				reply.Text = fmt.Sprintf("The data instance %q does not support type-specific key class deletions\n", dataname)
-			}
-			ctx := datastore.NewVersionedCtx(d, v)
-			if err = deleter.DeleteTKeyClass(ctx, tkclass, allVersions); err != nil {
 				return
 			}
-			reply.Text = fmt.Sprintf("Finished deletion of type-specific key class %d for data instance %q, version %s (all versions = %t)\n", tkclass, dataname, uuid, allVersions)
+			go func() {
+				ctx := datastore.NewVersionedCtx(d, v)
+				if err = deleter.DeleteTKeyClass(ctx, tkclass, allVersions); err != nil {
+					return
+				}
+			}()
+			reply.Text = fmt.Sprintf("Started deletion of type-specific key class %d for data instance %q, version %s (all versions = %t)\n", tkclass, dataname, uuid, allVersions)
 
 		default:
 			err = fmt.Errorf("Unknown command: %q", cmd)

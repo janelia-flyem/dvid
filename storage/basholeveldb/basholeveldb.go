@@ -1167,6 +1167,7 @@ func (db *LevelDB) DeleteTKeyClass(ctx storage.Context, tkc storage.TKeyClass, a
 	const BATCH_SIZE = 10000
 	batch := db.NewBatch(vctx).(*goBatch)
 
+	timedLog := dvid.NewTimeLog()
 	ro := levigo.NewReadOptions()
 	it := db.ldb.NewIterator(ro)
 	defer func() {
@@ -1198,7 +1199,7 @@ func (db *LevelDB) DeleteTKeyClass(ctx storage.Context, tkc storage.TKeyClass, a
 						return fmt.Errorf("Error on batch commit of DeleteTKeyClass at key-value pair %d: %v", numKV, err)
 					}
 					batch = db.NewBatch(vctx).(*goBatch)
-					dvid.Debugf("Deleted %d key-value pairs in ongoing DeleteTKeyClass for %s.\n", numKV+1, vctx)
+					timedLog.Debugf("Deleted %d key-value pairs in ongoing DeleteTKeyClass for data %s.\n", numKV+1, vctx.Data().DataName())
 				}
 				numKV++
 			}
@@ -1213,7 +1214,7 @@ func (db *LevelDB) DeleteTKeyClass(ctx storage.Context, tkc storage.TKeyClass, a
 			return fmt.Errorf("Error on last batch commit of DeleteTKeyClass: %v", err)
 		}
 	}
-	dvid.Debugf("Deleted %d key-value pairs in DeleteTKeyClass for %s.\n", numKV, vctx)
+	timedLog.Infof("Deleted %d key-value pairs in DeleteTKeyClass for data %s.\n", numKV, vctx.Data().DataName())
 	return nil
 }
 
