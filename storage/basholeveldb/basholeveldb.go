@@ -1174,7 +1174,7 @@ func (db *LevelDB) DeleteTKeyClass(ctx storage.Context, tkc storage.TKeyClass, a
 		it.Close()
 		dvid.StopCgo()
 	}()
-	numKV := 0
+	var numKV, numKVskipped uint64
 	it.Seek(minKey)
 	deleteVersion := vctx.VersionID()
 	for {
@@ -1202,6 +1202,12 @@ func (db *LevelDB) DeleteTKeyClass(ctx storage.Context, tkc storage.TKeyClass, a
 					timedLog.Debugf("Deleted %d key-value pairs in ongoing DeleteTKeyClass for data %s.\n", numKV+1, vctx.Data().DataName())
 				}
 				numKV++
+				numKVskipped = 0
+			} else {
+				if (numKVskipped+1)%BATCH_SIZE == 0 {
+					timedLog.Debugf("Skipped %d key-value pairs in ongoing DeleteTKeyClass for data %s.\n", numKVskipped+1, vctx.Data().DataName())
+				}
+				numKVskipped++
 			}
 
 			it.Next()
