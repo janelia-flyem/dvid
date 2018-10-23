@@ -1199,15 +1199,14 @@ func (db *LevelDB) DeleteTKeyClass(ctx storage.Context, tkc storage.TKeyClass, a
 						return fmt.Errorf("Error on batch commit of DeleteTKeyClass at key-value pair %d: %v", numKV, err)
 					}
 					batch = db.NewBatch(vctx).(*goBatch)
-					timedLog.Debugf("Deleted %d key-value pairs in ongoing DeleteTKeyClass for data %s.\n", numKV+1, vctx.Data().DataName())
 				}
 				numKV++
-				numKVskipped = 0
 			} else {
-				if (numKVskipped+1)%BATCH_SIZE == 0 {
-					timedLog.Debugf("Skipped %d key-value pairs in ongoing DeleteTKeyClass for data %s.\n", numKVskipped+1, vctx.Data().DataName())
-				}
 				numKVskipped++
+			}
+
+			if (numKV+numKVskipped)%BATCH_SIZE == 0 {
+				timedLog.Debugf("Deleted %d of %d key-value pairs in ongoing DeleteTKeyClass for data %s", numKV, numKV+numKVskipped, vctx.Data().DataName())
 			}
 
 			it.Next()
@@ -1220,7 +1219,7 @@ func (db *LevelDB) DeleteTKeyClass(ctx storage.Context, tkc storage.TKeyClass, a
 			return fmt.Errorf("Error on last batch commit of DeleteTKeyClass: %v", err)
 		}
 	}
-	timedLog.Infof("Deleted %d key-value pairs in DeleteTKeyClass for data %s.\n", numKV, vctx.Data().DataName())
+	timedLog.Infof("Deleted %d of %d key-value pairs in DeleteTKeyClass for data %s", numKV, numKV+numKVskipped, vctx.Data().DataName())
 	return nil
 }
 
