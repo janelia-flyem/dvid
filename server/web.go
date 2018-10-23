@@ -23,11 +23,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/janelia-flyem/go/nrsc"
-
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
+	"github.com/janelia-flyem/go/nrsc"
 	"github.com/zenazn/goji/web"
 	"github.com/zenazn/goji/web/middleware"
 )
@@ -1010,7 +1009,7 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 		}
 
 		if method == "post" {
-			mirrors := instanceMirrors(dataname, uuid)
+			mirrors := instanceMirrors(data.DataUUID(), uuid)
 			if len(mirrors) > 0 {
 				buf, err := ioutil.ReadAll(r.Body)
 				if err != nil {

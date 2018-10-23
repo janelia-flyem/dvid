@@ -149,5 +149,10 @@ instances = ["graytiles:99ef22cd85f143f58a623bd22aad0ef7"]
 # mirrored data.  This can be useful for load splitting where batch processes can
 # hit the mirror for the given instances.
 [mirror]
-	[mirror."labels:99ef22cd85f143f58a623bd22aad0ef7"]
+	# specify mirror for all POSTs across instances
+	[mirror.all]
 	servers = ["http://mirror1.janelia.org:7000", "http://mirror2.janelia.org:7000"]
+
+	# specify mirror for this data UUID and particular version UUID
+	[mirror."bc95398cb3ae40fcab2529c7bca1ad0d:99ef22cd85f143f58a623bd22aad0ef7"]
+	servers = ["http://mirror3.janelia.org:7000", "http://mirror4.janelia.org:7000"]

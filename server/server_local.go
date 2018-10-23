@@ -23,7 +23,6 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/rpc"
 	"github.com/janelia-flyem/dvid/storage"
-
 	"github.com/janelia-flyem/go/toml"
 )
 
@@ -282,12 +281,28 @@ func (c *tomlConfig) KafkaActivityTopic() string {
 	return c.Kafka.TopicActivity
 }
 
-func instanceMirrors(dataname dvid.InstanceName, uuid dvid.UUID) []string {
+func repoMirrors(dataUUID, versionUUID dvid.UUID) []string {
 	if len(tc.Mirror) == 0 {
 		return nil
 	}
-	dataspec := dvid.DataSpecifier(`"` + string(dataname) + `:` + string(uuid) + `"`)
+	dataspec := dvid.DataSpecifier(`"` + string(dataUUID) + `:` + string(versionUUID) + `"`)
 	mirror, found := tc.Mirror[dataspec]
+	if found {
+		return mirror.Servers
+	}
+	return nil
+}
+
+func instanceMirrors(dataUUID, versionUUID dvid.UUID) []string {
+	if len(tc.Mirror) == 0 {
+		return nil
+	}
+	mirror, found := tc.Mirror[dvid.DataSpecifier("all")]
+	if found {
+		return mirror.Servers
+	}
+	dataspec := dvid.DataSpecifier(`"` + string(dataUUID) + `:` + string(versionUUID) + `"`)
+	mirror, found = tc.Mirror[dataspec]
 	if found {
 		return mirror.Servers
 	}
