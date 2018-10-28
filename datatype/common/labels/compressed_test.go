@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/janelia-flyem/dvid/dvid"
-
 	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
 
@@ -411,6 +410,20 @@ func TestSolidBlockRLE(t *testing.T) {
 	block2, err := MakeBlock(dvid.Uint64ToByte(testvol), dvid.Point3d{64, 64, 64})
 	if err != nil {
 		t.Fatalf("error making block: %v\n", err)
+	}
+	pts := []dvid.Point3d{dvid.Point3d{10, 10, 10}, dvid.Point3d{40, 40, 40}, dvid.Point3d{58, 58, 58}}
+	labels := block2.GetPointLabels(pts)
+	if len(labels) != 3 {
+		t.Fatalf("expected 3 labels back, got %d\n", len(labels))
+	}
+	if labels[0] != 3 {
+		t.Errorf("Expected pt %s is label 3, got %d\n", pts[0], labels[0])
+	}
+	if labels[1] != 0 {
+		t.Errorf("Expected pt %s is label 0, got %d\n", pts[1], labels[1])
+	}
+	if labels[2] != 0 {
+		t.Errorf("Expected pt %s is label 0, got %d\n", pts[2], labels[2])
 	}
 	pb3 := PositionedBlock{
 		Block:  *block2,
@@ -872,6 +885,46 @@ func TestBinaryBlocks(t *testing.T) {
 	}
 }
 
+func testBlockPointLabels(t *testing.T, block *Block) {
+	labelData, _ := block.MakeLabelVolume()
+	pts := make([]dvid.Point3d, 5)
+	for n := 0; n < 1000; n++ {
+		for m := 0; m < 5; m++ {
+			pts[m] = dvid.Point3d{
+				int32(rand.Int() % 64),
+				int32(rand.Int() % 64),
+				int32(rand.Int() % 64),
+			}
+		}
+		labels := block.GetPointLabels(pts)
+		for m, pt := range pts {
+			i := (pt[2]*64*64 + pt[1]*64 + pt[0]) * 8
+			label := binary.LittleEndian.Uint64(labelData[i : i+8])
+			if label != labels[m] {
+				t.Fatalf("For pt %s expected label %d got label %d\n", pt, label, labels[m])
+			}
+		}
+	}
+}
+
+func TestPointLabels(t *testing.T) {
+	var d testData
+	var block *Block
+	var err error
+	for _, filename := range testFiles {
+		d, err = loadData(filename)
+		if err != nil {
+			t.Fatal(err)
+		}
+		block, err = MakeBlock(d.b, dvid.Point3d{64, 64, 64})
+		if err != nil {
+			t.Fatal(err)
+		}
+		testBlockPointLabels(t, block)
+	}
+	testBlockPointLabels(t, MakeSolidBlock(23, dvid.Point3d{64, 64, 64}))
+}
+
 func BenchmarkGoogleCompress(b *testing.B) {
 	d := make([]testData, len(testFiles))
 	for i, filename := range testFiles {
@@ -1120,6 +1173,74 @@ func BenchmarkDvidReturnArray(b *testing.B) {
 		labelarray, size := block[i%4].MakeLabelVolume()
 		if int64(len(labelarray)) != size.Prod()*8 {
 			b.Fatalf("expected label volume returned is %d bytes, got %d instead\n", size.Prod()*8, len(labelarray))
+		}
+	}
+}
+
+func BenchmarkPointLabels(b *testing.B) {
+	var d testData
+	numFiles := len(testFiles)
+	blocks := make([]*Block, numFiles)
+	var err error
+	for i, filename := range testFiles {
+		d, err = loadData(filename)
+		if err != nil {
+			b.Fatal(err)
+		}
+		blocks[i], err = MakeBlock(d.b, dvid.Point3d{64, 64, 64})
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ResetTimer()
+	var x, y, z int32
+	for i := 0; i < b.N; i++ {
+		x = int32(i) % 64
+		y = (x + 8) % 64
+		z = (y + 8) % 64
+		pts := []dvid.Point3d{
+			dvid.Point3d{x, y, z},
+			dvid.Point3d{y, x, z},
+			dvid.Point3d{z, x, y},
+		}
+		for f := 0; f < numFiles; f++ {
+			_ = blocks[f].GetPointLabels(pts)
+		}
+	}
+}
+
+func BenchmarkOldPointLabels(b *testing.B) {
+	var d testData
+	numFiles := len(testFiles)
+	blocks := make([]*Block, numFiles)
+	var err error
+	for i, filename := range testFiles {
+		d, err = loadData(filename)
+		if err != nil {
+			b.Fatal(err)
+		}
+		blocks[i], err = MakeBlock(d.b, dvid.Point3d{64, 64, 64})
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ResetTimer()
+	var x, y, z int32
+	for i := 0; i < b.N; i++ {
+		x = int32(i) % 64
+		y = (x + 8) % 64
+		z = (y + 8) % 64
+		pts := []dvid.Point3d{
+			dvid.Point3d{x, y, z},
+			dvid.Point3d{y, x, z},
+			dvid.Point3d{z, x, y},
+		}
+		for f := 0; f < numFiles; f++ {
+			labelData, _ := blocks[f].MakeLabelVolume()
+			for _, pt := range pts {
+				i := (pt[2]*64*64 + pt[1]*64 + pt[0]) * 8
+				_ = binary.LittleEndian.Uint64(labelData[i : i+8])
+			}
 		}
 	}
 }

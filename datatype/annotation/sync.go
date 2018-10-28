@@ -577,49 +577,15 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 // group the given elements into labels based on associated label data.  This can be used on all of a
 // current label's elements after a cleave since the RLEs are not known.
 func (d *Data) cleaveElements(v dvid.VersionID, target uint64, blockElems map[dvid.IZYXString]ElementsNR) (labelElems LabelElements, delta DeltaModifyElements, err error) {
-	labelData := d.getSyncedLabels()
-	if labelData == nil {
-		err = fmt.Errorf("no synced labels for annotation %q, skipping label-aware denormalization", d.DataName())
+	labelElems, err = d.getLabelElementsNR(v, blockElems)
+	if err != nil {
 		return
 	}
-	blockSize := d.blockSize()
-	bX := blockSize[0] * 8
-	bY := blockSize[1] * bX
-	blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * 8)
-
-	labelElems = LabelElements{}
-	for izyxStr, elems := range blockElems {
-		var bcoord dvid.ChunkPoint3d
-		bcoord, err = izyxStr.ToChunkPoint3d()
-		if err != nil {
-			return
-		}
-
-		// Get the labels for this block
-		var labels []byte
-		labels, err = labelData.GetLabelBytes(v, bcoord)
-		if err != nil {
-			return
-		}
-		if len(labels) == 0 {
-			continue
-		}
-		if len(labels) != blockBytes {
-			err = fmt.Errorf("expected %d bytes in %q label block, got %d instead.  aborting", blockBytes, d.DataName(), len(labels))
-			return
-		}
-
-		// Group annotations by label
-		for _, elem := range elems {
-			pt := elem.Pos.Point3dInChunk(blockSize)
-			i := pt[2]*bY + pt[1]*bX + pt[0]*8
-			label := binary.LittleEndian.Uint64(labels[i : i+8])
-			if label != target {
+	for label, elems := range labelElems {
+		if label != target {
+			for _, elem := range elems {
 				delta.Del = append(delta.Del, ElementPos{Label: target, Kind: elem.Kind, Pos: elem.Pos})
 				delta.Add = append(delta.Add, ElementPos{Label: label, Kind: elem.Kind, Pos: elem.Pos})
-			}
-			if label != 0 {
-				labelElems.add(label, elem)
 			}
 		}
 	}

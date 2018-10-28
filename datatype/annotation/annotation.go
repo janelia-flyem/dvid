@@ -998,6 +998,10 @@ type labelType interface {
 	DataName() dvid.InstanceName
 }
 
+type labelPointType interface {
+	GetLabelPoints(dvid.VersionID, []dvid.Point3d, uint8, bool) ([]uint64, error)
+}
+
 type supervoxelType interface {
 	GetSupervoxelAtPoint(dvid.VersionID, dvid.Point) (uint64, error)
 	BlockSize() dvid.Point
@@ -1369,44 +1373,168 @@ func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, batch storage.Bat
 	return nil
 }
 
-// lookup labels for given elements and add them to label element map
-func (d *Data) addLabelElements(v dvid.VersionID, labelE map[uint64]ElementsNR, bcoord dvid.ChunkPoint3d, elems Elements) (int, error) {
+// returns label elements for block elements, using specialized point requests if available (e.g., labelmap sync)
+func (d *Data) getLabelElements(v dvid.VersionID, blockElems map[dvid.IZYXString]Elements) (labelElems LabelElements, err error) {
 	labelData := d.getSyncedLabels()
 	if labelData == nil {
-		return 0, fmt.Errorf("no synced labels for annotation %q", d.DataName())
+		dvid.Errorf("No synced labels for annotation %q, skipping label-aware denormalization\n", d.DataName())
+		return
 	}
+	labelPointData, ok := labelData.(labelPointType)
+	labelElems = LabelElements{}
+	if ok {
+		var labels []uint64
+		for _, elems := range blockElems {
+			if len(elems) == 0 {
+				continue
+			}
+			pts := make([]dvid.Point3d, len(elems))
+			for i, elem := range elems {
+				pts[i] = elem.Pos
+			}
+			labels, err = labelPointData.GetLabelPoints(v, pts, 0, false)
+			if err != nil {
+				return
+			}
+			if len(labels) == 0 {
+				continue
+			}
+			for i, elem := range elems {
+				if labels[i] != 0 {
+					labelElems.add(labels[i], elem.ElementNR)
+				}
+			}
+		}
+	} else {
+		blockSize := d.blockSize()
+		bX := blockSize[0] * 8
+		bY := blockSize[1] * bX
+		blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * 8)
 
-	// Compute the strides (in bytes)
-	blockSize := d.blockSize()
-	bX := blockSize[0] * 8
-	bY := blockSize[1] * bX
-	blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * 8)
+		for izyxStr, elems := range blockElems {
+			var bcoord dvid.ChunkPoint3d
+			bcoord, err = izyxStr.ToChunkPoint3d()
+			if err != nil {
+				return
+			}
+			var labels []byte
+			labels, err = labelData.GetLabelBytes(v, bcoord)
+			if err != nil {
+				return
+			}
+			if len(labels) == 0 {
+				continue
+			}
+			if len(labels) != blockBytes {
+				err = fmt.Errorf("expected %d bytes in %q label block, got %d instead.  aborting", blockBytes, d.DataName(), len(labels))
+				return
+			}
 
-	// Get the labels for this block
-	labels, err := labelData.GetLabelBytes(v, bcoord)
+			// Group annotations by label
+			for _, elem := range elems {
+				pt := elem.Pos.Point3dInChunk(blockSize)
+				i := pt[2]*bY + pt[1]*bX + pt[0]*8
+				label := binary.LittleEndian.Uint64(labels[i : i+8])
+				if label != 0 {
+					labelElems.add(label, elem.ElementNR)
+				}
+			}
+		}
+	}
+	return
+}
+
+// returns label elements for block elements, using specialized point requests if available (e.g., labelmap sync)
+func (d *Data) getLabelElementsNR(v dvid.VersionID, blockElems map[dvid.IZYXString]ElementsNR) (labelElems LabelElements, err error) {
+	labelData := d.getSyncedLabels()
+	if labelData == nil {
+		dvid.Errorf("No synced labels for annotation %q, skipping label-aware denormalization\n", d.DataName())
+		return
+	}
+	labelPointData, ok := labelData.(labelPointType)
+	labelElems = LabelElements{}
+	if ok {
+		var labels []uint64
+		for _, elems := range blockElems {
+			if len(elems) == 0 {
+				continue
+			}
+			pts := make([]dvid.Point3d, len(elems))
+			for i, elem := range elems {
+				pts[i] = elem.Pos
+			}
+			labels, err = labelPointData.GetLabelPoints(v, pts, 0, false)
+			if err != nil {
+				return
+			}
+			if len(labels) == 0 {
+				continue
+			}
+			for i, elem := range elems {
+				if labels[i] != 0 {
+					labelElems.add(labels[i], elem)
+				}
+			}
+		}
+	} else {
+		blockSize := d.blockSize()
+		bX := blockSize[0] * 8
+		bY := blockSize[1] * bX
+		blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * 8)
+
+		for izyxStr, elems := range blockElems {
+			var bcoord dvid.ChunkPoint3d
+			bcoord, err = izyxStr.ToChunkPoint3d()
+			if err != nil {
+				return
+			}
+			var labels []byte
+			labels, err = labelData.GetLabelBytes(v, bcoord)
+			if err != nil {
+				return
+			}
+			if len(labels) == 0 {
+				continue
+			}
+			if len(labels) != blockBytes {
+				err = fmt.Errorf("expected %d bytes in %q label block, got %d instead.  aborting", blockBytes, d.DataName(), len(labels))
+				return
+			}
+
+			// Group annotations by label
+			for _, elem := range elems {
+				pt := elem.Pos.Point3dInChunk(blockSize)
+				i := pt[2]*bY + pt[1]*bX + pt[0]*8
+				label := binary.LittleEndian.Uint64(labels[i : i+8])
+				if label != 0 {
+					labelElems.add(label, elem)
+				}
+			}
+		}
+	}
+	return
+}
+
+// lookup labels for given elements and add them to label element map
+func (d *Data) addLabelElements(v dvid.VersionID, labelE LabelElements, bcoord dvid.ChunkPoint3d, elems Elements) (int, error) {
+	blockElems := map[dvid.IZYXString]Elements{
+		bcoord.ToIZYXString(): elems,
+	}
+	le, err := d.getLabelElements(v, blockElems)
 	if err != nil {
 		return 0, err
-	}
-	if len(labels) == 0 {
-		return 0, nil
-	}
-	if len(labels) != blockBytes {
-		return 0, fmt.Errorf("expected %d bytes in %q label block %s, got %d instead.  aborting", blockBytes, d.DataName(), bcoord, len(labels))
 	}
 
 	// Add annotations by label
 	var nonzeroElems int
-	for _, elem := range elems {
-		pt := elem.Pos.Point3dInChunk(blockSize)
-		i := pt[2]*bY + pt[1]*bX + pt[0]*8
-		label := binary.LittleEndian.Uint64(labels[i : i+8])
-		if label != 0 {
-			le := labelE[label]
-			le = append(le, elem.ElementNR)
-			labelE[label] = le
-			nonzeroElems++
-		} else {
-			dvid.Infof("Annotation %s was at voxel with label 0\n", elem.Pos)
+	for label, elems := range le {
+		for _, elem := range elems {
+			if label != 0 {
+				labelE.add(label, elem)
+				nonzeroElems++
+			} else {
+				dvid.Infof("Annotation %s was at voxel with label 0\n", elem.Pos)
+			}
 		}
 	}
 	return nonzeroElems, nil
@@ -1414,47 +1542,13 @@ func (d *Data) addLabelElements(v dvid.VersionID, labelE map[uint64]ElementsNR, 
 
 // stores synaptic elements arranged by label, replacing any
 // elements at same position.
-func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Batch, be map[dvid.IZYXString]Elements) error {
-	labelData := d.getSyncedLabels()
-	if labelData == nil {
-		dvid.Infof("No synced labels for annotation %q, skipping label-aware denormalization.\n", d.DataName())
-		return nil // no synced labels
+func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Batch, blockElems map[dvid.IZYXString]Elements) error {
+	toAdd, err := d.getLabelElements(ctx.VersionID(), blockElems)
+	if err != nil {
+		return err
 	}
-
-	// Compute the strides (in bytes)
-	blockSize := d.blockSize()
-	bX := blockSize[0] * 8
-	bY := blockSize[1] * bX
-	blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * 8)
-
-	toAdd := LabelElements{}
-	for izyxStr, elems := range be {
-		bcoord, err := izyxStr.ToChunkPoint3d()
-		if err != nil {
-			return err
-		}
-
-		// Get the labels for this block
-		labels, err := labelData.GetLabelBytes(ctx.VersionID(), bcoord)
-		if err != nil {
-			return err
-		}
-		if len(labels) == 0 {
-			continue
-		}
-		if len(labels) != blockBytes {
-			return fmt.Errorf("expected %d bytes in %q label block, got %d instead.  aborting", blockBytes, d.DataName(), len(labels))
-		}
-
-		// Group annotations by label
-		for _, elem := range elems {
-			pt := elem.Pos.Point3dInChunk(blockSize)
-			i := pt[2]*bY + pt[1]*bX + pt[0]*8
-			label := binary.LittleEndian.Uint64(labels[i : i+8])
-			if label != 0 {
-				toAdd.add(label, elem.ElementNR)
-			}
-		}
+	if len(toAdd) == 0 {
+		return nil
 	}
 
 	// Store all the added annotations to the appropriate labels.
@@ -2064,7 +2158,7 @@ func (d *Data) resyncInMemory(ctx *datastore.VersionedCtx) {
 
 	var totBlocks, totElemErrs, totLabelE, totTagE int
 
-	labelE := make(map[uint64]ElementsNR)
+	labelE := LabelElements{}
 	tagE := make(map[Tag]ElementsNR)
 
 	minTKey := storage.MinTKey(keyBlock)

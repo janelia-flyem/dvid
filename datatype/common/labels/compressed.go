@@ -13,6 +13,7 @@ import (
 )
 
 const SubBlockSize = 8
+const subBlockShift = 3 // 2^3 == SubBlockSize
 const DefaultSubBlocksPerBlock = 8
 const DefaultBlockSize = DefaultSubBlocksPerBlock * SubBlockSize
 
@@ -519,48 +520,53 @@ func MakeBlock(uint64array []byte, bsize dvid.Point3d) (*Block, error) {
 }
 
 // Block is the unit of storage for compressed DVID labels.  It is inspired by the
-// Neuroglancer compression scheme and makes the following changes: (1) a block-level
-// label list with sub-block indices into the list (minimal required bits vs 64 bits in
-// original Neuroglancer scheme), (2) the number of bits for encoding values is not
-// required to be a power of two.  A block-level label list allows easy sharing of labels
-// between sub-blocks, and sub-block storage can be more efficient due to the smaller index
-// (at the cost of an indirection) and better encoded value packing (at the cost of byte
-// alignment).  In both cases memory is gained for increased computation.
+// Neuroglancer compression scheme and makes the following changes: (1) a
+// block-level label list with sub-block indices into the list (minimal required
+// bits vs 64 bits in original Neuroglancer scheme), (2) the number of bits for
+// encoding values is not required to be a power of two.  A block-level label list
+// allows easy sharing of labels between sub-blocks, and sub-block storage can be
+// more efficient due to the smaller index (at the cost of an indirection) and
+// better encoded value packing (at the cost of byte alignment).  In both cases
+// memory is gained for increased computation.
 //
-// Blocks cover nx * ny * nz voxels.  This implementation allows any choice of nx, ny, and nz
-// with two restrictions: (1) nx, ny, and nz must be a multiple of 8 greater than 16, and
-// (2) the total number of labels cannot exceed the capacity of a uint32.
+// Blocks cover nx * ny * nz voxels.  This implementation allows any choice of nx,
+// ny, and nz with two restrictions: (1) nx, ny, and nz must be a multiple of 8
+// greater than 16, and (2) the total number of labels cannot exceed the capacity
+// of a uint32.
 //
-// Internally, labels are stored in 8x8x8 sub-blocks.  There are gx * gy * gz sub-blocks where
-// gx = nx / 8; gy = ny / 8; gz = nz / 8.
+// Internally, labels are stored in 8x8x8 sub-blocks.  There are gx * gy * gz
+// sub-blocks where gx = nx / 8; gy = ny / 8; gz = nz / 8.
 //
 // The byte layout will be the following if there are N labels in the Block:
 //
 //      3 * uint32      values of gx, gy, and gz
 //      uint32          # of labels (N), cannot exceed uint32.
-//      N * uint64      packed labels in little-endian format.  Label 0 can be used to represent
-//                          deleted labels, e.g., after a merge operation to avoid changing all
-//                          sub-block indices.
+//      N * uint64      packed labels in little-endian format.  Label 0 can be
+//							used to represent deleted labels, e.g., after a merge
+//							operation to avoid changing all sub-block indices.
 //
 //      ----- Data below is only included if N > 1, otherwise it is a solid block.
 //            Nsb = # sub-blocks = gx * gy * gz
 //
 //      Nsb * uint16        # of labels for sub-blocks (Ns[i]).
 //                              Each uint16 Ns[i] = # labels for sub-block i.
-//                              If Ns[i] == 0, the sub-block has no data (uninitialized), which
-//                              is useful for constructing Blocks with sparse data.
+//                              If Ns[i] == 0, the sub-block has no data
+// 								(uninitialized), which is useful for constructing
+//								Blocks with sparse data.
 //
-//      Nsb * Ns * uint32   label indices for sub-blocks where Ns = sum of Ns[i] over all sub-blocks.
-//                              For each sub-block i, we have Ns[i] label indices of lBits.
+//      Nsb * Ns * uint32   label indices for sub-blocks where Ns = sum of Ns[i]
+//								over all sub-blocks. For each sub-block i, we have
+//								Ns[i] label indices of lBits.
 //
 //      Nsb * values        sub-block indices for each voxel.
-//                              Data encompasses 512 * ceil(log2(Ns[i])) bits, padded so no two
-//                              sub-blocks have indices in the same byte.
-//                              At most we use 9 bits per voxel for up to the 512 labels in sub-block.
-//                              A value gives the sub-block index which points to the index into
-//                              the N labels.  If Ns[i] <= 1, there are no values.  If Ns[i] = 0,
-//                              the 8x8x8 voxels are set to label 0.  If Ns[i] = 1, all voxels
-//                              are the given label index.
+//                              Data encompasses 512 * ceil(log2(Ns[i])) bits,
+//								padded so no two sub-blocks have indices in the
+//								same byte. At most we use 9 bits per voxel for up
+//								to the 512 labels in sub-block. A value gives the
+//								sub-block index which points to the index into
+//                              the N labels.  If Ns[i] <= 1, there are no values.
+//								If Ns[i] = 0, the 8x8x8 voxels are set to label 0.
+//								If Ns[i] = 1, all voxels are the given label index.
 type Block struct {
 	Labels []uint64     // labels in Block.
 	Size   dvid.Point3d // # voxels in each dimension for this block
@@ -773,6 +779,116 @@ func (b *Block) getNumVoxels(labelIndex uint32) (labelVoxels uint64) {
 		}
 	}
 	return
+}
+
+type ptIndex struct {
+	pos   dvid.Point3d
+	index int
+}
+
+// GetPointLabels returns the labels associated with each point by traversing the compressed data.
+// If the point is outside the block, a zero is returned.
+func (b *Block) GetPointLabels(pts []dvid.Point3d) []uint64 {
+	if len(pts) == 0 {
+		return []uint64{}
+	}
+	results := make([]uint64, len(pts))
+
+	var label uint64
+	singleValue := false
+	if len(b.Labels) == 0 {
+		singleValue = true
+		label = 0
+	} else if len(b.Labels) == 1 {
+		singleValue = true
+		label = b.Labels[0]
+	}
+	if singleValue {
+		for i := 0; i < len(pts); i++ {
+			results[i] = label
+		}
+		return results
+	}
+
+	gx, gy, gz := b.Size[0]/SubBlockSize, b.Size[1]/SubBlockSize, b.Size[2]/SubBlockSize
+	maxSubBlocks := int(gx * gy * gz)
+	subBlockPts := make(map[int][]ptIndex)
+	for i, pt := range pts {
+		sx := pt[0] >> subBlockShift
+		sy := pt[1] >> subBlockShift
+		sz := pt[2] >> subBlockShift
+		sbx := pt[0] % SubBlockSize
+		sby := pt[1] % SubBlockSize
+		sbz := pt[2] % SubBlockSize
+		subBlockNum := int(sz*gy*gx + sy*gx + sx)
+		if subBlockNum >= maxSubBlocks {
+			dvid.Errorf("attempted to get label for point %s that was out of block, skipping point\n", pt)
+			continue
+		}
+		pti := ptIndex{pos: dvid.Point3d{sbx, sby, sbz}, index: i}
+		sbPts, found := subBlockPts[subBlockNum]
+		if found {
+			sbPts = append(sbPts, pti)
+		} else {
+			sbPts = []ptIndex{pti}
+		}
+		subBlockPts[subBlockNum] = sbPts
+	}
+	if len(subBlockPts) == 0 {
+		// all the points are outside the block!
+		return results
+	}
+
+	subBlockNumVoxels := SubBlockSize * SubBlockSize * SubBlockSize
+
+	var indexPos uint32
+	var bitpos int
+	for subBlockNum := 0; subBlockNum < maxSubBlocks; subBlockNum++ {
+		sbPts := subBlockPts[subBlockNum]
+
+		numSBLabels := b.NumSBLabels[subBlockNum]
+		switch numSBLabels {
+		case 0:
+			continue
+		case 1:
+			// make all points in this sub-block point to the single label
+			labelIndex := b.SBIndices[indexPos]
+			label := b.Labels[labelIndex]
+			for _, pti := range sbPts {
+				results[pti.index] = label
+			}
+			indexPos++
+			continue
+		default:
+		}
+
+		bits := int(bitsFor(numSBLabels))
+		for _, pti := range sbPts {
+			bitposPt := int(pti.pos[2]*SubBlockSize*SubBlockSize+pti.pos[1]*SubBlockSize+pti.pos[0])*bits + bitpos
+			var index uint16
+			bithead := bitposPt % 8
+			bytepos := bitposPt >> 3
+			if bithead+bits <= 8 {
+				// index totally within this byte
+				rightshift := uint(8 - bithead - bits)
+				index = uint16((b.SBValues[bytepos] & leftBitMask[bithead]) >> rightshift)
+			} else {
+				// index spans byte boundaries
+				index = uint16(b.SBValues[bytepos]&leftBitMask[bithead]) << 8
+				index |= uint16(b.SBValues[bytepos+1])
+				index >>= uint(16 - bithead - bits)
+			}
+			label := b.Labels[b.SBIndices[indexPos+uint32(index)]]
+			results[pti.index] = label
+		}
+
+		bitpos += subBlockNumVoxels * bits
+		if bitpos%8 != 0 {
+			bitpos += 8 - (bitpos % 8)
+		}
+		indexPos += uint32(numSBLabels) // advance to next sub-block indices
+	}
+	return results
 }
 
 // MergeLabels returns a new block that has computed the given MergeOp.

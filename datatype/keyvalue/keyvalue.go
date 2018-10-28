@@ -567,14 +567,14 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				}
 				w.Header().Set("Content-Type", "application/octet-stream")
 			}
-			comment = fmt.Sprintf("HTTP GET key %q of keyvalue %q: %d bytes (%s)\n", keyStr, d.DataName(), len(value), url)
+			comment = fmt.Sprintf("HTTP GET key %q of keyvalue %q: %d bytes (%s)", keyStr, d.DataName(), len(value), url)
 
 		case "delete":
 			if err := d.DeleteData(ctx, keyStr); err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
-			comment = fmt.Sprintf("HTTP DELETE data with key %q of keyvalue %q (%s)\n", keyStr, d.DataName(), url)
+			comment = fmt.Sprintf("HTTP DELETE data with key %q of keyvalue %q (%s)", keyStr, d.DataName(), url)
 
 		case "post":
 			data, err := ioutil.ReadAll(r.Body)

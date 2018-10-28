@@ -9,6 +9,7 @@ package labelmap
 
 import (
 	"bytes"
+	"compress/gzip"
 	"crypto/md5"
 	"encoding/binary"
 	"encoding/gob"
@@ -25,8 +26,6 @@ import (
 	"strings"
 	"sync"
 
-	"compress/gzip"
-
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/downres"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -35,7 +34,6 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
-
 	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
 
@@ -3157,7 +3155,7 @@ func (d *Data) handleLabel(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 	}
 	timedLog := dvid.NewTimeLog()
 
-	coord, err := dvid.StringToPoint(parts[4], "_")
+	coord, err := dvid.StringToPoint3d(parts[4], "_")
 	if err != nil {
 		server.BadRequest(w, r, err)
 		return
@@ -3170,13 +3168,13 @@ func (d *Data) handleLabel(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 	}
 	isSupervoxel := queryStrings.Get("supervoxels") == "true"
 
-	label, err := d.GetLabelAtScaledPoint(ctx.VersionID(), coord, scale, isSupervoxel)
+	labels, err := d.GetLabelPoints(ctx.VersionID(), []dvid.Point3d{coord}, scale, isSupervoxel)
 	if err != nil {
 		server.BadRequest(w, r, err)
 		return
 	}
 	w.Header().Set("Content-type", "application/json")
-	jsonStr := fmt.Sprintf(`{"Label": %d}`, label)
+	jsonStr := fmt.Sprintf(`{"Label": %d}`, labels[0])
 	fmt.Fprintf(w, jsonStr)
 
 	timedLog.Infof("HTTP GET label at %s (%s)", parts[4], r.URL)
@@ -3212,15 +3210,15 @@ func (d *Data) handleLabels(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 		server.BadRequest(w, r, fmt.Sprintf("Bad labels request JSON: %v", err))
 		return
 	}
+	labels, err := d.GetLabelPoints(ctx.VersionID(), coords, scale, isSupervoxel)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
 	w.Header().Set("Content-type", "application/json")
 	fmt.Fprintf(w, "[")
 	sep := false
-	for _, coord := range coords {
-		label, err := d.GetLabelAtScaledPoint(ctx.VersionID(), coord, scale, isSupervoxel)
-		if err != nil {
-			server.BadRequest(w, r, err)
-			return
-		}
+	for _, label := range labels {
 		if sep {
 			fmt.Fprintf(w, ",")
 		}
@@ -4529,4 +4527,69 @@ func (d *Data) GetLabelAtPoint(v dvid.VersionID, pt dvid.Point) (uint64, error) 
 // GetSupervoxelAtPoint returns the 64-bit unsigned int supervoxel id for a given point.
 func (d *Data) GetSupervoxelAtPoint(v dvid.VersionID, pt dvid.Point) (uint64, error) {
 	return d.GetLabelAtScaledPoint(v, pt, 0, true)
+}
+
+type ptsIndex struct {
+	pts     []dvid.Point3d
+	indices []int
+}
+
+// GetLabelPoints returns labels or supervoxels corresponding to given 3d points.
+func (d *Data) GetLabelPoints(v dvid.VersionID, pts []dvid.Point3d, scale uint8, supervoxels bool) (labels []uint64, err error) {
+	if len(pts) == 0 {
+		return
+	}
+	var mapping *SVMap
+	if !supervoxels {
+		if mapping, err = getMapping(d, v); err != nil {
+			return nil, err
+		}
+	}
+
+	// Partition into blocks and adjust pts into block coordinates.
+	labels = make([]uint64, len(pts))
+	blockSize := d.BlockSize().(dvid.Point3d)
+	blockPts := make(map[dvid.IZYXString]ptsIndex)
+	for i, pt := range pts {
+		x := pt[0] / blockSize[0]
+		y := pt[1] / blockSize[1]
+		z := pt[2] / blockSize[2]
+		bx := pt[0] % blockSize[0]
+		by := pt[1] % blockSize[1]
+		bz := pt[2] % blockSize[2]
+		bpt := dvid.Point3d{bx, by, bz}
+		bcoord := dvid.ChunkPoint3d{x, y, z}.ToIZYXString()
+		ptsi, found := blockPts[bcoord]
+		if found {
+			ptsi.pts = append(ptsi.pts, bpt)
+			ptsi.indices = append(ptsi.indices, i)
+		} else {
+			ptsi.pts = []dvid.Point3d{bpt}
+			ptsi.indices = []int{i}
+		}
+		blockPts[bcoord] = ptsi
+	}
+
+	// Iterate through blocks and get labels without inflating blocks.  TODO -- make concurrent?
+	for bcoord, ptsi := range blockPts {
+		chunkPt3d, err := bcoord.ToChunkPoint3d()
+		if err != nil {
+			return nil, err
+		}
+		block, err := d.GetLabelBlock(v, chunkPt3d, scale)
+		if err != nil {
+			return nil, err
+		}
+		if mapping != nil && mapping.exists(v) {
+			err = modifyBlockMapping(v, block, mapping)
+			if err != nil {
+				return nil, fmt.Errorf("unable to modify block %s mapping: %v", bcoord, err)
+			}
+		}
+		blockLabels := block.GetPointLabels(ptsi.pts)
+		for i, index := range ptsi.indices {
+			labels[index] = blockLabels[i]
+		}
+	}
+	return
 }

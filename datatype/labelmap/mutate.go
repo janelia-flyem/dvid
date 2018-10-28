@@ -26,9 +26,10 @@ type sizeChange struct {
 	oldSize, newSize uint64
 }
 
-// MergeLabels handles merging of any number of labels throughout the various label data
-// structures.  It assumes that the merges aren't cascading, e.g., there is no attempt
-// to merge label 3 into 4 and also 4 into 5.  The caller should have flattened the merges.
+// MergeLabels synchronously merges any number of labels throughout the various label
+// data structures.  It assumes that the merges aren't cascading, e.g., there is no
+// attempt to merge label 3 into 4 and also 4 into 5.  The caller should have flattened
+// the merges.
 // TODO: Provide some indication that subset of labels are under evolution, returning
 //   an "unavailable" status or 203 for non-authoritative response.  This might not be
 //   feasible for clustered DVID front-ends due to coordination issues.
@@ -151,8 +152,8 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 	return
 }
 
-// CleaveLabel cleaves a label given supervoxels to be cleaved.  Requires JSON in request body
-// using the following format:
+// CleaveLabel synchornously cleaves a label given supervoxels to be cleaved.
+// Requires JSON in request body using the following format:
 //	[supervoxel1, supervoxel2, ...]
 // Each element of the JSON array is a supervoxel to be cleaved from the label and either
 // given a new label or the one optionally supplied via the "cleavelabel" query string.

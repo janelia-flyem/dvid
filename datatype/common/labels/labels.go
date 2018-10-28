@@ -42,10 +42,6 @@ func LabelMap(iv dvid.InstanceVersion) *Mapping {
 // concurrently merge label 4 into some other label because there can be a race condition between
 // 3 -> 4 and 4 -> X.
 func MergeStart(iv dvid.InstanceVersion, op MergeOp) error {
-	mc.RLock()
-	dvid.Infof("MergeStart starting for iv %v with op %v.  mergeCache: %v\n", iv, op, mc.m)
-	mc.RUnlock()
-
 	// Don't allow a merge to start in the middle of a concurrent merge/split.
 	if labelsSplitting.IsDirty(iv, op.Target) { // we might be able to relax this one.
 		return fmt.Errorf("can't merge into label %d while it has an ongoing split", op.Target)
