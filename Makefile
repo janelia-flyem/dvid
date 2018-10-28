@@ -99,12 +99,12 @@ test-verbose: dvid
 
 # Coverage (does this repeat the test step above?)
 coverage: dvid
-	go test -cover -tags "${DVID_BACKEND}" ${DVID_PACKAGES}
+	go test -tags "${DVID_BACKENDS}" -cover ${DVID_PACKAGES}
 
 # Bench
 bench:
-	go test -bench -tags "${DVID_BACKEND}" ${DVID_PACKAGES}
-	go test -bench -i -tags "${DVID_BACKEND}" test dvid datastore
+	go test -v -tags "${DVID_BACKENDS}" -bench . ${DVID_PACKAGES}
+	# go test -bench -i -tags "${DVID_BACKEND}" test dvid datastore
 
 .PHONY: clean
 clean:
