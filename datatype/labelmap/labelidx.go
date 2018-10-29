@@ -1394,6 +1394,7 @@ func (d *Data) writeMappings(w io.Writer, v dvid.VersionID) error {
 	// out stream, so do only the copy under read lock to minimize time under read lock.
 	svm.RLock()
 	if len(svm.fm) == 0 {
+		svm.RUnlock()
 		dvid.Infof("no mappings found for data %q\n", d.DataName())
 		return nil
 	}
