@@ -4591,5 +4591,8 @@ func (d *Data) GetLabelPoints(v dvid.VersionID, pts []dvid.Point3d, scale uint8,
 			labels[index] = blockLabels[i]
 		}
 	}
+	if len(blockPts) > 10 {
+		dvid.Infof("Batch query for labels at %d points -> %d blocks examined\n", len(pts), len(blockPts))
+	}
 	return
 }
