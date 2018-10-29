@@ -11,13 +11,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/coocood/freecache"
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
-
-	"github.com/coocood/freecache"
 	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
 
@@ -896,7 +895,7 @@ func (d *Data) writeBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scal
 		return false, err
 	}
 
-	dvid.Infof("[%s] labels %v: streamed %d of %d blocks within bounds\n", ctx, lbls, len(indices), len(meta.Blocks))
+	dvid.Infof("[%s] label %d with %d constituent labels: streamed %d of %d blocks within bounds\n", ctx, label, len(lbls), len(indices), len(meta.Blocks))
 	return true, preErr
 }
 
@@ -946,7 +945,7 @@ func (d *Data) writeStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scal
 		return false, err
 	}
 
-	dvid.Infof("[%s] labels %v: streamed %d of %d blocks within bounds\n", ctx, lbls, len(indices), len(meta.Blocks))
+	dvid.Infof("[%s] label %d with %d constituent labels: streamed %d of %d blocks within bounds\n", ctx, label, len(lbls), len(indices), len(meta.Blocks))
 	return true, nil
 }
 
