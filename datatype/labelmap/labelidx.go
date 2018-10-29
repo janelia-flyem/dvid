@@ -1389,14 +1389,25 @@ func (d *Data) writeMappings(w io.Writer, v dvid.VersionID) error {
 	if err != nil {
 		return fmt.Errorf("unable to get ancestry for data %q, version %d: %v", d.DataName(), v, err)
 	}
+
+	// assume in-memory copy of mappings, especially if large, is much faster than writing
+	// out stream, so do only the copy under read lock to minimize time under read lock.
 	svm.RLock()
-	defer svm.RUnlock()
 	if len(svm.fm) == 0 {
 		dvid.Infof("no mappings found for data %q\n", d.DataName())
 		return nil
 	}
-	var numMappings, numErrors uint64
+	mapping := make(map[uint64]vmap, len(svm.fm))
 	for supervoxel, vm := range svm.fm {
+		vmdup := make([]byte, len(vm))
+		copy(vmdup, vm)
+		mapping[supervoxel] = vmdup
+	}
+	svm.RUnlock()
+	timedLog.Infof("write mappings: made duplicate of %d mappings", len(mapping))
+
+	var numMappings, numErrors uint64
+	for supervoxel, vm := range mapping {
 		label, present := vm.value(ancestry)
 		if present {
 			numMappings++
