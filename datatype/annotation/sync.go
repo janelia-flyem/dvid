@@ -434,6 +434,20 @@ func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, chunkPt dvid.ChunkPoint3
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
 	}
+
+	// send kafka merge event to instance-uuid topic
+	versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
+	msginfo := map[string]interface{}{
+		"Action": "ingest-block",
+		// "MutationID": op.MutID,
+		"UUID":      string(versionuuid),
+		"Timestamp": time.Now().String(),
+		"Delta":     delta,
+	}
+	jsonmsg, _ := json.Marshal(msginfo)
+	if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
+		dvid.Errorf("unable to write merge to kafka for data %q: %v\n", d.DataName(), err)
+	}
 }
 
 // If a block of labels is mutated, adjust any label that was either removed or added.
@@ -516,6 +530,20 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, chunkPt dvid.ChunkPoint3
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
 	}
+
+	// send kafka merge event to instance-uuid topic
+	versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
+	msginfo := map[string]interface{}{
+		"Action": "mutate-block",
+		// "MutationID": op.MutID,
+		"UUID":      string(versionuuid),
+		"Timestamp": time.Now().String(),
+		"Delta":     delta,
+	}
+	jsonmsg, _ := json.Marshal(msginfo)
+	if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
+		dvid.Errorf("unable to write mutate-block to kafka for data %q: %v\n", d.DataName(), err)
+	}
 }
 
 func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op labels.MergeOp) error {
@@ -562,6 +590,20 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 		batch.Put(targetTk, val)
 		if err := batch.Commit(); err != nil {
 			return fmt.Errorf("unable to commit merge for instance %q: %v", d.DataName(), err)
+		}
+
+		// send kafka merge event to instance-uuid topic
+		versionuuid, _ := datastore.UUIDFromVersion(v)
+		msginfo := map[string]interface{}{
+			"Action":     "merge",
+			"MutationID": op.MutID,
+			"UUID":       string(versionuuid),
+			"Timestamp":  time.Now().String(),
+			"Delta":      delta,
+		}
+		jsonmsg, _ := json.Marshal(msginfo)
+		if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
+			dvid.Errorf("unable to write merge to kafka for data %q: %v\n", d.DataName(), err)
 		}
 	}
 
@@ -636,6 +678,20 @@ func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, o
 		msg := datastore.SyncMessage{Event: ModifyElementsEvent, Version: ctx.VersionID(), Delta: delta}
 		if err := datastore.NotifySubscribers(evt, msg); err != nil {
 			dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
+		}
+
+		// send kafka cleave event to instance-uuid topic
+		versionuuid, _ := datastore.UUIDFromVersion(v)
+		msginfo := map[string]interface{}{
+			"Action":     "cleave",
+			"MutationID": op.MutID,
+			"UUID":       string(versionuuid),
+			"Timestamp":  time.Now().String(),
+			"Delta":      delta,
+		}
+		jsonmsg, _ := json.Marshal(msginfo)
+		if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
+			dvid.Errorf("unable to write cleave to kafka for data %q: %v\n", d.DataName(), err)
 		}
 	}
 	return nil
@@ -727,6 +783,20 @@ func (d *Data) splitLabelsCoarse(batcher storage.KeyValueBatcher, v dvid.Version
 	msg := datastore.SyncMessage{Event: ModifyElementsEvent, Version: ctx.VersionID(), Delta: delta}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
+	}
+
+	// send kafka coarse split event to instance-uuid topic
+	versionuuid, _ := datastore.UUIDFromVersion(v)
+	msginfo := map[string]interface{}{
+		"Action": "split-coarse",
+		// "MutationID": op.MutID,
+		"UUID":      string(versionuuid),
+		"Timestamp": time.Now().String(),
+		"Delta":     delta,
+	}
+	jsonmsg, _ := json.Marshal(msginfo)
+	if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
+		dvid.Errorf("unable to write coarse split to kafka for data %q: %v\n", d.DataName(), err)
 	}
 	return nil
 }
@@ -827,6 +897,20 @@ func (d *Data) splitLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 	msg := datastore.SyncMessage{Event: ModifyElementsEvent, Version: ctx.VersionID(), Delta: delta}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
+	}
+
+	// send kafka merge event to instance-uuid topic
+	versionuuid, _ := datastore.UUIDFromVersion(v)
+	msginfo := map[string]interface{}{
+		"Action": "split",
+		// "MutationID": op.MutID,
+		"UUID":      string(versionuuid),
+		"Timestamp": time.Now().String(),
+		"Delta":     delta,
+	}
+	jsonmsg, _ := json.Marshal(msginfo)
+	if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
+		dvid.Errorf("unable to write split to kafka for data %q: %v\n", d.DataName(), err)
 	}
 	return nil
 }
