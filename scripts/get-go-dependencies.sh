@@ -16,6 +16,21 @@ if [[ "$GOPATH" == "" ]]; then
   exit 1
 fi
 
+if [ ! -z "${CONDA_BUILD}" ]; then
+    CONDA_PREFIX="${PREFIX}"
+fi
+
+if [ -z "${CONDA_PREFIX}" ]; then
+     1>&2 echo "A conda environment must be active"
+     exit 1
+fi
+
+if [[ "${CONDA_PREFIX}" == "$(conda info --base)" ]]; then
+     1>&2 echo "The root conda environment is currently active.  Please use a non-root environment."
+     exit 1
+fi
+
+
 echo "Fetching third-party go sources..."
 
 # gopackages
@@ -75,7 +90,27 @@ go get github.com/boltdb/bolt
 go get github.com/DocSavage/gomdb
 
 # kafka
-go get github.com/confluentinc/confluent-kafka-go/kafka
+if [ $(uname) == "Linux" ]; then
+    # For some reason, the confluent kafka package cannot be built correctly unless you set LD_LIBRARY_PATH,
+    # despite the fact that our copy of librdkafka.so does correctly provide an internal RPATH.
+    # (I think the kafka build scripts are not properly calling the 'ld' command with -rpath or -rpath-link.)
+    #
+    # FWIW, The errors look like this:
+    # 
+    #   #github.com/confluentinc/confluent-kafka-go/kafka
+    #   /opt/rh/devtoolset-3/root/usr/libexec/gcc/x86_64-redhat-linux/4.9.2/ld: warning: libssl.so.1.0.0, needed by /opt/conda/envs/test-dvid/lib/librdkafka.so, not found (try using -rpath or -rpath-link)
+    #   /opt/rh/devtoolset-3/root/usr/libexec/gcc/x86_64-redhat-linux/4.9.2/ld: warning: liblz4.so.1, needed by /opt/conda/envs/test-dvid/lib/librdkafka.so, not found (try using -rpath or -rpath-link)
+    #   /opt/rh/devtoolset-3/root/usr/libexec/gcc/x86_64-redhat-linux/4.9.2/ld: warning: libcrypto.so.1.0.0, needed by /opt/conda/envs/test-dvid/lib/librdkafka.so, not found (try using -rpath or -rpath-link)
+    #   /opt/conda/envs/test-dvid/lib/librdkafka.so: undefined reference to `SHA256'
+    #   /opt/conda/envs/test-dvid/lib/librdkafka.so: undefined reference to `SSL_get_error'
+    #   /opt/conda/envs/test-dvid/lib/librdkafka.so: undefined reference to `PKCS12_free'
+    #   ...
+
+    # So simply define LD_LIBRARY_PATH first.
+    LD_LIBRARY_PATH=${CONDA_PREFIX}/lib go get github.com/confluentinc/confluent-kafka-go/kafka
+else
+    go get github.com/confluentinc/confluent-kafka-go/kafka
+fi
 
 # freecache
 go get github.com/coocood/freecache
