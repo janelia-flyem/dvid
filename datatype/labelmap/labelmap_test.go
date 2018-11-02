@@ -22,7 +22,6 @@ import (
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
-
 	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
 
@@ -950,6 +949,11 @@ func TestLabelarrayRepoPersistence(t *testing.T) {
 	config.Set("CountLabels", "false")
 	config.Set("MaxDownresLevel", "5")
 	dataservice, err := datastore.NewData(uuid, labelsT, "mylabels", config)
+	if err == nil {
+		t.Fatalf("expected error with bad block size but didn't get it")
+	}
+	config.Set("BlockSize", "64,32,16")
+	dataservice, err = datastore.NewData(uuid, labelsT, "mylabels", config)
 	if err != nil {
 		t.Errorf("Unable to create labels instance: %v\n", err)
 	}

@@ -70,7 +70,7 @@ $ dvid repo <UUID> new labelmap <data name> <settings...>
 
     Configuration Settings (case-insensitive keys)
 
-    BlockSize       Size in pixels  (default: %s)
+    BlockSize       Size in voxels  (default: %s) Should be multiples of 16.
     VoxelSize       Resolution of voxels (default: 8.0, 8.0, 8.0)
     VoxelUnits      Resolution units (default: "nanometers")
 	IndexedLabels   "false" if no sparse volume support is required (default "true")
@@ -158,7 +158,7 @@ HTTP API (Level 2 REST):
 	REQUIRED "dataname"         Name of the new instance
 	OPTIONAL "versioned"        If "false" or "0", the data is unversioned and acts as if 
 	                             all UUIDs within a repo become the root repo UUID.  (True by default.)
-    OPTIONAL "BlockSize"        Size in pixels  (default: 64,64,64)
+    OPTIONAL "BlockSize"        Size in pixels  (default: 64,64,64 and should be multiples of 16)
     OPTIONAL "VoxelSize"        Resolution of voxels (default: 8.0,8.0,8.0)
     OPTIONAL "VoxelUnits"       Resolution units (default: "nanometers")
 	OPTIONAL "IndexedLabels"    "false" if no sparse volume support is required (default "true")
@@ -1474,7 +1474,17 @@ func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSp
 
 // NewData returns a pointer to labelmap data.
 func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
-	if _, found := c.Get("BlockSize"); !found {
+	blockSizeStr, found, err := c.GetString("BlockSize")
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		var nx, ny, nz int
+		fmt.Sscanf(blockSizeStr, "%d,%d,%d", &nx, &ny, &nz)
+		if nx%16 != 0 || ny%16 != 0 || nz%16 != 0 {
+			return nil, fmt.Errorf("BlockSize must be multiples of 16")
+		}
+	} else {
 		c.Set("BlockSize", fmt.Sprintf("%d,%d,%d", DefaultBlockSize, DefaultBlockSize, DefaultBlockSize))
 	}
 	if _, found := c.Get("Compression"); !found {
