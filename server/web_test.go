@@ -63,6 +63,44 @@ func TestReload(t *testing.T) {
 	}
 }
 
+func TestHTTPCreate(t *testing.T) {
+	if err := OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer CloseTest()
+
+	jsonStr := `{"alias": "myrepo", "description": "test repo", "root": "28841c8277e044a7b187dda03e18da13"}`
+	payload := bytes.NewBufferString(jsonStr)
+	apiStr := fmt.Sprintf("%srepos", WebAPIPath)
+	TestHTTP(t, "POST", apiStr, payload)
+
+	// Verify it was saved.
+	apiStr += "/info"
+	r := TestHTTP(t, "GET", apiStr, nil)
+	jsonResp := make(map[string]map[string]interface{})
+	if err := json.Unmarshal(r, &jsonResp); err != nil {
+		t.Fatalf("Unable to unmarshal repos/info response: %s\n", string(r))
+	}
+	if len(jsonResp) != 1 {
+		t.Errorf("Bad repos/infoote return: %s\n", string(r))
+	}
+	repoData, ok := jsonResp["28841c8277e044a7b187dda03e18da13"]
+	if !ok {
+		t.Fatalf("Expected root repo info, got: %s\n", string(r))
+	}
+	rootI, ok := repoData["Root"]
+	if !ok {
+		t.Fatalf("Expected repo info, got: %v\n", repoData)
+	}
+	uuidStr, ok := rootI.(string)
+	if !ok {
+		t.Fatalf("can't interpret root info (%v) as string\n", rootI)
+	}
+	if uuidStr != "28841c8277e044a7b187dda03e18da13" {
+		t.Fatalf("Got bad root: %s\n", uuidStr)
+	}
+}
+
 func TestNote(t *testing.T) {
 	if err := OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)

@@ -181,8 +181,9 @@ Repo-Level REST endpoints
  POST /api/repos
 
 	Creates a new repository.  Expects configuration data in JSON as the body of the POST.
-	Configuration is a JSON object with optional "alias", "description", and "passcode"
-	properties.  Returns the root UUID of the newly created repo in JSON object: {"root": uuid}
+	Configuration is a JSON object with optional "alias", "description", "root" (the desired
+	UUID of the root), and "passcode" properties. Returns the root UUID of the newly created 
+	repo in JSON object: {"root": uuid}
 
  GET  /api/repos/info
 
@@ -1318,8 +1319,19 @@ func reposPostHandler(w http.ResponseWriter, r *http.Request) {
 	if !found {
 		passcode = ""
 	}
+	assignStr, found, err := config.GetString("root")
+	if err != nil {
+		BadRequest(w, r, "POST on repos endpoint with error on getting 'root': %v", err)
+		return
+	}
+	var assign dvid.UUID
+	var assignPtr *dvid.UUID
+	if found {
+		assign = dvid.UUID(assignStr)
+		assignPtr = &assign
+	}
 
-	root, err := datastore.NewRepo(alias, description, nil, passcode)
+	root, err := datastore.NewRepo(alias, description, assignPtr, passcode)
 	if err != nil {
 		BadRequest(w, r, err)
 		return
