@@ -1462,8 +1462,9 @@ func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, batch storage.Bat
 	return nil
 }
 
-// returns label elements for block elements, using specialized point requests if available (e.g., labelmap sync)
-func (d *Data) getLabelElements(v dvid.VersionID, blockElems map[dvid.IZYXString]Elements) (labelElems LabelElements, err error) {
+// returns label elements with relationships for block elements, using
+// specialized point requests if available (e.g., labelmap sync)
+func (d *Data) getLabelElements(v dvid.VersionID, elems Elements) (labelElems LabelElements, err error) {
 	labelData := d.getSyncedLabels()
 	if labelData == nil {
 		dvid.Errorf("No synced labels for annotation %q, skipping label-aware denormalization\n", d.DataName())
@@ -1472,26 +1473,18 @@ func (d *Data) getLabelElements(v dvid.VersionID, blockElems map[dvid.IZYXString
 	labelPointData, ok := labelData.(labelPointType)
 	labelElems = LabelElements{}
 	if ok {
+		pts := make([]dvid.Point3d, len(elems))
+		for i, elem := range elems {
+			pts[i] = elem.Pos
+		}
 		var labels []uint64
-		for _, elems := range blockElems {
-			if len(elems) == 0 {
-				continue
-			}
-			pts := make([]dvid.Point3d, len(elems))
-			for i, elem := range elems {
-				pts[i] = elem.Pos
-			}
-			labels, err = labelPointData.GetLabelPoints(v, pts, 0, false)
-			if err != nil {
-				return
-			}
-			if len(labels) == 0 {
-				continue
-			}
-			for i, elem := range elems {
-				if labels[i] != 0 {
-					labelElems.add(labels[i], elem.ElementNR)
-				}
+		labels, err = labelPointData.GetLabelPoints(v, pts, 0, false)
+		if err != nil {
+			return
+		}
+		for i, elem := range elems {
+			if labels[i] != 0 {
+				labelElems.add(labels[i], elem.ElementNR)
 			}
 		}
 	} else {
@@ -1500,6 +1493,13 @@ func (d *Data) getLabelElements(v dvid.VersionID, blockElems map[dvid.IZYXString
 		bY := blockSize[1] * bX
 		blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * 8)
 
+		blockElems := make(map[dvid.IZYXString]Elements)
+		for _, elem := range elems {
+			izyxStr := elem.Pos.ToBlockIZYXString(blockSize)
+			be := blockElems[izyxStr]
+			be = append(be, elem)
+			blockElems[izyxStr] = be
+		}
 		for izyxStr, elems := range blockElems {
 			var bcoord dvid.ChunkPoint3d
 			bcoord, err = izyxStr.ToChunkPoint3d()
@@ -1533,8 +1533,9 @@ func (d *Data) getLabelElements(v dvid.VersionID, blockElems map[dvid.IZYXString
 	return
 }
 
-// returns label elements for block elements, using specialized point requests if available (e.g., labelmap sync)
-func (d *Data) getLabelElementsNR(v dvid.VersionID, blockElems map[dvid.IZYXString]ElementsNR) (labelElems LabelElements, err error) {
+// returns label elements without relationships for block elements, using
+// specialized point requests if available (e.g., labelmap sync)
+func (d *Data) getLabelElementsNR(v dvid.VersionID, elems ElementsNR) (labelElems LabelElements, err error) {
 	labelData := d.getSyncedLabels()
 	if labelData == nil {
 		dvid.Errorf("No synced labels for annotation %q, skipping label-aware denormalization\n", d.DataName())
@@ -1543,26 +1544,18 @@ func (d *Data) getLabelElementsNR(v dvid.VersionID, blockElems map[dvid.IZYXStri
 	labelPointData, ok := labelData.(labelPointType)
 	labelElems = LabelElements{}
 	if ok {
+		pts := make([]dvid.Point3d, len(elems))
+		for i, elem := range elems {
+			pts[i] = elem.Pos
+		}
 		var labels []uint64
-		for _, elems := range blockElems {
-			if len(elems) == 0 {
-				continue
-			}
-			pts := make([]dvid.Point3d, len(elems))
-			for i, elem := range elems {
-				pts[i] = elem.Pos
-			}
-			labels, err = labelPointData.GetLabelPoints(v, pts, 0, false)
-			if err != nil {
-				return
-			}
-			if len(labels) == 0 {
-				continue
-			}
-			for i, elem := range elems {
-				if labels[i] != 0 {
-					labelElems.add(labels[i], elem)
-				}
+		labels, err = labelPointData.GetLabelPoints(v, pts, 0, false)
+		if err != nil {
+			return
+		}
+		for i, elem := range elems {
+			if labels[i] != 0 {
+				labelElems.add(labels[i], elem)
 			}
 		}
 	} else {
@@ -1571,6 +1564,13 @@ func (d *Data) getLabelElementsNR(v dvid.VersionID, blockElems map[dvid.IZYXStri
 		bY := blockSize[1] * bX
 		blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * 8)
 
+		blockElems := make(map[dvid.IZYXString]ElementsNR)
+		for _, elem := range elems {
+			izyxStr := elem.Pos.ToBlockIZYXString(blockSize)
+			be := blockElems[izyxStr]
+			be = append(be, elem)
+			blockElems[izyxStr] = be
+		}
 		for izyxStr, elems := range blockElems {
 			var bcoord dvid.ChunkPoint3d
 			bcoord, err = izyxStr.ToChunkPoint3d()
@@ -1606,10 +1606,7 @@ func (d *Data) getLabelElementsNR(v dvid.VersionID, blockElems map[dvid.IZYXStri
 
 // lookup labels for given elements and add them to label element map
 func (d *Data) addLabelElements(v dvid.VersionID, labelE LabelElements, bcoord dvid.ChunkPoint3d, elems Elements) (int, error) {
-	blockElems := map[dvid.IZYXString]Elements{
-		bcoord.ToIZYXString(): elems,
-	}
-	le, err := d.getLabelElements(v, blockElems)
+	le, err := d.getLabelElements(v, elems)
 	if err != nil {
 		return 0, err
 	}
@@ -1631,8 +1628,8 @@ func (d *Data) addLabelElements(v dvid.VersionID, labelE LabelElements, bcoord d
 
 // stores synaptic elements arranged by label, replacing any
 // elements at same position.
-func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Batch, blockElems map[dvid.IZYXString]Elements) error {
-	toAdd, err := d.getLabelElements(ctx.VersionID(), blockElems)
+func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Batch, elems Elements) error {
+	toAdd, err := d.getLabelElements(ctx.VersionID(), elems)
 	if err != nil {
 		return err
 	}
@@ -2028,7 +2025,7 @@ func (d *Data) StoreElements(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff 
 	}
 
 	// Store new elements among label denormalizations
-	if err := d.storeLabelElements(ctx, batch, addToBlock); err != nil {
+	if err := d.storeLabelElements(ctx, batch, elems); err != nil {
 		return err
 	}
 
@@ -2237,7 +2234,7 @@ func (d *Data) storeTags(batcher storage.KeyValueBatcher, ctx *datastore.Version
 	return nil
 }
 
-func (d *Data) storeLabels(batcher storage.KeyValueBatcher, ctx *datastore.VersionedCtx, blockE map[dvid.IZYXString]Elements) error {
+func (d *Data) storeLabels(batcher storage.KeyValueBatcher, ctx *datastore.VersionedCtx, blockE Elements) error {
 	batch := batcher.NewBatch(ctx)
 	if err := d.storeLabelElements(ctx, batch, blockE); err != nil {
 		return err
@@ -2436,7 +2433,7 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 	var numBlocks, numBlockE, numTagE int
 	var totMoved, totBlockE, totTagE int
 
-	blockE := make(map[dvid.IZYXString]Elements)
+	var blockE Elements
 	tagE := make(map[Tag]Elements)
 
 	minTKey := storage.MinTKey(keyBlock)
@@ -2500,7 +2497,7 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 			elems = fixed
 			totMoved += len(deleteElems)
 		}
-		blockE[chunkPt.ToIZYXString()] = elems
+		blockE = append(blockE, elems...)
 		numBlockE += len(elems)
 
 		if numTagE > 1000 {
@@ -2517,7 +2514,7 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 			}
 			totBlockE += numBlockE
 			numBlockE = 0
-			blockE = make(map[dvid.IZYXString]Elements)
+			blockE = Elements{}
 			timedLog.Infof("Loaded %d blocks of annotations (%d elements), moved %d", numBlocks, totBlockE, totMoved)
 		}
 

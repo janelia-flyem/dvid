@@ -4549,6 +4549,7 @@ func (d *Data) GetLabelPoints(v dvid.VersionID, pts []dvid.Point3d, scale uint8,
 	if len(pts) == 0 {
 		return
 	}
+	timedLog := dvid.NewTimeLog()
 	var mapping *SVMap
 	if !supervoxels {
 		if mapping, err = getMapping(d, v); err != nil {
@@ -4602,7 +4603,7 @@ func (d *Data) GetLabelPoints(v dvid.VersionID, pts []dvid.Point3d, scale uint8,
 		}
 	}
 	if len(blockPts) > 10 {
-		dvid.Infof("Larger query for labels at %d points -> %d blocks examined\n", len(pts), len(blockPts))
+		timedLog.Infof("Larger query for labels at %d points -> %d blocks examined", len(pts), len(blockPts))
 	}
 	return
 }

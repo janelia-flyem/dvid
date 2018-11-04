@@ -618,8 +618,8 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 
 // group the given elements into labels based on associated label data.  This can be used on all of a
 // current label's elements after a cleave since the RLEs are not known.
-func (d *Data) cleaveElements(v dvid.VersionID, target uint64, blockElems map[dvid.IZYXString]ElementsNR) (labelElems LabelElements, delta DeltaModifyElements, err error) {
-	labelElems, err = d.getLabelElementsNR(v, blockElems)
+func (d *Data) cleaveElements(v dvid.VersionID, target uint64, targetElems ElementsNR) (labelElems LabelElements, delta DeltaModifyElements, err error) {
+	labelElems, err = d.getLabelElementsNR(v, targetElems)
 	if err != nil {
 		return
 	}
@@ -642,12 +642,12 @@ func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, o
 	defer d.StopUpdate()
 
 	ctx := datastore.NewVersionedCtx(d, v)
-	oldTk := NewLabelTKey(op.Target)
-	blockElems, err := getBlockElementsNR(ctx, oldTk, d.blockSize())
+	targetTk := NewLabelTKey(op.Target)
+	targetElems, err := getElementsNR(ctx, targetTk)
 	if err != nil {
 		return err
 	}
-	labelElements, delta, err := d.cleaveElements(v, op.Target, blockElems)
+	labelElements, delta, err := d.cleaveElements(v, op.Target, targetElems)
 	if err != nil {
 		return err
 	}
