@@ -2539,7 +2539,9 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 	timedLog.Infof("Completed asynchronous annotation %q reload of %d block and %d tag elements.", d.DataName(), totBlockE, totTagE)
 }
 
-func (d *Data) ReloadData(ctx *datastore.VersionedCtx, inMemory bool) {
+// RecreateDenormalizations will recreate label and tag denormalizations from
+// the block-based elements.
+func (d *Data) RecreateDenormalizations(ctx *datastore.VersionedCtx, inMemory bool) {
 	if inMemory {
 		go d.resyncInMemory(ctx)
 	} else {
@@ -2909,7 +2911,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Only POST action is available on 'reload' endpoint.")
 			return
 		}
-		d.ReloadData(ctx, inMemory)
+		d.RecreateDenormalizations(ctx, inMemory)
 
 	default:
 		server.BadAPIRequest(w, r, d)

@@ -346,9 +346,9 @@ Node-Level REST endpoints
 	}
 
 
- GET /api/node/{uuid}/commit
+ GET /api/node/{uuid}/status
 
-	Returns the commit or lock state of the node with given UUID in JSON format:
+	Returns the commit or lock status of the node with given UUID in JSON format:
 
 	{ "Locked": true }
 
@@ -658,6 +658,7 @@ func initRoutes() {
 	nodeMux.Get("/api/node/:uuid/log", getNodeLogHandler)
 	nodeMux.Post("/api/node/:uuid/log", postNodeLogHandler)
 	nodeMux.Get("/api/node/:uuid/commit", repoCommitStateHandler)
+	nodeMux.Get("/api/node/:uuid/status", repoCommitStateHandler)
 	nodeMux.Post("/api/node/:uuid/commit", repoCommitHandler)
 	nodeMux.Post("/api/node/:uuid/branch", repoBranchHandler)
 	nodeMux.Post("/api/node/:uuid/newversion", repoNewVersionHandler)
