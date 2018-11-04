@@ -508,6 +508,39 @@ func (t Tags) Swap(i, j int) {
 	t[i], t[j] = t[j], t[i]
 }
 
+// Changes returns tags removed or added from the receiver.
+func (t Tags) Changes(t2 Tags) (removed, added Tags) {
+	if len(t) == 0 {
+		added = make(Tags, len(t2))
+		copy(added, t2)
+		return
+	}
+	if len(t2) == 0 {
+		removed = make(Tags, len(t))
+		copy(removed, t)
+		return
+	}
+	curTags := make(map[Tag]struct{}, len(t))
+	newTags := make(map[Tag]struct{}, len(t2))
+	for _, tag := range t {
+		curTags[tag] = struct{}{}
+	}
+	for _, tag := range t2 {
+		newTags[tag] = struct{}{}
+	}
+	for _, tag := range t2 {
+		if _, found := curTags[tag]; !found {
+			added = append(added, tag)
+		}
+	}
+	for _, tag := range t {
+		if _, found := newTags[tag]; !found {
+			removed = append(removed, tag)
+		}
+	}
+	return
+}
+
 // ElementNR describes a synaptic element's properties with No Relationships (NR),
 // used for label and tag annotations while block-indexed annotations include the
 // relationships.
@@ -929,6 +962,62 @@ func getElementsInRLE(ctx *datastore.VersionedCtx, brles dvid.BlockRLEs) (Elemen
 		}
 	}
 	return rleElems, nil
+}
+
+type tagDeltaT struct {
+	add   ElementsNR          // elements to add or modify
+	erase map[string]struct{} // points to erase
+}
+
+func addTagDelta(newBlockE, curBlockE Elements, tagDelta map[Tag]tagDeltaT) {
+	if len(newBlockE) == 0 {
+		return
+	}
+	elemsByPoint := make(map[string]ElementNR, len(newBlockE))
+	for _, newElem := range newBlockE {
+		zyx := string(newElem.Pos.ToZYXBytes())
+		elemsByPoint[zyx] = newElem.ElementNR
+	}
+	for _, curElem := range curBlockE {
+		zyx := string(curElem.Pos.ToZYXBytes())
+		newElem, found := elemsByPoint[zyx]
+		if !found {
+			continue
+		}
+		removed, added := curElem.Tags.Changes(newElem.Tags)
+		for _, tag := range removed {
+			td, found := tagDelta[tag]
+			if found {
+				td.erase[zyx] = struct{}{}
+			} else {
+				td.erase = map[string]struct{}{
+					zyx: struct{}{},
+				}
+			}
+			tagDelta[tag] = td
+		}
+		for _, tag := range added {
+			td, found := tagDelta[tag]
+			if found {
+				td.add = append(td.add, newElem)
+			} else {
+				td.add = ElementsNR{newElem}
+			}
+			tagDelta[tag] = td
+		}
+		delete(elemsByPoint, zyx)
+	}
+	for _, newElem := range elemsByPoint {
+		for _, tag := range newElem.Tags {
+			td, found := tagDelta[tag]
+			if found {
+				td.add = append(td.add, newElem)
+			} else {
+				td.add = ElementsNR{newElem}
+			}
+			tagDelta[tag] = td
+		}
+	}
 }
 
 // Properties are additional properties for data beyond those in standard datastore.Data.
@@ -1604,6 +1693,50 @@ func (d *Data) storeTagElements(ctx *datastore.VersionedCtx, batch storage.Batch
 	return nil
 }
 
+func (d *Data) modifyTagElements(ctx *datastore.VersionedCtx, batch storage.Batch, tagDelta map[Tag]tagDeltaT) error {
+	for tag, td := range tagDelta {
+		tk, err := NewTagTKey(tag)
+		if err != nil {
+			return err
+		}
+		tagElems, err := getElementsNR(ctx, tk)
+		if err != nil {
+			return err
+		}
+		if len(td.add) != 0 {
+			if tagElems != nil {
+				tagElems.add(td.add)
+			} else {
+				tagElems = make(ElementsNR, len(td.add))
+				copy(tagElems, td.add)
+			}
+		}
+		// Note all elements to be deleted.
+		var toDel []int
+		for i, elem := range tagElems {
+			zyx := string(elem.Pos.ToZYXBytes())
+			if _, found := td.erase[zyx]; found {
+				toDel = append(toDel, i)
+			}
+		}
+		if len(toDel) != 0 {
+			// Delete them from high index to low index due while reusing slice.
+			for i := len(toDel) - 1; i >= 0; i-- {
+				d := toDel[i]
+				tagElems[d] = tagElems[len(tagElems)-1]
+				tagElems[len(tagElems)-1] = ElementNR{}
+				tagElems = tagElems[:len(tagElems)-1]
+			}
+		}
+
+		// Save the tag.
+		if err := putBatchElements(batch, tk, tagElems); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ProcessLabelAnnotations will pass all annotations, label by label, to the given function.
 func (d *Data) ProcessLabelAnnotations(v dvid.VersionID, f func(label uint64, elems ElementsNR)) error {
 	minTKey := storage.MinTKey(keyLabel)
@@ -1850,28 +1983,32 @@ func (d *Data) StoreElements(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff 
 	dvid.Infof("%d synaptic elements received via POST\n", len(elems))
 
 	blockSize := d.blockSize()
-	blockE := make(map[dvid.IZYXString]Elements)
-	tagE := make(map[Tag]Elements)
+	addToBlock := make(map[dvid.IZYXString]Elements)
+	tagDelta := make(map[Tag]tagDeltaT)
 
-	// Iterate through elements, organizing them into blocks and tags.
-	// Note: we do not check for redundancy and guarantee uniqueness at this stage.
+	// Organize added elements into blocks
 	for _, elem := range elems {
 		// Get block coord for this element.
 		izyxStr := elem.Pos.ToBlockIZYXString(blockSize)
 
 		// Append to block
-		be := blockE[izyxStr]
+		be := addToBlock[izyxStr]
 		be = append(be, elem)
-		blockE[izyxStr] = be
+		addToBlock[izyxStr] = be
+	}
 
-		// Append to tags if present
-		if len(elem.Tags) > 0 {
-			for _, tag := range elem.Tags {
-				te := tagE[tag]
-				te = append(te, elem)
-				tagE[tag] = te
-			}
+	// Find current elements under the blocks.
+	for izyxStr, elems := range addToBlock {
+		bcoord, err := izyxStr.ToChunkPoint3d()
+		if err != nil {
+			return err
 		}
+		tk := NewBlockTKey(bcoord)
+		curBlockE, err := getElements(ctx, tk)
+		if err != nil {
+			return err
+		}
+		addTagDelta(elems, curBlockE, tagDelta)
 	}
 
 	// Do modifications under a batch.
@@ -1881,22 +2018,22 @@ func (d *Data) StoreElements(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff 
 	}
 	batcher, ok := store.(storage.KeyValueBatcher)
 	if !ok {
-		return fmt.Errorf("Data type annotation requires batch-enabled store, which %q is not\n", store)
+		return fmt.Errorf("data type annotation requires batch-enabled store, which %q is not", store)
 	}
 	batch := batcher.NewBatch(ctx)
 
 	// Store the new block elements
-	if err := d.storeBlockElements(ctx, batch, blockE); err != nil {
+	if err := d.storeBlockElements(ctx, batch, addToBlock); err != nil {
 		return err
 	}
 
 	// Store new elements among label denormalizations
-	if err := d.storeLabelElements(ctx, batch, blockE); err != nil {
+	if err := d.storeLabelElements(ctx, batch, addToBlock); err != nil {
 		return err
 	}
 
 	// Store the new tag elements
-	if err := d.storeTagElements(ctx, batch, tagE); err != nil {
+	if err := d.modifyTagElements(ctx, batch, tagDelta); err != nil {
 		return err
 	}
 

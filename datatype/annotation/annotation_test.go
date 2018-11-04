@@ -621,6 +621,7 @@ func testResponse(t *testing.T, expected Elements, template string, args ...inte
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(expected.Normalize(), got.Normalize()) {
+		_, fn, line, _ := runtime.Caller(1)
 		var expectedStr, gotStr string
 		if jsonBytes, err := json.Marshal(expected.Normalize()); err != nil {
 			t.Fatalf("error converting expected to JSON: %v\n", err)
@@ -632,7 +633,7 @@ func testResponse(t *testing.T, expected Elements, template string, args ...inte
 		} else {
 			gotStr = string(jsonBytes)
 		}
-		t.Fatalf("Expected for %s:\n%s\nGot:\n%s\n", url, expectedStr, gotStr)
+		t.Fatalf("Expected for %s [%s:%d]:\n%s\nGot:\n%v\n", url, fn, line, expectedStr, gotStr)
 	}
 }
 
@@ -884,6 +885,43 @@ func TestTagRequests(t *testing.T) {
 		},
 	}
 	testResponse(t, expected, "%snode/%s/%s/tag/Synapse1?relationships=true", server.WebAPIPath, uuid, data.DataName())
+
+	// post the same annotation but without a tag to see if we've removed the tag
+	mod1 := Elements{
+		{
+			ElementNR{
+				Pos:  dvid.Point3d{33, 30, 31},
+				Kind: PostSyn,
+			},
+			[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+		},
+	}
+	testJSON, err = json.Marshal(mod1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.TestHTTP(t, "POST", url1, strings.NewReader(string(testJSON)))
+	expected = Elements{}
+	testResponse(t, expected, "%snode/%s/%s/tag/%s?relationships=true", server.WebAPIPath, uuid, data.DataName(), tag)
+
+	// post the same annotation but with a tag to see if it's added to the tag
+	mod2 := Elements{
+		{
+			ElementNR{
+				Pos:  dvid.Point3d{33, 30, 31},
+				Kind: PostSyn,
+				Tags: []Tag{"foobar", "foobaz"},
+			},
+			[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+		},
+	}
+	testJSON, err = json.Marshal(mod2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.TestHTTP(t, "POST", url1, strings.NewReader(string(testJSON)))
+	testResponse(t, mod2, "%snode/%s/%s/tag/foobaz?relationships=true", server.WebAPIPath, uuid, data.DataName())
+	testResponse(t, mod2, "%snode/%s/%s/tag/foobar?relationships=true", server.WebAPIPath, uuid, data.DataName())
 }
 
 func getBytesRLE(t *testing.T, rles dvid.RLEs) *bytes.Buffer {

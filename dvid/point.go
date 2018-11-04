@@ -739,6 +739,28 @@ func (p Point3d) ToBlockIZYXString(size Point3d) IZYXString {
 	return idx.ToIZYXString()
 }
 
+// ToZYXBytes returns the point in a byte slice format suitable for
+// use as a map index, etc.
+func (p Point3d) ToZYXBytes() []byte {
+	buf := make([]byte, 12)
+	binary.BigEndian.PutUint32(buf[0:4], uint32(int64(p[2])-math.MinInt32))
+	binary.BigEndian.PutUint32(buf[4:8], uint32(int64(p[1])-math.MinInt32))
+	binary.BigEndian.PutUint32(buf[8:12], uint32(int64(p[0])-math.MinInt32))
+	return buf
+}
+
+// FromZYXBytes sets a point from an encoded slice.
+func (p *Point3d) FromZYXBytes(zyx []byte) error {
+	if len(zyx) != 12 {
+		return fmt.Errorf("Illegal byte length (%d) for ZYXString", len(zyx))
+	}
+	z := int32(int64(binary.BigEndian.Uint32(zyx[0:4])) + math.MinInt32)
+	y := int32(int64(binary.BigEndian.Uint32(zyx[4:8])) + math.MinInt32)
+	x := int32(int64(binary.BigEndian.Uint32(zyx[8:12])) + math.MinInt32)
+	*p = Point3d{x, y, z}
+	return nil
+}
+
 // ChunkIndexer returns an chunk indexer from a 3d point.
 func (p Point3d) ChunkIndexer(size Point3d) ChunkIndexer {
 	// Get the chunk coord.

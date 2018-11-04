@@ -11,7 +11,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"hash/fnv"
-	"math"
 	"sync"
 )
 
@@ -297,23 +296,17 @@ func (i *IndexZYX) Scheme() string {
 // integer space as consecutive in binary representation so we use
 // bigendian and convert signed integer space to unsigned integer space.
 func (i *IndexZYX) Bytes() []byte {
-	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.BigEndian, uint32(int64((*i)[2])-math.MinInt32))
-	binary.Write(buf, binary.BigEndian, uint32(int64((*i)[1])-math.MinInt32))
-	binary.Write(buf, binary.BigEndian, uint32(int64((*i)[0])-math.MinInt32))
-	return buf.Bytes()
+	return Point3d(*i).ToZYXBytes()
 }
 
 // IndexFromBytes returns an index from key bytes.  The passed Index is used just
 // to choose the appropriate byte decoding scheme.
 func (i *IndexZYX) IndexFromBytes(b []byte) error {
-	if len(b) != 12 {
-		return fmt.Errorf("Illegal byte length (%d) for IndexZYX", len(b))
+	var p Point3d
+	if err := p.FromZYXBytes(b); err != nil {
+		return err
 	}
-	z := int32(int64(binary.BigEndian.Uint32(b[0:4])) + math.MinInt32)
-	y := int32(int64(binary.BigEndian.Uint32(b[4:8])) + math.MinInt32)
-	x := int32(int64(binary.BigEndian.Uint32(b[8:12])) + math.MinInt32)
-	*i = IndexZYX{x, y, z}
+	*i = IndexZYX{p[0], p[1], p[2]}
 	return nil
 }
 
