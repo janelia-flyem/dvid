@@ -375,7 +375,7 @@ GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?qu
 POST <api URL>/node/<UUID>/<data name>/raw/0_1_2/<size>/<offset>[?queryopts]
 
     Puts block-aligned voxel data using the block sizes defined for  this data instance.  
-    For example, if the BlockSize = 32, offset and size must by multiples of 32.
+    For example, if the BlockSize = 32, offset and size must be multiples of 32.
 
     Example: 
 
