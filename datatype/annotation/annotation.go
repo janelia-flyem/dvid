@@ -541,6 +541,29 @@ func (t Tags) Changes(t2 Tags) (removed, added Tags) {
 	return
 }
 
+// Removed returns tags removed from the receiver.
+func (t Tags) Removed(t2 Tags) Tags {
+	if len(t) == 0 {
+		return Tags{}
+	}
+	if len(t2) == 0 {
+		removed := make(Tags, len(t))
+		copy(removed, t)
+		return removed
+	}
+	newTags := make(map[Tag]struct{}, len(t2))
+	for _, tag := range t2 {
+		newTags[tag] = struct{}{}
+	}
+	var removed Tags
+	for _, tag := range t {
+		if _, found := newTags[tag]; !found {
+			removed = append(removed, tag)
+		}
+	}
+	return removed
+}
+
 // ElementNR describes a synaptic element's properties with No Relationships (NR),
 // used for label and tag annotations while block-indexed annotations include the
 // relationships.
@@ -977,6 +1000,16 @@ func addTagDelta(newBlockE, curBlockE Elements, tagDelta map[Tag]tagDeltaT) {
 	for _, newElem := range newBlockE {
 		zyx := string(newElem.Pos.ToZYXBytes())
 		elemsByPoint[zyx] = newElem.ElementNR
+		// add every new point -- could check to see if exactly same but costs computation
+		for _, tag := range newElem.Tags {
+			td, found := tagDelta[tag]
+			if found {
+				td.add = append(td.add, newElem.ElementNR)
+			} else {
+				td.add = ElementsNR{newElem.ElementNR}
+			}
+			tagDelta[tag] = td
+		}
 	}
 	for _, curElem := range curBlockE {
 		zyx := string(curElem.Pos.ToZYXBytes())
@@ -984,7 +1017,7 @@ func addTagDelta(newBlockE, curBlockE Elements, tagDelta map[Tag]tagDeltaT) {
 		if !found {
 			continue
 		}
-		removed, added := curElem.Tags.Changes(newElem.Tags)
+		removed := curElem.Tags.Removed(newElem.Tags)
 		for _, tag := range removed {
 			td, found := tagDelta[tag]
 			if found {
@@ -996,27 +1029,7 @@ func addTagDelta(newBlockE, curBlockE Elements, tagDelta map[Tag]tagDeltaT) {
 			}
 			tagDelta[tag] = td
 		}
-		for _, tag := range added {
-			td, found := tagDelta[tag]
-			if found {
-				td.add = append(td.add, newElem)
-			} else {
-				td.add = ElementsNR{newElem}
-			}
-			tagDelta[tag] = td
-		}
 		delete(elemsByPoint, zyx)
-	}
-	for _, newElem := range elemsByPoint {
-		for _, tag := range newElem.Tags {
-			td, found := tagDelta[tag]
-			if found {
-				td.add = append(td.add, newElem)
-			} else {
-				td.add = ElementsNR{newElem}
-			}
-			tagDelta[tag] = td
-		}
 	}
 }
 
