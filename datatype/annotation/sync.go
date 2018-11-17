@@ -647,6 +647,9 @@ func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, o
 	if err != nil {
 		return err
 	}
+	if len(targetElems) == 0 {
+		return nil
+	}
 	labelElements, delta, err := d.cleaveElements(v, op.Target, targetElems)
 	if err != nil {
 		return err
