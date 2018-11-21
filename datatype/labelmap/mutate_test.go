@@ -2322,7 +2322,7 @@ func TestMultiscaleMergeCleave(t *testing.T) {
 			t.Errorf("problem decoding response (%s): %v\n", string(labelResp), err)
 		}
 		if labelJSON.Label != label {
-			t.Errorf("bad response to label query on (%d, %d, %d): %s\n", pt[0], pt[1], pt[2], string(labelResp))
+			t.Errorf("expected label %d to query on (%d, %d, %d): %s\n", label, pt[0], pt[1], pt[2], string(labelResp))
 		}
 		sentLabels = append(sentLabels, label)
 		strarray[i] = fmt.Sprintf("%d", label)

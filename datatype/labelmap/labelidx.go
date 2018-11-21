@@ -71,6 +71,7 @@ func (k indexKey) VersionedCtx() *datastore.VersionedCtx {
 
 // returns nil if no Meta is found.
 func getLabelIndex(ctx *datastore.VersionedCtx, label uint64) (*labels.Index, error) {
+	timedLog := dvid.NewTimeLog()
 	store, err := datastore.GetKeyValueDB(ctx.Data())
 	if err != nil {
 		return nil, err
@@ -80,6 +81,7 @@ func getLabelIndex(ctx *datastore.VersionedCtx, label uint64) (*labels.Index, er
 		return nil, err
 	}
 	if len(compressed) == 0 {
+		timedLog.Infof("retrieved empty index for label %d", label)
 		return nil, nil
 	}
 	val, _, err := dvid.DeserializeData(compressed, true)
@@ -94,10 +96,12 @@ func getLabelIndex(ctx *datastore.VersionedCtx, label uint64) (*labels.Index, er
 	if idx.Label == 0 {
 		idx.Label = label
 	}
+	timedLog.Infof("retrieved label %d index with %d blocks", label, len(idx.Blocks))
 	return idx, nil
 }
 
 func putLabelIndex(ctx *datastore.VersionedCtx, idx *labels.Index) error {
+	timedLog := dvid.NewTimeLog()
 	store, err := datastore.GetOrderedKeyValueDB(ctx.Data())
 	if err != nil {
 		return fmt.Errorf("data %q PutLabelMeta had error initializing store: %v", ctx.Data().DataName(), err)
@@ -116,6 +120,7 @@ func putLabelIndex(ctx *datastore.VersionedCtx, idx *labels.Index) error {
 	if err := store.Put(ctx, tk, compressed); err != nil {
 		return fmt.Errorf("unable to store indices for label %d, data %s: %v", idx.Label, ctx.Data().DataName(), err)
 	}
+	timedLog.Infof("stored label %d index with %d blocks", idx.Label, len(idx.Blocks))
 	return nil
 }
 

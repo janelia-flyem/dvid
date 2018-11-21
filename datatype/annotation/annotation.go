@@ -1101,7 +1101,8 @@ type labelType interface {
 }
 
 type labelPointType interface {
-	GetLabelPoints(dvid.VersionID, []dvid.Point3d, uint8, bool) ([]uint64, error)
+	GetLabelPoints(v dvid.VersionID, pts []dvid.Point3d, scale uint8, supervoxels bool) ([]uint64, error)
+	GetLabelPointsInSupervoxels(v dvid.VersionID, pts []dvid.Point3d, supervoxels []uint64) ([]uint64, error)
 }
 
 type supervoxelType interface {
@@ -1546,9 +1547,9 @@ func (d *Data) getLabelElements(v dvid.VersionID, elems Elements) (labelElems La
 	return
 }
 
-// returns label elements without relationships for block elements, using
-// specialized point requests if available (e.g., labelmap sync)
-func (d *Data) getLabelElementsNR(v dvid.VersionID, elems ElementsNR) (labelElems LabelElements, err error) {
+// returns label elements without relationships for block elements, using specialized point
+// requests if available (e.g., labelmap sync) and restricted to given supervoxels.
+func (d *Data) getLabelElementsNR(v dvid.VersionID, elems ElementsNR, supervoxels []uint64) (labelElems LabelElements, err error) {
 	labelData := d.getSyncedLabels()
 	if labelData == nil {
 		dvid.Errorf("No synced labels for annotation %q, skipping label-aware denormalization\n", d.DataName())
@@ -1562,7 +1563,7 @@ func (d *Data) getLabelElementsNR(v dvid.VersionID, elems ElementsNR) (labelElem
 			pts[i] = elem.Pos
 		}
 		var labels []uint64
-		labels, err = labelPointData.GetLabelPoints(v, pts, 0, false)
+		labels, err = labelPointData.GetLabelPointsInSupervoxels(v, pts, supervoxels)
 		if err != nil {
 			return
 		}

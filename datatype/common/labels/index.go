@@ -297,6 +297,28 @@ func (idx *Index) GetProcessedBlockIndices(scale uint8, bounds dvid.Bounds) (dvi
 	return indices, nil
 }
 
+// GetSupervoxelsBlocks returns the blocks for a given list of supervoxels.
+func (idx *Index) GetSupervoxelsBlocks(supervoxels Set) map[dvid.IZYXString]struct{} {
+	if idx == nil {
+		return nil
+	}
+	blockMap := make(map[dvid.IZYXString]struct{})
+	for zyx := range idx.Blocks {
+		izyx := BlockIndexToIZYXString(zyx)
+		svc := idx.Blocks[zyx]
+		if svc == nil || svc.Counts == nil {
+			continue
+		}
+		for supervoxel, count := range svc.Counts {
+			if _, found := supervoxels[supervoxel]; found && count > 0 {
+				blockMap[izyx] = struct{}{}
+				break
+			}
+		}
+	}
+	return blockMap
+}
+
 // FitToBounds modifies the receiver to fit the given optional block bounds.
 func (idx *Index) FitToBounds(bounds *dvid.OptionalBounds) error {
 	if bounds == nil {

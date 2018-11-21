@@ -616,24 +616,6 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 	return nil
 }
 
-// group the given elements into labels based on associated label data.  This can be used on all of a
-// current label's elements after a cleave since the RLEs are not known.
-func (d *Data) cleaveElements(v dvid.VersionID, target uint64, targetElems ElementsNR) (labelElems LabelElements, delta DeltaModifyElements, err error) {
-	labelElems, err = d.getLabelElementsNR(v, targetElems)
-	if err != nil {
-		return
-	}
-	for label, elems := range labelElems {
-		if label != target {
-			for _, elem := range elems {
-				delta.Del = append(delta.Del, ElementPos{Label: target, Kind: elem.Kind, Pos: elem.Pos})
-				delta.Add = append(delta.Add, ElementPos{Label: label, Kind: elem.Kind, Pos: elem.Pos})
-			}
-		}
-	}
-	return
-}
-
 func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op labels.CleaveOp) error {
 	// d.Lock()
 	// defer d.Unlock()
@@ -650,14 +632,23 @@ func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, o
 	if len(targetElems) == 0 {
 		return nil
 	}
-	labelElements, delta, err := d.cleaveElements(v, op.Target, targetElems)
+	var delta DeltaModifyElements
+	labelElems, err := d.getLabelElementsNR(v, targetElems, op.CleavedSupervoxels)
 	if err != nil {
 		return err
+	}
+	for label, elems := range labelElems {
+		if label != op.Target {
+			for _, elem := range elems {
+				delta.Del = append(delta.Del, ElementPos{Label: op.Target, Kind: elem.Kind, Pos: elem.Pos})
+				delta.Add = append(delta.Add, ElementPos{Label: label, Kind: elem.Kind, Pos: elem.Pos})
+			}
+		}
 	}
 
 	// Write the new label-indexed denormalizations
 	batch := batcher.NewBatch(ctx)
-	for label, elems := range labelElements {
+	for label, elems := range labelElems {
 		labelTKey := NewLabelTKey(label)
 		val, err := json.Marshal(elems)
 		if err != nil {
@@ -667,7 +658,7 @@ func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, o
 	}
 
 	// Handle case of a completely removed label
-	if _, found := labelElements[op.Target]; !found {
+	if _, found := labelElems[op.Target]; !found {
 		batch.Delete(NewLabelTKey(op.Target))
 	}
 

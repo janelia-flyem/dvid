@@ -422,6 +422,16 @@ func (svm *SVMap) MappedLabels(v dvid.VersionID, supervoxels []uint64) (mapped [
 	return
 }
 
+// does not apply lock so can be used in loops with outside locking.
+func (svm *SVMap) applyMappingToBlock(ancestry []uint8, block *labels.Block) {
+	for i, label := range block.Labels {
+		mapped, found := svm.mapLabel(label, ancestry)
+		if found {
+			block.Labels[i] = mapped
+		}
+	}
+}
+
 // GetMappedLabels returns an array of mapped labels, which could be the same as the passed slice,
 // for the given version of the data instance.
 func (d *Data) GetMappedLabels(v dvid.VersionID, supervoxels []uint64) (mapped []uint64, found []bool, err error) {

@@ -4544,21 +4544,12 @@ type ptsIndex struct {
 	indices []int
 }
 
-// GetLabelPoints returns labels or supervoxels corresponding to given 3d points.
-func (d *Data) GetLabelPoints(v dvid.VersionID, pts []dvid.Point3d, scale uint8, supervoxels bool) (labels []uint64, err error) {
-	if len(pts) == 0 {
-		return
-	}
-	timedLog := dvid.NewTimeLog()
-	var mapping *SVMap
-	if !supervoxels {
-		if mapping, err = getMapping(d, v); err != nil {
-			return nil, err
-		}
-	}
+type blockPtsI struct {
+	*labels.Block
+	ptsIndex
+}
 
-	// Partition into blocks and adjust pts into block coordinates.
-	labels = make([]uint64, len(pts))
+func (d *Data) partitionPoints(pts []dvid.Point3d) map[dvid.IZYXString]ptsIndex {
 	blockSize := d.BlockSize().(dvid.Point3d)
 	blockPts := make(map[dvid.IZYXString]ptsIndex)
 	for i, pt := range pts {
@@ -4580,30 +4571,196 @@ func (d *Data) GetLabelPoints(v dvid.VersionID, pts []dvid.Point3d, scale uint8,
 		}
 		blockPts[bcoord] = ptsi
 	}
+	return blockPts
+}
 
-	// Iterate through blocks and get labels without inflating blocks.  TODO -- make concurrent?
+// GetLabelPoints returns labels or supervoxels corresponding to given 3d points.
+func (d *Data) GetLabelPoints(v dvid.VersionID, pts []dvid.Point3d, scale uint8, useSupervoxels bool) (mapped []uint64, err error) {
+	if len(pts) == 0 {
+		return
+	}
+	timedLog := dvid.NewTimeLog()
+
+	mapped = make([]uint64, len(pts))
+	blockPts := d.partitionPoints(pts)
+
+	// Get mapping.
+	var mapping *SVMap
+	var ancestry []uint8
+	if !useSupervoxels {
+		if mapping, err = getMapping(d, v); err != nil {
+			return nil, err
+		}
+		if mapping != nil && mapping.exists(v) {
+			ancestry, err = mapping.getAncestry(v)
+			if err != nil {
+				err = fmt.Errorf("unable to get ancestry for version %d: %v", v, err)
+				return
+			}
+			mapping.RLock()
+			defer mapping.RUnlock()
+		}
+	}
+
+	// Iterate through blocks and get labels without inflating blocks and concurrently process data.
+	var wg sync.WaitGroup
+	var labelsMu sync.Mutex
+	concurrency := len(blockPts) / 10
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	ch := make(chan blockPtsI, len(blockPts))
+	for c := 0; c < concurrency; c++ {
+		go func() {
+			wg.Add(1)
+			for bptsI := range ch {
+				if len(ancestry) > 0 {
+					mapping.applyMappingToBlock(ancestry, bptsI.Block)
+				}
+				blockLabels := bptsI.Block.GetPointLabels(bptsI.pts)
+				labelsMu.Lock()
+				for i, index := range bptsI.indices {
+					mapped[index] = blockLabels[i]
+				}
+				labelsMu.Unlock()
+			}
+			wg.Done()
+		}()
+	}
 	for bcoord, ptsi := range blockPts {
 		chunkPt3d, err := bcoord.ToChunkPoint3d()
 		if err != nil {
+			close(ch)
 			return nil, err
 		}
 		block, err := d.GetLabelBlock(v, chunkPt3d, scale)
 		if err != nil {
+			close(ch)
 			return nil, err
 		}
-		if mapping != nil && mapping.exists(v) {
-			err = modifyBlockMapping(v, block, mapping)
-			if err != nil {
-				return nil, fmt.Errorf("unable to modify block %s mapping: %v", bcoord, err)
+		ch <- blockPtsI{block, ptsi}
+	}
+	close(ch)
+	wg.Wait()
+
+	if len(blockPts) > 10 {
+		timedLog.Infof("Larger label query for annotation %q at %d points -> %d blocks with %d goroutines", d.DataName(), len(pts), len(blockPts), concurrency)
+	}
+	return
+}
+
+// GetLabelPointsInSupervoxels returns labels for 3d points that fall within given supervoxels or 0 otherwise.
+func (d *Data) GetLabelPointsInSupervoxels(v dvid.VersionID, pts []dvid.Point3d, supervoxels labels.Set) (mapped []uint64, err error) {
+	if len(pts) == 0 {
+		return
+	}
+	timedLog := dvid.NewTimeLog()
+	blockPts := d.partitionPoints(pts)
+	mapped = make([]uint64, len(pts))
+
+	// Get labels covered and selected supervoxels in each to check.
+	labelSupervoxels := make(map[uint64]labels.Set)
+	var mapping *SVMap
+	var ancestry []uint8
+	if mapping, err = getMapping(d, v); err != nil {
+		return nil, err
+	}
+	if mapping != nil && mapping.exists(v) {
+		ancestry, err = mapping.getAncestry(v)
+		if err != nil {
+			err = fmt.Errorf("unable to get ancestry for version %d: %v", v, err)
+			return
+		}
+		mapping.RLock()
+		defer mapping.RUnlock()
+
+		for supervoxel := range supervoxels {
+			label, wasMapped := mapping.mapLabel(supervoxel, ancestry)
+			if wasMapped {
+				svs, found := labelSupervoxels[label]
+				if found {
+					svs[supervoxel] = struct{}{}
+				} else {
+					svs = labels.Set{supervoxel: struct{}{}}
+				}
+				labelSupervoxels[label] = svs
 			}
 		}
-		blockLabels := block.GetPointLabels(ptsi.pts)
-		for i, index := range ptsi.indices {
-			labels[index] = blockLabels[i]
+	} else {
+		for supervoxel := range supervoxels {
+			labelSupervoxels[supervoxel] = labels.Set{supervoxel: struct{}{}}
 		}
 	}
-	if len(blockPts) > 10 {
-		timedLog.Infof("Larger query for labels at %d points -> %d blocks examined", len(pts), len(blockPts))
+
+	// Launch the block processing goroutines
+	var wg sync.WaitGroup
+	var labelsMu sync.Mutex
+	concurrency := len(blockPts) / 10
+	if concurrency < 1 {
+		concurrency = 1
 	}
+	ch := make(chan blockPtsI, len(blockPts))
+	for c := 0; c < concurrency; c++ {
+		go func() {
+			wg.Add(1)
+			for bptsI := range ch {
+				if len(ancestry) > 0 {
+					mapping.applyMappingToBlock(ancestry, bptsI.Block)
+				}
+				blockLabels := bptsI.Block.GetPointLabels(bptsI.pts)
+				labelsMu.Lock()
+				for i, index := range bptsI.indices {
+					mapped[index] = blockLabels[i]
+				}
+				labelsMu.Unlock()
+			}
+			wg.Done()
+		}()
+	}
+
+	// Get the involved label indices and find the blocks
+	var numPtsInSupervoxels, numBlocks int
+	for label, svs := range labelSupervoxels {
+		shard := label % numIndexShards
+		indexMu[shard].RLock()
+		idx, err := getCachedLabelIndex(d, v, label)
+		indexMu[shard].RUnlock()
+		if err != nil {
+			return nil, err
+		}
+
+		blockMap := idx.GetSupervoxelsBlocks(svs)
+		if err != nil {
+			return nil, err
+		}
+		var numPtsInLabel int
+		for bcoord, ptsi := range blockPts {
+			if _, found := blockMap[bcoord]; !found {
+				continue
+			}
+
+			// this block contains desired supervoxel and also at least one of our points, so do computation.
+			chunkPt3d, err := bcoord.ToChunkPoint3d()
+			if err != nil {
+				close(ch)
+				return nil, err
+			}
+			block, err := d.GetLabelBlock(v, chunkPt3d, 0)
+			if err != nil {
+				close(ch)
+				return nil, err
+			}
+			numBlocks++
+			numPtsInLabel += len(ptsi.pts)
+			numPtsInSupervoxels += numPtsInLabel
+			ch <- blockPtsI{block, ptsi}
+		}
+		dvid.Infof("label %d, supervoxels %s had %d blocks -> %d points in %s\n", label, svs, len(blockMap), numPtsInLabel, d.DataName())
+	}
+
+	close(ch)
+	wg.Wait()
+
+	timedLog.Infof("Annotation %q query restricted to %d supervoxels for up to %d points -> %d points in %d blocks (%d goroutines)", d.DataName(), len(supervoxels), len(pts), numPtsInSupervoxels, numBlocks, concurrency)
 	return
 }
