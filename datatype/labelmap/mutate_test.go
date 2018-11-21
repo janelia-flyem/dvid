@@ -795,14 +795,6 @@ func TestMergeLabels(t *testing.T) {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
-	apiStr = fmt.Sprintf("%snode/%s/%s/label/59_56_20", server.WebAPIPath, uuid, "labels")
-	jsonResp = server.TestHTTP(t, "GET", apiStr, nil)
-	if err := json.Unmarshal(jsonResp, &jsonVal2); err != nil {
-		t.Errorf("Unable to parse 'label' endpoint response: %s\n", jsonResp)
-	}
-	if jsonVal2.Label != 2 {
-		t.Errorf("Expected label 2, got label %d\n", jsonVal2.Label)
-	}
 	apiStr = fmt.Sprintf("%snode/%s/%s/labels", server.WebAPIPath, uuid, "labels")
 	jsonResp = server.TestHTTP(t, "GET", apiStr, bytes.NewBufferString(payload))
 	if err := json.Unmarshal(jsonResp, &labels); err != nil {
@@ -819,6 +811,15 @@ func TestMergeLabels(t *testing.T) {
 	}
 	if labels[3] != 4 {
 		t.Errorf("Expected label 4, got label %d\n", labels[3])
+	}
+
+	apiStr = fmt.Sprintf("%snode/%s/%s/label/59_56_20", server.WebAPIPath, uuid, "labels")
+	jsonResp = server.TestHTTP(t, "GET", apiStr, nil)
+	if err := json.Unmarshal(jsonResp, &jsonVal2); err != nil {
+		t.Errorf("Unable to parse 'label' endpoint response: %s\n", jsonResp)
+	}
+	if jsonVal2.Label != 2 {
+		t.Errorf("Expected label 2, got label %d\n", jsonVal2.Label)
 	}
 
 	retrieved := newTestVolume(128, 128, 128)
@@ -2247,14 +2248,16 @@ func TestMultiscaleMergeCleave(t *testing.T) {
 	var labelJSON struct {
 		Label uint64
 	}
-	for label, pt := range testPoints0 {
-		labelReq := fmt.Sprintf("%snode/%s/labels/label/%d_%d_%d", server.WebAPIPath, uuid, pt[0], pt[1], pt[2])
-		labelResp := server.TestHTTP(t, "GET", labelReq, nil)
-		if err := json.Unmarshal(labelResp, &labelJSON); err != nil {
-			t.Errorf("problem decoding response (%s): %v\n", string(labelResp), err)
-		}
-		if labelJSON.Label != label {
-			t.Errorf("bad response to label query on (%d, %d, %d): %s\n", pt[0], pt[1], pt[2], string(labelResp))
+	for i := 0; i < 100; i++ {
+		for label, pt := range testPoints0 {
+			labelReq := fmt.Sprintf("%snode/%s/labels/label/%d_%d_%d", server.WebAPIPath, uuid, pt[0], pt[1], pt[2])
+			labelResp := server.TestHTTP(t, "GET", labelReq, nil)
+			if err := json.Unmarshal(labelResp, &labelJSON); err != nil {
+				t.Errorf("problem decoding response (%s): %v\n", string(labelResp), err)
+			}
+			if labelJSON.Label != label {
+				t.Errorf("bad response to label query on (%d, %d, %d): %s\n", pt[0], pt[1], pt[2], string(labelResp))
+			}
 		}
 	}
 	for label, pt := range testPoints1 {

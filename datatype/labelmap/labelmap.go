@@ -4606,8 +4606,8 @@ func (d *Data) GetLabelPoints(v dvid.VersionID, pts []dvid.Point3d, scale uint8,
 	}
 	ch := make(chan blockPtsI, len(blockPts))
 	for c := 0; c < concurrency; c++ {
+		wg.Add(1)
 		go func() {
-			wg.Add(1)
 			for bptsI := range ch {
 				if len(ancestry) > 0 {
 					mapping.applyMappingToBlock(ancestry, bptsI.Block)
@@ -4696,8 +4696,8 @@ func (d *Data) GetLabelPointsInSupervoxels(v dvid.VersionID, pts []dvid.Point3d,
 	}
 	ch := make(chan blockPtsI, len(blockPts))
 	for c := 0; c < concurrency; c++ {
+		wg.Add(1)
 		go func() {
-			wg.Add(1)
 			for bptsI := range ch {
 				if len(ancestry) > 0 {
 					mapping.applyMappingToBlock(ancestry, bptsI.Block)
