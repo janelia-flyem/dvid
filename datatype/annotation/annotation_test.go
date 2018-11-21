@@ -1694,14 +1694,14 @@ func testLabelsReload(t *testing.T, uuid dvid.UUID, labelblkName, labelvolName d
 	testResponseLabel(t, expectedLabel4, "%snode/%s/mysynapses/label/4?relationships=true", server.WebAPIPath, uuid)
 }
 
-func TestOldLabelsReload(t *testing.T) {
+func TestLabelblkReload(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
 	}
 	defer server.CloseTest()
 
 	// Create testbed volume and data instances
-	uuid, _ := initTestRepo()
+	uuid, v := initTestRepo()
 	var config dvid.Config
 	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
 	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
@@ -1731,29 +1731,28 @@ func TestOldLabelsReload(t *testing.T) {
 	// Add the sync
 	server.CreateTestSync(t, uuid, "mysynapses", "labels,bodies")
 
-	// Do a reload asynchronously
-	reloadURL := fmt.Sprintf("%snode/%s/mysynapses/reload", server.WebAPIPath, uuid)
-	server.TestHTTP(t, "POST", reloadURL, nil)
-
-	// Wait until done.
-	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
-		t.Fatalf("Error blocking on sync of annotations: %v\n", err)
+	// Do a reload synchronously and check
+	d, err := GetByUUIDName(uuid, "mysynapses")
+	if err != nil {
+		t.Fatal(err)
 	}
+	ctx := datastore.NewVersionedCtx(d, v)
+	d.resyncInMemory(ctx, true)
 
 	testLabelsReload(t, uuid, "labels", "bodies")
 }
 
-func TestLabelsReload(t *testing.T) {
+func testLabelReload(t *testing.T, typename string, inMemory bool) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
 	}
 	defer server.CloseTest()
 
 	// Create testbed volume and data instances
-	uuid, _ := initTestRepo()
+	uuid, v := initTestRepo()
 	var config dvid.Config
 	config.Set("BlockSize", "32,32,32")
-	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
+	server.CreateTestInstance(t, uuid, typename, "labels", config)
 
 	_ = createLabelTestVolume(t, uuid, "labels")
 
@@ -1775,16 +1774,28 @@ func TestLabelsReload(t *testing.T) {
 	// Add the sync
 	server.CreateTestSync(t, uuid, "mysynapses", "labels")
 
-	// Do a reload asynchronously
-	reloadURL := fmt.Sprintf("%snode/%s/mysynapses/reload", server.WebAPIPath, uuid)
-	server.TestHTTP(t, "POST", reloadURL, nil)
-
-	// Wait until done.
-	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
-		t.Fatalf("Error blocking on sync of annotations: %v\n", err)
+	// Do a reload synchronously and check
+	d, err := GetByUUIDName(uuid, "mysynapses")
+	if err != nil {
+		t.Fatal(err)
 	}
-
+	ctx := datastore.NewVersionedCtx(d, v)
+	if inMemory {
+		d.resyncInMemory(ctx, true)
+	} else {
+		d.resyncLowMemory(ctx)
+	}
 	testLabelsReload(t, uuid, "labels", "labels")
+}
+
+func TestLabelarrayReload(t *testing.T) {
+	testLabelReload(t, "labelarray", true)
+	testLabelReload(t, "labelarray", false)
+}
+
+func TestLabelmapReload(t *testing.T) {
+	testLabelReload(t, "labelmap", true)
+	testLabelReload(t, "labelmap", false)
 }
 
 // A single label block within the volume

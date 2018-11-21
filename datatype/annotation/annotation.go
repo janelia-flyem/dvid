@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -63,8 +64,10 @@ $ dvid node <UUID> <data name> reload <settings...>
 
     Configuration Settings (case-insensitive keys)
 
-	inmemory 	"false": uses a slower out-of-memory reload in case	the server doesn't 
-					have enough memory to hold all annotations in memory.
+	check 		"false": (default "true") check denormalizations, writing to log when issues
+					are detected, and only replacing denormalization when it is incorrect.
+	inmemory 	"false": (default "true") use in-memory reload, which assumes the server
+					has enough memory to hold all annotations in memory.
 
     ------------------
 
@@ -2241,6 +2244,16 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d, k
 	return batch.Commit()
 }
 
+// RecreateDenormalizations will recreate label and tag denormalizations from
+// the block-based elements.
+func (d *Data) RecreateDenormalizations(ctx *datastore.VersionedCtx, inMemory, check bool) {
+	if inMemory {
+		go d.resyncInMemory(ctx, check)
+	} else {
+		go d.resyncLowMemory(ctx)
+	}
+}
+
 func (d *Data) storeTags(batcher storage.KeyValueBatcher, ctx *datastore.VersionedCtx, tagE map[Tag]Elements) error {
 	batch := batcher.NewBatch(ctx)
 	if err := d.storeTagElements(ctx, batch, tagE); err != nil {
@@ -2289,20 +2302,20 @@ func (d *Data) deleteDenormalizations(ctx *datastore.VersionedCtx) error {
 	return nil
 }
 
+type denormElems struct {
+	tk    storage.TKey
+	elems ElementsNR
+}
+
 // Do in-memory resync of all keyBlock kv pairs, forcing the label and tag denormalizations.
-func (d *Data) resyncInMemory(ctx *datastore.VersionedCtx) {
+// If check is true, checks denormalizations, logging any issues, and only replaces denormalizations
+// when they are incorrect.
+func (d *Data) resyncInMemory(ctx *datastore.VersionedCtx, check bool) {
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		dvid.Errorf("Annotation %q had error initializing store: %v\n", d.DataName(), err)
 		return
 	}
-
-	d.StartUpdate()
-	// d.Lock()
-	defer func() {
-		// d.Unlock()
-		d.StopUpdate()
-	}()
 	if err := d.deleteDenormalizations(ctx); err != nil {
 		dvid.Errorf("Can't delete denormalizations: %v\n", err)
 		return
@@ -2370,60 +2383,66 @@ func (d *Data) resyncInMemory(ctx *datastore.VersionedCtx) {
 	}
 	timedLog.Infof("Completed loading %d blocks of annotations (%d elements in %d labels / %d elements in %d tags), errors %d", totBlocks, totLabelE, len(labelE), totTagE, len(tagE), totElemErrs)
 
-	// Write label elements
-	dvid.Infof("Writing elements for %d labels ...", len(labelE))
-	var numLabelErrs, numLabels int
-	for label, elems := range labelE {
-		val, err := json.Marshal(elems)
-		if err != nil {
-			dvid.Errorf("problem with marshaling elements for label %q: %v\n", label, err)
-			numLabelErrs++
-			continue
-		}
-		tk := NewLabelTKey(label)
-		if err := store.Put(ctx, tk, val); err != nil {
-			dvid.Errorf("problem storing label %q elements: %v\n", label, err)
-			numLabelErrs++
-		}
-		numLabels++
-		if numLabels%1000 == 0 {
-			timedLog.Infof("Stored %d/%d label denormalizations", numLabels, len(labelE))
-		}
+	var wg sync.WaitGroup
+	var numErrs, numProcessed, numChanged int64
+	ch := make(chan denormElems, 1000)
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			for de := range ch {
+				changed := true
+				if check {
+					correctNormalized := de.elems.Normalize()
+					old, err := getElementsNR(ctx, de.tk)
+					if err != nil {
+						atomic.AddInt64(&numErrs, 1)
+						continue
+					}
+					oldNormalized := old.Normalize()
+					if reflect.DeepEqual(correctNormalized, oldNormalized) {
+						changed = false
+					}
+				}
+				if changed {
+					atomic.AddInt64(&numChanged, 1)
+					val, err := json.Marshal(de.elems)
+					if err != nil {
+						atomic.AddInt64(&numErrs, 1)
+						continue
+					}
+					if err := store.Put(ctx, de.tk, val); err != nil {
+						atomic.AddInt64(&numErrs, 1)
+					}
+				}
+				atomic.AddInt64(&numProcessed, 1)
+				if numProcessed%10000 == 0 {
+					timedLog.Infof("Processed %d of %d labels", numProcessed, len(labelE))
+				}
+			}
+			wg.Done()
+		}()
 	}
-	timedLog.Infof("Finished label denormalization of %d labels with %d label elements (%d errors)", numLabels, totLabelE, numLabelErrs)
 
-	// Write tagged elements
-	dvid.Infof("Writing elements for %d tags ...", len(tagE))
-	var numTagErrs, numTags int
+	dvid.Infof("Writing elements for %d labels, %d tags ...", len(labelE), len(tagE))
+	for label, elems := range labelE {
+		ch <- denormElems{tk: NewLabelTKey(label), elems: elems}
+	}
 	for tag, elems := range tagE {
 		tk, err := NewTagTKey(tag)
 		if err != nil {
 			dvid.Errorf("problem with tag key tkey for tag %q: %v\n", tag, err)
-			numTagErrs++
+			atomic.AddInt64(&numErrs, 1)
 			continue
 		}
-		val, err := json.Marshal(elems)
-		if err != nil {
-			dvid.Errorf("problem with marshaling elements for tag %q: %v\n", tag, err)
-			numTagErrs++
-			continue
-		}
-		if err := store.Put(ctx, tk, val); err != nil {
-			dvid.Errorf("problem storing tag %q elements: %v\n", tag, err)
-			numTagErrs++
-		}
-		numTags++
-		if numTags%1000 == 0 {
-			timedLog.Infof("Stored %d/%d tag denormalizations", numTags, len(tagE))
-		}
+		ch <- denormElems{tk: tk, elems: elems}
 	}
-	timedLog.Infof("Finished tag denormalization of %d tags with %d tag elements (%d errors)", numTags, totTagE, numTagErrs)
-
-	timedLog.Infof("Completed denormalizing %d blocks of annotations (%d elements in %d labels / %d elements in %d tags), errors %d", totBlocks, totLabelE, len(labelE), totTagE, len(tagE), totElemErrs+numLabelErrs+numTagErrs)
+	close(ch)
+	wg.Wait()
+	timedLog.Infof("Finished denormalization of %d kvs, %d changed (%d errors)", numProcessed, numChanged, numErrs)
 }
 
 // Get all keyBlock kv pairs, forcing the label and tag denormalizations.
-func (d *Data) resync(ctx *datastore.VersionedCtx) {
+func (d *Data) resyncLowMemory(ctx *datastore.VersionedCtx) {
 	timedLog := dvid.NewTimeLog()
 
 	store, err := datastore.GetOrderedKeyValueDB(d)
@@ -2437,12 +2456,6 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 		return
 	}
 
-	d.StartUpdate()
-	// d.Lock()
-	defer func() {
-		// d.Unlock()
-		d.StopUpdate()
-	}()
 	if err := d.deleteDenormalizations(ctx); err != nil {
 		dvid.Errorf("Can't delete denormalizations: %v\n", err)
 		return
@@ -2557,17 +2570,6 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 	timedLog.Infof("Completed asynchronous annotation %q reload of %d block and %d tag elements.", d.DataName(), totBlockE, totTagE)
 }
 
-// RecreateDenormalizations will recreate label and tag denormalizations from
-// the block-based elements.
-func (d *Data) RecreateDenormalizations(ctx *datastore.VersionedCtx, inMemory bool) {
-	if inMemory {
-		go d.resyncInMemory(ctx)
-	} else {
-		go d.resync(ctx)
-	}
-	dvid.Infof("Started reload of annotations %q...\n", d.DataName())
-}
-
 // GetByDataUUID returns a pointer to annotation data given a data UUID.
 func GetByDataUUID(dataUUID dvid.UUID) (*Data, error) {
 	source, err := datastore.GetDataByDataUUID(dataUUID)
@@ -2635,11 +2637,44 @@ func (d *Data) GobEncode() ([]byte, error) {
 }
 
 // DoRPC acts as a switchboard for RPC commands.
-func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
-	switch request.TypeCommand() {
+func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
+	switch req.TypeCommand() {
+	case "reload":
+		var uuidStr, dataName string
+		if _, err := req.FilenameArgs(1, &uuidStr, &dataName); err != nil {
+			return err
+		}
+		uuid, v, err := datastore.MatchingUUID(uuidStr)
+		if err != nil {
+			return err
+		}
+		locked, err := datastore.LockedUUID(uuid)
+		if err != nil {
+			return err
+		}
+		if !locked {
+			return fmt.Errorf("cannot reload annotation %q unless it is locked (uuid %s)", d.DataName(), uuid)
+		}
+		if err = datastore.AddToNodeLog(uuid, []string{req.Command.String()}); err != nil {
+			return err
+		}
+		var inMemory, check bool
+		setting, found := req.Setting("inmemory")
+		if !found || setting != "false" {
+			inMemory = true
+		}
+		setting, found = req.Setting("check")
+		if !found || setting != "false" {
+			check = true
+		}
+		ctx := datastore.NewVersionedCtx(d, v)
+		d.RecreateDenormalizations(ctx, inMemory, check)
+		reply.Text = fmt.Sprintf("Asynchronously checking and restoring label and tag denormalizations for annotation %q\n", d.DataName())
+		return nil
+
 	default:
-		return fmt.Errorf("unknown command.  Data type %q [%s] does not support %q command.",
-			d.DataName(), d.TypeName(), request.TypeCommand())
+		return fmt.Errorf("unknown command.  Data type %q [%s] does not support %q command",
+			d.DataName(), d.TypeName(), req.TypeCommand())
 	}
 }
 
