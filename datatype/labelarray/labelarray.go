@@ -90,11 +90,6 @@ $ dvid node <UUID> <data name> load <offset> <image glob> <settings...>
     offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
     image glob    Filenames of label images, preferably in quotes, e.g., "foo-xy-*.png"
 
-    Configuration Settings (case-insensitive keys)
-
-    Proc          "noindex": prevents creation of denormalized data to speed up obtaining sparse 
-    				 volumes and size query responses using the loaded labels.
-
 $ dvid node <UUID> <data name> composite <uint8 data name> <new rgba8 data name>
 
     Creates a RGBA8 image where the RGB is a hash of the labels and the A is the

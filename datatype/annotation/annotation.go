@@ -54,6 +54,18 @@ $ dvid repo <UUID> new annotation <data name> <settings...>
     data name      Name of data to create, e.g., "synapses"
     settings       Configuration settings in "key=value" format separated by spaces.
 	
+$ dvid node <UUID> <data name> reload <settings...>
+
+	Forces asynchornous denormalization of all annotations for labels and tags.  Because
+	this is a special request for mass mutations that require static "normalized" data
+	(only verifies and changes the label and tag denormalizations), it can only be run
+	on locked nodes.
+
+    Configuration Settings (case-insensitive keys)
+
+	inmemory 	"false": uses a slower out-of-memory reload in case	the server doesn't 
+					have enough memory to hold all annotations in memory.
+
     ------------------
 
 HTTP API (Level 2 REST):
@@ -230,14 +242,6 @@ POST <api URL>/node/<UUID>/<data name>/move/<from_coord>/<to_coord>[?<options>]
 	kafkalog    Set to "off" if you don't want this mutation logged to kafka.
 
 		
-POST <api URL>/node/<UUID>/<data name>/reload[?inmemory=true]
-
-	Forces asynchornous denormalization of all annotations for labels and tags.  Can be 
-	used to initialize a newly added sync.  Note that the annotation will be locked until
-	the denormalization is finished with a log message.
-
-	If a query string "?inmemory=true" is used, a faster in-memory reload is done assuming
-	the server has enough memory to hold all annotations in memory.
 
 ------
 
@@ -2917,15 +2921,6 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		timedLog.Infof("HTTP %s: move synaptic element from %s to %s (%s)", r.Method, fromPt, toPt, r.URL)
-
-	case "reload":
-		// POST <api URL>/node/<UUID>/<data name>/reload
-		inMemory := r.URL.Query().Get("inmemory") == "true"
-		if action != "post" {
-			server.BadRequest(w, r, "Only POST action is available on 'reload' endpoint.")
-			return
-		}
-		d.RecreateDenormalizations(ctx, inMemory)
 
 	default:
 		server.BadAPIRequest(w, r, d)
