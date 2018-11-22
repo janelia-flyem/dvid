@@ -2316,9 +2316,11 @@ func (d *Data) resyncInMemory(ctx *datastore.VersionedCtx, check bool) {
 		dvid.Errorf("Annotation %q had error initializing store: %v\n", d.DataName(), err)
 		return
 	}
-	if err := d.deleteDenormalizations(ctx); err != nil {
-		dvid.Errorf("Can't delete denormalizations: %v\n", err)
-		return
+	if !check {
+		if err := d.deleteDenormalizations(ctx); err != nil {
+			dvid.Errorf("Can't delete denormalizations: %v\n", err)
+			return
+		}
 	}
 
 	var totBlocks, totElemErrs, totLabelE, totTagE int
