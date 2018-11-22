@@ -4645,6 +4645,7 @@ func (d *Data) GetLabelPoints(v dvid.VersionID, pts []dvid.Point3d, scale uint8,
 }
 
 // GetLabelPointsInSupervoxels returns labels for 3d points that fall within given supervoxels or 0 otherwise.
+/*
 func (d *Data) GetLabelPointsInSupervoxels(v dvid.VersionID, pts []dvid.Point3d, supervoxels labels.Set) (mapped []uint64, err error) {
 	if len(pts) == 0 {
 		return
@@ -4759,3 +4760,4 @@ func (d *Data) GetLabelPointsInSupervoxels(v dvid.VersionID, pts []dvid.Point3d,
 	timedLog.Infof("Annotation %q query restricted to %d supervoxels for up to %d points -> %d points in %d blocks (%d goroutines)", d.DataName(), len(supervoxels), len(pts), numPtsInSupervoxels, numBlocks, concurrency)
 	return
 }
+*/

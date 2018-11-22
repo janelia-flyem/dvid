@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/labelarray"
 	"github.com/janelia-flyem/dvid/datatype/labelblk"
 	"github.com/janelia-flyem/dvid/datatype/labelmap"
@@ -1108,8 +1109,11 @@ type labelType interface {
 }
 
 type labelPointType interface {
-	GetLabelPoints(v dvid.VersionID, pts []dvid.Point3d, scale uint8, supervoxels bool) ([]uint64, error)
-	GetLabelPointsInSupervoxels(v dvid.VersionID, pts []dvid.Point3d, supervoxels []uint64) ([]uint64, error)
+	GetLabelPoints(v dvid.VersionID, pts []dvid.Point3d, scale uint8, useSupervoxels bool) ([]uint64, error)
+}
+
+type labelSupervoxelPointType interface {
+	GetLabelPointsInSupervoxels(v dvid.VersionID, pts []dvid.Point3d, supervoxels labels.Set) ([]uint64, error)
 }
 
 type supervoxelType interface {
@@ -1556,21 +1560,37 @@ func (d *Data) getLabelElements(v dvid.VersionID, elems Elements) (labelElems La
 
 // returns label elements without relationships for block elements, using specialized point
 // requests if available (e.g., labelmap sync) and restricted to given supervoxels.
-func (d *Data) getLabelElementsNR(v dvid.VersionID, elems ElementsNR, supervoxels []uint64) (labelElems LabelElements, err error) {
+func (d *Data) getLabelElementsNR(v dvid.VersionID, elems ElementsNR, supervoxels labels.Set) (labelElems LabelElements, err error) {
 	labelData := d.getSyncedLabels()
 	if labelData == nil {
 		dvid.Errorf("No synced labels for annotation %q, skipping label-aware denormalization\n", d.DataName())
 		return
 	}
-	labelPointData, ok := labelData.(labelPointType)
+	labelPointData, pointOK := labelData.(labelPointType)
+	labelSupervoxelPointData, pointSupervoxelOK := labelData.(labelSupervoxelPointType)
 	labelElems = LabelElements{}
-	if ok {
+	if pointSupervoxelOK {
 		pts := make([]dvid.Point3d, len(elems))
 		for i, elem := range elems {
 			pts[i] = elem.Pos
 		}
 		var labels []uint64
-		labels, err = labelPointData.GetLabelPointsInSupervoxels(v, pts, supervoxels)
+		labels, err = labelSupervoxelPointData.GetLabelPointsInSupervoxels(v, pts, supervoxels)
+		if err != nil {
+			return
+		}
+		for i, elem := range elems {
+			if labels[i] != 0 {
+				labelElems.add(labels[i], elem)
+			}
+		}
+	} else if pointOK {
+		pts := make([]dvid.Point3d, len(elems))
+		for i, elem := range elems {
+			pts[i] = elem.Pos
+		}
+		var labels []uint64
+		labels, err = labelPointData.GetLabelPoints(v, pts, 0, false)
 		if err != nil {
 			return
 		}

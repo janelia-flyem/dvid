@@ -633,7 +633,11 @@ func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, o
 		return nil
 	}
 	var delta DeltaModifyElements
-	labelElems, err := d.getLabelElementsNR(v, targetElems, op.CleavedSupervoxels)
+	supervoxels := make(labels.Set, len(op.CleavedSupervoxels))
+	for _, supervoxel := range op.CleavedSupervoxels {
+		supervoxels[supervoxel] = struct{}{}
+	}
+	labelElems, err := d.getLabelElementsNR(v, targetElems, supervoxels)
 	if err != nil {
 		return err
 	}
