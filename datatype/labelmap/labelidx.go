@@ -143,7 +143,9 @@ func getCachedLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.I
 
 	var err error
 	var idxBytes []byte
+	var timedLog dvid.TimeLog
 	if indexCache != nil {
+		timedLog = dvid.NewTimeLog()
 		idxBytes, err = indexCache.Get(k.Bytes())
 		if err != nil && err != freecache.ErrNotFound {
 			return nil, err
@@ -156,6 +158,8 @@ func getCachedLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.I
 			return nil, err
 		}
 		atomic.AddUint64(&metaHits, 1)
+		hitRate := float64(10000*metaHits/metaAttempts) / 100.0
+		timedLog.Infof("label %d index hit, %d bytes (total %d hits / %d attempts - %4.2f%%)", label, len(idxBytes), metaHits, metaAttempts, hitRate)
 		return idx, nil
 	}
 	idx, err = getLabelIndex(k.VersionedCtx(), label)
@@ -172,6 +176,8 @@ func getCachedLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.I
 		} else if err := indexCache.Set(k.Bytes(), idxBytes, 0); err != nil {
 			dvid.Errorf("unable to set label %d index cache for %q: %v\n", label, d.DataName(), err)
 		}
+		hitRate := float64(10000*metaHits/metaAttempts) / 100.0
+		timedLog.Infof("label %d index miss, %d bytes (total %d hits / %d attempts - %4.2f%%)", label, len(idxBytes), metaHits, metaAttempts, hitRate)
 	}
 	if idx.Label != label {
 		dvid.Criticalf("label index for data %q, label %d has internal label value %d\n", d.DataName(), label, idx.Label)
