@@ -562,7 +562,7 @@ var testTagData = Elements{
 				"i'm really special": "",
 			},
 		},
-		[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
+		[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{21, 33, 40}}, {Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
 	},
 	{
 		ElementNR{
@@ -937,6 +937,13 @@ func TestPropChange(t *testing.T) {
 	testResponse(t, expected, "%snode/%s/%s/tag/Zlt90?relationships=true", server.WebAPIPath, uuid, data.DataName())
 }
 
+func removeRelationships(elems Elements) {
+	for i, elem := range elems {
+		elem.Rels = []Relationship{}
+		elems[i] = elem
+	}
+}
+
 func TestTagRequests(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
@@ -976,7 +983,7 @@ func TestTagRequests(t *testing.T) {
 					"i'm really special": "",
 				},
 			},
-			[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
+			[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{21, 33, 40}}, {Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
 		},
 		{
 			ElementNR{
@@ -987,8 +994,9 @@ func TestTagRequests(t *testing.T) {
 			[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 		},
 	}
-	tag := Tag("Synapse1")
-	testResponse(t, expected, "%snode/%s/%s/tag/%s?relationships=true", server.WebAPIPath, uuid, data.DataName(), tag)
+	testResponse(t, expected, "%snode/%s/%s/tag/Synapse1?relationships=true", server.WebAPIPath, uuid, data.DataName())
+	removeRelationships(expected)
+	testResponse(t, expected, "%snode/%s/%s/tag/Synapse1", server.WebAPIPath, uuid, data.DataName())
 
 	expected = Elements{
 		{
@@ -1000,8 +1008,9 @@ func TestTagRequests(t *testing.T) {
 			[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 		},
 	}
-	tag = Tag("Synapse10")
-	testResponse(t, expected, "%snode/%s/%s/tag/%s?relationships=true", server.WebAPIPath, uuid, data.DataName(), tag)
+	testResponse(t, expected, "%snode/%s/%s/tag/Synapse10?relationships=true", server.WebAPIPath, uuid, data.DataName())
+	removeRelationships(expected)
+	testResponse(t, expected, "%snode/%s/%s/tag/Synapse10", server.WebAPIPath, uuid, data.DataName())
 
 	expected = Elements{
 		{
@@ -1014,6 +1023,8 @@ func TestTagRequests(t *testing.T) {
 		},
 	}
 	testResponse(t, expected, "%snode/%s/%s/tag/Synapse11?relationships=true", server.WebAPIPath, uuid, data.DataName())
+	removeRelationships(expected)
+	testResponse(t, expected, "%snode/%s/%s/tag/Synapse11", server.WebAPIPath, uuid, data.DataName())
 
 	expected = Elements{
 		{
@@ -1026,6 +1037,8 @@ func TestTagRequests(t *testing.T) {
 		},
 	}
 	testResponse(t, expected, "%snode/%s/%s/tag/Synapse111?relationships=true", server.WebAPIPath, uuid, data.DataName())
+	removeRelationships(expected)
+	testResponse(t, expected, "%snode/%s/%s/tag/Synapse111", server.WebAPIPath, uuid, data.DataName())
 
 	expected = Elements{
 		{
@@ -1039,7 +1052,7 @@ func TestTagRequests(t *testing.T) {
 					"i'm really special": "",
 				},
 			},
-			[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
+			[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{21, 33, 40}}, {Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
 		},
 		{
 			ElementNR{
@@ -1059,6 +1072,8 @@ func TestTagRequests(t *testing.T) {
 		},
 	}
 	testResponse(t, expected, "%snode/%s/%s/tag/Zlt90?relationships=true", server.WebAPIPath, uuid, data.DataName())
+	removeRelationships(expected)
+	testResponse(t, expected, "%snode/%s/%s/tag/Zlt90", server.WebAPIPath, uuid, data.DataName())
 
 	// delete an annotation and check if its deleted in tag
 	delurl := fmt.Sprintf("%snode/%s/%s/element/15_27_35", server.WebAPIPath, uuid, data.DataName())
@@ -1071,10 +1086,32 @@ func TestTagRequests(t *testing.T) {
 				Kind: PostSyn,
 				Tags: []Tag{"Synapse1"},
 			},
-			[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+			[]Relationship{},
 		},
 	}
 	testResponse(t, expected, "%snode/%s/%s/tag/Synapse1?relationships=true", server.WebAPIPath, uuid, data.DataName())
+	removeRelationships(expected)
+	testResponse(t, expected, "%snode/%s/%s/tag/Synapse1", server.WebAPIPath, uuid, data.DataName())
+	expected = Elements{
+		{
+			ElementNR{
+				Pos:  dvid.Point3d{14, 25, 37}, // Label 3
+				Kind: PostSyn,
+				Tags: []Tag{"Synapse11", "Zlt90"},
+			},
+			[]Relationship{},
+		},
+		{
+			ElementNR{
+				Pos:  dvid.Point3d{33, 30, 31},
+				Kind: PostSyn,
+				Tags: []Tag{"Synapse111", "Zlt90"},
+			},
+			[]Relationship{},
+		},
+	}
+	testResponse(t, expected, "%snode/%s/%s/tag/Zlt90?relationships=true", server.WebAPIPath, uuid, data.DataName())
+	testResponse(t, expected, "%snode/%s/%s/tag/Zlt90", server.WebAPIPath, uuid, data.DataName())
 
 	// post the same annotation but without a tag to see if we've removed the tag
 	mod1 := Elements{
@@ -1093,6 +1130,19 @@ func TestTagRequests(t *testing.T) {
 	server.TestHTTP(t, "POST", url1, strings.NewReader(string(testJSON)))
 	expected = Elements{}
 	testResponse(t, expected, "%snode/%s/%s/tag/Synapse111?relationships=true", server.WebAPIPath, uuid, data.DataName())
+	testResponse(t, expected, "%snode/%s/%s/tag/Synapse111", server.WebAPIPath, uuid, data.DataName())
+	expected = Elements{
+		{
+			ElementNR{
+				Pos:  dvid.Point3d{14, 25, 37}, // Label 3
+				Kind: PostSyn,
+				Tags: []Tag{"Synapse11", "Zlt90"},
+			},
+			[]Relationship{},
+		},
+	}
+	testResponse(t, expected, "%snode/%s/%s/tag/Zlt90?relationships=true", server.WebAPIPath, uuid, data.DataName())
+	testResponse(t, expected, "%snode/%s/%s/tag/Zlt90", server.WebAPIPath, uuid, data.DataName())
 
 	// post the same annotation but with a tag to see if it's added to the tag
 	mod2 := Elements{
@@ -1112,6 +1162,9 @@ func TestTagRequests(t *testing.T) {
 	server.TestHTTP(t, "POST", url1, strings.NewReader(string(testJSON)))
 	testResponse(t, mod2, "%snode/%s/%s/tag/foobaz?relationships=true", server.WebAPIPath, uuid, data.DataName())
 	testResponse(t, mod2, "%snode/%s/%s/tag/foobar?relationships=true", server.WebAPIPath, uuid, data.DataName())
+	removeRelationships(mod2)
+	testResponse(t, mod2, "%snode/%s/%s/tag/foobaz", server.WebAPIPath, uuid, data.DataName())
+	testResponse(t, mod2, "%snode/%s/%s/tag/foobar", server.WebAPIPath, uuid, data.DataName())
 
 	// modify the property of the annotation in a tag
 	mod3 := Elements{
@@ -1126,7 +1179,7 @@ func TestTagRequests(t *testing.T) {
 					"i'm really NOT special": "",
 				},
 			},
-			[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
+			[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{21, 33, 40}}, {Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
 		},
 		{
 			ElementNR{
@@ -1142,7 +1195,7 @@ func TestTagRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	server.TestHTTP(t, "POST", url1, strings.NewReader(string(testJSON)))
-	expectedSynapse1 := Elements{
+	expected = Elements{
 		{
 			ElementNR{
 				Pos:  dvid.Point3d{15, 27, 35}, // Label 1
@@ -1154,7 +1207,7 @@ func TestTagRequests(t *testing.T) {
 					"i'm really NOT special": "",
 				},
 			},
-			[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
+			[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{21, 33, 40}}, {Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
 		},
 		{
 			ElementNR{
@@ -1162,11 +1215,14 @@ func TestTagRequests(t *testing.T) {
 				Kind: PostSyn,
 				Tags: []Tag{"Synapse1"},
 			},
-			[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+			[]Relationship{},
 		},
 	}
-	testResponse(t, expectedSynapse1, "%snode/%s/%s/tag/Synapse1?relationships=true", server.WebAPIPath, uuid, data.DataName())
-	expectedZlt90 := Elements{
+	testResponse(t, expected, "%snode/%s/%s/tag/Synapse1?relationships=true", server.WebAPIPath, uuid, data.DataName())
+	removeRelationships(expected)
+	testResponse(t, expected, "%snode/%s/%s/tag/Synapse1", server.WebAPIPath, uuid, data.DataName())
+
+	expected = Elements{
 		{
 			ElementNR{
 				Pos:  dvid.Point3d{14, 25, 37}, // Label 3
@@ -1176,7 +1232,9 @@ func TestTagRequests(t *testing.T) {
 			[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 		},
 	}
-	testResponse(t, expectedZlt90, "%snode/%s/%s/tag/Zlt90?relationships=true", server.WebAPIPath, uuid, data.DataName())
+	testResponse(t, expected, "%snode/%s/%s/tag/Zlt90?relationships=true", server.WebAPIPath, uuid, data.DataName())
+	removeRelationships(expected)
+	testResponse(t, expected, "%snode/%s/%s/tag/Zlt90", server.WebAPIPath, uuid, data.DataName())
 }
 
 func getBytesRLE(t *testing.T, rles dvid.RLEs) *bytes.Buffer {
