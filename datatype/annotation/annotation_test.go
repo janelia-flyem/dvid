@@ -818,7 +818,7 @@ func TestPropChange(t *testing.T) {
 					"i'm really special": "",
 				},
 			},
-			[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
+			[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{21, 33, 40}}, {Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
 		},
 		{
 			ElementNR{
@@ -844,7 +844,7 @@ func TestPropChange(t *testing.T) {
 					"i'm NOT really special": "",
 				},
 			},
-			[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
+			[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{21, 33, 40}}, {Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
 		},
 	}
 	testJSON, err = json.Marshal(mod)
@@ -865,7 +865,7 @@ func TestPropChange(t *testing.T) {
 					"i'm NOT really special": "",
 				},
 			},
-			[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
+			[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{21, 33, 40}}, {Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
 		},
 		{
 			ElementNR{
@@ -877,30 +877,7 @@ func TestPropChange(t *testing.T) {
 		},
 	}
 	testResponse(t, expected, "%snode/%s/%s/tag/Synapse1?relationships=true", server.WebAPIPath, uuid, data.DataName())
-
-	expected = Elements{
-		{
-			ElementNR{
-				Pos:  dvid.Point3d{15, 27, 35}, // Label 1
-				Kind: PreSyn,
-				Tags: []Tag{"Synapse1", "Zlt90"},
-				Prop: map[string]string{
-					"Im a T-Bar":             "no",
-					"I'm not a PSD":          "unsure",
-					"i'm NOT really special": "",
-				},
-			},
-			[]Relationship{},
-		},
-		{
-			ElementNR{
-				Pos:  dvid.Point3d{21, 33, 40}, // Label 2
-				Kind: PostSyn,
-				Tags: []Tag{"Synapse1"},
-			},
-			[]Relationship{},
-		},
-	}
+	removeRelationships(expected)
 	testResponse(t, expected, "%snode/%s/%s/tag/Synapse1", server.WebAPIPath, uuid, data.DataName())
 
 	expected = Elements{
@@ -915,7 +892,7 @@ func TestPropChange(t *testing.T) {
 					"i'm NOT really special": "",
 				},
 			},
-			[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
+			[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{21, 33, 40}}, {Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
 		},
 		{
 			ElementNR{
@@ -935,6 +912,8 @@ func TestPropChange(t *testing.T) {
 		},
 	}
 	testResponse(t, expected, "%snode/%s/%s/tag/Zlt90?relationships=true", server.WebAPIPath, uuid, data.DataName())
+	removeRelationships(expected)
+	testResponse(t, expected, "%snode/%s/%s/tag/Zlt90", server.WebAPIPath, uuid, data.DataName())
 }
 
 func removeRelationships(elems Elements) {
