@@ -19,6 +19,8 @@ Multiple lines!
 
 interactiveOpsBeforeBlock = 10 # Blocks processing routines, e.g., image tile creations, if interactive ops over last 2 min exceeds this amount.  If omitted or 0 will do no blocking.
 
+shutdownDelay = 0 # Delay after shutdown request to let HTTP requests drain.  Default is 5 seconds.
+
 # if a start-up webhook is provided, DVID will do a POST on the webhook address and send JSON
 # with the server attributes including the values for "host", "note", and other server properties.
 # startWebhook = "http://dvidmonitor.hhmi.org"

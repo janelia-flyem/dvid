@@ -57,6 +57,7 @@ func init() {
 	}
 	DefaultHost = out.String()
 	DefaultHost = DefaultHost[:len(DefaultHost)-1] // removes EOL
+	tc.Server.ShutdownDelay = 5
 }
 
 // TestConfig specifies configuration for testing servers.
@@ -354,6 +355,7 @@ type ServerConfig struct {
 	MutIDStart uint64 `toml:"min_mutation_id_start"`
 
 	InteractiveOpsBeforeBlock int // # of interactive ops in 2 min period before batch processing is blocked.  Zero value = no blocking.
+	ShutdownDelay             int // seconds to delay after receiving shutdown request to let HTTP requests drain.
 }
 
 // DatastoreConfig returns data instance configuration necessary to

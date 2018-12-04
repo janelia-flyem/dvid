@@ -324,8 +324,10 @@ func Shutdown() {
 		}
 		time.Sleep(1 * time.Second)
 	}
-	dvid.Infof("Waiting 5 seconds for any HTTP requests to drain...\n")
-	time.Sleep(5 * time.Second)
+	if tc.Server.ShutdownDelay > 0 {
+		dvid.Infof("Waiting %d seconds for any HTTP requests to drain...\n", tc.Server.ShutdownDelay)
+		time.Sleep(time.Duration(tc.Server.ShutdownDelay) * time.Second)
+	}
 	datastore.Shutdown()
 	dvid.BlockOnActiveCgo()
 	rpc.Shutdown()
