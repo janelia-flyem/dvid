@@ -1773,47 +1773,52 @@ func (d *Data) SendBlockSimple(w http.ResponseWriter, x, y, z int32, v []byte, c
 }
 
 // SendBlocksSpecific writes data to the blocks specified -- best for non-ordered backend
-func (d *Data) SendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWriter, compression string, blockstring string, isprefetch bool) error {
+func (d *Data) SendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWriter, compression string, blockstring string, isprefetch bool) (numBlocks int, err error) {
 	w.Header().Set("Content-type", "application/octet-stream")
 
 	if compression != "uncompressed" && compression != "jpeg" && compression != "" {
-		return fmt.Errorf("don't understand 'compression' query string value: %s", compression)
+		err = fmt.Errorf("don't understand 'compression' query string value: %s", compression)
+		return
 	}
 	timedLog := dvid.NewTimeLog()
 	defer timedLog.Infof("SendBlocks Specific ")
 
 	// extract querey string
 	if blockstring == "" {
-		return nil
+		return
 	}
 	coordarray := strings.Split(blockstring, ",")
 	if len(coordarray)%3 != 0 {
-		return fmt.Errorf("block query string should be three coordinates per block")
+		err = fmt.Errorf("block query string should be three coordinates per block")
+		return
 	}
+	numBlocks = len(coordarray) / 3
 
 	// make a finished queue
 	finishedRequests := make(chan error, len(coordarray)/3)
 	var mutex sync.Mutex
 
 	// get store
-	store, err := datastore.GetKeyValueDB(d)
+	var store storage.KeyValueDB
+	store, err = datastore.GetKeyValueDB(d)
 	if err != nil {
-		return fmt.Errorf("Data type labelblk had error initializing store: %v\n", err)
+		return
 	}
 
 	// iterate through each block and query
 	for i := 0; i < len(coordarray); i += 3 {
-		xloc, err := strconv.Atoi(coordarray[i])
+		var xloc, yloc, zloc int
+		xloc, err = strconv.Atoi(coordarray[i])
 		if err != nil {
-			return err
+			return
 		}
-		yloc, err := strconv.Atoi(coordarray[i+1])
+		yloc, err = strconv.Atoi(coordarray[i+1])
 		if err != nil {
-			return err
+			return
 		}
-		zloc, err := strconv.Atoi(coordarray[i+2])
+		zloc, err = strconv.Atoi(coordarray[i+2])
 		if err != nil {
-			return err
+			return
 		}
 
 		go func(xloc, yloc, zloc int32, isprefetch bool, finishedRequests chan error, store storage.KeyValueDB) {
@@ -1850,8 +1855,7 @@ func (d *Data) SendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 			}
 		}
 	}
-
-	return err
+	return
 }
 
 // GetBlocks returns a slice of bytes corresponding to all the blocks along a span in X
@@ -2123,11 +2127,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 
 		if action == "get" {
-			if err := d.SendBlocksSpecific(ctx, w, compression, blocklist, isprefetch); err != nil {
+			numBlocks, err := d.SendBlocksSpecific(ctx, w, compression, blocklist, isprefetch)
+			if err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
 			timedLog.Infof("HTTP %s: %s", r.Method, r.URL)
+			activity["num_blocks"] = numBlocks
 		} else {
 			server.BadRequest(w, r, "DVID does not accept the %s action on the 'specificblocks' endpoint", action)
 			return

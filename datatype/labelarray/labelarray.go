@@ -1734,40 +1734,44 @@ func (d *Data) convertTo64bit(geom dvid.Geometry, data []uint8, bytesPerVoxel, s
 }
 
 // sendBlocksSpecific writes data to the blocks specified -- best for non-ordered backend
-func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWriter, blockstring string, scale uint8) error {
+func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWriter, blockstring string, scale uint8) (numBlocks int, err error) {
 	w.Header().Set("Content-type", "application/octet-stream")
 	// extract querey string
 	if blockstring == "" {
-		return nil
+		return
 	}
 	coordarray := strings.Split(blockstring, ",")
 	if len(coordarray)%3 != 0 {
-		return fmt.Errorf("block query string should be three coordinates per block")
+		err = fmt.Errorf("block query string should be three coordinates per block")
+		return
 	}
+	numBlocks = len(coordarray) / 3
 
 	// make a finished queue
 	finishedRequests := make(chan error, len(coordarray)/3)
 	var mutex sync.Mutex
 
 	// get store
-	store, err := datastore.GetKeyValueDB(d)
+	var store storage.KeyValueDB
+	store, err = datastore.GetKeyValueDB(d)
 	if err != nil {
-		return fmt.Errorf("Data type labelblk had error initializing store: %v\n", err)
+		return
 	}
 
 	// iterate through each block and query
 	for i := 0; i < len(coordarray); i += 3 {
-		xloc, err := strconv.Atoi(coordarray[i])
+		var xloc, yloc, zloc int
+		xloc, err = strconv.Atoi(coordarray[i])
 		if err != nil {
-			return err
+			return
 		}
-		yloc, err := strconv.Atoi(coordarray[i+1])
+		yloc, err = strconv.Atoi(coordarray[i+1])
 		if err != nil {
-			return err
+			return
 		}
-		zloc, err := strconv.Atoi(coordarray[i+2])
+		zloc, err = strconv.Atoi(coordarray[i+2])
 		if err != nil {
-			return err
+			return
 		}
 
 		go func(xloc, yloc, zloc int32, finishedRequests chan error, store storage.KeyValueDB) {
@@ -1798,8 +1802,7 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 			err = errjob
 		}
 	}
-
-	return err
+	return
 }
 
 // returns nil block if no block is at the given block coordinate
@@ -2702,12 +2705,14 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		if action == "get" {
-			if err := d.sendBlocksSpecific(ctx, w, blocklist, scale); err != nil {
+			numBlocks, err := d.sendBlocksSpecific(ctx, w, blocklist, scale)
+			if err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
 			timedLog := dvid.NewTimeLog()
 			timedLog.Infof("HTTP %s: %s", r.Method, r.URL)
+			activity["num_blocks"] = numBlocks
 		} else {
 			server.BadRequest(w, r, "DVID does not accept the %s action on the 'specificblocks' endpoint", action)
 			return
