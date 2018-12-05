@@ -197,8 +197,9 @@ type DataService interface {
 	// DoRPC handles command line and RPC commands specific to a data type
 	DoRPC(Request, *Response) error
 
-	// ServeHTTP handles HTTP requests in the context of a particular version.
-	ServeHTTP(dvid.UUID, *VersionedCtx, http.ResponseWriter, *http.Request)
+	// ServeHTTP handles HTTP requests in the context of a particular version and
+	// returns activity information that can be logged for monitoring.
+	ServeHTTP(dvid.UUID, *VersionedCtx, http.ResponseWriter, *http.Request) (activity map[string]interface{})
 
 	// DescribeTKeyClass explains in a string what a particular TKeyClass
 	// is used for.  For example, one class of TKey for the label data types is the block-indexed

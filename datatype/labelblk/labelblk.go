@@ -1240,7 +1240,7 @@ func checkContentHash(hash string, data []byte) error {
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.
-func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) (activity map[string]interface{}) {
 	// TODO -- Refactor this method to break it up and make it simpler.  Use the web routing for the endpoints.
 
 	timedLog := dvid.NewTimeLog()
@@ -1616,6 +1616,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	default:
 		server.BadAPIRequest(w, r, d)
 	}
+	return
 }
 
 // --------- Other functions on labelblk Data -----------------

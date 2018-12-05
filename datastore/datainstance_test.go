@@ -38,7 +38,8 @@ func (d *TestData) DoRPC(request Request, reply *Response) error {
 	return nil
 }
 
-func (d *TestData) ServeHTTP(uuid dvid.UUID, ctx *VersionedCtx, w http.ResponseWriter, r *http.Request) {
+func (d *TestData) ServeHTTP(uuid dvid.UUID, ctx *VersionedCtx, w http.ResponseWriter, r *http.Request) map[string]interface{} {
+	return nil
 }
 
 func (d *TestData) Help() string {

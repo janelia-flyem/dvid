@@ -604,7 +604,6 @@ func initRoutes() {
 	mainMux.Use(recoverHandler)
 	mainMux.Use(corsHandler)
 
-	// Handle RAML interface
 	mainMux.Get("/interface", interfaceHandler)
 	mainMux.Get("/interface/version", versionHandler)
 
@@ -614,19 +613,22 @@ func initRoutes() {
 
 	mainMux.Get("/api/storage", serverStorageHandler)
 
-	mainMux.Get("/api/server/info", serverInfoHandler)
-	mainMux.Get("/api/server/info/", serverInfoHandler)
-	mainMux.Get("/api/server/note", serverNoteHandler)
-	mainMux.Get("/api/server/note/", serverNoteHandler)
-	mainMux.Get("/api/server/types", serverTypesHandler)
-	mainMux.Get("/api/server/types/", serverTypesHandler)
-	mainMux.Get("/api/server/compiled-types", serverCompiledTypesHandler)
-	mainMux.Get("/api/server/compiled-types/", serverCompiledTypesHandler)
-	mainMux.Get("/api/server/groupcache", serverGroupcacheHandler)
-	mainMux.Get("/api/server/groupcache/", serverGroupcacheHandler)
-	mainMux.Post("/api/server/settings", serverSettingsHandler)
-	mainMux.Post("/api/server/reload-metadata", serverReload)
-	mainMux.Post("/api/server/reload-metadata/", serverReload)
+	serverMux := web.New()
+	mainMux.Handle("/api/server/:action", serverMux)
+	serverMux.Use(activityLogHandler)
+	serverMux.Get("/api/server/info", serverInfoHandler)
+	serverMux.Get("/api/server/info/", serverInfoHandler)
+	serverMux.Get("/api/server/note", serverNoteHandler)
+	serverMux.Get("/api/server/note/", serverNoteHandler)
+	serverMux.Get("/api/server/types", serverTypesHandler)
+	serverMux.Get("/api/server/types/", serverTypesHandler)
+	serverMux.Get("/api/server/compiled-types", serverCompiledTypesHandler)
+	serverMux.Get("/api/server/compiled-types/", serverCompiledTypesHandler)
+	serverMux.Get("/api/server/groupcache", serverGroupcacheHandler)
+	serverMux.Get("/api/server/groupcache/", serverGroupcacheHandler)
+	serverMux.Post("/api/server/settings", serverSettingsHandler)
+	serverMux.Post("/api/server/reload-metadata", serverReload)
+	serverMux.Post("/api/server/reload-metadata/", serverReload)
 
 	if !readonly {
 		mainMux.Post("/api/repos", reposPostHandler)
@@ -635,11 +637,13 @@ func initRoutes() {
 
 	repoRawMux := web.New()
 	mainMux.Handle("/api/repo/:uuid", repoRawMux)
+	repoRawMux.Use(activityLogHandler)
 	repoRawMux.Use(repoRawSelector)
 	repoRawMux.Head("/api/repo/:uuid", repoHeadHandler)
 
 	repoMux := web.New()
 	mainMux.Handle("/api/repo/:uuid/:action", repoMux)
+	repoMux.Use(activityLogHandler)
 	repoMux.Use(repoSelector)
 	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
 	repoMux.Post("/api/repo/:uuid/instance", repoNewDataHandler)
@@ -651,6 +655,7 @@ func initRoutes() {
 	nodeMux := web.New()
 	mainMux.Handle("/api/node/:uuid", nodeMux)
 	mainMux.Handle("/api/node/:uuid/:action", nodeMux)
+	nodeMux.Use(activityLogHandler)
 	nodeMux.Use(repoRawSelector)
 	nodeMux.Use(nodeSelector)
 	nodeMux.Get("/api/node/:uuid/note", getNodeNoteHandler)
@@ -714,14 +719,41 @@ func wrapResponseWriter(w http.ResponseWriter) *wrappedResponseWriter {
 	return &wr
 }
 
-// Middleware that prevents any web requests if httpAvail is false, and logs activity
-// to kafka if available.  Allows draconian shutdown of server when doing critical reorg
-// of internals.
+// Middleware that prevents any web requests if httpAvail is false.  Allows draconian
+// shutdown of server when doing critical reorg of internals.
 func httpAvailHandler(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		if httpUnavailable(w) {
 			return
 		}
+		h.ServeHTTP(w, r)
+	}
+	return http.HandlerFunc(fn)
+}
+
+// Middleware that recovers from panics, sends email if a notification email
+// has been provided, and log issues.
+func recoverHandler(c *web.C, h http.Handler) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) {
+		reqID := middleware.GetReqID(*c)
+
+		defer func() {
+			if e := recover(); e != nil {
+				msg := fmt.Sprintf("Panic detected on request %s:\n%+v\nIP: %v, URL: %s\n",
+					reqID, e, r.RemoteAddr, r.URL.Path)
+				dvid.ReportPanic(msg, WebServer())
+				http.Error(w, msg, 500)
+			}
+		}()
+
+		h.ServeHTTP(w, r)
+	}
+	return http.HandlerFunc(fn)
+}
+
+// Middleware that logs activity to kafka if available.
+func activityLogHandler(c *web.C, h http.Handler) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) {
 		t0 := time.Now()
 		myw := wrapResponseWriter(w)
 		h.ServeHTTP(myw, r)
@@ -743,26 +775,6 @@ func httpAvailHandler(c *web.C, h http.Handler) http.Handler {
 			}
 			storage.LogActivityToKafka(activity)
 		}
-	}
-	return http.HandlerFunc(fn)
-}
-
-// Middleware that recovers from panics, sends email if a notification email
-// has been provided, and log issues.
-func recoverHandler(c *web.C, h http.Handler) http.Handler {
-	fn := func(w http.ResponseWriter, r *http.Request) {
-		reqID := middleware.GetReqID(*c)
-
-		defer func() {
-			if e := recover(); e != nil {
-				msg := fmt.Sprintf("Panic detected on request %s:\n%+v\nIP: %v, URL: %s\n",
-					reqID, e, r.RemoteAddr, r.URL.Path)
-				dvid.ReportPanic(msg, WebServer())
-				http.Error(w, msg, 500)
-			}
-		}()
-
-		h.ServeHTTP(w, r)
 	}
 	return http.HandlerFunc(fn)
 }
@@ -906,6 +918,7 @@ func repoSelector(c *web.C, h http.Handler) http.Handler {
 // forwards the request to that instance's HTTP handler.
 func instanceSelector(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
+		t0 := time.Now()
 		var err error
 		dataname := dvid.InstanceName(c.URLParams["dataname"])
 		uuid, ok := c.Env["uuid"].(dvid.UUID)
@@ -1034,8 +1047,31 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 				}
 			}
 		}
-
-		data.ServeHTTP(uuid, ctx, w, r)
+		myw := wrapResponseWriter(w)
+		activity := data.ServeHTTP(uuid, ctx, myw, r)
+		if KafkaAvailable() {
+			user := r.URL.Query().Get("u")
+			app := r.URL.Query().Get("app")
+			t := time.Since(t0)
+			data := map[string]interface{}{
+				"time":        t0.Unix(),
+				"duration":    t.Seconds() * 1000.0,
+				"status":      myw.status,
+				"user":        user,
+				"client":      app,
+				"method":      r.Method,
+				"uri":         r.RequestURI,
+				"bytes_in":    r.ContentLength,
+				"bytes_out":   myw.bytes,
+				"remote_addr": r.RemoteAddr,
+			}
+			if len(activity) > 0 {
+				for k, v := range activity {
+					data[k] = v
+				}
+			}
+			storage.LogActivityToKafka(data)
+		}
 	}
 	return http.HandlerFunc(fn)
 }

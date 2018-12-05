@@ -1298,7 +1298,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.
-func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) (activity map[string]interface{}) {
 	// --- Don't time labelgraph ops because they are very small and frequent.
 	// --- TODO -- Implement monitoring system that aggregates logged ops instead of
 	// ----------- printing out each one.
@@ -1331,7 +1331,6 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "help":
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintln(w, d.Help())
-		return
 	case "info":
 		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
@@ -1356,7 +1355,6 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		err = d.handleSubgraphBulk(ctx, db, w, labelgraph, method)
 		if err != nil {
 			server.BadRequest(w, r, err)
-			return
 		}
 	case "neighbors":
 		if method != "get" {
@@ -1366,7 +1364,6 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		err := d.handleNeighbors(ctx, db, w, parts[4:])
 		if err != nil {
 			server.BadRequest(w, r, err)
-			return
 		}
 	case "merge":
 		if method != "post" {
@@ -1381,42 +1378,35 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		err = d.handleMerge(ctx, db, w, labelgraph)
 		if err != nil {
 			server.BadRequest(w, r, err)
-			return
 		}
 	case "weight":
 		if method != "post" {
 			server.BadRequest(w, r, "Only supports POSTs")
-			return
 		}
 		labelgraph, err := d.ExtractGraph(r, false)
 		if err != nil {
 			server.BadRequest(w, r, err)
-			return
 		}
 		err = d.handleWeightUpdate(ctx, db, w, labelgraph)
 		if err != nil {
 			server.BadRequest(w, r, err)
-			return
 		}
 	case "propertytransaction":
 		err := d.handlePropertyTransaction(ctx, db, w, r, parts[4:], method)
 		if err != nil {
 			server.BadRequest(w, r, err)
-			return
 		}
 	case "property":
 		err := d.handleProperty(ctx, db, w, r, parts[4:], method)
 		if err != nil {
 			server.BadRequest(w, r, err)
-			return
 		}
 	case "undomerge":
 		// not supported until transaction history is supported
 		server.BadRequest(w, r, "undomerge not yet implemented")
-		return
 	default:
 		server.BadAPIRequest(w, r, d)
-		return
 	}
 	//timedLog.Infof("Successful labelgraph op %s on %q", parts[3], d.DataName())
+	return
 }
