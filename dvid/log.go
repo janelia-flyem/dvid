@@ -23,6 +23,8 @@ var (
 	// we use a single goroutine for writing a stream of messages to the log in
 	// an asynchronous manner.
 	logCh chan logMessage
+
+	logChAvail bool // true if log channel is available
 )
 
 type logFunc func(s string)
@@ -36,6 +38,7 @@ const maxPendingLogMessages = 10000
 
 func init() {
 	logCh = make(chan logMessage, maxPendingLogMessages)
+	logChAvail = true
 	go func() {
 		for msg := range logCh {
 			msg.f(msg.msg)
@@ -52,13 +55,14 @@ func PendingLogMessages() int {
 func Shutdown() {
 	logger.Infof("Shutting down DVID core...\n")
 	for {
-		time.Sleep(1 * time.Second)
+		time.Sleep(100 * time.Millisecond)
 		if len(logCh) > 0 {
 			Infof("Waiting for %d log messages to write...\n", len(logCh))
 		} else {
 			break
 		}
 	}
+	logChAvail = false
 	close(logCh)
 	logger.Infof("Logging system shutdown.\n")
 	logger.Shutdown()
@@ -114,68 +118,92 @@ func SetLogMode(newMode ModeFlag) {
 	mode = newMode
 }
 
+func logUntimedMessage(f logFunc, format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	if logChAvail {
+		logCh <- logMessage{f: f, msg: msg}
+	} else {
+		LogImmediately(msg)
+	}
+}
+
+func logMessageWithTime(f logFunc, format string, args ...interface{}) {
+	t := time.Now()
+	timeStr := fmt.Sprintf("%d/%02d/%02d %02d:%02d:%02d", t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
+	msg := fmt.Sprintf(timeStr+" "+format, args...)
+	if logChAvail {
+		logCh <- logMessage{f: f, msg: msg}
+	} else {
+		LogImmediately(msg)
+	}
+}
+
+func logTimedMessage(t0 time.Time, f logFunc, format string, args ...interface{}) {
+	msg := fmt.Sprintf(format+": %s\n", append(args, time.Since(t0))...)
+	if logChAvail {
+		logCh <- logMessage{f: f, msg: msg}
+	} else {
+		LogImmediately(msg)
+	}
+}
+
 func Debugf(format string, args ...interface{}) {
 	if mode <= DebugMode {
-		logCh <- logMessage{f: logger.Debug, msg: fmt.Sprintf(format, args...)}
+		logUntimedMessage(logger.Debug, format, args)
 	}
 }
 
 func Infof(format string, args ...interface{}) {
 	if mode <= InfoMode {
-		logCh <- logMessage{f: logger.Info, msg: fmt.Sprintf(format, args...)}
+		logUntimedMessage(logger.Info, format, args)
 	}
 }
 
 func Warningf(format string, args ...interface{}) {
 	if mode <= WarningMode {
-		logCh <- logMessage{f: logger.Warning, msg: fmt.Sprintf(format, args...)}
+		logUntimedMessage(logger.Warning, format, args)
 	}
 }
 
 func Errorf(format string, args ...interface{}) {
 	if mode <= ErrorMode {
-		logCh <- logMessage{f: logger.Error, msg: fmt.Sprintf(format, args...)}
+		logUntimedMessage(logger.Error, format, args)
 	}
 }
 
 func Criticalf(format string, args ...interface{}) {
 	if mode <= CriticalMode {
-		logCh <- logMessage{f: logger.Critical, msg: fmt.Sprintf(format, args...)}
+		logUntimedMessage(logger.Critical, format, args)
 	}
-}
-
-func timestr() string {
-	t := time.Now()
-	return fmt.Sprintf("%d/%02d/%02d %02d:%02d:%02d", t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 }
 
 func TimeDebugf(format string, args ...interface{}) {
 	if mode <= DebugMode {
-		logCh <- logMessage{f: logger.Debug, msg: fmt.Sprintf(timestr()+" "+format, args...)}
+		logMessageWithTime(logger.Debug, format, args)
 	}
 }
 
 func TimeInfof(format string, args ...interface{}) {
 	if mode <= InfoMode {
-		logCh <- logMessage{f: logger.Info, msg: fmt.Sprintf(timestr()+" "+format, args...)}
+		logMessageWithTime(logger.Info, format, args)
 	}
 }
 
 func TimeWarningf(format string, args ...interface{}) {
 	if mode <= WarningMode {
-		logCh <- logMessage{f: logger.Warning, msg: fmt.Sprintf(timestr()+" "+format, args...)}
+		logMessageWithTime(logger.Warning, format, args)
 	}
 }
 
 func TimeErrorf(format string, args ...interface{}) {
 	if mode <= ErrorMode {
-		logCh <- logMessage{f: logger.Error, msg: fmt.Sprintf(timestr()+" "+format, args...)}
+		logMessageWithTime(logger.Error, format, args)
 	}
 }
 
 func TimeCriticalf(format string, args ...interface{}) {
 	if mode <= CriticalMode {
-		logCh <- logMessage{f: logger.Critical, msg: fmt.Sprintf(timestr()+" "+format, args...)}
+		logMessageWithTime(logger.Critical, format, args)
 	}
 }
 
@@ -201,31 +229,31 @@ func NewTimeLog() TimeLog {
 
 func (t TimeLog) Debugf(format string, args ...interface{}) {
 	if mode <= DebugMode {
-		logCh <- logMessage{f: t.logger.Debug, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
+		logTimedMessage(t.start, t.logger.Debug, format, args)
 	}
 }
 
 func (t TimeLog) Infof(format string, args ...interface{}) {
 	if mode <= InfoMode {
-		logCh <- logMessage{f: t.logger.Info, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
+		logTimedMessage(t.start, t.logger.Info, format, args)
 	}
 }
 
 func (t TimeLog) Warningf(format string, args ...interface{}) {
 	if mode <= WarningMode {
-		logCh <- logMessage{f: t.logger.Warning, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
+		logTimedMessage(t.start, t.logger.Warning, format, args)
 	}
 }
 
 func (t TimeLog) Errorf(format string, args ...interface{}) {
 	if mode <= ErrorMode {
-		logCh <- logMessage{f: t.logger.Error, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
+		logTimedMessage(t.start, t.logger.Error, format, args)
 	}
 }
 
 func (t TimeLog) Criticalf(format string, args ...interface{}) {
 	if mode <= CriticalMode {
-		logCh <- logMessage{f: t.logger.Critical, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
+		logTimedMessage(t.start, t.logger.Critical, format, args)
 	}
 }
 
