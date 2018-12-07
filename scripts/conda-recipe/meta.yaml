@@ -153,8 +153,9 @@ source:
     folder:  src/github.com/boltdb/bolt
 
   # kafka
+  # NOTE: Using v0.11.6 for now, until we obtain a build of librdkafka 1.0
   - git_url: https://github.com/confluentinc/confluent-kafka-go
-    git_tag: master
+    git_tag: v0.11.6
     folder:  src/github.com/confluentinc/confluent-kafka-go
     
   # freecache
