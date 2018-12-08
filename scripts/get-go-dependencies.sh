@@ -31,6 +31,15 @@ if [[ "${CONDA_PREFIX}" == "$(conda info --base)" ]]; then
 fi
 
 
+if [[ "$(uname)" == "Linux" ]]; then
+    if [[ -z "${CC}" ]]; then
+        1>&2 echo "You must have a compiler installed, and CC must be defined."
+        1>&2 echo "This will be done for you if you run scripts/install-compiled-dependencies.sh"
+        exit 1
+    fi
+    ln -sf ${CC} ${CONDA_PREFIX}/bin/gcc
+fi
+
 echo "Fetching third-party go sources..."
 
 # gopackages

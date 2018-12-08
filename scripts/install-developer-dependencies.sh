@@ -25,6 +25,11 @@ cd ${THIS_SCRIPT_DIR}
 CONDA_PYTHON=$(conda info --root)/bin/python
 ${CONDA_PYTHON} _install_compiled_dependencies.py
 
+# Some of those dependencies (namely, gcc) may have installed scripts to
+# ${CONDA_PREFIX}/etc/conda/activate.d/
+# so re-activate the current environment to ensure that those scripts have been run.
+source activate ${CONDA_DEFAULT_ENV}
+
 ##
 ## Install go dependencies.
 ##

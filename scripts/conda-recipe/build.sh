@@ -19,3 +19,6 @@ make test
 
 # Install
 make install
+
+# Remove the gcc symlink that was created in get-go-dependenices.sh
+rm -rf ${PREFIX}/bin/gcc

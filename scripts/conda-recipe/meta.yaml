@@ -27,6 +27,8 @@ requirements:
   build:
     - go 1.10.*
     - pkg-config
+    # Anaconda's gcc build
+    - gcc_linux-64 # [linux]
 
   # The 'host' environment is for libraries that
   # will be included/linked into dvid.

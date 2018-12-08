@@ -18,13 +18,28 @@ with open(recipe_yaml, 'r') as f:
     recipe_meta = yaml.load(f)
 
 build_requirements = recipe_meta['requirements']['build']
-build_requirements += recipe_meta['requirements']['host']
+
+# For development setup, we want to install everything into one environment.
+# That means the 'build' and 'host' environments must all be installed together.
+# To avoid letting the 'build' requirements (such as libgcc) conflict with
+# the 'host' requirements, we'll relax the version constraints on them,
+# except for the go compiler.
+relaxed_build_requirements = []
+for req in build_requirements:
+    if req.startswith('go'):
+        relaxed_build_requirements.append(req)
+    else:
+        relaxed_build_requirements.append( req.split()[0] )
+
+host_requirements = recipe_meta['requirements']['host']
+
+combined_requirements = relaxed_build_requirements + host_requirements
 
 print("Installing compiled dependencies...")
 
-# Convert the requirements (with version specs, if any) to conda's command-line syntax
-# (i.e. replace spaces with '=')
-requirement_specs = map(lambda r: '='.join(r.split()), build_requirements)
+# Convert the requirements (with version specs, if any)
+# to conda's command-line syntax (i.e. replace spaces with '=')
+requirement_specs = map(lambda r: '='.join(r.split()), combined_requirements)
 
 # Install to the currently active environment.
 cmd = 'conda install -y {}'.format(' '.join(requirement_specs))
