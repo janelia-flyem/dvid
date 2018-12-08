@@ -11,7 +11,7 @@
 
 set -e
 
-if [[ "$GOPATH" == "" ]]; then
+if [[ "${GOPATH}" == "" ]]; then
   1>&2 echo "You must define GOPATH to use this script!"
   exit 1
 fi
@@ -99,7 +99,19 @@ go get github.com/boltdb/bolt
 go get github.com/DocSavage/gomdb
 
 # kafka
-KAFKA_GO_DIR=${GOPATH}/src/github.com/confluentinc/confluent-kafka-go
+CONFLUENTINC_DIR=${GOPATH}/src/github.com/confluentinc
+KAFKA_GO_DIR=${CONFLUENTINC_DIR}/confluent-kafka-go
+mkdir -p ${CONFLUENTINC_DIR}
+
+# Can't use 'go get' directly, because that gets the newest version and we want something older.
+# Instead, we clone it manually, checkout the tag we want, and then build it.
+if [[ -d ${KAFKA_GO_DIR} ]]; then
+    cd ${KAFKA_GO_DIR} && git fetch && cd -
+else
+    git clone https://github.com/confluentinc/confluent-kafka-go ${KAFKA_GO_DIR}
+fi
+cd ${KAFKA_GO_DIR} && git checkout v0.11.6 && cd -
+
 if [ $(uname) == "Linux" ]; then
     # For some reason, the confluent kafka package cannot be built correctly unless you set LD_LIBRARY_PATH,
     # despite the fact that our copy of librdkafka.so does correctly provide an internal RPATH.
@@ -117,19 +129,9 @@ if [ $(uname) == "Linux" ]; then
     #   ...
 
     # So simply define LD_LIBRARY_PATH first.
-    
-    # Can't use 'go get' directly, because that gets the newest version and we want something older.
-    # Instead, we clone it manually, checkout the tag we want, and then build it.
-    git clone https://github.com/confluentinc/confluent-kafka-go ${KAKFA_GO_DIR}
-    cd ${KAFKA_GO_DIR}
-    git checkout v0.11.6
-    cd -
     LD_LIBRARY_PATH=${CONDA_PREFIX}/lib go build github.com/confluentinc/confluent-kafka-go/kafka
 else
-    go get github.com/confluentinc/confluent-kafka-go/kafka
-    cd ${KAFKA_GO_DIR}
-    git checkout v0.11.6
-    cd -
+    go build github.com/confluentinc/confluent-kafka-go/kafka
 fi
 
 # freecache
