@@ -123,37 +123,23 @@ For each platform (Mac and Linux):
     $ anaconda upload -u flyem-forge $(conda info --base)/conda-bld/linux-64/dvid-0.8.20-0.tar.bz2 # Linux
     ```
 
-   Note: For maximum Linux compatibility, consider building within a Docker container, such as `condaforge/linux-anvil`:
+   Note: For maximum Linux compatibility, build within the `flyem-build` Docker container:
    
    <details>
    
    <summary>Click here to see Docker container commands</summary>
    
    ```
-   ## Pull and start the container:
-   $ docker pull condaforge/linux-anvil
-   $ docker run -i -t --name dvid-build condaforge/linux-anvil
-   
-   ## In the container:
-   [conda@0709a0f996e7 ~]$ conda config --add channels flyem-forge
-   [conda@0709a0f996e7 ~]$ git clone https://github.com/janelia-flyem/dvid
-   [conda@0709a0f996e7 ~]$ cd dvid
-   [conda@0709a0f996e7 dvid]$ conda build scripts/conda-recipe
-   ...
-   [conda@0709a0f996e7 dvid]$ anaconda upload /opt/conda/conda-bld/linux-64/dvid-0.8.20-0.tar.bz2
-   
+   # Launch the container
+   git clone https://github.com/janelia-flyem/flyem-build-container
+   cd flyem-build-container
+   ./launch.sh # (or resume.sh)
 
-   ## For your next build, you can skip the initial configuration
-   ## if you re-attach to the container as you left it:
-   $ docker start dvid-build
-   $ docker attach dvid-build
-   
-   [conda@0709a0f996e7 ~]$ cd dvid
-   [conda@0709a0f996e7 dvid]$ git fetch --tags origin
-   [conda@0709a0f996e7 dvid]$ git pull origin master
-   [conda@0709a0f996e7 dvid]$ conda build scripts/conda-recipe
-   ...
-   [conda@0709a0f996e7 dvid]$ anaconda upload /opt/conda/conda-bld/linux-64/dvid-0.8.21-0.tar.bz2
+
+   # Within the container
+   cd /flyem-workspace/gopath/src/github.com/janelia-flyem/dvid
+   conda build scripts/conda-recipe
+   anaconda upload /opt/conda/conda-bld/linux-64/dvid-0.8.20-0.tar.bz2
    ```
    
    </details>
