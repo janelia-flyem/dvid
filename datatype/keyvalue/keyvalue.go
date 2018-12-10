@@ -602,7 +602,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				server.BadRequest(w, r, err)
 				return
 			}
-			comment = fmt.Sprintf("HTTP POST keyvalue '%s': %d bytes (%s)\n", d.DataName(), len(data), url)
+			comment = fmt.Sprintf("HTTP POST keyvalue '%s': %d bytes (%s)", d.DataName(), len(data), url)
 		default:
 			server.BadRequest(w, r, "key endpoint does not support %q HTTP verb", action)
 			return
