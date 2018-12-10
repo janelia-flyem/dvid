@@ -2,6 +2,7 @@ package dvid
 
 import (
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -149,68 +150,68 @@ func logTimedMessage(t0 time.Time, f logFunc, format string, args ...interface{}
 
 func Debugf(format string, args ...interface{}) {
 	if mode <= DebugMode {
-		logUntimedMessage(logger.Debug, format, args)
+		logUntimedMessage(logger.Debug, format, args...)
 	}
 }
 
 func Infof(format string, args ...interface{}) {
 	if mode <= InfoMode {
-		logUntimedMessage(logger.Info, format, args)
+		logUntimedMessage(logger.Info, format, args...)
 	}
 }
 
 func Warningf(format string, args ...interface{}) {
 	if mode <= WarningMode {
-		logUntimedMessage(logger.Warning, format, args)
+		logUntimedMessage(logger.Warning, format, args...)
 	}
 }
 
 func Errorf(format string, args ...interface{}) {
 	if mode <= ErrorMode {
-		logUntimedMessage(logger.Error, format, args)
+		logUntimedMessage(logger.Error, format, args...)
 	}
 }
 
 func Criticalf(format string, args ...interface{}) {
 	if mode <= CriticalMode {
-		logUntimedMessage(logger.Critical, format, args)
+		logUntimedMessage(logger.Critical, format, args...)
 	}
 }
 
 func TimeDebugf(format string, args ...interface{}) {
 	if mode <= DebugMode {
-		logMessageWithTime(logger.Debug, format, args)
+		logMessageWithTime(logger.Debug, format, args...)
 	}
 }
 
 func TimeInfof(format string, args ...interface{}) {
 	if mode <= InfoMode {
-		logMessageWithTime(logger.Info, format, args)
+		logMessageWithTime(logger.Info, format, args...)
 	}
 }
 
 func TimeWarningf(format string, args ...interface{}) {
 	if mode <= WarningMode {
-		logMessageWithTime(logger.Warning, format, args)
+		logMessageWithTime(logger.Warning, format, args...)
 	}
 }
 
 func TimeErrorf(format string, args ...interface{}) {
 	if mode <= ErrorMode {
-		logMessageWithTime(logger.Error, format, args)
+		logMessageWithTime(logger.Error, format, args...)
 	}
 }
 
 func TimeCriticalf(format string, args ...interface{}) {
 	if mode <= CriticalMode {
-		logMessageWithTime(logger.Critical, format, args)
+		logMessageWithTime(logger.Critical, format, args...)
 	}
 }
 
 // LogImmediately writes a message to the log file immediately, bypassing any queue of
 // log messages.
 func LogImmediately(s string) {
-	logger.Criticalf("%s", s)
+	log.Print(s)
 }
 
 // TimeLog adds elapsed time to logging.
