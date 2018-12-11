@@ -242,7 +242,7 @@ GET  <api URL>/node/<UUID>/<data name>/specificblocks[?queryopts]
         int32  Block 1 coordinate Y
         int32  Block 1 coordinate Z
         int32  # bytes for first block (N1)
-        byte0  Bytes of block data in jpeg-compressed format.
+        byte0  Bytes of block data in compressed format.
         byte1
         ...
         byteN1
@@ -251,7 +251,7 @@ GET  <api URL>/node/<UUID>/<data name>/specificblocks[?queryopts]
         int32  Block 2 coordinate Y
         int32  Block 2 coordinate Z
         int32  # bytes for second block (N2)
-        byte0  Bytes of block data in jpeg-compressed format.
+        byte0  Bytes of block data in compressed format.
         byte1
         ...
         byteN2
@@ -3056,7 +3056,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				return
 			}
 			timedLog.Infof("HTTP %s: %s", r.Method, r.URL)
-			activity["num_blocks"] = numBlocks
+			activity = map[string]interface{}{
+				"num_blocks": numBlocks,
+			}
 		} else {
 			server.BadRequest(w, r, "DVID does not accept the %s action on the 'specificblocks' endpoint", action)
 			return

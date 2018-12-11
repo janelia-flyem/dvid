@@ -230,31 +230,31 @@ func NewTimeLog() TimeLog {
 
 func (t TimeLog) Debugf(format string, args ...interface{}) {
 	if mode <= DebugMode {
-		logTimedMessage(t.start, t.logger.Debug, format, args)
+		logTimedMessage(t.start, t.logger.Debug, format, args...)
 	}
 }
 
 func (t TimeLog) Infof(format string, args ...interface{}) {
 	if mode <= InfoMode {
-		logTimedMessage(t.start, t.logger.Info, format, args)
+		logTimedMessage(t.start, t.logger.Info, format, args...)
 	}
 }
 
 func (t TimeLog) Warningf(format string, args ...interface{}) {
 	if mode <= WarningMode {
-		logTimedMessage(t.start, t.logger.Warning, format, args)
+		logTimedMessage(t.start, t.logger.Warning, format, args...)
 	}
 }
 
 func (t TimeLog) Errorf(format string, args ...interface{}) {
 	if mode <= ErrorMode {
-		logTimedMessage(t.start, t.logger.Error, format, args)
+		logTimedMessage(t.start, t.logger.Error, format, args...)
 	}
 }
 
 func (t TimeLog) Criticalf(format string, args ...interface{}) {
 	if mode <= CriticalMode {
-		logTimedMessage(t.start, t.logger.Critical, format, args)
+		logTimedMessage(t.start, t.logger.Critical, format, args...)
 	}
 }
 

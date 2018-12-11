@@ -2712,7 +2712,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			}
 			timedLog := dvid.NewTimeLog()
 			timedLog.Infof("HTTP %s: %s", r.Method, r.URL)
-			activity["num_blocks"] = numBlocks
+			activity = map[string]interface{}{
+				"num_blocks": numBlocks,
+			}
 		} else {
 			server.BadRequest(w, r, "DVID does not accept the %s action on the 'specificblocks' endpoint", action)
 			return

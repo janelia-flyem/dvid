@@ -1259,33 +1259,28 @@ func testGetBlock(t *testing.T, uuid dvid.UUID, name string, bcoord dvid.Point3d
 	if err = block.UnmarshalBinary(uncompressed); err != nil {
 		t.Fatalf("unable to deserialize label block (%d, %d, %d): %v\n", x, y, z, err)
 	}
-	bytearray, _ := block.MakeLabelVolume()
+	izyx := dvid.IndexZYX{bcoord[0], bcoord[1], bcoord[2]}
+	checkBlock(t, labels.PositionedBlock{block, izyx.ToIZYXString()}, td)
+}
+
+func checkBlock(t *testing.T, pb labels.PositionedBlock, td testData) {
+	bytearray, _ := pb.Block.MakeLabelVolume()
 	uint64array, err := dvid.ByteToUint64(bytearray)
 	if err != nil {
-		t.Fatalf("error converting returned block %s to uint64 array: %v\n", bcoord, err)
+		t.Fatalf("error converting returned block %s to uint64 array: %v\n", pb.BCoord, err)
 	}
 	if len(uint64array) != len(td.u) {
-		t.Fatalf("got block %s with %d labels != expected %d labels\n", bcoord, len(uint64array), len(td.u))
+		t.Fatalf("got block %s with %d labels != expected %d labels\n", pb.BCoord, len(uint64array), len(td.u))
 	}
 	for i, val := range uint64array {
 		if val != td.u[i] {
-			t.Fatalf("error at pos %d: got label %d, expected label %d\n", i, val, td.u[i])
+			t.Fatalf("error in block %s, pos %d: got label %d, expected label %d\n", pb.BCoord, i, val, td.u[i])
 		}
 	}
 }
 
-func testGetVolumeBlocks(t *testing.T, uuid dvid.UUID, name string, supervoxels bool, size, offset dvid.Point3d) []labels.PositionedBlock {
-	apiStr := fmt.Sprintf("%snode/%s/%s/blocks/%d_%d_%d/%d_%d_%d?compression=blocks&supervoxels=%t", server.WebAPIPath,
-		uuid, name, size[0], size[1], size[2], offset[0], offset[1], offset[2], supervoxels)
-	data := server.TestHTTP(t, "GET", apiStr, nil)
-
-	nx := size[0] / 64
-	ny := size[1] / 64
-	nz := size[2] / 64
-	numBlocks := int(nx * ny * nz)
-
+func decodeReturnedBlocks(t *testing.T, data []byte) []labels.PositionedBlock {
 	var blocks []labels.PositionedBlock
-
 	b := 0
 	for {
 		if b+16 > len(data) {
@@ -1318,12 +1313,27 @@ func testGetVolumeBlocks(t *testing.T, uuid dvid.UUID, name string, supervoxels 
 		}
 		blocks = append(blocks, labels.PositionedBlock{BCoord: bcoord, Block: block})
 		b += n
-		if len(blocks) == numBlocks {
+		if len(data) == b {
 			break
 		}
 	}
 	return blocks
 }
+
+func testGetSpecificBlocks(t *testing.T, uuid dvid.UUID, name string, supervoxels bool, bcoordStr string) []labels.PositionedBlock {
+	apiStr := fmt.Sprintf("%snode/%s/%s/specificblocks?compression=blocks&supervoxels=%t&blocks=%s", server.WebAPIPath,
+		uuid, name, supervoxels, bcoordStr)
+	data := server.TestHTTP(t, "GET", apiStr, nil)
+	return decodeReturnedBlocks(t, data)
+}
+
+func testGetVolumeBlocks(t *testing.T, uuid dvid.UUID, name string, supervoxels bool, size, offset dvid.Point3d) []labels.PositionedBlock {
+	apiStr := fmt.Sprintf("%snode/%s/%s/blocks/%d_%d_%d/%d_%d_%d?compression=blocks&supervoxels=%t", server.WebAPIPath,
+		uuid, name, size[0], size[1], size[2], offset[0], offset[1], offset[2], supervoxels)
+	data := server.TestHTTP(t, "GET", apiStr, nil)
+	return decodeReturnedBlocks(t, data)
+}
+
 func TestPostBlocks(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
@@ -1390,11 +1400,15 @@ func TestPostBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var bcoordStr string
 	for i := 0; i < 4; i++ {
 		x0 := (blockCoords[i][0] - 1) * 64
 		y0 := (blockCoords[i][1] - 2) * 64
 		z0 := (blockCoords[i][2] - 3) * 64
-
+		bcoordStr += fmt.Sprintf("%d,%d,%d", blockCoords[i][0], blockCoords[i][1], blockCoords[i][2])
+		if i != 3 {
+			bcoordStr += ","
+		}
 		var x, y, z int32
 		for z = 0; z < 64; z++ {
 			for y = 0; y < 64; y++ {
@@ -1412,6 +1426,24 @@ func TestPostBlocks(t *testing.T) {
 	// test GET /blocks
 	for i, td := range data {
 		testGetBlock(t, uuid, "labels", blockCoords[i], td)
+	}
+
+	// test GET /specificblocks
+	pblocks := testGetSpecificBlocks(t, uuid, "labels", true, bcoordStr)
+	for i, td := range data {
+		izyx := dvid.IndexZYX{blockCoords[i][0], blockCoords[i][1], blockCoords[i][2]}
+		izyxStr := izyx.ToIZYXString()
+		var j int
+		for _, pb := range pblocks {
+			if izyxStr == pb.BCoord {
+				break
+			}
+			j++
+		}
+		if j == 4 {
+			t.Fatalf("Didn't find block %s in retrieved blocks\n", izyxStr)
+		}
+		checkBlock(t, pblocks[j], td)
 	}
 }
 
