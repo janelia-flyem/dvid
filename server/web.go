@@ -683,7 +683,7 @@ func initRoutes() {
 
 // returns true and sends a 503 (Service Unavailable) status code if unavailable.
 func httpUnavailable(w http.ResponseWriter) bool {
-	if httpAvail {
+	if httpAvail || dvid.RequestsOK() {
 		return false
 	}
 	http.Error(w, "DVID server is unavailable.", http.StatusServiceUnavailable)
