@@ -234,7 +234,7 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 	if zeroOut || chunk.V == nil {
 		blockSize, ok := d.BlockSize().(dvid.Point3d)
 		if !ok {
-			dvid.Errorf("Block size for data %q is not 3d: %s\n", d.BlockSize)
+			dvid.Errorf("Block size for data %q is not 3d: %s\n", d.DataName(), d.BlockSize())
 			return
 		}
 		block = *labels.MakeSolidBlock(0, blockSize)

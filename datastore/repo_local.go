@@ -2562,17 +2562,17 @@ func (r *repoT) versionSet() map[dvid.VersionID]struct{} {
 type DataAvail uint8
 
 const (
-	// For any query, we must also traverse this node's ancestors in the DAG
+	// DataDelta = For any query, we must also traverse this node's ancestors in the DAG
 	// up to any DataComplete ancestor.  Used if a node is marked as archived.
 	DataDelta DataAvail = iota
 
-	// All key-value pairs are available within this node.
+	// DataComplete = All key-value pairs are available within this node.
 	DataComplete
 
-	// Queries are redirected to Root since this is unversioned.
+	// DataRoot = Queries are redirected to Root since this is unversioned.
 	DataRoot
 
-	// Data has been explicitly deleted at this node and is no longer available.
+	// DataDeleted = key-value pairs have been explicitly deleted at this node and is no longer available.
 	DataDeleted
 )
 
@@ -2587,7 +2587,7 @@ func (avail DataAvail) String() string {
 	case DataDeleted:
 		return "Deleted"
 	default:
-		dvid.Criticalf("Unknown DataAvail (%v) with String()\n", avail)
+		dvid.Criticalf("Unknown DataAvail code %d in DataAvail.String()\n", avail)
 		return "Unknown"
 	}
 }

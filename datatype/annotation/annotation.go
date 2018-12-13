@@ -2579,13 +2579,13 @@ func (d *Data) resyncLowMemory(ctx *datastore.VersionedCtx) {
 	if numTagE > 0 {
 		totTagE += numTagE
 		if err := d.storeTags(batcher, ctx, tagE); err != nil {
-			dvid.Errorf("Error writing final set of tags of data %q: %v", err)
+			dvid.Errorf("Error writing final set of tags of data %q: %v", d.DataName(), err)
 		}
 	}
 	if numBlockE > 0 {
 		totBlockE += numBlockE
 		if err := d.storeLabels(batcher, ctx, blockE); err != nil {
-			dvid.Errorf("Error writing final set of label elements of data %q: %v", err)
+			dvid.Errorf("Error writing final set of label elements of data %q: %v", d.DataName(), err)
 		}
 	}
 

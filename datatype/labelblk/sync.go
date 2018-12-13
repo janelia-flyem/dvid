@@ -135,7 +135,7 @@ func (d *Data) serializeOctants(oct octant, blockBuf []byte) ([]byte, error) {
 	for sector, data := range oct {
 		if len(data) > 0 {
 			if len(data) != sectorbytes {
-				dvid.Criticalf("Expected %d bytes in octant for %d, instead got %d bytes.\n", sectorbytes, d.DataName(), len(data))
+				dvid.Criticalf("Expected %d bytes in octant for %s, instead got %d bytes.\n", sectorbytes, d.DataName(), len(data))
 			}
 			// Get the corner voxel (in block coordinates) for this sector.
 			iz := sector >> 2
