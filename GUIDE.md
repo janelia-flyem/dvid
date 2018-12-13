@@ -123,7 +123,7 @@ For each platform (Mac and Linux):
     $ anaconda upload -u flyem-forge $(conda info --base)/conda-bld/linux-64/dvid-0.8.20-0.tar.bz2 # Linux
     ```
 
-   Note: For maximum Linux compatibility, build within the `flyem-build` Docker container:
+   Note: For maximum Linux compatibility, build within the [`flyem-build`][flyem-build] Docker container:
    
    <details>
    
@@ -154,6 +154,7 @@ For each platform (Mac and Linux):
 
 4. [Draft a GitHub release.][creating-releases]
 
+[flyem-build]: https://github.com/janelia-flyem/flyem-build-container
 [creating-releases]: https://help.github.com/articles/creating-releases
 
 
