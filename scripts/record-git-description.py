@@ -23,4 +23,4 @@ if different:
         f.write(current_description)
 
 # Echo the name of the record file
-print(record_path, end='')
+sys.stdout.write(record_path)
