@@ -1,3 +1,4 @@
+import tempfile
 import subprocess
 import yaml
 
@@ -11,7 +12,8 @@ print("(This may take several seconds.)")
 # (For instance, it contains jinja template syntax.)
 # The 'conda render' command preprocesses the file and converts it to pure YAML,
 # which we can then parse with the standard 'yaml' module.
-recipe_yaml = '/tmp/dvid-rendered-recipe-meta.yaml'
+tmpdir = tempfile.mkdtemp()
+recipe_yaml = '{}/dvid-rendered-recipe-meta.yaml'.format(tmpdir)
 subprocess.check_call('conda render --file {} conda-recipe'.format(recipe_yaml), shell=True)
 
 with open(recipe_yaml, 'r') as f:
