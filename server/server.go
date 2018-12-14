@@ -305,8 +305,8 @@ func About() string {
 // This may not be so graceful if the chunk handler uses cgo since the interrupt
 // may be caught during cgo execution.
 func Shutdown() {
-	// Stop accepting HTTP requests.
-	httpAvail = false
+	// Stop accepting requests.
+	dvid.DenyRequests()
 
 	// Wait for chunk handlers.
 	waits := 0

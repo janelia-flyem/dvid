@@ -499,8 +499,7 @@ var (
 		*web.Mux
 		routesSetup bool
 	}
-	webMuxMu  sync.Mutex // Can Lock() to prevent any kind of web requests from initiating actions.
-	httpAvail bool       // false if we should return 503 (Service Unavailable) to any HTTP request
+	webMuxMu sync.Mutex // Can Lock() to prevent any kind of web requests from initiating actions.
 )
 
 func init() {
@@ -541,7 +540,6 @@ func ServeSingleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Allow cross-origin resource sharing.
 	w.Header().Add("Access-Control-Allow-Origin", "*")
 
-	httpAvail = true
 	webMux.ServeHTTP(w, r)
 }
 
@@ -574,7 +572,6 @@ func serveHTTP() {
 		WriteTimeout: WriteTimeout,
 		ReadTimeout:  ReadTimeout,
 	}
-	httpAvail = true
 	log.Fatal(s.ListenAndServe())
 
 	// graceful.HandleSignals()
@@ -683,7 +680,7 @@ func initRoutes() {
 
 // returns true and sends a 503 (Service Unavailable) status code if unavailable.
 func httpUnavailable(w http.ResponseWriter) bool {
-	if httpAvail || dvid.RequestsOK() {
+	if dvid.RequestsOK() {
 		return false
 	}
 	http.Error(w, "DVID server is unavailable.", http.StatusServiceUnavailable)
