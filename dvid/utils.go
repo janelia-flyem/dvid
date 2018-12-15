@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -358,62 +359,105 @@ func New8ByteAlignBytes(numBytes uint32) []byte {
 // ByteToUint64 returns a uint64 slice that reuses the passed byte slice.  NOTE: The passed byte slice
 // must be aligned for uint64.  Use New8ByteAlignBytes() to allocate for guarantee.
 func ByteToUint64(b []byte) (out []uint64, err error) {
-	if len(b)%8 != 0 {
-		return nil, fmt.Errorf("bad length in dvid.ByteToUint64: len %d", len(b))
+	if len(b)%uint64Size != 0 || uintptr(unsafe.Pointer(&b[0]))%uint64Size != 0 {
+		return nil, fmt.Errorf("bad len, cap, or alignment of dvid.ByteToUint32 len %d", len(b))
 	}
-	if uintptr(unsafe.Pointer(&b[0]))%8 != 0 {
-		return nil, fmt.Errorf("bad alignment in dvid.ByteToUint64: uintptr = %d", uintptr(unsafe.Pointer(&b[0])))
-	}
-	if intSize == 32 {
-		return (*[maxSliceSize32]uint64)(unsafe.Pointer(&b[0]))[: len(b)/8 : cap(b)/8], nil
-	}
-	return (*[maxSliceSize64]uint64)(unsafe.Pointer(&b[0]))[: len(b)/8 : cap(b)/8], nil
+	return uint64SliceFromByteSlice(b), nil
 }
 
 // ByteToUint32 returns a uint32 slice that reuses the passed byte slice.  NOTE: The passed byte slice
 // must be aligned for uint32.
-func ByteToUint32(b []byte) (out []uint32, err error) {
-	if len(b)%4 != 0 || uintptr(unsafe.Pointer(&b[0]))%4 != 0 {
+func ByteToUint32(b []byte) ([]uint32, error) {
+	if len(b)%uint32Size != 0 || uintptr(unsafe.Pointer(&b[0]))%uint32Size != 0 {
 		return nil, fmt.Errorf("bad len, cap, or alignment of dvid.ByteToUint32 len %d", len(b))
 	}
-	if intSize == 32 {
-		return (*[maxSliceSize32 << 1]uint32)(unsafe.Pointer(&b[0]))[: len(b)/4 : cap(b)/4], nil
-	}
-	return (*[maxSliceSize64 << 1]uint32)(unsafe.Pointer(&b[0]))[: len(b)/4 : cap(b)/4], nil
+	return uint32SliceFromByteSlice(b), nil
 }
 
 // ByteToUint16 returns a uint16 slice that reuses the passed byte slice.  NOTE: The passed byte slice
 // must be aligned for uint16.
-func ByteToUint16(b []byte) (out []uint16, err error) {
-	if len(b)%2 != 0 || uintptr(unsafe.Pointer(&b[0]))%4 != 0 {
+func ByteToUint16(b []byte) ([]uint16, error) {
+	if len(b)%uint16Size != 0 || uintptr(unsafe.Pointer(&b[0]))%uint16Size != 0 {
 		return nil, fmt.Errorf("bad len, cap, or alignment of dvid.ByteToUint16 len %d", len(b))
 	}
-	if intSize == 32 {
-		return (*[maxSliceSize32 << 2]uint16)(unsafe.Pointer(&b[0]))[: len(b)/2 : cap(b)/2], nil
-	}
-	return (*[maxSliceSize64 << 2]uint16)(unsafe.Pointer(&b[0]))[: len(b)/2 : cap(b)/2], nil
+	return uint16SliceFromByteSlice(b), nil
 }
 
 // Uint16ToByte returns the underlying byte slice for a uint16 slice.
 func Uint16ToByte(in []uint16) []byte {
-	if intSize == 32 {
-		return (*[maxSliceSize32 << 3]byte)(unsafe.Pointer(&in[0]))[:len(in)*2]
-	}
-	return (*[maxSliceSize64 << 3]byte)(unsafe.Pointer(&in[0]))[:len(in)*2]
+	sh := &reflect.SliceHeader{}
+	sh.Len = len(in) * uint16Size
+	sh.Cap = len(in) * uint16Size
+	sh.Data = (uintptr)(unsafe.Pointer(&in[0]))
+	return *(*[]byte)(unsafe.Pointer(sh))
 }
 
 // Uint32ToByte returns the underlying byte slice for a uint32 slice.
 func Uint32ToByte(in []uint32) []byte {
-	if intSize == 32 {
-		return (*[maxSliceSize32 << 3]byte)(unsafe.Pointer(&in[0]))[:len(in)*4]
-	}
-	return (*[maxSliceSize64 << 3]byte)(unsafe.Pointer(&in[0]))[:len(in)*4]
+	sh := &reflect.SliceHeader{}
+	sh.Len = len(in) * uint32Size
+	sh.Cap = len(in) * uint32Size
+	sh.Data = (uintptr)(unsafe.Pointer(&in[0]))
+	return *(*[]byte)(unsafe.Pointer(sh))
 }
 
 // Uint64ToByte returns the underlying byte slice for a uint64 slice.
 func Uint64ToByte(in []uint64) []byte {
-	if intSize == 32 {
-		return (*[maxSliceSize32 << 3]byte)(unsafe.Pointer(&in[0]))[:len(in)*8]
-	}
-	return (*[maxSliceSize64 << 3]byte)(unsafe.Pointer(&in[0]))[:len(in)*8]
+	sh := &reflect.SliceHeader{}
+	sh.Len = len(in) * uint64Size
+	sh.Cap = len(in) * uint64Size
+	sh.Data = (uintptr)(unsafe.Pointer(&in[0]))
+	return *(*[]byte)(unsafe.Pointer(sh))
+}
+
+// taken from github.com/alecthomas/unsafeslice
+const (
+	uint64Size = 8
+	uint32Size = 4
+	uint16Size = 2
+	uint8Size  = 1
+)
+
+func newRawSliceHeader(sh *reflect.SliceHeader, b []byte, stride int) *reflect.SliceHeader {
+	sh.Len = len(b) / stride
+	sh.Cap = len(b) / stride
+	sh.Data = (uintptr)(unsafe.Pointer(&b[0]))
+	return sh
+}
+
+func newSliceHeader(b []byte, stride int) unsafe.Pointer {
+	sh := &reflect.SliceHeader{}
+	return unsafe.Pointer(newRawSliceHeader(sh, b, stride))
+}
+
+func uint64SliceFromByteSlice(b []byte) []uint64 {
+	return *(*[]uint64)(newSliceHeader(b, uint64Size))
+}
+
+func int64SliceFromByteSlice(b []byte) []int64 {
+	return *(*[]int64)(newSliceHeader(b, uint64Size))
+}
+
+func uint32SliceFromByteSlice(b []byte) []uint32 {
+	return *(*[]uint32)(newSliceHeader(b, uint32Size))
+}
+
+func int32SliceFromByteSlice(b []byte) []int32 {
+	return *(*[]int32)(newSliceHeader(b, uint32Size))
+}
+
+func uint16SliceFromByteSlice(b []byte) []uint16 {
+	return *(*[]uint16)(newSliceHeader(b, uint16Size))
+}
+
+func int16SliceFromByteSlice(b []byte) []int16 {
+	return *(*[]int16)(newSliceHeader(b, uint16Size))
+}
+
+func uint8SliceFromByteSlice(b []byte) []uint8 {
+	return *(*[]uint8)(newSliceHeader(b, uint8Size))
+}
+
+func int8SliceFromByteSlice(b []byte) []int8 {
+	return *(*[]int8)(newSliceHeader(b, uint8Size))
 }
