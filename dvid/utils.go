@@ -33,12 +33,8 @@ var (
 	NumCPU int
 )
 
-var maxSliceSize int
-
-const maxSliceSize32 = 1 << 27 // max slice for a 8-byte value (uint64) on 32-bit server
-const maxSliceSize64 = 1 << 34 // max slice, given DVID request bounds, for a 8-byte value (uint64) on 64-bit server
-
-const intSize = 32 << (^uint(0) >> 63) // size in bits of an int
+// BitsOfInt is the number of bits used for an int
+const BitsOfInt = 32 << (^uint(0) >> 63)
 
 func init() {
 	// If this is not a little-endian machine, exit because this package is only optimized
@@ -49,13 +45,8 @@ func init() {
 		os.Exit(1)
 	}
 
-	switch intSize {
-	case 32:
-		maxSliceSize = maxSliceSize32
-	case 64:
-		maxSliceSize = maxSliceSize64
-	default:
-		fmt.Printf("Unknown architecture with int size of %d bits.  DVID works with 32 or 64 bit architectures.\n", intSize)
+	if BitsOfInt != 32 && BitsOfInt != 64 {
+		fmt.Printf("Unknown architecture with int size of %d bits.  DVID works with 32 or 64 bit architectures.\n", BitsOfInt)
 		os.Exit(1)
 	}
 }
