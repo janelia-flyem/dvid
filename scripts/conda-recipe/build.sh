@@ -7,6 +7,10 @@ export GOPATH=$(pwd)
 DVID_REPO=${GOPATH}/src/github.com/janelia-flyem/dvid
 cd ${DVID_REPO}
 
+# go-1.11 requires at least macOS 10.10, but conda-build targets 10.9 by default.
+# Setting this variable explicitly overrides some linker warnings.
+export MACOSX_DEPLOYMENT_TARGET=10.10
+
 # In theory, most dependencies were already cloned thanks to the lists in meta.yaml.
 # But the developer is free to add things to get-go-dependencies, too.
 ${DVID_REPO}/scripts/get-go-dependencies.sh
