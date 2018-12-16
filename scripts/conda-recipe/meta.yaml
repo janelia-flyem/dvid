@@ -25,7 +25,7 @@ requirements:
   # are used to build dvid, but are not linked against
   # or incorporated into the executable in any way.
   build:
-    - go 1.10.*
+    - go 1.11.*
     - pkg-config
     # Anaconda's gcc build
     - gcc_linux-64 # [linux]
