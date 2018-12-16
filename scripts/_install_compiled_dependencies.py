@@ -90,4 +90,7 @@ if os.path.exists(history_path):
     print("Note: Removing conda history file, backing up as {}".format(new_path))
     os.rename(history_path, new_path)
 
+    # Create empty history file -- required by some conda commands, e.g. 'conda list'
+    open(history_path, 'w').close()
+
 print("Done installing compiled dependencies.")
