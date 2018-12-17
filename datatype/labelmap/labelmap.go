@@ -3435,13 +3435,13 @@ func (d *Data) handleIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 			timedLog.Infof("HTTP POST index for label %d (%s) -- empty index so deleted index", label, r.URL)
 			return
 		}
-		if err := putLabelIndex(ctx, idx); err != nil {
+		if err := putCachedLabelIndex(d, ctx.VersionID(), idx); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
 
 	case "get":
-		idx, err := getLabelIndex(ctx, label)
+		idx, err := getCachedLabelIndex(d, ctx.VersionID(), label)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -3522,7 +3522,7 @@ func (d *Data) handleIngestIndices(ctx *datastore.VersionedCtx, w http.ResponseW
 			continue
 		}
 		idx := labels.Index{LabelIndex: *protoIdx}
-		if err := putLabelIndex(ctx, &idx); err != nil {
+		if err := putCachedLabelIndex(d, ctx.VersionID(), &idx); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
