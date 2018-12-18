@@ -258,7 +258,7 @@ GET  <api URL>/node/<UUID>/<data name>/specificblocks[?queryopts]
 
         ...
 
-    If no data is available for given block span, nothing is returned.
+    If a block is not available, no data will be returned for it.
 
     Arguments:
 
@@ -553,7 +553,7 @@ GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
 
         ...
 
-    If no data is available for given block span, nothing is returned.
+	If a block is not available, no data will be returned for it.
 
     Arguments:
 
@@ -2019,7 +2019,7 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 		for data := range ch {
 			if data.err != nil && sendErr == nil {
 				sendErr = data.err
-			} else {
+			} else if len(data.value) > 0 {
 				err := writeBlock(w, data.bcoord, data.value)
 				if err != nil && sendErr == nil {
 					sendErr = err

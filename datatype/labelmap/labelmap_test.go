@@ -1296,6 +1296,7 @@ func decodeReturnedBlocks(t *testing.T, data []byte) []labels.PositionedBlock {
 		b += 4
 		bcoord := dvid.ChunkPoint3d{x, y, z}.ToIZYXString()
 
+		dvid.Infof("uncompressing block (%d,%d,%d) of %d bytes...\n", x, y, z, n)
 		gzipIn := bytes.NewBuffer(data[b : b+n])
 		zr, err := gzip.NewReader(gzipIn)
 		if err != nil {
@@ -1444,6 +1445,29 @@ func TestPostBlocks(t *testing.T) {
 			t.Fatalf("Didn't find block %s in retrieved blocks\n", izyxStr)
 		}
 		checkBlock(t, pblocks[j], td)
+	}
+	bcoordStr2 := "100,23,89,"
+	for i := 0; i < 2; i++ {
+		bcoordStr2 += fmt.Sprintf("%d,%d,%d,", blockCoords[i][0], blockCoords[i][1], blockCoords[i][2])
+	}
+	bcoordStr2 += "0,50,40"
+	pblocks = testGetSpecificBlocks(t, uuid, "labels", true, bcoordStr2)
+	if len(pblocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d blocks instead\n", len(pblocks))
+	}
+	var gotBlocks int
+	for _, pb := range pblocks {
+		for i, td := range data {
+			izyx := dvid.IndexZYX{blockCoords[i][0], blockCoords[i][1], blockCoords[i][2]}
+			izyxStr := izyx.ToIZYXString()
+			if izyxStr == pb.BCoord {
+				gotBlocks++
+				checkBlock(t, pb, td)
+			}
+		}
+	}
+	if gotBlocks != 2 {
+		t.Fatalf("expected to receive 2 blocks, got %d instead\n", gotBlocks)
 	}
 }
 
@@ -1796,8 +1820,25 @@ func testLabels(t *testing.T, labelsIndexed bool) {
 	vol.testBlocks(t, "GET DVID compressed label blocks", uuid, "blocks")
 	vol.testBlocks(t, "GET gzip blocks", uuid, "gzip")
 
+	apiStr := fmt.Sprintf("%snode/%s/%s/blocks/64_32_32/0_0_0?compression=blocks", server.WebAPIPath,
+		uuid, vol.name)
+	data := server.TestHTTP(t, "GET", apiStr, nil)
+	if len(data) != 0 {
+		t.Fatalf("expected no data return for unset block, got %d bytes instead\n", len(data))
+	}
+	apiStr = fmt.Sprintf("%snode/%s/%s/blocks/64_32_32/0_64_96?compression=blocks", server.WebAPIPath,
+		uuid, vol.name)
+	data = server.TestHTTP(t, "GET", apiStr, nil)
+	blocks := decodeReturnedBlocks(t, data)
+	if len(data) == 0 {
+		t.Fatalf("expected on block of data, got no data in response\n")
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("expected one block of two blocks requested, got %d blocks instead\n", len(blocks))
+	}
+
 	// Test the "label" endpoint.
-	apiStr := fmt.Sprintf("%snode/%s/%s/label/100_64_96", server.WebAPIPath, uuid, "labels")
+	apiStr = fmt.Sprintf("%snode/%s/%s/label/100_64_96", server.WebAPIPath, uuid, "labels")
 	jsonResp := server.TestHTTP(t, "GET", apiStr, nil)
 	var r labelResp
 	if err := json.Unmarshal(jsonResp, &r); err != nil {

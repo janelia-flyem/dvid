@@ -1789,8 +1789,8 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 			if len(value) > 0 {
 				// lock shared resource
 				mutex.Lock()
-				defer mutex.Unlock()
 				d.SendBlockSimple(w, xloc, yloc, zloc, value, "")
+				mutex.Unlock()
 			}
 		}(int32(xloc), int32(yloc), int32(zloc), finishedRequests, store)
 	}
