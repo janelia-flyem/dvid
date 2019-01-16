@@ -640,6 +640,7 @@ func initRoutes() {
 
 	repoMux := web.New()
 	mainMux.Handle("/api/repo/:uuid/:action", repoMux)
+	repoMux.Use(mutationsHandler)
 	repoMux.Use(activityLogHandler)
 	repoMux.Use(repoSelector)
 	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
@@ -652,6 +653,7 @@ func initRoutes() {
 	nodeMux := web.New()
 	mainMux.Handle("/api/node/:uuid", nodeMux)
 	mainMux.Handle("/api/node/:uuid/:action", nodeMux)
+	nodeMux.Use(mutationsHandler)
 	nodeMux.Use(activityLogHandler)
 	nodeMux.Use(repoRawSelector)
 	nodeMux.Use(nodeSelector)
@@ -668,6 +670,7 @@ func initRoutes() {
 	instanceMux := web.New()
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword", instanceMux)
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword/*", instanceMux)
+	instanceMux.Use(mutationsHandler)
 	instanceMux.Use(repoRawSelector)
 	instanceMux.Use(instanceSelector)
 	instanceMux.NotFound(notFound)
@@ -743,6 +746,36 @@ func recoverHandler(c *web.C, h http.Handler) http.Handler {
 			}
 		}()
 
+		h.ServeHTTP(w, r)
+	}
+	return http.HandlerFunc(fn)
+}
+
+// Middleware that logs all mutations to any configured mutation log
+func mutationsHandler(c *web.C, h http.Handler) http.Handler {
+	mutConfig := config.MutationLogSpec()
+	fn := func(w http.ResponseWriter, r *http.Request) {
+		if mutConfig.Logstore != "" {
+			buf, err := ioutil.ReadAll(r.Body)
+			if err != nil {
+				BadRequest(w, r, "unable to read POST for mirroring: %v", err)
+				return
+			}
+			dup := make([]byte, len(buf))
+			copy(dup, buf)
+			r.Body = ioutil.NopCloser(bytes.NewBuffer(dup))
+
+			uuid, ok := c.Env["uuid"].(dvid.UUID)
+			if !ok {
+				msg := fmt.Sprintf("Bad format for UUID %q\n", c.Env["uuid"])
+				BadRequest(w, r, msg)
+				return
+			}
+			if err := LogMutation(mutConfig, uuid, r, buf); err != nil {
+				BadRequest(w, r, err)
+				return
+			}
+		}
 		h.ServeHTTP(w, r)
 	}
 	return http.HandlerFunc(fn)

@@ -972,7 +972,7 @@ func (d *Data) writeLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale u
 		compressed = compressed[:outSize]
 		n, err = w.Write(compressed)
 		if n != outSize {
-			err = fmt.Errorf("only able to write %d of %d lz4 compressed bytes\n", n, outSize)
+			err = fmt.Errorf("only able to write %d of %d lz4 compressed bytes", n, outSize)
 		}
 	case "gzip":
 		gw := gzip.NewWriter(w)

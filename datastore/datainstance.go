@@ -169,12 +169,6 @@ func (vctx *VersionedCtx) GetGraphDB() (storage.GraphDB, error) {
 	return GetGraphDB(d)
 }
 
-// BlobService is an interface for storing and retrieving data based on its content.
-type BlobService interface {
-	GetBlob(ref string) (data []byte, err error)
-	PutBlob(data []byte) (ref string, err error)
-}
-
 // DataService is an interface for operations on an instance of a supported datatype.
 type DataService interface {
 	dvid.Data

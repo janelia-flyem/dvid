@@ -61,6 +61,7 @@ func TestStartWebhook(t *testing.T) {
 	tomlCfg.Server.StartJaneliaConfig = ts2.URL
 
 	// check server startup
+	tomlCfg.Kafka = storage.KafkaConfig{}
 	if err := tc.Initialize(); err != nil {
 		t.Fatalf("couldn't initialize server: %v\n", err)
 	}
@@ -74,13 +75,8 @@ func TestStartWebhook(t *testing.T) {
 	if data != `{"HTTP Address":"localhost:8000","Host":"mygreatserver.test.com","Note":"You can put anything you want in here and have it available via /api/server/note.\nMultiple lines!\n","RPC Address":"localhost:8001"}` {
 		t.Fatalf("Expected server info to be sent to Janelia webhook, but received this instead:\n%s\n", data)
 	}
-
-	// check if there's no recipient for webhook.
-	tomlCfg.Server.StartWebhook = "http://mybadurl:2718"
-	if err := tc.Initialize(); err == nil {
-		t.Fatalf("expected error in supplying bad webhook, but got no error!\n")
-	}
 }
+
 func TestServerInfo(t *testing.T) {
 	_, _, err := LoadConfig("../scripts/distro-files/config-full.toml")
 	if err != nil {
@@ -101,11 +97,11 @@ func TestServerInfo(t *testing.T) {
 	if jsonVal.Host != "mygreatserver.test.com:8000" {
 		t.Errorf("expected %q, got %q for host\n", "mygreatserver.test.com:8000", jsonVal.Host)
 	}
-	if jsonVal.KafkaServers != "http://foo.bar.com:1234,http://foo2.bar.com:1234" {
-		t.Errorf("expected %q, got %q for kafka servers\n", "http://foo.bar.com:1234,http://foo2.bar.com:1234", jsonVal.KafkaServers)
+	if jsonVal.KafkaServers != "foo.bar.com:1234,foo2.bar.com:1234" {
+		t.Errorf("expected %q for kafka servers, got JSON:\n%s\n", "foo.bar.com:1234,foo2.bar.com:1234", jsonStr)
 	}
 	if jsonVal.TopicPrefix != "postsFromServer1" {
-		t.Errorf("expected kafka topic prefix but got %q\n", jsonVal.TopicPrefix)
+		t.Errorf("unexpected kafka topic prefix, got JSON:\n%s\n", jsonStr)
 	}
 }
 
@@ -136,8 +132,16 @@ func TestParseConfig(t *testing.T) {
 		t.Errorf("Bad backend configuration retrieval: %v\n", backendCfg)
 	}
 
+	mutCfg := tomlCfg.Mutations
+	if mutCfg.Blobstore != "store4blob" {
+		t.Errorf("got unexpected value for mutations.blobstore: %s\n", mutCfg.Blobstore)
+	}
+	if mutCfg.Logstore != "kafka:my-mutations" {
+		t.Errorf("got unexpected value for mutations.Logstore: %s\n", mutCfg.Logstore)
+	}
+
 	kafkaCfg := tomlCfg.Kafka
-	if len(kafkaCfg.Servers) != 2 || kafkaCfg.Servers[0] != "http://foo.bar.com:1234" || kafkaCfg.Servers[1] != "http://foo2.bar.com:1234" {
+	if len(kafkaCfg.Servers) != 2 || kafkaCfg.Servers[0] != "foo.bar.com:1234" || kafkaCfg.Servers[1] != "foo2.bar.com:1234" {
 		t.Errorf("Bad Kafka config: %v\n", kafkaCfg)
 	}
 

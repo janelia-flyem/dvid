@@ -57,11 +57,17 @@ type Config interface {
 	// Set timing in HTTP header
 	AllowTiming() bool
 
-	// Kafka activity topic, empty if not configured
+	// KafkaActivityTopic returns the kafka topic for activity logging, empty if not configured
 	KafkaActivityTopic() string
 
-	// Kafka servers, nil if not configured
+	// KafkaPrefixTopic returns the prefix for any data instance-level mutation logging topic.
+	KafkaPrefixTopic() string
+
+	// KafkaServers returns a list of kafka servers, nil if not configured
 	KafkaServers() []string
+
+	// MutationLogSpec returns config for where mutations should be logged.
+	MutationLogSpec() MutationsConfig
 }
 
 // GetConfig returns configuration settings for the server, which is set by each platform-specific server code.
@@ -272,8 +278,8 @@ func AboutJSON() (jsonStr string, err error) {
 		data["Kafka Servers"] = strings.Join(kservers, ",")
 		data["Kafka Activity Topic"] = config.KafkaActivityTopic()
 	}
-	if storage.KafkaTopicPrefix != "" {
-		data["Kafka Topic Prefix"] = storage.KafkaTopicPrefix
+	if config.KafkaPrefixTopic() != "" {
+		data["Kafka Topic Prefix"] = config.KafkaPrefixTopic()
 	}
 	m, err := json.Marshal(data)
 	if err != nil {

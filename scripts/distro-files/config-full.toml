@@ -50,6 +50,12 @@ logfile = "/demo/logs/dvid.log"
 max_log_size = 500 # MB
 max_log_age = 30   # days
 
+[mutations]
+# use kafka server with "my-mutations" topic.  TODO -- support additional log stores.
+logstore = "kafka:my-mutations"
+# store any large POST body into blobstore with unique ref stored in kafka
+blobstore = "store4blob"
+
 # Backends can be specified in many ways.  In decreasing order of precedence:
 #
 # backend."<name>:<uuid>" = store to use for a particular data instance, 
@@ -93,6 +99,10 @@ max_log_age = 30   # days
     engine = "basholeveldb"
     path = "/datassd/dbs/basholeveldb"
  
+    [store.store4blob]
+    engine = "basholeveldb"
+    path = "/datassd/dbs/blobstore"
+ 
     [store.kvautobus]
     engine = "kvautobus"
     path = "http://tem-dvid.int.janelia.org:9000"
@@ -123,7 +133,7 @@ topicPrefix = "postsFromServer1"
 # optional: forces topic suffix for instance mutations; each entry is data UUID : suffix.
 topicSuffixes = ["bc95398cb3ae40fcab2529c7bca1ad0d:myGreatDataInstance"]
 
-servers = ["http://foo.bar.com:1234", "http://foo2.bar.com:1234"]
+servers = ["foo.bar.com:1234", "foo2.bar.com:1234"]
 
 # Cache support allows setting datatype-specific caching mechanisms.
 # Currently freecache is supported in labelarray and labelmap.

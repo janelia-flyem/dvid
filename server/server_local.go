@@ -112,6 +112,7 @@ type tomlConfig struct {
 	Server     ServerConfig
 	Email      dvid.EmailConfig
 	Logging    dvid.LogConfig
+	Mutations  MutationsConfig
 	Kafka      storage.KafkaConfig
 	Store      map[storage.Alias]storeConfig
 	Backend    map[dvid.DataSpecifier]backendConfig
@@ -280,6 +281,14 @@ func (c *tomlConfig) KafkaServers() []string {
 
 func (c *tomlConfig) KafkaActivityTopic() string {
 	return c.Kafka.TopicActivity
+}
+
+func (c *tomlConfig) KafkaPrefixTopic() string {
+	return c.Kafka.TopicPrefix
+}
+
+func (c *tomlConfig) MutationLogSpec() MutationsConfig {
+	return c.Mutations
 }
 
 func repoMirrors(dataUUID, versionUUID dvid.UUID) []string {
