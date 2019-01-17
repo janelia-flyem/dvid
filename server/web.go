@@ -773,9 +773,13 @@ func mutationsHandler(c *web.C, h http.Handler) http.Handler {
 				return
 			}
 			var dataID dvid.UUID
-			dataname := c.Env["dataname"].(dvid.InstanceName)
-			if dataname != "" {
-				data, err := datastore.GetDataByUUIDName(uuid, dataname)
+			dataname := c.Env["dataname"]
+			if dataname != nil {
+				instancename, ok := dataname.(dvid.InstanceName)
+				if !ok {
+					BadRequest(w, r, "bad data instance name")
+				}
+				data, err := datastore.GetDataByUUIDName(uuid, instancename)
 				if err != nil {
 					BadRequest(w, r, err)
 					return
