@@ -771,7 +771,17 @@ func mutationsHandler(c *web.C, h http.Handler) http.Handler {
 				BadRequest(w, r, msg)
 				return
 			}
-			if err := LogMutation(mutConfig, uuid, r, buf); err != nil {
+			var dataID dvid.UUID
+			dataname := c.Env["dataname"].(dvid.InstanceName)
+			if dataname != "" {
+				data, err := datastore.GetDataByUUIDName(uuid, dataname)
+				if err != nil {
+					BadRequest(w, r, err)
+					return
+				}
+				dataID = data.DataUUID()
+			}
+			if err := LogMutation(mutConfig, uuid, dataID, r, buf); err != nil {
 				BadRequest(w, r, err)
 				return
 			}

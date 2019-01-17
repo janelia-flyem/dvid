@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -33,21 +34,36 @@ func logMutationPayload(cfg MutationsConfig, data []byte) (ref string, err error
 	return blobstore.PutBlob(data)
 }
 
+var (
+	mutOrderID  uint64
+	mutOrderMux sync.RWMutex
+)
+
 // LogMutation logs a HTTP mutation request to the mutation log specific in the config.
-func LogMutation(cfg MutationsConfig, uuid dvid.UUID, r *http.Request, data []byte) (err error) {
-	var postRef string
-	if postRef, err = logMutationPayload(cfg, data); err != nil {
-		return fmt.Errorf("unable to store mutation payload (%s): %v", r.RequestURI, err)
-	}
+func LogMutation(cfg MutationsConfig, versionID, dataID dvid.UUID, r *http.Request, data []byte) (err error) {
 	mutation := map[string]interface{}{
-		"Time":        time.Now().Unix(),
+		"TimeUnix":    time.Now().Unix(),
 		"Method":      r.Method,
 		"URI":         r.RequestURI,
-		"BytesIn":     r.ContentLength,
 		"RemoteAddr":  r.RemoteAddr,
 		"ContentType": r.Header.Get("Content-Type"),
-		"DataRef":     postRef,
 	}
+	if dataID != "" {
+		mutation["DataUUID"] = dataID
+	}
+	if len(data) != 0 {
+		var postRef string
+		if postRef, err = logMutationPayload(cfg, data); err != nil {
+			return fmt.Errorf("unable to store mutation payload (%s): %v", r.RequestURI, err)
+		}
+		mutation["DataBytes"] = len(data)
+		mutation["DataRef"] = postRef
+	}
+	mutOrderMux.Lock()
+	mutOrderID++
+	mutation["MutationOrderID"] = mutOrderID
+	mutOrderMux.Unlock()
+
 	jsonmsg, err := json.Marshal(mutation)
 	if err != nil {
 		return fmt.Errorf("error marshaling JSON for mutation (%s): %v", r.RequestURI, err)
@@ -61,7 +77,7 @@ func LogMutation(cfg MutationsConfig, uuid dvid.UUID, r *http.Request, data []by
 	spec := parts[1]
 	switch store {
 	case "kafka":
-		topic := spec + "-" + string(uuid)
+		topic := spec + "-" + string(versionID)
 		if err = storage.KafkaProduceMsg(jsonmsg, topic); err != nil {
 			return fmt.Errorf("error on sending mutation (%s) to kafka: %v", r.RequestURI, err)
 		}
