@@ -640,6 +640,7 @@ func initRoutes() {
 
 	repoMux := web.New()
 	mainMux.Handle("/api/repo/:uuid/:action", repoMux)
+	repoMux.Use(repoRawSelector)
 	repoMux.Use(mutationsHandler)
 	repoMux.Use(activityLogHandler)
 	repoMux.Use(repoSelector)
@@ -653,9 +654,9 @@ func initRoutes() {
 	nodeMux := web.New()
 	mainMux.Handle("/api/node/:uuid", nodeMux)
 	mainMux.Handle("/api/node/:uuid/:action", nodeMux)
+	nodeMux.Use(repoRawSelector)
 	nodeMux.Use(mutationsHandler)
 	nodeMux.Use(activityLogHandler)
-	nodeMux.Use(repoRawSelector)
 	nodeMux.Use(nodeSelector)
 	nodeMux.Get("/api/node/:uuid/note", getNodeNoteHandler)
 	nodeMux.Post("/api/node/:uuid/note", postNodeNoteHandler)
@@ -670,8 +671,8 @@ func initRoutes() {
 	instanceMux := web.New()
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword", instanceMux)
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword/*", instanceMux)
-	instanceMux.Use(mutationsHandler)
 	instanceMux.Use(repoRawSelector)
+	instanceMux.Use(mutationsHandler)
 	instanceMux.Use(instanceSelector)
 	instanceMux.NotFound(notFound)
 
