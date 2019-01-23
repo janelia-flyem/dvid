@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -622,4 +624,193 @@ func TestLabelsResync(t *testing.T) {
 	server.TestHTTP(t, "POST", url, nil)
 
 	checkSequencing(t, uuid)
+}
+
+func TestLabelmap(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := datastore.NewTestRepo()
+	var config dvid.Config
+	server.CreateTestInstance(t, uuid, "labelmap", "labels", config)
+
+	sz := int32(128) // size of one cube side in voxels
+	numVoxels := sz * sz * sz
+	numLabels := 100
+	data := make([]byte, numVoxels*8)
+	offset := 0
+	for v := 0; v < int(numVoxels); v++ {
+		label := uint64(rand.Int()%numLabels) + 1
+		binary.LittleEndian.PutUint64(data[offset:offset+8], label)
+		offset += 8
+	}
+	_ = createLabelTestVolume(t, uuid, "labels")
+	apiStr := fmt.Sprintf("%snode/%s/labels/raw/0_1_2/%d_%d_%d/0_0_0", server.WebAPIPath,
+		uuid, sz, sz, sz)
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBuffer(data))
+
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	// Add annotations syncing with "labels" instance.
+	server.CreateTestInstance(t, uuid, "annotation", "mysynapses", config)
+	server.CreateTestSync(t, uuid, "mysynapses", "labels")
+
+	// Create a ROI that will be used for our labelsz.
+	server.CreateTestInstance(t, uuid, "roi", "myroi", config)
+	roiRequest := fmt.Sprintf("%snode/%s/myroi/roi", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", roiRequest, getROIReader())
+
+	// Create labelsz instances synced to the above annotations.
+	server.CreateTestInstance(t, uuid, "labelsz", "noroi", config)
+	server.CreateTestSync(t, uuid, "noroi", "mysynapses")
+	config.Set("ROI", fmt.Sprintf("myroi,%s", uuid))
+	server.CreateTestInstance(t, uuid, "labelsz", "withroi", config)
+	server.CreateTestSync(t, uuid, "withroi", "mysynapses")
+
+	labels := []uint64{10, 20, 30, 40, 50}
+	postsynCounts := make(map[uint64]int, numLabels)
+	presynCounts := make(map[uint64]int, numLabels)
+	var synapses annotation.Elements
+	var x, y, z int32
+	// This should put 31x31x31 (29791) PostSyn
+	for z = 4; z < sz; z += 4 {
+		for y = 4; y < sz; y += 4 {
+			for x = 4; x < sz; x += 4 {
+				e := annotation.Element{
+					annotation.ElementNR{
+						Pos:  dvid.Point3d{x, y, z},
+						Kind: annotation.PostSyn,
+					},
+					[]annotation.Relationship{},
+				}
+				synapses = append(synapses, e)
+				offset := (z*sz*sz + y*sz + x) * 8
+				label := binary.LittleEndian.Uint64(data[offset : offset+8])
+				postsynCounts[label] = postsynCounts[label] + 1
+			}
+		}
+	}
+	// This should put 32x32x32 (32768) PreSyn in volume
+	for z = 2; z < sz; z += 4 {
+		for y = 2; y < sz; y += 4 {
+			for x = 2; x < sz; x += 4 {
+				e := annotation.Element{
+					annotation.ElementNR{
+						Pos:  dvid.Point3d{x, y, z},
+						Kind: annotation.PreSyn,
+					},
+					[]annotation.Relationship{},
+				}
+				synapses = append(synapses, e)
+				offset := (z*sz*sz + y*sz + x) * 8
+				label := binary.LittleEndian.Uint64(data[offset : offset+8])
+				presynCounts[label] = presynCounts[label] + 1
+			}
+		}
+	}
+	testJSON, err := json.Marshal(synapses)
+	if err != nil {
+		t.Fatal(err)
+	}
+	url := fmt.Sprintf("%snode/%s/mysynapses/elements", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", url, strings.NewReader(string(testJSON)))
+
+	postStr := "["
+	for i, label := range labels {
+		postStr += strconv.Itoa(int(label))
+		if i != len(labels)-1 {
+			postStr += ","
+		}
+	}
+	postStr += "]"
+	url = fmt.Sprintf("%snode/%s/noroi/counts/PreSyn", server.WebAPIPath, uuid)
+	retData := server.TestHTTP(t, "GET", url, bytes.NewBuffer([]byte(postStr)))
+	var retVal []struct {
+		Label  uint64
+		PreSyn int
+	}
+	if err := json.Unmarshal(retData, &retVal); err != nil {
+		t.Errorf("Unable to decode return value: %v\n", retData)
+	}
+	for _, val := range retVal {
+		expected, found := presynCounts[val.Label]
+		if !found {
+			t.Fatalf("Bad label %d returned: %s\n", val.Label, string(retData))
+		}
+		if expected != val.PreSyn {
+			t.Fatalf("Expected label %d presyn to have %d, got %d\n", val.Label, expected, val.PreSyn)
+		}
+	}
+	url = fmt.Sprintf("%snode/%s/noroi/counts/PostSyn", server.WebAPIPath, uuid)
+	retData = server.TestHTTP(t, "GET", url, bytes.NewBuffer([]byte(postStr)))
+	var retVal2 []struct {
+		Label   uint64
+		PostSyn int
+	}
+	if err := json.Unmarshal(retData, &retVal2); err != nil {
+		t.Errorf("Unable to decode return value: %v\n", retData)
+	}
+	for _, val := range retVal2 {
+		expected, found := postsynCounts[val.Label]
+		if !found {
+			t.Fatalf("Bad label %d returned: %s\n", val.Label, string(retData))
+		}
+		if expected != val.PostSyn {
+			t.Fatalf("Expected label %d postsyn to have %d, got %d\n", val.Label, expected, val.PostSyn)
+		}
+	}
+	url = fmt.Sprintf("%snode/%s/noroi/counts/AllSyn", server.WebAPIPath, uuid)
+	retData = server.TestHTTP(t, "GET", url, bytes.NewBuffer([]byte(postStr)))
+	var retVal3 []struct {
+		Label  uint64
+		AllSyn int
+	}
+	if err := json.Unmarshal(retData, &retVal3); err != nil {
+		t.Errorf("Unable to decode return value: %v\n", retData)
+	}
+	for _, val := range retVal3 {
+		expectedPre, found := presynCounts[val.Label]
+		if !found {
+			t.Fatalf("Bad label %d returned: %s\n", val.Label, string(retData))
+		}
+		expectedPost, found := postsynCounts[val.Label]
+		if !found {
+			t.Fatalf("Bad label %d returned: %s\n", val.Label, string(retData))
+		}
+		if expectedPre+expectedPost != val.AllSyn {
+			t.Fatalf("Expected label %d allsyn to have %d+%d, got %d\n", val.Label, expectedPre, expectedPost, val.AllSyn)
+		}
+	}
+
+	// merge 10+20 into 30 and recheck
+	url = fmt.Sprintf("%snode/%s/labels/merge", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", url, bytes.NewBufferString("[30,10,20]"))
+
+	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
+		t.Fatalf("Error blocking on sync of annotations: %v\n", err)
+	}
+
+	url = fmt.Sprintf("%snode/%s/noroi/count/30/PreSyn", server.WebAPIPath, uuid)
+	retData = server.TestHTTP(t, "GET", url, nil)
+	presynMerged := presynCounts[10] + presynCounts[20] + presynCounts[30]
+	if string(retData) != fmt.Sprintf(`{"Label":30,"PreSyn":%d}`, presynMerged) {
+		t.Errorf("Got back incorrect post-merge PreSyn noroi count of label 30: %s\nlabel 10+20+30 = %d+%d+%d = %d\n",
+			string(retData), presynCounts[10], presynCounts[20], presynCounts[30], presynMerged)
+	}
+
+	url = fmt.Sprintf("%snode/%s/noroi/count/10/PreSyn", server.WebAPIPath, uuid)
+	retData = server.TestHTTP(t, "GET", url, nil)
+	if string(retData) != `{"Label":10,"PreSyn":0}` {
+		t.Errorf("Got back incorrect post-merge PreSyn noroi count of label 10: %s\n", string(retData))
+	}
+	url = fmt.Sprintf("%snode/%s/noroi/count/20/PreSyn", server.WebAPIPath, uuid)
+	retData = server.TestHTTP(t, "GET", url, nil)
+	if string(retData) != `{"Label":20,"PreSyn":0}` {
+		t.Errorf("Got back incorrect post-merge PreSyn noroi count of label 20: %s\n", string(retData))
+	}
 }

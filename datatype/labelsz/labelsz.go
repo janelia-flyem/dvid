@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math"
 	"net/http"
 	"reflect"
@@ -141,8 +142,24 @@ GET <api URL>/node/<UUID>/<data name>/count/<label>/<index type>
 
 	{ "Label": 21847,  "PreSyn": 81 }
 
+
 Note: For the following URL endpoints that return and accept POSTed JSON values, see the JSON format
 at end of this documentation.
+
+GET <api URL>/node/<UUID>/<data name>/counts/<index type>
+
+	Returns the count of the given annotation element type for the POSTed labels.
+	Note "counts" is plural. 
+	<index type> is the same as individual GET call (eg, PostSyn, AllSyn, etc).
+	
+	The body of the request will contain a json list of labels. 
+	Return value should be like the /top endpoint: 
+	
+	[ 
+		{ "Label": 188, "PreSyn": 81 }, 
+		{ "Label": 23, "PreSyn": 65 }, 
+		{ "Label": 8137, "PreSyn": 58 } 
+	]
 
 GET <api URL>/node/<UUID>/<data name>/top/<N>/<index type>
 
@@ -384,6 +401,46 @@ func (d *Data) GetCountElementType(ctx *datastore.VersionedCtx, label uint64, i 
 	}
 	count := binary.LittleEndian.Uint32(val)
 	return count, nil
+}
+
+// SendCountsByElementType writes the counts for given index type for a list of labels
+func (d *Data) SendCountsByElementType(w http.ResponseWriter, ctx *datastore.VersionedCtx, labels []uint64, idxType IndexType) error {
+	store, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return err
+	}
+
+	// d.RLock()
+	// defer d.RUnlock()
+
+	w.Header().Set("Content-type", "application/json")
+	if _, err := fmt.Fprintf(w, "["); err != nil {
+		return err
+	}
+	numLabels := len(labels)
+	for i, label := range labels {
+		val, err := store.Get(ctx, NewTypeLabelTKey(idxType, label))
+		if err != nil {
+			dvid.Errorf("problem in GET for index type %s, label %d: %v", idxType, label, err)
+			continue
+		}
+		var count uint32
+		if val != nil {
+			if len(val) != 4 {
+				dvid.Errorf("bad value size %d for index type %s, label %d", len(val), idxType, label)
+				continue
+			}
+			count = binary.LittleEndian.Uint32(val)
+		}
+		if _, err := fmt.Fprintf(w, `{"Label":%d,%q:%d}`, label, idxType, count); err != nil {
+			continue
+		}
+		if i != numLabels-1 {
+			fmt.Fprintf(w, ",")
+		}
+	}
+	fmt.Fprintf(w, "]")
+	return nil
 }
 
 // GetTopElementType returns a sorted list of the top N labels that have the given ElementType.
@@ -628,23 +685,53 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, err)
 			return
 		}
-		i := StringToIndexType(parts[5])
-		if i == UnknownIndex {
+		idxType := StringToIndexType(parts[5])
+		if idxType == UnknownIndex {
 			server.BadRequest(w, r, fmt.Errorf("unknown index type specified (%q)", parts[5]))
 			return
 		}
-		count, err := d.GetCountElementType(ctx, label, i)
+		count, err := d.GetCountElementType(ctx, label, idxType)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-type", "application/json")
-		jsonStr := fmt.Sprintf(`{"Label":%d,%q:%d}`, label, i, count)
+		jsonStr := fmt.Sprintf(`{"Label":%d,%q:%d}`, label, idxType, count)
 		if _, err := io.WriteString(w, jsonStr); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
-		timedLog.Infof("HTTP %s: get count for label %d, index type %s: %s", r.Method, label, i, r.URL)
+		timedLog.Infof("HTTP %s: get count for label %d, index type %s: %s", r.Method, label, idxType, r.URL)
+
+	case "counts":
+		if action != "get" {
+			server.BadRequest(w, r, "Only GET action is available on 'counts' endpoint.")
+			return
+		}
+		data, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			server.BadRequest(w, r, "Bad GET request body for counts query: %v", err)
+			return
+		}
+		if len(parts) < 5 {
+			server.BadRequest(w, r, "Must include element type after 'counts' endpoint.")
+			return
+		}
+		idxType := StringToIndexType(parts[4])
+		if idxType == UnknownIndex {
+			server.BadRequest(w, r, fmt.Errorf("unknown index type specified (%q)", parts[4]))
+			return
+		}
+		var labels []uint64
+		if err := json.Unmarshal(data, &labels); err != nil {
+			server.BadRequest(w, r, fmt.Sprintf("Bad JSON label array sent in 'counts' query: %v", err))
+			return
+		}
+		if err := d.SendCountsByElementType(w, ctx, labels, idxType); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		timedLog.Infof("HTTP GET counts query of %d labels (%s)", len(labels), r.URL)
 
 	case "top":
 		if action != "get" {
