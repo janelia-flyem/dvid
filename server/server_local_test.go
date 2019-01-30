@@ -25,8 +25,7 @@ func loadConfigFile(t *testing.T, filename string) string {
 }
 
 func TestStartWebhook(t *testing.T) {
-	tomlCfg, _, err := LoadConfig("../scripts/distro-files/config-full.toml")
-	if err != nil {
+	if err := LoadConfig("../scripts/distro-files/config-full.toml"); err != nil {
 		t.Fatalf("bad TOML configuration: %v\n", err)
 	}
 
@@ -40,7 +39,7 @@ func TestStartWebhook(t *testing.T) {
 		}
 	}))
 	defer ts.Close()
-	tomlCfg.Server.StartWebhook = ts.URL
+	tc.Server.StartWebhook = ts.URL
 
 	// test handler for Janelia-specific start webhook
 	var data string
@@ -58,11 +57,11 @@ func TestStartWebhook(t *testing.T) {
 		}
 	}))
 	defer ts2.Close()
-	tomlCfg.Server.StartJaneliaConfig = ts2.URL
+	tc.Server.StartJaneliaConfig = ts2.URL
 
 	// check server startup
-	tomlCfg.Kafka = storage.KafkaConfig{}
-	if err := tc.Initialize(); err != nil {
+	tc.Kafka = storage.KafkaConfig{}
+	if err := Initialize(); err != nil {
 		t.Fatalf("couldn't initialize server: %v\n", err)
 	}
 
@@ -78,8 +77,7 @@ func TestStartWebhook(t *testing.T) {
 }
 
 func TestServerInfo(t *testing.T) {
-	_, _, err := LoadConfig("../scripts/distro-files/config-full.toml")
-	if err != nil {
+	if err := LoadConfig("../scripts/distro-files/config-full.toml"); err != nil {
 		t.Fatalf("bad TOML configuration: %v\n", err)
 	}
 	jsonStr, err := AboutJSON()
@@ -106,8 +104,7 @@ func TestServerInfo(t *testing.T) {
 }
 
 func TestParseConfig(t *testing.T) {
-	tomlCfg, backendCfg, err := LoadConfig("../scripts/distro-files/config-full.toml")
-	if err != nil {
+	if err := LoadConfig("../scripts/distro-files/config-full.toml"); err != nil {
 		t.Fatalf("bad TOML configuration: %v\n", err)
 	}
 
@@ -116,7 +113,7 @@ func TestParseConfig(t *testing.T) {
 		t.Errorf("Expected labelarray cache to be set to 10 (MB), got %d bytes instead\n", sz)
 	}
 
-	datacfg := tomlCfg.Server.DatastoreConfig()
+	datacfg := DatastoreConfig()
 	if datacfg.InstanceGen != "sequential" || datacfg.InstanceStart != 100 {
 		t.Errorf("Bad instance id retrieval of configuration: %v\n", datacfg)
 	}
@@ -124,42 +121,46 @@ func TestParseConfig(t *testing.T) {
 		t.Errorf("Bad mutation id start retrieval in configuration: %v\n", datacfg)
 	}
 
-	logCfg := tomlCfg.Logging
+	logCfg := tc.Logging
 	if logCfg.Logfile != "/demo/logs/dvid.log" || logCfg.MaxSize != 500 || logCfg.MaxAge != 30 {
 		t.Errorf("Bad logging configuration retrieval: %v\n", logCfg)
 	}
-	if backendCfg.DefaultKVDB != "raid6" || backendCfg.DefaultLog != "mutationlog" || backendCfg.KVStore["grayscale:99ef22cd85f143f58a623bd22aad0ef7"] != "kvautobus" {
-		t.Errorf("Bad backend configuration retrieval: %v\n", backendCfg)
+	backend, err := GetBackend()
+	if err != nil {
+		t.Errorf("couldn't get backend: %v\n", err)
+	}
+	if backend.DefaultKVDB != "raid6" || backend.DefaultLog != "mutationlog" || backend.KVStore["grayscale:99ef22cd85f143f58a623bd22aad0ef7"] != "kvautobus" {
+		t.Errorf("Bad backend configuration retrieval: %v\n", backend)
 	}
 
-	mutCfg := tomlCfg.Mutations
-	if mutCfg.Blobstore != "store4blob" {
+	mutCfg := tc.Mutations
+	if mutCfg.Blobstore != "raid6" {
 		t.Errorf("got unexpected value for mutations.blobstore: %s\n", mutCfg.Blobstore)
 	}
-	if mutCfg.Logstore != "kafka:my-mutations" {
+	if mutCfg.Logstore != "logstore:mutationlog" {
 		t.Errorf("got unexpected value for mutations.Logstore: %s\n", mutCfg.Logstore)
 	}
 
-	kafkaCfg := tomlCfg.Kafka
+	kafkaCfg := tc.Kafka
 	if len(kafkaCfg.Servers) != 2 || kafkaCfg.Servers[0] != "foo.bar.com:1234" || kafkaCfg.Servers[1] != "foo2.bar.com:1234" {
 		t.Errorf("Bad Kafka config: %v\n", kafkaCfg)
 	}
 
-	if len(tomlCfg.Mirror) != 2 {
-		t.Errorf("Bad mirror config: %v\n", tomlCfg.Mirror)
+	if len(tc.Mirror) != 2 {
+		t.Errorf("Bad mirror config: %v\n", tc.Mirror)
 	}
 	spec := dvid.DataSpecifier(`"bc95398cb3ae40fcab2529c7bca1ad0d:99ef22cd85f143f58a623bd22aad0ef7"`)
-	mirrorCfg, found := tomlCfg.Mirror[spec]
+	mirrorCfg, found := tc.Mirror[spec]
 	if !found {
-		t.Fatalf("did not find expected mirror configuration for %s: %v\n", spec, tomlCfg.Mirror)
+		t.Fatalf("did not find expected mirror configuration for %s: %v\n", spec, tc.Mirror)
 	}
 	if len(mirrorCfg.Servers) != 2 || mirrorCfg.Servers[0] != "http://mirror3.janelia.org:7000" || mirrorCfg.Servers[1] != "http://mirror4.janelia.org:7000" {
 		t.Fatalf("bad parsed mirror servers: %v\n", mirrorCfg)
 	}
 	spec = dvid.DataSpecifier(`all`)
-	mirrorCfg, found = tomlCfg.Mirror[spec]
+	mirrorCfg, found = tc.Mirror[spec]
 	if !found {
-		t.Fatalf("did not find expected mirror configuration for %s: %v\n", spec, tomlCfg.Mirror)
+		t.Fatalf("did not find expected mirror configuration for %s: %v\n", spec, tc.Mirror)
 	}
 	if len(mirrorCfg.Servers) != 2 || mirrorCfg.Servers[0] != "http://mirror1.janelia.org:7000" || mirrorCfg.Servers[1] != "http://mirror2.janelia.org:7000" {
 		t.Fatalf("bad parsed mirror servers: %v\n", mirrorCfg)
@@ -183,7 +184,7 @@ func TestTOMLConfigAbsolutePath(t *testing.T) {
 	c.Store["bar"]["path"] = "/tmp/bar-storage-db" // Already absolute, should stay unchanged.
 
 	// Convert relative paths to absolute
-	c.ConvertPathsToAbsolute("/tmp/dvid-configs/myconfig.toml")
+	c.convertPathsToAbsolute("/tmp/dvid-configs/myconfig.toml")
 
 	// Checks
 	if c.Server.WebClient != "/tmp/dvid-configs/dvid-distro/dvid-console" {

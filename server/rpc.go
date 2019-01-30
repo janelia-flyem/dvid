@@ -200,11 +200,11 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 	switch cmd.Name() {
 
 	case "help":
-		reply.Text = fmt.Sprintf(rpcHelp, config.RPCAddress(), config.HTTPAddress())
+		reply.Text = fmt.Sprintf(rpcHelp, RPCAddress(), HTTPAddress())
 
 	case "shutdown":
 		dvid.Infof("DVID server halting due to 'shutdown' command.")
-		reply.Text = fmt.Sprintf("DVID server at %s is being shutdown...\n", config.RPCAddress())
+		reply.Text = fmt.Sprintf("DVID server at %s is being shutdown...\n", RPCAddress())
 		// launch goroutine shutdown so we can concurrently return shutdown message to client.
 		go Shutdown()
 

@@ -93,7 +93,6 @@ func OpenTest(configs ...TestConfig) error {
 			}
 		}
 	}
-	config = &tc
 	dvid.Infof("OpenTest with %v: cache setting %v\n", configs, tc.Cache)
 	if dataMapped {
 		datastore.OpenTest(dataMap)
@@ -108,26 +107,17 @@ func CloseTest() {
 	datastore.CloseTest()
 }
 
-type tomlConfig struct {
-	Server     ServerConfig
-	Email      dvid.EmailConfig
-	Logging    dvid.LogConfig
-	Mutations  MutationsConfig
-	Kafka      storage.KafkaConfig
-	Store      map[storage.Alias]storeConfig
-	Backend    map[dvid.DataSpecifier]backendConfig
-	Cache      map[string]sizeConfig
-	Groupcache storage.GroupcacheConfig
-	Mirror     map[dvid.DataSpecifier]mirrorConfig
-}
+// Initialize sets up the server (runs webhook, kafka goroutine, etc) and
+// presumes that LoadConfig() or another method was already used to configure
+// the server.
+func Initialize() error {
+	tc.Logging.SetLogger()
 
-// Initialize sets up the server (runs webhook, kafka goroutine, etc).
-func (c *tomlConfig) Initialize() error {
-	if err := c.Kafka.Initialize(WebServer()); err != nil {
+	if err := tc.Kafka.Initialize(WebServer()); err != nil {
 		return err
 	}
 
-	sc := c.Server
+	sc := tc.Server
 	if sc.StartWebhook == "" && sc.StartJaneliaConfig == "" {
 		return nil
 	}
@@ -174,10 +164,23 @@ func (c *tomlConfig) Initialize() error {
 	return nil
 }
 
+type tomlConfig struct {
+	Server     localConfig
+	Email      dvid.EmailConfig
+	Logging    dvid.LogConfig
+	Mutations  MutationsConfig
+	Kafka      storage.KafkaConfig
+	Store      map[storage.Alias]storeConfig
+	Backend    map[dvid.DataSpecifier]backendConfig
+	Cache      map[string]sizeConfig
+	Groupcache storage.GroupcacheConfig
+	Mirror     map[dvid.DataSpecifier]mirrorConfig
+}
+
 // Some settings in the TOML can be given as relative paths.
 // This function converts them in-place to absolute paths,
 // assuming the given paths were relative to the TOML file's own directory.
-func (c *tomlConfig) ConvertPathsToAbsolute(configPath string) error {
+func (c *tomlConfig) convertPathsToAbsolute(configPath string) error {
 	var err error
 
 	configDir := filepath.Dir(configPath)
@@ -213,9 +216,9 @@ func (c *tomlConfig) ConvertPathsToAbsolute(configPath string) error {
 	return nil
 }
 
-func (c tomlConfig) Stores() (map[storage.Alias]dvid.StoreConfig, error) {
-	stores := make(map[storage.Alias]dvid.StoreConfig, len(c.Store))
-	for alias, sc := range c.Store {
+func Stores() (map[storage.Alias]dvid.StoreConfig, error) {
+	stores := make(map[storage.Alias]dvid.StoreConfig, len(tc.Store))
+	for alias, sc := range tc.Store {
 		e, ok := sc["engine"]
 		if !ok {
 			return nil, fmt.Errorf("store configurations must have %q set to valid driver", "engine")
@@ -235,60 +238,60 @@ func (c tomlConfig) Stores() (map[storage.Alias]dvid.StoreConfig, error) {
 }
 
 // Host returns the most understandable host alias + any port.
-func (c *tomlConfig) Host() string {
-	parts := strings.Split(c.Server.HTTPAddress, ":")
-	host := c.Server.Host
+func Host() string {
+	parts := strings.Split(tc.Server.HTTPAddress, ":")
+	host := tc.Server.Host
 	if len(parts) > 1 {
 		host = host + ":" + parts[len(parts)-1]
 	}
 	return host
 }
 
-func (c *tomlConfig) Note() string {
-	return c.Server.Note
+func Note() string {
+	return tc.Server.Note
 }
 
-func (c *tomlConfig) HTTPAddress() string {
-	return c.Server.HTTPAddress
+func HTTPAddress() string {
+	return tc.Server.HTTPAddress
 }
 
-func (c *tomlConfig) RPCAddress() string {
-	return c.Server.RPCAddress
+func RPCAddress() string {
+	return tc.Server.RPCAddress
 }
 
-func (c *tomlConfig) WebClient() string {
-	return c.Server.WebClient
+func WebClient() string {
+	return tc.Server.WebClient
 }
 
-func (c *tomlConfig) WebRedirectPath() string {
-	return c.Server.WebRedirectPath
+func WebRedirectPath() string {
+	return tc.Server.WebRedirectPath
 }
 
-func (c *tomlConfig) WebDefaultFile() string {
-	return c.Server.WebDefaultFile
+func WebDefaultFile() string {
+	return tc.Server.WebDefaultFile
 }
 
-func (c *tomlConfig) AllowTiming() bool {
-	return c.Server.AllowTiming
+func AllowTiming() bool {
+	return tc.Server.AllowTiming
 }
 
-func (c *tomlConfig) KafkaServers() []string {
-	if len(c.Kafka.Servers) != 0 {
-		return c.Kafka.Servers
+func KafkaServers() []string {
+	if len(tc.Kafka.Servers) != 0 {
+		return tc.Kafka.Servers
 	}
 	return nil
 }
 
-func (c *tomlConfig) KafkaActivityTopic() string {
-	return c.Kafka.TopicActivity
+func KafkaActivityTopic() string {
+	return tc.Kafka.TopicActivity
 }
 
-func (c *tomlConfig) KafkaPrefixTopic() string {
-	return c.Kafka.TopicPrefix
+func KafkaPrefixTopic() string {
+	return tc.Kafka.TopicPrefix
 }
 
-func (c *tomlConfig) MutationLogSpec() MutationsConfig {
-	return c.Mutations
+func MutationLogSpec() MutationsConfig {
+	return tc.Mutations
 }
 
 func repoMirrors(dataUUID, versionUUID dvid.UUID) []string {
@@ -344,8 +347,8 @@ func WebServer() string {
 	return host
 }
 
-// ServerConfig holds ports, host name, and other properties of this dvid server.
-type ServerConfig struct {
+// localConfig holds ports, host name, and other properties of this dvid server.
+type localConfig struct {
 	Host            string
 	HTTPAddress     string
 	RPCAddress      string
@@ -369,11 +372,11 @@ type ServerConfig struct {
 
 // DatastoreConfig returns data instance configuration necessary to
 // handle id generation.
-func (sc ServerConfig) DatastoreConfig() datastore.Config {
+func DatastoreConfig() datastore.Config {
 	return datastore.Config{
-		InstanceGen:   sc.IIDGen,
-		InstanceStart: dvid.InstanceID(sc.IIDStart),
-		MutationStart: sc.MutIDStart,
+		InstanceGen:   tc.Server.IIDGen,
+		InstanceStart: dvid.InstanceID(tc.Server.IIDStart),
+		MutationStart: tc.Server.MutIDStart,
 	}
 }
 
@@ -393,30 +396,33 @@ type mirrorConfig struct {
 }
 
 // LoadConfig loads DVID server configuration from a TOML file.
-func LoadConfig(filename string) (*tomlConfig, *storage.Backend, error) {
+func LoadConfig(filename string) error {
 	if filename == "" {
-		return &tc, nil, fmt.Errorf("No server TOML configuration file provided")
+		return fmt.Errorf("No server TOML configuration file provided")
 	}
 	if _, err := toml.DecodeFile(filename, &tc); err != nil {
-		return &tc, nil, fmt.Errorf("could not decode TOML config: %v", err)
+		return fmt.Errorf("could not decode TOML config: %v", err)
 	}
 	dvid.Infof("tomlConfig: %v\n", tc)
 	var err error
-	err = tc.ConvertPathsToAbsolute(filename)
+	err = tc.convertPathsToAbsolute(filename)
 	if err != nil {
-		return &tc, nil, fmt.Errorf("could not convert relative paths to absolute paths in TOML config: %v", err)
+		return fmt.Errorf("could not convert relative paths to absolute paths in TOML config: %v", err)
 	}
 
 	if tc.Email.IsAvailable() {
 		dvid.SetEmailServer(tc.Email)
 	}
+	return nil
+}
 
+// GetBackend returns a backend from current configuration.
+func GetBackend() (backend *storage.Backend, err error) {
 	// Get all defined stores.
-	backend := new(storage.Backend)
+	backend = new(storage.Backend)
 	backend.Groupcache = tc.Groupcache
-	backend.Stores, err = tc.Stores()
-	if err != nil {
-		return &tc, nil, err
+	if backend.Stores, err = Stores(); err != nil {
+		return
 	}
 
 	// Get default store if there's only one store defined.
@@ -433,7 +439,8 @@ func LoadConfig(filename string) (*tomlConfig, *storage.Backend, error) {
 		// lookup store config
 		_, found := backend.Stores[v.Store]
 		if !found {
-			return &tc, nil, fmt.Errorf("Backend for %q specifies unknown store %q", k, v.Store)
+			err = fmt.Errorf("Backend for %q specifies unknown store %q", k, v.Store)
+			return
 		}
 		spec := dvid.DataSpecifier(strings.Trim(string(k), "\""))
 		backend.KVStore[spec] = v.Store
@@ -447,7 +454,8 @@ func LoadConfig(filename string) (*tomlConfig, *storage.Backend, error) {
 		backend.DefaultKVDB = defaultStore
 	} else {
 		if backend.DefaultKVDB == "" {
-			return &tc, nil, fmt.Errorf("if no default backend specified, must have exactly one store defined in config file")
+			err = fmt.Errorf("if no default backend specified, must have exactly one store defined in config file")
+			return
 		}
 	}
 
@@ -461,14 +469,12 @@ func LoadConfig(filename string) (*tomlConfig, *storage.Backend, error) {
 		backend.Metadata = defaultMetadataName
 	} else {
 		if backend.DefaultKVDB == "" {
-			return &tc, nil, fmt.Errorf("can't set metadata if no default backend specified, must have exactly one store defined in config file")
+			err = fmt.Errorf("can't set metadata if no default backend specified, must have exactly one store defined in config file")
+			return
 		}
 		backend.Metadata = backend.DefaultKVDB
 	}
-
-	// The server config could be local, cluster, gcloud-specific config.  Here it is local.
-	config = &tc
-	return &tc, backend, nil
+	return
 }
 
 // Serve starts HTTP and RPC servers.

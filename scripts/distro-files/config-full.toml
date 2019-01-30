@@ -51,10 +51,12 @@ max_log_size = 500 # MB
 max_log_age = 30   # days
 
 [mutations]
-# use kafka server with "my-mutations" topic.  TODO -- support additional log stores.
-logstore = "kafka:my-mutations"
+# use kafka server with "my-mutations" topic.
+# logstore = "kafka:my-mutations"
+# use local log store with automatic UUID topic
+logstore = "logstore:mutationlog"
 # store any large POST body into blobstore with unique ref stored in kafka
-blobstore = "store4blob"
+blobstore = "raid6"
 
 # Backends can be specified in many ways.  In decreasing order of precedence:
 #
@@ -99,10 +101,6 @@ blobstore = "store4blob"
     engine = "basholeveldb"
     path = "/datassd/dbs/basholeveldb"
  
-    [store.store4blob]
-    engine = "basholeveldb"
-    path = "/datassd/dbs/blobstore"
- 
     [store.kvautobus]
     engine = "kvautobus"
     path = "http://tem-dvid.int.janelia.org:9000"
@@ -119,7 +117,7 @@ blobstore = "store4blob"
 
     [store.mutationlog]
     engine = "filelog"
-    path = "/data/mutationlogs"  # directory that holds mutation log per instance-UUID.
+    path = "/data/mutationlog"  # directory that holds mutation log per instance-UUID.
 
 # Kafka support can be specified.  This allows mutations to be logged and facilitates
 # syncing, etc.  If a "filelog" store is available as default, then any failed kafka

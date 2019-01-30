@@ -162,7 +162,7 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 	}
 	data, ok := dataservice.(*Data)
 	if !ok {
-		t.Fatalf("Returned new data instance is not roi.Data\n")
+		t.Fatalf("Returned new data instance is not keyvalue.Data\n")
 	}
 
 	// PUT a value
@@ -251,7 +251,7 @@ func TestKeyvalueUnversioned(t *testing.T) {
 	}
 	data, ok := dataservice.(*Data)
 	if !ok {
-		t.Fatalf("Returned new data instance is not roi.Data\n")
+		t.Fatalf("Returned new data instance is not keyvalue.Data\n")
 	}
 
 	// PUT a value
@@ -834,7 +834,7 @@ func TestDiamondGetOnMerge(t *testing.T) {
 	}
 	data, ok := dataservice.(*Data)
 	if !ok {
-		t.Fatalf("Returned new data instance is not roi.Data\n")
+		t.Fatalf("Returned new data instance is not keyvalue.Data\n")
 	}
 
 	// PUT a value
@@ -873,3 +873,25 @@ func TestDiamondGetOnMerge(t *testing.T) {
 		t.Errorf("Error on merged child, key %q: expected %q, got %q\n", key1, value1, string(returnValue))
 	}
 }
+
+/*
+TODO -- Complete when mutation log access added, so we can check mutation is logged and test blobstore
+		fetch with reference.
+
+func TestBlobstoreMutationLog(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	server.CreateTestInstance(t, uuid, "keyvalue", "mykv", config)
+
+	key := "mykey"
+	value := "some stuff"
+	url := fmt.Sprintf("%snode/%s/mykv/key/%s", server.WebAPIPath, uuid, key)
+	server.TestHTTP(t, "POST", url, strings.NewReader(value))
+}
+
+*/

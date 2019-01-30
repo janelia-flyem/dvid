@@ -37,44 +37,6 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-// Config provides server configuration parameters.  Should be set by platform-specific implementations.
-type Config interface {
-	Host() string // Abbreviated host identifier + port.
-	Note() string
-
-	HTTPAddress() string
-	RPCAddress() string
-
-	// Path to web client files
-	WebClient() string
-
-	// Path to redirect if HTTP request doesn't exist
-	WebRedirectPath() string
-
-	// Path to file under WebClient() directory.  Its contents will be transmitted if HTTP request doesn't exist
-	WebDefaultFile() string
-
-	// Set timing in HTTP header
-	AllowTiming() bool
-
-	// KafkaActivityTopic returns the kafka topic for activity logging, empty if not configured
-	KafkaActivityTopic() string
-
-	// KafkaPrefixTopic returns the prefix for any data instance-level mutation logging topic.
-	KafkaPrefixTopic() string
-
-	// KafkaServers returns a list of kafka servers, nil if not configured
-	KafkaServers() []string
-
-	// MutationLogSpec returns config for where mutations should be logged.
-	MutationLogSpec() MutationsConfig
-}
-
-// GetConfig returns configuration settings for the server, which is set by each platform-specific server code.
-func GetConfig() Config {
-	return config
-}
-
 var (
 	// MaxDataRequest sets the limit on the amount of data that could be returned for a request
 	MaxDataRequest = int64(3) * dvid.Giga
@@ -139,9 +101,6 @@ var (
 	// the read-only Version() function and is set by build-time code generation using
 	// the "git describe" command.  See the CMakeLists.txt file for the code generation.
 	gitVersion string
-
-	// configuration for a platform-specific server
-	config Config
 
 	// kafka topic to publish activity for this server
 	kafkaActivityTopic string
@@ -263,9 +222,9 @@ func AboutJSON() (jsonStr string, err error) {
 		"Storage backend":   storage.EnginesAvailable(),
 		"Server time":       time.Now().String(),
 		"Server uptime":     time.Since(startupTime).String(),
-		"RPC Address":       config.RPCAddress(),
-		"Host":              config.Host(),
-		"Note":              config.Note(),
+		"RPC Address":       RPCAddress(),
+		"Host":              Host(),
+		"Note":              Note(),
 	}
 	if readonly {
 		data["Mode"] = "read only"
@@ -273,13 +232,13 @@ func AboutJSON() (jsonStr string, err error) {
 	if fullwrite {
 		data["Mode"] = "allow writes on committed nodes"
 	}
-	kservers := config.KafkaServers()
+	kservers := KafkaServers()
 	if len(kservers) > 0 {
 		data["Kafka Servers"] = strings.Join(kservers, ",")
-		data["Kafka Activity Topic"] = config.KafkaActivityTopic()
+		data["Kafka Activity Topic"] = KafkaActivityTopic()
 	}
-	if config.KafkaPrefixTopic() != "" {
-		data["Kafka Topic Prefix"] = config.KafkaPrefixTopic()
+	if KafkaPrefixTopic() != "" {
+		data["Kafka Topic Prefix"] = KafkaPrefixTopic()
 	}
 	m, err := json.Marshal(data)
 	if err != nil {

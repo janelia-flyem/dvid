@@ -12,35 +12,40 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
+var (
+	mutCfg MutationsConfig
+
+	mutOrderID  uint64
+	mutOrderMux sync.RWMutex
+)
+
 // MutationsConfig specifies handling of mutation logs, which are composed of
 // an append-only logs of mutations for each version and one log for repository
 // changes.  A blobstore must also be specified to hold large mutation data that
 // is
 type MutationsConfig struct {
-	Logstore  string        // example: "kafka:mytopic".  TODO -- support non-kafka log store.
+	Logstore  string        // examples: "kafka:mytopic", "logstore:myStoreAlias"
 	Blobstore storage.Alias // alias to a store
 }
 
-func logMutationPayload(cfg MutationsConfig, data []byte) (ref string, err error) {
+func logMutationPayload(data []byte) (ref string, err error) {
 	var store dvid.Store
-	if store, err = storage.GetStoreByAlias(cfg.Blobstore); err != nil {
+	if store, err = storage.GetStoreByAlias(mutCfg.Blobstore); err != nil {
 		return
 	}
 	blobstore, ok := store.(storage.BlobStore)
 	if !ok {
-		err = fmt.Errorf("mutation blobstore %q is not a valid blob store", cfg.Blobstore)
+		err = fmt.Errorf("mutation blobstore %q is not a valid blob store", mutCfg.Blobstore)
 		return
 	}
 	return blobstore.PutBlob(data)
 }
 
-var (
-	mutOrderID  uint64
-	mutOrderMux sync.RWMutex
-)
-
 // LogMutation logs a HTTP mutation request to the mutation log specific in the config.
-func LogMutation(cfg MutationsConfig, versionID, dataID dvid.UUID, r *http.Request, data []byte) (err error) {
+func LogMutation(versionID, dataID dvid.UUID, r *http.Request, data []byte) (err error) {
+	if mutCfg.Blobstore == "" || mutCfg.Logstore == "" {
+		return nil
+	}
 	mutation := map[string]interface{}{
 		"TimeUnix":    time.Now().Unix(),
 		"Method":      r.Method,
@@ -53,7 +58,7 @@ func LogMutation(cfg MutationsConfig, versionID, dataID dvid.UUID, r *http.Reque
 	}
 	if len(data) != 0 {
 		var postRef string
-		if postRef, err = logMutationPayload(cfg, data); err != nil {
+		if postRef, err = logMutationPayload(data); err != nil {
 			return fmt.Errorf("unable to store mutation payload (%s): %v", r.RequestURI, err)
 		}
 		mutation["DataBytes"] = len(data)
@@ -69,9 +74,9 @@ func LogMutation(cfg MutationsConfig, versionID, dataID dvid.UUID, r *http.Reque
 		return fmt.Errorf("error marshaling JSON for mutation (%s): %v", r.RequestURI, err)
 	}
 
-	parts := strings.Split(cfg.Logstore, ":")
+	parts := strings.Split(mutCfg.Logstore, ":")
 	if len(parts) != 2 {
-		return fmt.Errorf("bad logstore specification %q", cfg.Logstore)
+		return fmt.Errorf("bad logstore specification %q", mutCfg.Logstore)
 	}
 	store := parts[0]
 	spec := parts[1]
@@ -81,8 +86,22 @@ func LogMutation(cfg MutationsConfig, versionID, dataID dvid.UUID, r *http.Reque
 		if err = storage.KafkaProduceMsg(jsonmsg, topic); err != nil {
 			return fmt.Errorf("error on sending mutation (%s) to kafka: %v", r.RequestURI, err)
 		}
+	case "logstore":
+		store, err := storage.GetStoreByAlias(storage.Alias(spec))
+		if err != nil {
+			return fmt.Errorf("bad mutation logstore specification %q", spec)
+		}
+		logable, ok := store.(storage.LogWritable)
+		if !ok {
+			return fmt.Errorf("mutation logstore %q was not a valid write log", spec)
+		}
+		log := logable.GetWriteLog()
+		if log == nil {
+			return fmt.Errorf("unable to get write log from store %s", store)
+		}
+		return log.TopicAppend(string(versionID), storage.LogMessage{Data: jsonmsg})
 	default:
-		return fmt.Errorf("unknown store %q in logstore specification %q", store, cfg.Logstore)
+		return fmt.Errorf("unknown store %q in logstore specification %q", store, mutCfg.Logstore)
 	}
 	return nil
 }

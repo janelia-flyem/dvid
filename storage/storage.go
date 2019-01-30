@@ -131,7 +131,7 @@ func GetEngine(name string) Engine {
 	return e
 }
 
-// GetTestableBackend returns testable enines and a storage backend that combines all
+// GetTestableBackend returns testable engines and a storage backend that combines all
 // testable engine configurations.
 func GetTestableBackend(kvMap, logMap DataMap) (map[Alias]TestableEngine, *Backend, error) {
 	var found bool

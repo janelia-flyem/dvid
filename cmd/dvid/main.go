@@ -275,17 +275,19 @@ func DoServe(cmd dvid.Command) error {
 	if configPath == "" {
 		return fmt.Errorf("serve command must be followed by the path to the TOML configuration file")
 	}
-	tc, backend, err := server.LoadConfig(configPath)
-	if err != nil {
+	if err := server.LoadConfig(configPath); err != nil {
 		return fmt.Errorf("error loading configuration file %q: %v", configPath, err)
 	}
-	tc.Logging.SetLogger()
 
-	if err := tc.Initialize(); err != nil {
+	if err := server.Initialize(); err != nil {
 		return err
 	}
 
 	// Initialize storage and datastore layer
+	backend, err := server.GetBackend()
+	if err != nil {
+		return err
+	}
 	initMetadata, err := storage.Initialize(cmd.Settings(), backend)
 	if err != nil {
 		return fmt.Errorf("unable to initialize storage: %v", err)
@@ -300,7 +302,7 @@ func DoServe(cmd dvid.Command) error {
 		transdb.LockKey(key)
 	}
 
-	if err := datastore.Initialize(initMetadata, tc.Server.DatastoreConfig()); err != nil {
+	if err := datastore.Initialize(initMetadata, server.DatastoreConfig()); err != nil {
 		if hastrans {
 			var ctx storage.MetadataContext
 			key := ctx.ConstructKey(storage.NewTKey(datastore.ServerLockKey, nil))
