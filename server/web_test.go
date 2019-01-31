@@ -248,6 +248,44 @@ func TestCommitBranchMergeDelete(t *testing.T) {
 	}
 	parent2 := dvid.UUID(resp.Child)
 
+	// Check branch versions
+	apiStr = fmt.Sprintf("%srepo/%s/branch-versions/master", WebAPIPath, parent1)
+	r := TestHTTP(t, "GET", apiStr, nil)
+	versionsResp := make([]string, 2)
+	if err := json.Unmarshal(r, &versionsResp); err != nil {
+		t.Fatalf("Unable to unmarshal branch versions: %s\n", string(r))
+	}
+	if len(versionsResp) != 2 {
+		t.Errorf("Bad branch versions return: %s\n", string(r))
+	}
+	if versionsResp[0] != string(parent1) {
+		t.Errorf("Expected master leaf to be %s, got %s\n", parent1, versionsResp[0])
+	}
+	if versionsResp[1] != string(uuid) {
+		t.Errorf("Expected master root to be %s, got %s\n", uuid, versionsResp[1])
+	}
+
+	apiStr = fmt.Sprintf("%srepo/%s/branch-versions/mybranch", WebAPIPath, parent2)
+	r = TestHTTP(t, "GET", apiStr, nil)
+	if err := json.Unmarshal(r, &versionsResp); err != nil {
+		t.Fatalf("Unable to unmarshal branch versions: %s\n", string(r))
+	}
+	if len(versionsResp) != 2 {
+		t.Errorf("Bad branch versions return: %s\n", string(r))
+	}
+	if versionsResp[0] != string(parent2) {
+		t.Errorf("Expected mybranch leaf to be %s, got %s\n", parent2, versionsResp[0])
+	}
+	if versionsResp[1] != string(uuid) {
+		t.Errorf("Expected mybranch root to be %s, got %s\n", uuid, versionsResp[1])
+	}
+
+	apiStr = fmt.Sprintf("%srepo/%s/branch-versions/foo", WebAPIPath, parent2)
+	r = TestHTTP(t, "GET", apiStr, nil)
+	if string(r) != "[]" {
+		t.Errorf("Bad branch versions return: %s\n", string(r))
+	}
+
 	// Commit both parents
 	payload = bytes.NewBufferString(`{"note": "This is first parent"}`)
 	apiStr = fmt.Sprintf("%snode/%s/commit", WebAPIPath, parent1)

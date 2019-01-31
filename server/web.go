@@ -247,6 +247,11 @@ Repo-Level REST endpoints
 	descriptions for the entire repo and not just one node.  For particular versions, use
 	node-level logging (below).
 
+  GET /api/repo/{uuid}/branch-versions/<branch name>
+
+	Returns a JSON list of version UUIDs for the given branch name, starting with the
+	current leaf and working back to the root.  Use "master" for the default branch.
+
  POST /api/repo/{uuid}/merge
 
 	Creates a conflict-free merge of a set of committed parent UUIDs into a child.  Note
@@ -647,12 +652,14 @@ func initRoutes() {
 
 	repoMux := web.New()
 	mainMux.Handle("/api/repo/:uuid/:action", repoMux)
+	mainMux.Handle("/api/repo/:uuid/:action/:name", repoMux)
 	repoMux.Use(repoRawSelector)
 	repoMux.Use(mutationsHandler)
 	repoMux.Use(activityLogHandler)
 	repoMux.Use(repoSelector)
 	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
 	repoMux.Post("/api/repo/:uuid/instance", repoNewDataHandler)
+	repoMux.Get("/api/repo/:uuid/branch-versions/:name", repoBranchVersionsHandler)
 	repoMux.Get("/api/repo/:uuid/log", getRepoLogHandler)
 	repoMux.Post("/api/repo/:uuid/log", postRepoLogHandler)
 	repoMux.Post("/api/repo/:uuid/merge", repoMergeHandler)
@@ -906,6 +913,7 @@ func repoRawSelector(c *web.C, h http.Handler) http.Handler {
 			return
 		}
 		c.Env["uuid"] = uuid
+		c.Env["name"] = c.URLParams["name"]
 
 		h.ServeHTTP(w, r)
 	}
@@ -1474,6 +1482,18 @@ func repoHeadHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 func repoInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	uuid := (c.Env["uuid"]).(dvid.UUID)
 	jsonStr, err := datastore.GetRepoJSON(uuid)
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, jsonStr)
+}
+
+func repoBranchVersionsHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid := (c.Env["uuid"]).(dvid.UUID)
+	name := (c.Env["name"]).(string)
+	jsonStr, err := datastore.GetBranchVersionsJSON(uuid, name)
 	if err != nil {
 		BadRequest(w, r, err)
 		return

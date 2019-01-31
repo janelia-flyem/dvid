@@ -1111,6 +1111,26 @@ func (m *repoManager) getRepoJSON(uuid dvid.UUID) (string, error) {
 	return string(jsonBytes), err
 }
 
+func (m *repoManager) getBranchVersionsJSON(uuid dvid.UUID, name string) (string, error) {
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return "", err
+	}
+	ancestry, err := r.dag.getAncestryByBranch(name)
+	if err != nil {
+		return "", err
+	}
+	jsonStr := "["
+	for i, ancestor := range ancestry {
+		jsonStr += `"` + string(ancestor) + `"`
+		if i != len(ancestry)-1 {
+			jsonStr += ","
+		}
+	}
+	jsonStr += "]"
+	return jsonStr, nil
+}
+
 func (m *repoManager) getRepoAlias(uuid dvid.UUID) (string, error) {
 	r, err := m.repoFromUUID(uuid)
 	if err != nil {
@@ -2609,6 +2629,46 @@ func newDAG(uuid dvid.UUID, v dvid.VersionID) *dagT {
 			v: newNode(uuid, v),
 		},
 	}
+}
+
+func (d *dagT) getAncestryByBranch(branch string) (ancestry []dvid.UUID, err error) {
+	d.RLock()
+	defer d.RUnlock()
+
+	// find leaf for this branch.
+	var leaf *nodeT
+	for _, node := range d.nodes {
+		if node.branch == branch || (branch == "master" && node.branch == "") {
+			if len(node.children) == 0 {
+				leaf = node
+			}
+		}
+	}
+
+	// start from leaf and work way up to root
+	cur := leaf
+	for {
+		if cur == nil {
+			break
+		}
+		ancestry = append(ancestry, cur.uuid)
+		if len(cur.parents) == 0 {
+			break
+		}
+		for i, parentV := range cur.parents {
+			parent, found := d.nodes[parentV]
+			if !found {
+				err = fmt.Errorf("branch %q node %s has parent version %d that doesn't exist", cur.branch, cur.uuid, parentV)
+				return
+			}
+			if i < len(cur.parents)-1 {
+				ancestry = append(ancestry, parent.uuid)
+			} else {
+				cur = parent // we ascend the last parent in case of merged parents
+			}
+		}
+	}
+	return
 }
 
 // returns duplicate of DAG limited by any set of version IDs.  If the root UUID is not in the
