@@ -32,7 +32,7 @@ requirements:
     # - https://github.com/conda-forge/go-feedstock/pull/38#issuecomment-460823214
     # With related changes here, too:
     # - https://github.com/conda-forge/go-feedstock/pull/43
-    - go 1.11.3 h8534fd4_1001
+    - go=1.11.3=h8534fd4_1001
     #- go 1.11.*
     
     - pkg-config
