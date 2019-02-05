@@ -30,12 +30,16 @@ build_requirements = recipe_meta['requirements']['build']
 # except for the go compiler.
 relaxed_build_requirements = []
 for req in build_requirements:
-    if req.startswith('go '):
-        relaxed_build_requirements.append('='.join(req.split()[:2]))
+    if req.split()[0] == 'go':
+        relaxed_build_requirements.append(req)
+    elif req.startswith('go '):
+        relaxed_build_requirements.append(' '.join(req.split()[:2]))
     else:
         relaxed_build_requirements.append( req.split()[0] )
 
+# Keep name and version for host requirements
 host_requirements = recipe_meta['requirements']['host']
+host_requirements = list(map(lambda r: ' '.join(r.split()[:2]), host_requirements))
 
 combined_requirements = relaxed_build_requirements + host_requirements
 
@@ -43,7 +47,7 @@ print("Installing compiled dependencies...")
 
 # Convert the requirements (with version specs, if any)
 # to conda's command-line syntax (i.e. replace spaces with '=')
-requirement_specs = map(lambda r: '='.join(r.split()[:2]), combined_requirements)
+requirement_specs = map(lambda r: '='.join(r.split()), combined_requirements)
 
 # Install to the currently active environment.
 cmd = 'conda install -y {}'.format(' '.join(requirement_specs))
