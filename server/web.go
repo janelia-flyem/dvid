@@ -247,7 +247,7 @@ Repo-Level REST endpoints
 	descriptions for the entire repo and not just one node.  For particular versions, use
 	node-level logging (below).
 
-  GET /api/repo/{uuid}/branch-versions/<branch name>
+  GET /api/repo/{uuid}/branch-versions/{branch name}
 
 	Returns a JSON list of version UUIDs for the given branch name, starting with the
 	current leaf and working back to the root.  Use "master" for the default branch.

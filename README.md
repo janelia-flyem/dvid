@@ -7,6 +7,10 @@ DVID       [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github
 [![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) 
 [![Travis CI Status](https://travis-ci.org/janelia-flyem/dvid.svg?branch=master)](https://travis-ci.org/janelia-flyem/dvid)
 
+There is a [paper on DVID](https://www.frontiersin.org/article/10.3389/fncir.2019.00005)
+describing its motivation and architecture, including how versioning works at the key-value
+level.
+
 See the [DVID Wiki](https://github.com/janelia-flyem/dvid/wiki) for more information including installation and examples of use.
 
 ![High-level architecture of DVID](/images/dvid-highlevel.png)
