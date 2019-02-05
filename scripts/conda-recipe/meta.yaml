@@ -25,7 +25,16 @@ requirements:
   # are used to build dvid, but are not linked against
   # or incorporated into the executable in any way.
   build:
-    - go 1.11.*
+    
+    # For now, we pull an exact build of the go compiler to avoid
+    # a new issue in the way conda-forge's `go` package is built.
+    # The PR that made this change is here:
+    # - https://github.com/conda-forge/go-feedstock/pull/38#issuecomment-460823214
+    # With related changes here, too:
+    # - https://github.com/conda-forge/go-feedstock/pull/43
+    - go 1.11.3 h8534fd4_1001
+    #- go 1.11.*
+    
     - pkg-config
     # Anaconda's gcc build
     - gcc_linux-64 # [linux]
