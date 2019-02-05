@@ -58,17 +58,17 @@ DVID is written in Go and supports different storage backends, a REST HTTP API,
 and command-line access (likely minimized in near future).  Some components written in 
 C, e.g., storage engines like Leveldb and fast codecs like lz4, are embedded or linked as a library.
 
+Mutations and activity logging can be sent to a Kafka server.  We use kafka activity topics to feed Kibana
+for analyzing DVID performance.
+
+![Snapshot of Kibana web page for DVID metrics](https://raw.githubusercontent.com/janelia-flyem/dvid/master/images/dvid-kibana-example.png)
+
 DVID has been tested on MacOS X, Linux (Fedora 16, CentOS 6, Ubuntu), and 
 [Windows 10+ Bash Shell](https://msdn.microsoft.com/en-us/commandline/wsl/about). It comes out-of-the-box with an embedded leveldb for storage although you can configure other storage backends.
-
-If you just need nd-array access, consider [DICED](https://github.com/janelia-flyem/diced#diced-diced-is-cloud-enabled-dvid-), which provides a simple python numpy interface to the main image/label datatypes in DVID.
-Because of the limited datatypes within DICED, petabyte-scale distributed computing support for mutations will be available sooner in DICED than for the full range of datatypes in DVID.
 
 Command-line and HTTP API documentation can be 
 found in [help constants within packages](https://github.com/janelia-flyem/dvid/blob/master/datatype/labelvol/labelvol.go#L34) or by visiting the **/api/help**
 HTTP endpoint on a running DVID server.
-
-
 
 ![Web app for 3d inspection being served from and sending requests to DVID](https://raw.githubusercontent.com/janelia-flyem/dvid/master/images/webapp.png)
 
