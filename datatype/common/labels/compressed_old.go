@@ -6,17 +6,16 @@ package labels
 import (
 	"fmt"
 	"math"
+	"runtime"
 
 	"github.com/janelia-flyem/dvid/dvid"
 )
-
-type oldCompressedSegData []uint32
 
 // oldCompress takes an input 3D label array of a given volume dimensions and compresses
 // it using the segmentation format defined in Neuroglancer.  VolSize must be tileable by
 // 8x8x8 block size.
 func oldCompress(b []byte, volsize dvid.Point) ([]byte, error) {
-	uintSlice, err := dvid.ByteToUint64(b)
+	uintSlice, err := dvid.AliasByteToUint64(b)
 	if err != nil {
 		return nil, err
 	}
@@ -24,14 +23,15 @@ func oldCompress(b []byte, volsize dvid.Point) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return dvid.Uint32ToByte(seg), nil
+	runtime.KeepAlive(&b)
+	return dvid.AliasUint32ToByte(seg), nil
 }
 
 // oldCompressUint64 takes an input 3D label array of a given volume dimensions and compresses
 // it using the segmentation format defined in Neuroglancer.  VolSize must be tileable by
 // 8x8x8 block size.  The output data is an array of 32 bit numbers. TODO: reuse table
 // encoding to improve compression.
-func oldCompressUint64(input []uint64, volsize dvid.Point) (oldCompressedSegData, error) {
+func oldCompressUint64(input []uint64, volsize dvid.Point) ([]uint32, error) {
 	BLKSIZE := uint(8)
 
 	xsize := uint(volsize.Value(0))
@@ -157,21 +157,21 @@ func oldCompressUint64(input []uint64, volsize dvid.Point) (oldCompressedSegData
 // and decompresses it. VolSize must be tileable by 8x8x8 block size.  The output
 // data is a slice of bytes that represents packed uint64.
 func oldDecompress(b []byte, volsize dvid.Point) ([]byte, error) {
-	seg, err := dvid.ByteToUint32(b)
+	seg, err := dvid.AliasByteToUint32(b)
 	if err != nil {
 		return nil, err
 	}
-	labels, err := oldDecompressUint64(oldCompressedSegData(seg), volsize)
+	labels, err := oldDecompressUint64(seg, volsize)
 	if err != nil {
 		return nil, err
 	}
-	return dvid.Uint64ToByte(labels), nil
+	return dvid.AliasUint64ToByte(labels), nil
 }
 
 // oldDecompressUint64 takes an input compressed array of 64-bit labels of a given volume dimensions
 // and decompresses it. VolSize must be tileable by 8x8x8 block size.  The output
 // data is an array of 64 bit numbers.
-func oldDecompressUint64(input oldCompressedSegData, volsize dvid.Point) ([]uint64, error) {
+func oldDecompressUint64(input []uint32, volsize dvid.Point) ([]uint64, error) {
 	BLKSIZE := uint(8)
 
 	xsize := uint(volsize.Value(0))

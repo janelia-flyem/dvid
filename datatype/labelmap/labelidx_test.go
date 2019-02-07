@@ -271,7 +271,7 @@ func TestIngest2(t *testing.T) {
 			for i := 0; i < 64*64*64; i++ {
 				td.u[i] = 91748 * uint64(i)
 			}
-			td.b, err = labels.MakeBlock(dvid.Uint64ToByte(td.u), dvid.Point3d{64, 64, 64})
+			td.b, err = labels.MakeBlock(dvid.AliasUint64ToByte(td.u), dvid.Point3d{64, 64, 64})
 			if err != nil {
 				t.Fatal(err)
 			}

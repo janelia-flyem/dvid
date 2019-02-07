@@ -379,11 +379,11 @@ func checkLabels(t *testing.T, text string, expected, got []byte) {
 	if len(expected) != len(got) {
 		t.Errorf("%s byte mismatch: expected %d bytes, got %d bytes\n", text, len(expected), len(got))
 	}
-	expectLabels, err := dvid.ByteToUint64(expected)
+	expectLabels, err := dvid.AliasByteToUint64(expected)
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotLabels, err := dvid.ByteToUint64(got)
+	gotLabels, err := dvid.AliasByteToUint64(got)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,6 +393,8 @@ func checkLabels(t *testing.T, text string, expected, got []byte) {
 			return
 		}
 	}
+	runtime.KeepAlive(&expected)
+	runtime.KeepAlive(&got)
 }
 
 type labelVol struct {
@@ -1265,7 +1267,7 @@ func testGetBlock(t *testing.T, uuid dvid.UUID, name string, bcoord dvid.Point3d
 
 func checkBlock(t *testing.T, pb labels.PositionedBlock, td testData) {
 	bytearray, _ := pb.Block.MakeLabelVolume()
-	uint64array, err := dvid.ByteToUint64(bytearray)
+	uint64array, err := dvid.AliasByteToUint64(bytearray)
 	if err != nil {
 		t.Fatalf("error converting returned block %s to uint64 array: %v\n", pb.BCoord, err)
 	}
@@ -1277,6 +1279,7 @@ func checkBlock(t *testing.T, pb labels.PositionedBlock, td testData) {
 			t.Fatalf("error in block %s, pos %d: got label %d, expected label %d\n", pb.BCoord, i, val, td.u[i])
 		}
 	}
+	runtime.KeepAlive(&bytearray)
 }
 
 func decodeReturnedBlocks(t *testing.T, data []byte) []labels.PositionedBlock {
@@ -1397,7 +1400,7 @@ func TestPostBlocks(t *testing.T) {
 		name:      "labels",
 	}
 	got := vol.getLabelVolume(t, uuid, "", "")
-	gotLabels, err := dvid.ByteToUint64(got)
+	gotLabels, err := dvid.AliasByteToUint64(got)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1423,6 +1426,7 @@ func TestPostBlocks(t *testing.T) {
 			}
 		}
 	}
+	runtime.KeepAlive(&got)
 
 	// test GET /blocks
 	for i, td := range data {
@@ -1608,10 +1612,11 @@ func TestBlocksWithMerge(t *testing.T) {
 			}
 		}
 	}
-	block0, err := labels.MakeBlock(dvid.Uint64ToByte(blockVol0), dvid.Point3d{64, 64, 64})
+	block0, err := labels.MakeBlock(dvid.AliasUint64ToByte(blockVol0), dvid.Point3d{64, 64, 64})
 	if err != nil {
 		t.Fatalf("error making block 0: %v\n", err)
 	}
+	runtime.KeepAlive(&blockVol0)
 	block0data, err := block0.CompressGZIP()
 	if err != nil {
 		t.Fatalf("error making block 0: %v\n", err)
@@ -1630,10 +1635,11 @@ func TestBlocksWithMerge(t *testing.T) {
 			}
 		}
 	}
-	block1, err := labels.MakeBlock(dvid.Uint64ToByte(blockVol1), dvid.Point3d{64, 64, 64})
+	block1, err := labels.MakeBlock(dvid.AliasUint64ToByte(blockVol1), dvid.Point3d{64, 64, 64})
 	if err != nil {
 		t.Fatalf("error making block 0: %v\n", err)
 	}
+	runtime.KeepAlive(&blockVol1)
 	block1data, err := block1.CompressGZIP()
 	if err != nil {
 		t.Fatalf("error making block 0: %v\n", err)
@@ -1698,7 +1704,7 @@ func TestBlocksWithMerge(t *testing.T) {
 			if bcoord == testBlockData[i].bcoord {
 				found = true
 				labelBytes, _ := gotBlock.MakeLabelVolume()
-				labelVol, err := dvid.ByteToUint64(labelBytes)
+				labelVol, err := dvid.AliasByteToUint64(labelBytes)
 				if err != nil {
 					t.Fatalf("problem inflating block %s labels to []uint64: %v\n", bcoord, err)
 				}
@@ -1707,6 +1713,7 @@ func TestBlocksWithMerge(t *testing.T) {
 						t.Fatalf("label mismatch found at index %d, expected %d, got %d\n", v, testBlockData[i].labels[v], val)
 					}
 				}
+				runtime.KeepAlive(&labelBytes)
 			}
 		}
 		if !found {
@@ -1734,7 +1741,7 @@ func TestBlocksWithMerge(t *testing.T) {
 			if bcoord == testBlockData[i].bcoord {
 				found = true
 				labelBytes, _ := gotBlock.MakeLabelVolume()
-				labelVol, err := dvid.ByteToUint64(labelBytes)
+				labelVol, err := dvid.AliasByteToUint64(labelBytes)
 				if err != nil {
 					t.Fatalf("problem inflating block %s labels to []uint64: %v\n", bcoord, err)
 				}
@@ -1743,6 +1750,7 @@ func TestBlocksWithMerge(t *testing.T) {
 						t.Fatalf("label mismatch found at index %d, expected 1, got %d\n", v, val)
 					}
 				}
+				runtime.KeepAlive(&labelBytes)
 			}
 		}
 		if !found {

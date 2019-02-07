@@ -348,11 +348,11 @@ func checkLabels(t *testing.T, text string, expected, got []byte) {
 	if len(expected) != len(got) {
 		t.Errorf("%s byte mismatch: expected %d bytes, got %d bytes\n", text, len(expected), len(got))
 	}
-	expectLabels, err := dvid.ByteToUint64(expected)
+	expectLabels, err := dvid.AliasByteToUint64(expected)
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotLabels, err := dvid.ByteToUint64(got)
+	gotLabels, err := dvid.AliasByteToUint64(got)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,6 +362,8 @@ func checkLabels(t *testing.T, text string, expected, got []byte) {
 			return
 		}
 	}
+	runtime.KeepAlive(&expected)
+	runtime.KeepAlive(&got)
 }
 
 type labelVol struct {
@@ -1205,7 +1207,7 @@ func TestPostBlocks(t *testing.T) {
 		name:      "labels",
 	}
 	got := vol.getLabelVolume(t, uuid, "", "")
-	gotLabels, err := dvid.ByteToUint64(got)
+	gotLabels, err := dvid.AliasByteToUint64(got)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1227,6 +1229,7 @@ func TestPostBlocks(t *testing.T) {
 			}
 		}
 	}
+	runtime.KeepAlive(&got)
 }
 
 func testExtents(t *testing.T, name string, uuid dvid.UUID, min, max dvid.Point3d) {

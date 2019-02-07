@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"runtime"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -44,7 +45,7 @@ func (pb PositionedBlock) DoSplitWithStats(op SplitOp, m *SVSplitMap, newLabelFu
 		return
 	}
 	lblarrayBytes, _ := pb.MakeLabelVolume()
-	lblarray, err := dvid.ByteToUint64(lblarrayBytes)
+	lblarray, err := dvid.AliasByteToUint64(lblarrayBytes)
 	if err != nil {
 		return
 	}
@@ -93,7 +94,7 @@ func (pb PositionedBlock) SplitStats(rles dvid.RLEs, m *SVSplitMap, newLabelFunc
 		return
 	}
 	lblarrayBytes, _ := pb.MakeLabelVolume()
-	lblarray, err := dvid.ByteToUint64(lblarrayBytes)
+	lblarray, err := dvid.AliasByteToUint64(lblarrayBytes)
 	if err != nil {
 		return
 	}
@@ -118,6 +119,7 @@ func (pb PositionedBlock) SplitStats(rles dvid.RLEs, m *SVSplitMap, newLabelFunc
 			i++
 		}
 	}
+	runtime.KeepAlive(&lblarrayBytes)
 	return
 }
 
@@ -138,7 +140,7 @@ func (pb PositionedBlock) splitSlow(op SplitOp) (split *Block, keptSize, splitSi
 		return
 	}
 	lblarrayBytes, _ := pb.MakeLabelVolume()
-	lblarray, err := dvid.ByteToUint64(lblarrayBytes)
+	lblarray, err := dvid.AliasByteToUint64(lblarrayBytes)
 	if err != nil {
 		return
 	}
@@ -343,7 +345,7 @@ func (pb PositionedBlock) splitFast(op SplitOp) (split *Block, keptSize, splitSi
 
 	split = new(Block)
 	split.Size = pb.Size
-	split.data = dvid.New8ByteAlignBytes(blockBytes)
+	split.data, split.dataSrc = dvid.New8ByteAlignBytes(blockBytes)
 	pos := uint32(16)
 	nbytes := numLabels * 8
 	copy(split.data[:pos+nbytes], pb.data[:pos+nbytes])
@@ -352,13 +354,13 @@ func (pb PositionedBlock) splitFast(op SplitOp) (split *Block, keptSize, splitSi
 		binary.LittleEndian.PutUint64(split.data[pos+nbytes:pos+nbytes+8], op.NewLabel)
 		nbytes += 8
 	}
-	if split.Labels, err = dvid.ByteToUint64(split.data[pos : pos+nbytes]); err != nil {
+	if split.Labels, err = dvid.AliasByteToUint64(split.data[pos : pos+nbytes]); err != nil {
 		return
 	}
 
 	pos += nbytes
 	nbytes = numSubBlocks * 2
-	if split.NumSBLabels, err = dvid.ByteToUint16(split.data[pos : pos+nbytes]); err != nil {
+	if split.NumSBLabels, err = dvid.AliasByteToUint16(split.data[pos : pos+nbytes]); err != nil {
 		return
 	}
 	for i, num := range pb.NumSBLabels {
@@ -370,7 +372,7 @@ func (pb PositionedBlock) splitFast(op SplitOp) (split *Block, keptSize, splitSi
 	}
 
 	pos += nbytes
-	if split.SBIndices, err = dvid.ByteToUint32(split.data[pos : pos+subBlockIndexBytes]); err != nil {
+	if split.SBIndices, err = dvid.AliasByteToUint32(split.data[pos : pos+subBlockIndexBytes]); err != nil {
 		return
 	}
 	indexPos = 0
@@ -400,7 +402,7 @@ func (pb PositionedBlock) SplitSupervoxel(op SplitSupervoxelOp) (split *Block, k
 		return
 	}
 	lblarrayBytes, _ := pb.MakeLabelVolume()
-	lblarray, err := dvid.ByteToUint64(lblarrayBytes)
+	lblarray, err := dvid.AliasByteToUint64(lblarrayBytes)
 	if err != nil {
 		return
 	}
@@ -440,7 +442,7 @@ func (pb PositionedBlock) SplitSupervoxels(rles dvid.RLEs, svsplits map[uint64]S
 		return
 	}
 	lblarrayBytes, _ := pb.MakeLabelVolume()
-	lblarray, err := dvid.ByteToUint64(lblarrayBytes)
+	lblarray, err := dvid.AliasByteToUint64(lblarrayBytes)
 	if err != nil {
 		return
 	}
@@ -577,7 +579,8 @@ type Block struct {
 	SBIndices   []uint32 // indices into Labels array
 	SBValues    []byte   // compressed voxel values giving index into SBIndices.
 
-	data []byte // serialized format as described above
+	data    []byte   // serialized format as described above
+	dataSrc []uint64 // slice that provides the 8-byte aligned memory used for data.
 }
 
 // CompressGZIP returns a gzip compressed encoding of the serialized block data.
@@ -894,7 +897,7 @@ func (b *Block) GetPointLabels(pts []dvid.Point3d) []uint64 {
 // MergeLabels returns a new block that has computed the given MergeOp.
 func (b *Block) MergeLabels(op MergeOp) (merged *Block, err error) {
 	merged = new(Block)
-	merged.data = dvid.New8ByteAlignBytes(uint32(len(b.data))) // at most the length of the unmerged Block
+	merged.data, merged.dataSrc = dvid.New8ByteAlignBytes(uint32(len(b.data))) // at most the length of the unmerged Block
 	copy(merged.data, b.data)
 	if err = merged.setExportedVars(); err != nil {
 		merged = nil
@@ -942,7 +945,7 @@ func (b *Block) MergeLabels(op MergeOp) (merged *Block, err error) {
 // ReplaceLabel replaces references to the target label with newLabel.
 func (b *Block) ReplaceLabel(target, newLabel uint64) (replace *Block, replaceSize uint64, err error) {
 	replace = new(Block)
-	replace.data = dvid.New8ByteAlignBytes(uint32(len(b.data)))
+	replace.data, replace.dataSrc = dvid.New8ByteAlignBytes(uint32(len(b.data)))
 	copy(replace.data, b.data)
 	if err = replace.setExportedVars(); err != nil {
 		replace = nil
@@ -961,7 +964,7 @@ func (b *Block) ReplaceLabel(target, newLabel uint64) (replace *Block, replaceSi
 // ReplaceLabels replaces labels according to mapping and doesn't compute sizes.
 func (b *Block) ReplaceLabels(mapping map[uint64]uint64) (replace *Block, replaced bool, err error) {
 	replace = new(Block)
-	replace.data = dvid.New8ByteAlignBytes(uint32(len(b.data)))
+	replace.data, replace.dataSrc = dvid.New8ByteAlignBytes(uint32(len(b.data)))
 	copy(replace.data, b.data)
 	if err = replace.setExportedVars(); err != nil {
 		replace = nil
@@ -1332,7 +1335,7 @@ func (b *Block) setData(gx, gy, gz uint32, sbLabels map[uint64]uint32, sbIndices
 
 	var numSBIndices, sbIndexBytes, numSBValueBytes uint32
 	if numLabels <= 1 {
-		b.data = dvid.New8ByteAlignBytes(16 + numLabels*8)
+		b.data, b.dataSrc = dvid.New8ByteAlignBytes(16 + numLabels*8)
 	} else {
 		for _, indices := range sbIndices {
 			numSBIndices += uint32(len(indices))
@@ -1342,7 +1345,7 @@ func (b *Block) setData(gx, gy, gz uint32, sbLabels map[uint64]uint32, sbIndices
 			numSBValueBytes += uint32(len(valueBytes))
 		}
 		blockBytes := 16 + numLabels*8 + numSubBlocks*2 + sbIndexBytes + numSBValueBytes
-		b.data = dvid.New8ByteAlignBytes(blockBytes)
+		b.data, b.dataSrc = dvid.New8ByteAlignBytes(blockBytes)
 	}
 
 	binary.LittleEndian.PutUint32(b.data[0:4], gx)
@@ -1352,7 +1355,7 @@ func (b *Block) setData(gx, gy, gz uint32, sbLabels map[uint64]uint32, sbIndices
 
 	pos := uint32(16)
 	var err error
-	b.Labels, err = dvid.ByteToUint64(b.data[pos : pos+numLabels*8])
+	b.Labels, err = dvid.AliasByteToUint64(b.data[pos : pos+numLabels*8])
 	if err != nil {
 		return err
 	}
@@ -1370,12 +1373,12 @@ func (b *Block) setData(gx, gy, gz uint32, sbLabels map[uint64]uint32, sbIndices
 
 	pos += numLabels * 8
 	nbytes := numSubBlocks * 2
-	b.NumSBLabels, err = dvid.ByteToUint16(b.data[pos : pos+nbytes])
+	b.NumSBLabels, err = dvid.AliasByteToUint16(b.data[pos : pos+nbytes])
 	if err != nil {
 		return err
 	}
 	pos += nbytes
-	b.SBIndices, err = dvid.ByteToUint32(b.data[pos : pos+sbIndexBytes])
+	b.SBIndices, err = dvid.AliasByteToUint32(b.data[pos : pos+sbIndexBytes])
 	if err != nil {
 		return err
 	}
@@ -1565,7 +1568,7 @@ func (b Block) MakeLabelVolume() (uint64array []byte, size dvid.Point3d) {
 
 	numVoxels := b.Size.Prod()
 	uint64array = make([]byte, numVoxels*8)
-	outarray, _ := dvid.ByteToUint64(uint64array)
+	outarray, _ := dvid.AliasByteToUint64(uint64array)
 
 	gx, gy, gz := b.Size[0]/SubBlockSize, b.Size[1]/SubBlockSize, b.Size[2]/SubBlockSize
 
@@ -1644,7 +1647,7 @@ func (b *Block) UnmarshalBinary(data []byte) error {
 		return fmt.Errorf("can't unmarshal block binary of length %d", len(data))
 	}
 	numBytes := uint32(len(data))
-	b.data = dvid.New8ByteAlignBytes(numBytes)
+	b.data, b.dataSrc = dvid.New8ByteAlignBytes(numBytes)
 	copy(b.data, data)
 	return b.setExportedVars()
 }
@@ -1728,7 +1731,7 @@ func (b *Block) setExportedVars() (err error) {
 		return fmt.Errorf("number of labels (%d) exceeds what can be contained in max block size %d", numLabels, MaxBlockSize)
 	}
 
-	b.Labels, err = dvid.ByteToUint64(b.data[16 : 16+numLabels*8])
+	b.Labels, err = dvid.AliasByteToUint64(b.data[16 : 16+numLabels*8])
 	if err != nil {
 		return
 	}
@@ -1743,7 +1746,7 @@ func (b *Block) setExportedVars() (err error) {
 	pos := uint32(16)
 	pos += numLabels * 8
 	nbytes := numSubBlocks * 2
-	b.NumSBLabels, err = dvid.ByteToUint16(b.data[pos : pos+nbytes])
+	b.NumSBLabels, err = dvid.AliasByteToUint16(b.data[pos : pos+nbytes])
 	if err != nil {
 		return
 	}
@@ -1754,7 +1757,7 @@ func (b *Block) setExportedVars() (err error) {
 
 	pos += nbytes
 	subBlockIndexBytes := numSubBlockIndices * 4
-	b.SBIndices, err = dvid.ByteToUint32(b.data[pos : pos+subBlockIndexBytes])
+	b.SBIndices, err = dvid.AliasByteToUint32(b.data[pos : pos+subBlockIndexBytes])
 	if err != nil {
 		return
 	}
@@ -2427,6 +2430,7 @@ func (b Block) WriteGoogleCompression(w io.Writer) error {
 // label array and portion of data that is being processed
 type subvolumeData struct {
 	data      []uint64
+	dataBytes []byte    // necessary to prevent GC if aliased into data
 	volsize   [3]uint32 // full size of volume
 	blockOff  [3]uint32 // offset from corner of subvolume to block being processed
 	blockSize [3]uint32 // size of block extending from blockOff
@@ -2458,8 +2462,9 @@ func setSubvolume(uint64array []byte, volsize, blockOff dvid.Point, blockSize dv
 		return nil, fmt.Errorf("Bad block offset %s + block size %s > volume size %s", blockOff, blockSize, volsize)
 	}
 	s := new(subvolumeData)
+	s.dataBytes = uint64array
 	var err error
-	s.data, err = dvid.ByteToUint64(uint64array)
+	s.data, err = dvid.AliasByteToUint64(uint64array)
 	if err != nil {
 		return nil, err
 	}
@@ -2607,7 +2612,7 @@ func (s *subvolumeData) encodeBlock() (*Block, error) {
 	subBlockIndexBytes := numSubBlockIndices * 4
 	subBlockValueBytes := uint32(bitpos >> 3)
 	blockBytes := 16 + numLabels*8 + numSubBlocks*2 + subBlockIndexBytes + subBlockValueBytes
-	b.data = dvid.New8ByteAlignBytes(blockBytes)
+	b.data, b.dataSrc = dvid.New8ByteAlignBytes(blockBytes)
 
 	b.Size = s.getBlockSize()
 
@@ -2618,7 +2623,7 @@ func (s *subvolumeData) encodeBlock() (*Block, error) {
 
 	pos := uint32(16)
 	var err error
-	b.Labels, err = dvid.ByteToUint64(b.data[pos : pos+numLabels*8])
+	b.Labels, err = dvid.AliasByteToUint64(b.data[pos : pos+numLabels*8])
 	if err != nil {
 		return nil, err
 	}
@@ -2628,14 +2633,14 @@ func (s *subvolumeData) encodeBlock() (*Block, error) {
 
 	pos += numLabels * 8
 	nbytes := numSubBlocks * 2
-	b.NumSBLabels, err = dvid.ByteToUint16(b.data[pos : pos+nbytes])
+	b.NumSBLabels, err = dvid.AliasByteToUint16(b.data[pos : pos+nbytes])
 	if err != nil {
 		return nil, err
 	}
 	copy(b.NumSBLabels, numSubBlockLabels)
 
 	pos += nbytes
-	b.SBIndices, err = dvid.ByteToUint32(b.data[pos : pos+subBlockIndexBytes])
+	b.SBIndices, err = dvid.AliasByteToUint32(b.data[pos : pos+subBlockIndexBytes])
 	if err != nil {
 		return nil, err
 	}

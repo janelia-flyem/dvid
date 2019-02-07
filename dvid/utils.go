@@ -3,6 +3,7 @@ package dvid
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -332,50 +333,68 @@ func MakeGzipHandler(fn http.HandlerFunc) http.HandlerFunc {
 }
 
 // New8ByteAlignBytes returns a byte slice that has an 8 byte alignment guarantee
-// based on the Go compiler spec.
-func New8ByteAlignBytes(numBytes uint32) []byte {
+// based on the Go compiler spec.  The source []uint64 must be preserved until
+// the byte slice is no longer needed.
+func New8ByteAlignBytes(numBytes uint32) ([]byte, []uint64) {
 	numWords := numBytes / 8
 	if numBytes%8 != 0 {
 		numWords++
 	}
 	uint64buf := make([]uint64, numWords)
-	bytebuf := Uint64ToByte(uint64buf)
-	return bytebuf[:numBytes]
+	bytebuf := AliasUint64ToByte(uint64buf)
+	return bytebuf[:numBytes], uint64buf
 }
 
-// NOTE: The following slice aliasing functions should be used with caution, particularly
-//       when reusing preallocated slices.  The intended use is for reuse of preallocated
-//       slices.
-
-// ByteToUint64 returns a uint64 slice that reuses the passed byte slice.  NOTE: The passed byte slice
-// must be aligned for uint64.  Use New8ByteAlignBytes() to allocate for guarantee.
+// ByteToUint64 copies a properly aligned byte slice into a []uint64.
 func ByteToUint64(b []byte) (out []uint64, err error) {
+	if len(b)%8 != 0 {
+		return nil, fmt.Errorf("cannot convert byte slice of length %d into []uint64", len(b))
+	}
+	sz := len(b) / 8
+	out = make([]uint64, sz)
+	opos := 0
+	for i := 0; i < len(b); i += 8 {
+		out[opos] = binary.LittleEndian.Uint64(b[i : i+8])
+		opos++
+	}
+	return out, nil
+}
+
+// NOTE: The following slice aliasing functions should be used with caution.  The source data
+// must be preserved until the alias is released.  This can be done in the following ways:
+//  - make sure the source slice is referenced after the alias is no longer needed.
+//  - holding it in same structure as the returned slice (as in Block)
+//  - use a runtime.KeepAlive(&b) statement to make sure the underlying bytes are not garbage collected.
+
+// AliasByteToUint64 returns a uint64 slice that reuses the passed byte slice.  NOTE: The passed byte slice
+// must be aligned for uint64.  Use New8ByteAlignBytes() to allocate for guarantee.
+func AliasByteToUint64(b []byte) (out []uint64, err error) {
 	if len(b)%uint64Size != 0 || uintptr(unsafe.Pointer(&b[0]))%uint64Size != 0 {
 		return nil, fmt.Errorf("bad len, cap, or alignment of dvid.ByteToUint32 len %d", len(b))
 	}
 	return uint64SliceFromByteSlice(b), nil
 }
 
-// ByteToUint32 returns a uint32 slice that reuses the passed byte slice.  NOTE: The passed byte slice
+// AliasByteToUint32 returns a uint32 slice that reuses the passed byte slice.  NOTE: The passed byte slice
 // must be aligned for uint32.
-func ByteToUint32(b []byte) ([]uint32, error) {
+func AliasByteToUint32(b []byte) ([]uint32, error) {
 	if len(b)%uint32Size != 0 || uintptr(unsafe.Pointer(&b[0]))%uint32Size != 0 {
 		return nil, fmt.Errorf("bad len, cap, or alignment of dvid.ByteToUint32 len %d", len(b))
 	}
 	return uint32SliceFromByteSlice(b), nil
 }
 
-// ByteToUint16 returns a uint16 slice that reuses the passed byte slice.  NOTE: The passed byte slice
+// AliasByteToUint16 returns a uint16 slice that reuses the passed byte slice.  NOTE: The passed byte slice
 // must be aligned for uint16.
-func ByteToUint16(b []byte) ([]uint16, error) {
+func AliasByteToUint16(b []byte) ([]uint16, error) {
 	if len(b)%uint16Size != 0 || uintptr(unsafe.Pointer(&b[0]))%uint16Size != 0 {
 		return nil, fmt.Errorf("bad len, cap, or alignment of dvid.ByteToUint16 len %d", len(b))
 	}
 	return uint16SliceFromByteSlice(b), nil
 }
 
-// Uint16ToByte returns the underlying byte slice for a uint16 slice.
-func Uint16ToByte(in []uint16) []byte {
+// AliasUint16ToByte returns the underlying byte slice for a uint16 slice.
+func AliasUint16ToByte(in []uint16) []byte {
 	sh := &reflect.SliceHeader{}
 	sh.Len = len(in) * uint16Size
 	sh.Cap = len(in) * uint16Size
@@ -383,8 +402,8 @@ func Uint16ToByte(in []uint16) []byte {
 	return *(*[]byte)(unsafe.Pointer(sh))
 }
 
-// Uint32ToByte returns the underlying byte slice for a uint32 slice.
-func Uint32ToByte(in []uint32) []byte {
+// AliasUint32ToByte returns the underlying byte slice for a uint32 slice.
+func AliasUint32ToByte(in []uint32) []byte {
 	sh := &reflect.SliceHeader{}
 	sh.Len = len(in) * uint32Size
 	sh.Cap = len(in) * uint32Size
@@ -392,8 +411,8 @@ func Uint32ToByte(in []uint32) []byte {
 	return *(*[]byte)(unsafe.Pointer(sh))
 }
 
-// Uint64ToByte returns the underlying byte slice for a uint64 slice.
-func Uint64ToByte(in []uint64) []byte {
+// AliasUint64ToByte returns the underlying byte slice for a uint64 slice.
+func AliasUint64ToByte(in []uint64) []byte {
 	sh := &reflect.SliceHeader{}
 	sh.Len = len(in) * uint64Size
 	sh.Cap = len(in) * uint64Size
