@@ -3,6 +3,10 @@
 # GOPATH is just the build 'work' dir 
 export GOPATH=$(pwd)
 
+echo "******************"
+echo "GOROOT: ${GOROOT}"
+echo "******************"
+
 # The dvid repo was cloned to the appropriate internal directory
 DVID_REPO=${GOPATH}/src/github.com/janelia-flyem/dvid
 cd ${DVID_REPO}

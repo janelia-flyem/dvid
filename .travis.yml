@@ -30,7 +30,7 @@ install:
   - conda config --add channels conda-forge
   - conda config --add channels flyem-forge
   - conda update -q conda
-  - conda install -y conda-build=3.16.3 # conda-build 3.17 introduces some issue related to LEIF
+  - conda install -y conda-build=3.17.8 # Known to work.
   - conda info -a
 
 script:
