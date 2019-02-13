@@ -1087,6 +1087,8 @@ POST <api URL>/node/<UUID>/<data name>/split-supervoxel/<supervoxel>?<options>
 
 	split  	Label id that should be used for split voxels.
 	remain  Label id that should be used for remaining (unsplit) voxels.
+	downres Defaults to "true" where all lower-res scales will be computed.
+	          Use "false" if you plan on supplying lower-res scales via POST /blocks.
 
 POST <api URL>/node/<UUID>/<data name>/split/<label>
 
@@ -4302,6 +4304,10 @@ func (d *Data) handleSplitSupervoxel(ctx *datastore.VersionedCtx, w http.Respons
 	queryStrings := r.URL.Query()
 	splitStr := queryStrings.Get("split")
 	remainStr := queryStrings.Get("remain")
+	downscale := true
+	if queryStrings.Get("downres") == "false" {
+		downscale = false
+	}
 	var err error
 	var split, remain uint64
 	if splitStr != "" {
@@ -4331,7 +4337,7 @@ func (d *Data) handleSplitSupervoxel(ctx *datastore.VersionedCtx, w http.Respons
 		return
 	}
 	info := dvid.GetModInfo(r)
-	splitSupervoxel, remainSupervoxel, mutID, err := d.SplitSupervoxel(ctx.VersionID(), supervoxel, split, remain, r.Body, info)
+	splitSupervoxel, remainSupervoxel, mutID, err := d.SplitSupervoxel(ctx.VersionID(), supervoxel, split, remain, r.Body, info, downscale)
 	if err != nil {
 		server.BadRequest(w, r, fmt.Sprintf("split supervoxel %d -> %d, %d: %v", supervoxel, splitSupervoxel, remainSupervoxel, err))
 		return

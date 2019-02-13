@@ -669,7 +669,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 // The input is a binary sparse volume and should be totally contained by the given supervoxel.
 // The first returned label is assigned to the split voxels while the second returned label is
 // assigned to the remainder voxels.
-func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabel uint64, r io.ReadCloser, info dvid.ModInfo) (splitSupervoxel, remainSupervoxel, mutID uint64, err error) {
+func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabel uint64, r io.ReadCloser, info dvid.ModInfo, downscale bool) (splitSupervoxel, remainSupervoxel, mutID uint64, err error) {
 	timedLog := dvid.NewTimeLog()
 
 	// Create new labels for this split that will persist to store
@@ -793,7 +793,10 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 		RemainSupervoxel: remainSupervoxel,
 		Split:            splitmap,
 	}
-	downresMut := downres.NewMutation(d, v, mutID)
+	var downresMut *downres.Mutation
+	if downscale {
+		downresMut = downres.NewMutation(d, v, mutID)
+	}
 
 	var splitblks dvid.IZYXSlice
 	if splitblks, err = d.splitSupervoxelIndex(v, info, op, idx); err != nil {
@@ -858,10 +861,12 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 		return
 	}
 
-	if err = downresMut.Execute(); err != nil {
-		dvid.Criticalf("down-res compute of supervoxel split %d failed with error: %v\n", svlabel, err)
-		dvid.Criticalf("down-res error can lead to sync issue between scale 0 and higher affecting these blocks: %s\n", splitblks)
-		return
+	if downresMut != nil {
+		if err = downresMut.Execute(); err != nil {
+			dvid.Criticalf("down-res compute of supervoxel split %d failed with error: %v\n", svlabel, err)
+			dvid.Criticalf("down-res error can lead to sync issue between scale 0 and higher affecting these blocks: %s\n", splitblks)
+			return
+		}
 	}
 
 	timedLog.Debugf("labelmap supervoxel %d split complete (%d blocks split)", op.Supervoxel, len(op.Split))
@@ -927,10 +932,11 @@ func (d *Data) splitSupervoxelThread(ctx *datastore.VersionedCtx, downresMut *do
 			continue
 		}
 
-		if err := downresMut.BlockMutated(pb.BCoord, splitBlock); err != nil {
-			errCh <- fmt.Errorf("data %q publishing downres, block %s: %v", d.DataName(), pb.BCoord, err)
-		} else {
-			errCh <- nil
+		if downresMut != nil {
+			if err = downresMut.BlockMutated(pb.BCoord, splitBlock); err != nil {
+				err = fmt.Errorf("data %q publishing downres, block %s: %v", d.DataName(), pb.BCoord, err)
+			}
 		}
+		errCh <- err
 	}
 }
