@@ -565,6 +565,29 @@ func TestSparseVolumes(t *testing.T) {
 		t.Errorf("bad response to maxlabel endpoint: %s\n", string(maxLabelResp))
 	}
 
+	server.TestHTTP(t, "POST", fmt.Sprintf("%snode/%s/labels/maxlabel/8", server.WebAPIPath, uuid), nil)
+	maxLabelResp = server.TestHTTP(t, "GET", fmt.Sprintf("%snode/%s/labels/maxlabel", server.WebAPIPath, uuid), nil)
+	if string(maxLabelResp) != `{"maxlabel": 8}` {
+		t.Errorf("bad response to maxlabel endpoint: %s\n", string(maxLabelResp))
+	}
+
+	nextLabelResp := server.TestHTTP(t, "GET", fmt.Sprintf("%snode/%s/labels/nextlabel", server.WebAPIPath, uuid), nil)
+	if string(nextLabelResp) != `{"nextlabel": 9}` {
+		t.Errorf("bad response to nextlabel endpoint: %s\n", string(nextLabelResp))
+	}
+	nextLabelResp = server.TestHTTP(t, "POST", fmt.Sprintf("%snode/%s/labels/nextlabel/5", server.WebAPIPath, uuid), nil)
+	if string(nextLabelResp) != `{"start": 9, "end": 13}` {
+		t.Errorf("bad response to POST /nextlabel: %s\n", string(maxLabelResp))
+	}
+	maxLabelResp = server.TestHTTP(t, "GET", fmt.Sprintf("%snode/%s/labels/maxlabel", server.WebAPIPath, uuid), nil)
+	if string(maxLabelResp) != `{"maxlabel": 13}` {
+		t.Errorf("bad response to maxlabel endpoint: %s\n", string(maxLabelResp))
+	}
+	nextLabelResp = server.TestHTTP(t, "GET", fmt.Sprintf("%snode/%s/labels/nextlabel", server.WebAPIPath, uuid), nil)
+	if string(nextLabelResp) != `{"nextlabel": 14}` {
+		t.Errorf("bad response to nextlabel endpoint: %s\n", string(nextLabelResp))
+	}
+
 	badReqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/0", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "GET", badReqStr, nil)
 

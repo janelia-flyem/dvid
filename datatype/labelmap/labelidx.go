@@ -684,7 +684,7 @@ func (d *Data) aggregateBlockChanges(v dvid.VersionID, svmap *SVMap, ch <-chan b
 		}
 	}
 	go func() {
-		if err := d.updateMaxLabel(v, maxLabel); err != nil {
+		if _, err := d.updateMaxLabel(v, maxLabel); err != nil {
 			dvid.Errorf("max label change during block aggregation for %q: %v\n", d.DataName(), err)
 		}
 	}()

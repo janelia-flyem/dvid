@@ -165,7 +165,7 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 		return
 	}
 
-	cleaveLabel, err = d.NewLabel(v)
+	cleaveLabel, err = d.newLabel(v)
 	if err != nil {
 		return
 	}
@@ -254,7 +254,7 @@ func (d *Data) splitPass1(ctx *datastore.VersionedCtx, splitmap dvid.BlockRLEs, 
 	timedLog := dvid.NewTimeLog()
 	svsplit := new(labels.SVSplitMap)
 	newLabelFunc := func() (uint64, error) {
-		return d.NewLabel(ctx.VersionID())
+		return d.newLabel(ctx.VersionID())
 	}
 
 	errCh := make(chan error, len(splitblks))
@@ -503,7 +503,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 	timedLog := dvid.NewTimeLog()
 
 	// Create a new label id for this version that will persist to store
-	toLabel, err = d.NewLabel(v)
+	toLabel, err = d.newLabel(v)
 	if err != nil {
 		return
 	}
@@ -675,18 +675,18 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 	// Create new labels for this split that will persist to store
 	if splitlabel != 0 {
 		splitSupervoxel = splitlabel
-		if err = d.updateMaxLabel(v, splitlabel); err != nil {
+		if _, err = d.updateMaxLabel(v, splitlabel); err != nil {
 			return
 		}
-	} else if splitSupervoxel, err = d.NewLabel(v); err != nil {
+	} else if splitSupervoxel, err = d.newLabel(v); err != nil {
 		return
 	}
 	if remainlabel != 0 {
 		remainSupervoxel = remainlabel
-		if err = d.updateMaxLabel(v, remainlabel); err != nil {
+		if _, err = d.updateMaxLabel(v, remainlabel); err != nil {
 			return
 		}
-	} else if remainSupervoxel, err = d.NewLabel(v); err != nil {
+	} else if remainSupervoxel, err = d.newLabel(v); err != nil {
 		return
 	}
 	dvid.Debugf("Splitting subset of label %d into new label %d and renaming remainder to label %d...\n", svlabel, splitSupervoxel, remainSupervoxel)

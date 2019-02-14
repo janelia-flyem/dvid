@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/downres"
@@ -665,6 +666,32 @@ GET <api URL>/node/<UUID>/<data name>/maxlabel
 
 		{ "maxlabel": <label #> }
 
+POST <api URL>/node/<UUID>/<data name>/maxlabel/<max label>
+
+	Sets the maximum label for the version of data specified by the UUID.  This maximum label will be 
+	ignored if it is not greater than the current maximum label.  This value is purely informative
+	(i.e., not used for establishing new labels on split) and can be used to distinguish new labels
+	in remote stores that may collide with local ones.
+	
+GET <api URL>/node/<UUID>/<data name>/nextlabel
+
+	GET returns what would be a new label for the version of data in JSON form assuming the version
+	has not been committed:
+
+		{ "nextlabel": <label #> }
+	
+POST <api URL>/node/<UUID>/<data name>/nextlabel/<desired # of labels>
+
+	POST allows the client to request some # of labels that will be reserved.
+	This is used if the client wants to introduce new labels.
+
+	Response:
+
+		{ "start": <starting label #>, "end": <ending label #> }
+
+	Unlike POST /maxlabel, which can set the maximum label arbitrarily high, this
+	endpoint gives incremental new label ids.
+
 
 -------------------------------------------------------------------------------------------------------
 --- The following endpoints require the labelmap data instance to have IndexedLabels set to true. ---
@@ -930,25 +957,6 @@ GET <api URL>/node/<UUID>/<data name>/sparsevols-coarse/<start label>/<end label
 			int32   Block coordinate of run start (dimension 1)
 			int32   Block coordinate of run start (dimension 2)
 			int32   Length of run
-
-
-GET <api URL>/node/<UUID>/<data name>/nextlabel
-POST <api URL>/node/<UUID>/<data name>/nextlabel
-
-	GET returns the next label for the version of data in JSON form:
-
-		{ "nextlabel": <label #> }
-
-	POST allows the client to request some # of labels that will be reserved.
-	This is used if the client wants to introduce new labels.
-
-	The request:
-
-		{ "needed": <# of labels> }
-
-	Response:
-
-		{ "start": <starting label #>, "end": <ending label #> }
 
 
 POST <api URL>/node/<UUID>/<data name>/merge
@@ -1615,8 +1623,7 @@ func (d *Data) GobEncode() ([]byte, error) {
 }
 
 // makes database call for any update
-func (d *Data) updateMaxLabel(v dvid.VersionID, label uint64) error {
-	var changed bool
+func (d *Data) updateMaxLabel(v dvid.VersionID, label uint64) (changed bool, err error) {
 	d.mlMu.RLock()
 	curMax, found := d.MaxLabel[v]
 	d.mlMu.RUnlock()
@@ -1626,18 +1633,20 @@ func (d *Data) updateMaxLabel(v dvid.VersionID, label uint64) error {
 	if changed {
 		d.mlMu.Lock()
 		d.MaxLabel[v] = label
-		if err := d.persistMaxLabel(v); err != nil {
-			return fmt.Errorf("updateMaxLabel of data %q: %v\n", d.DataName(), err)
+		if err = d.persistMaxLabel(v); err != nil {
+			err = fmt.Errorf("updateMaxLabel of data %q: %v", d.DataName(), err)
+			return
 		}
 		if label > d.MaxRepoLabel {
 			d.MaxRepoLabel = label
-			if err := d.persistMaxRepoLabel(); err != nil {
-				return fmt.Errorf("updateMaxLabel of data %q: %v\n", d.DataName(), err)
+			if err = d.persistMaxRepoLabel(); err != nil {
+				err = fmt.Errorf("updateMaxLabel of data %q: %v", d.DataName(), err)
+				return
 			}
 		}
 		d.mlMu.Unlock()
 	}
-	return nil
+	return
 }
 
 // makes database call for any update
@@ -1703,8 +1712,8 @@ func (d *Data) persistMaxRepoLabel() error {
 	return store.Put(ctx, maxRepoLabelTKey, buf)
 }
 
-// NewLabel returns a new label for the given version.
-func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
+// newLabel returns a new label for the given version.
+func (d *Data) newLabel(v dvid.VersionID) (uint64, error) {
 	d.mlMu.Lock()
 	defer d.mlMu.Unlock()
 
@@ -1727,6 +1736,38 @@ func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 		return d.MaxRepoLabel, err
 	}
 	return d.MaxRepoLabel, nil
+}
+
+// newLabels returns a span of new labels for the given version
+func (d *Data) newLabels(v dvid.VersionID, numLabels uint64) (begin, end uint64, err error) {
+	if numLabels <= 0 {
+		err = fmt.Errorf("cannot request %d new labels, must be 1 or more", numLabels)
+	}
+	d.mlMu.Lock()
+	defer d.mlMu.Unlock()
+
+	// Make sure we aren't trying to add labels on a locked node.
+	var locked bool
+	if locked, err = datastore.LockedVersion(v); err != nil {
+		return
+	}
+	if locked {
+		err = fmt.Errorf("can't ask for new labels in a locked version id %d", v)
+		return
+	}
+
+	// Increment and store.
+	begin = d.MaxRepoLabel + 1
+	end = d.MaxRepoLabel + numLabels
+	d.MaxRepoLabel = end
+	d.MaxLabel[v] = d.MaxRepoLabel
+	if err = d.persistMaxLabel(v); err != nil {
+		return
+	}
+	if err = d.persistMaxRepoLabel(); err != nil {
+		return
+	}
+	return
 }
 
 // --- datastore.InstanceMutator interface -----
@@ -3128,10 +3169,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		d.handleSparsevolsCoarse(ctx, w, r, parts)
 
 	case "maxlabel":
-		d.handleMaxlabel(ctx, w, r)
+		d.handleMaxlabel(ctx, w, r, parts)
 
 	case "nextlabel":
-		d.handleNextlabel(ctx, w, r)
+		d.handleNextlabel(ctx, w, r, parts)
 
 	case "split-supervoxel":
 		d.handleSplitSupervoxel(ctx, w, r, parts)
@@ -4254,18 +4295,49 @@ func (d *Data) handleSparsevolsCoarse(ctx *datastore.VersionedCtx, w http.Respon
 	timedLog.Infof("HTTP %s: sparsevols-coarse on label %s to %s (%s)", r.Method, parts[4], parts[5], r.URL)
 }
 
-func (d *Data) handleMaxlabel(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+func (d *Data) handleMaxlabel(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
 	// GET <api URL>/node/<UUID>/<data name>/maxlabel
+	// POST <api URL>/node/<UUID>/<data name>/maxlabel/<max label>
 	timedLog := dvid.NewTimeLog()
-	w.Header().Set("Content-Type", "application/json")
 	switch strings.ToLower(r.Method) {
 	case "get":
+		w.Header().Set("Content-Type", "application/json")
 		maxlabel, ok := d.MaxLabel[ctx.VersionID()]
 		if !ok {
 			server.BadRequest(w, r, "No maximum label found for %s version %d\n", d.DataName(), ctx.VersionID())
 			return
 		}
 		fmt.Fprintf(w, "{%q: %d}", "maxlabel", maxlabel)
+
+	case "post":
+		if len(parts) < 5 {
+			server.BadRequest(w, r, "DVID requires max label ID to follow POST /maxlabel")
+			return
+		}
+		maxlabel, err := strconv.ParseUint(parts[4], 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		changed, err := d.updateMaxLabel(ctx.VersionID(), maxlabel)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if changed {
+			versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
+			msginfo := map[string]interface{}{
+				"Action":    "maxlabel",
+				"MaxLabel":  maxlabel,
+				"UUID":      string(versionuuid),
+				"Timestamp": time.Now().String(),
+			}
+			jsonmsg, _ := json.Marshal(msginfo)
+			if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+				dvid.Errorf("error on sending split op to kafka: %v", err)
+			}
+		}
+
 	default:
 		server.BadRequest(w, r, "Unknown action %q requested: %s\n", r.Method, r.URL)
 		return
@@ -4273,16 +4345,30 @@ func (d *Data) handleMaxlabel(ctx *datastore.VersionedCtx, w http.ResponseWriter
 	timedLog.Infof("HTTP maxlabel request (%s)", r.URL)
 }
 
-func (d *Data) handleNextlabel(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+func (d *Data) handleNextlabel(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
 	// GET <api URL>/node/<UUID>/<data name>/nextlabel
-	// POST <api URL>/node/<UUID>/<data name>/nextlabel
+	// POST <api URL>/node/<UUID>/<data name>/nextlabel/<number of labels>
 	timedLog := dvid.NewTimeLog()
 	w.Header().Set("Content-Type", "application/json")
 	switch strings.ToLower(r.Method) {
 	case "get":
-		fmt.Fprintf(w, "{%q: %d}", "nextlabel", d.MaxRepoLabel+1)
+		fmt.Fprintf(w, `{"nextlabel": %d}`, d.MaxRepoLabel+1)
 	case "post":
-		server.BadRequest(w, r, "POST on maxlabel is not supported yet.\n")
+		if len(parts) < 5 {
+			server.BadRequest(w, r, "DVID requires number of requested labels to follow POST /nextlabel")
+			return
+		}
+		numLabels, err := strconv.ParseUint(parts[4], 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		start, end, err := d.newLabels(ctx.VersionID(), numLabels)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		fmt.Fprintf(w, `{"start": %d, "end": %d}`, start, end)
 		return
 	default:
 		server.BadRequest(w, r, "Unknown action %q requested: %s\n", r.Method, r.URL)
