@@ -673,7 +673,15 @@ POST <api URL>/node/<UUID>/<data name>/maxlabel/<max label>
 	(i.e., not used for establishing new labels on split) and can be used to distinguish new labels
 	in remote stores that may collide with local ones.
 	
-GET <api URL>/node/<UUID>/<data name>/nextlabel
+	If Kafka is enabled, a log message will be posted:
+	{
+		"Action":     "post-maxlabel",
+		"Max Label":  label,
+		"UUID":       uuid,
+		"Timestamp":  time.Now().String(),
+	}
+
+	GET <api URL>/node/<UUID>/<data name>/nextlabel
 
 	GET returns what would be a new label for the version of data in JSON form assuming the version
 	has not been committed:
@@ -691,6 +699,15 @@ POST <api URL>/node/<UUID>/<data name>/nextlabel/<desired # of labels>
 
 	Unlike POST /maxlabel, which can set the maximum label arbitrarily high, this
 	endpoint gives incremental new label ids.
+
+	If Kafka is enabled, a log message will be posted:
+	{
+		"Action":      "post-nextlabel",
+		"Start Label": start,
+		"End Label":   end,
+		"UUID":        uuid,
+		"Timestamp":   time.Now().String(),
+	}
 
 
 -------------------------------------------------------------------------------------------------------
@@ -4327,7 +4344,7 @@ func (d *Data) handleMaxlabel(ctx *datastore.VersionedCtx, w http.ResponseWriter
 		if changed {
 			versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
 			msginfo := map[string]interface{}{
-				"Action":    "maxlabel",
+				"Action":    "post-maxlabel",
 				"MaxLabel":  maxlabel,
 				"UUID":      string(versionuuid),
 				"Timestamp": time.Now().String(),
@@ -4369,6 +4386,18 @@ func (d *Data) handleNextlabel(ctx *datastore.VersionedCtx, w http.ResponseWrite
 			return
 		}
 		fmt.Fprintf(w, `{"start": %d, "end": %d}`, start, end)
+		versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
+		msginfo := map[string]interface{}{
+			"Action":      "post-nextlabel",
+			"Start Label": start,
+			"End Label":   end,
+			"UUID":        string(versionuuid),
+			"Timestamp":   time.Now().String(),
+		}
+		jsonmsg, _ := json.Marshal(msginfo)
+		if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+			dvid.Errorf("error on sending split op to kafka: %v", err)
+		}
 		return
 	default:
 		server.BadRequest(w, r, "Unknown action %q requested: %s\n", r.Method, r.URL)
