@@ -34,10 +34,13 @@ requirements:
     # - https://github.com/conda-forge/go-feedstock/pull/43
     - go=1.11.3=h8534fd4_1001
     #- go 1.11.*
+
+    # Anaconda's gcc build
+    - {{ compiler('c') }}       # [unix]
+    - {{ compiler('cxx') }}     # [unix]
+    - {{ compiler('fortran') }} # [unix]
     
     - pkg-config
-    # Anaconda's gcc build
-    - gcc_linux-64 # [linux]
 
   # The 'host' environment is for libraries that
   # will be included/linked into dvid.
