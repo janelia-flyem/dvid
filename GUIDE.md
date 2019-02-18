@@ -36,9 +36,14 @@ Developer Guide
 Setup
 -----
 
-1. If you are using a bare OS, you will need some essentials before installing anything else: `sudo apt-get install build-essential gcc bzip2`.  Then Install [`conda`][miniconda].
+1. If you are using a bare OS, you will need some essentials before installing anything else: `sudo apt-get install build-essential gcc bzip2`.
+Then Install `conda`.
 
-[miniconda]: https://conda.io/miniconda.html
+   **Note:** These developer instructions are not yet compatible with conda 4.6 (released in January 2019).
+   Please use conda 4.5, which can be downloaded here:
+
+   - Linux: https://repo.anaconda.com/miniconda/Miniconda2-4.5.12-Linux-x86_64.sh
+   - Mac: https://repo.anaconda.com/miniconda/Miniconda2-4.5.12-MacOSX-x86_64.sh
 
 2. Install `conda-build` and `anaconda-client`:
 
@@ -50,7 +55,7 @@ Setup
     If you already had those installed, be sure to update to the latest versions:
     
     ```
-    $ conda update -n base conda conda-build anaconda-client
+    $ conda update -n base conda-build anaconda-client
     ```
 
 3. Add `flyem-forge` and `conda-forge` to your `.condarc` file:
