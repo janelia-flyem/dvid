@@ -59,10 +59,13 @@ func (r *Response) Write(w io.Writer) error {
 // have a version DAG.
 type VersionedCtx struct {
 	*storage.DataContext
+	User string
 }
 
+// NewVersionedCtx creates a new versioned context that also has ability to
+// hold a user string.
 func NewVersionedCtx(data dvid.Data, versionID dvid.VersionID) *VersionedCtx {
-	return &VersionedCtx{storage.NewDataContext(data, versionID)}
+	return &VersionedCtx{DataContext: storage.NewDataContext(data, versionID)}
 }
 
 // VersionedKeyValue returns the key-value pair corresponding to this key's version

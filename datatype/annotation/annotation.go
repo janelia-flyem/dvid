@@ -2089,6 +2089,9 @@ func (d *Data) StoreElements(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff 
 			"UUID":      string(versionuuid),
 			"Timestamp": time.Now().String(),
 		}
+		if ctx.User != "" {
+			msginfo["User"] = ctx.User
+		}
 		jsonmsg, err := json.Marshal(msginfo)
 		if err != nil {
 			dvid.Errorf("error marshaling JSON for annotations %q element post: %v\n", d.DataName(), err)
@@ -2158,6 +2161,9 @@ func (d *Data) DeleteElement(ctx *datastore.VersionedCtx, pt dvid.Point3d, kafka
 			"Point":     pt,
 			"UUID":      string(versionuuid),
 			"Timestamp": time.Now().String(),
+		}
+		if ctx.User != "" {
+			msginfo["User"] = ctx.User
 		}
 		jsonmsg, err := json.Marshal(msginfo)
 		if err != nil {
@@ -2235,6 +2241,9 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d, k
 			"To":        to,
 			"UUID":      string(versionuuid),
 			"Timestamp": time.Now().String(),
+		}
+		if ctx.User != "" {
+			msginfo["User"] = ctx.User
 		}
 		jsonmsg, err := json.Marshal(msginfo)
 		if err != nil {
@@ -2707,6 +2716,12 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 	// Get the action (GET, POST)
 	action := strings.ToLower(r.Method)
+
+	// Add user to context if provided
+	user := r.URL.Query().Get("u")
+	if user != "" {
+		ctx.User = user
+	}
 
 	// Break URL request into arguments
 	url := r.URL.Path[len(server.WebAPIPath):]
