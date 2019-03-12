@@ -88,6 +88,54 @@ func BlockIndexToIZYXString(zyx uint64) dvid.IZYXString {
 	return dvid.ChunkPoint3d{x, y, z}.ToIZYXString()
 }
 
+// Equal returns true if the receiver and passed Index are equivalent.
+func (idx Index) Equal(idx2 Index) bool {
+	if idx.Label != idx2.Label {
+		return false
+	}
+	if idx.LastMutId != idx2.LastMutId {
+		return false
+	}
+	if idx.LastModTime != idx2.LastModTime {
+		return false
+	}
+	if idx.LastModUser != idx2.LastModUser {
+		return false
+	}
+	if idx.LastModApp != idx2.LastModApp {
+		return false
+	}
+	if len(idx.Blocks) != len(idx2.Blocks) {
+		return false
+	}
+	if len(idx.Blocks) > 0 {
+		for block, svc := range idx.Blocks {
+			svc2, found := idx2.Blocks[block]
+			if !found {
+				return false
+			}
+			if (svc == nil && svc2 != nil) || (svc != nil && svc2 == nil) {
+				return false
+			}
+			if svc != nil {
+				if len(svc.Counts) != len(svc2.Counts) {
+					return false
+				}
+				for label, count := range svc.Counts {
+					count2, found := svc2.Counts[label]
+					if !found {
+						return false
+					}
+					if count != count2 {
+						return false
+					}
+				}
+			}
+		}
+	}
+	return true
+}
+
 // StringDump returns a description of the data within the Index.
 // If showMutationInfo is true, the mutation ID and information about
 // modification is also printed.

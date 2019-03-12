@@ -1199,6 +1199,21 @@ POST <api URL>/node/<UUID>/<data name>/index/<label>
 
 	If the blocks map is empty on a POST, the label index is deleted.
 	
+GET <api URL>/node/<UUID>/<data name>/indices
+
+	Allows bulk GET of indices (blocks per supervoxel and their voxel count) by
+	including in the GET body a JSON array of requested labels:
+
+		[ 1028193, 883177046, ... ]
+
+	The GET returns a protobuf serialization of a LabelIndices message defined by:
+	
+	message LabelIndices {
+		repeated LabelIndex indices = 1;
+	}
+
+	where LabelIndex is defined by the protobuf above in the /index documentation.
+
 POST <api URL>/node/<UUID>/<data name>/indices
 
 	Allows bulk storage of indices (blocks per supervoxel and their voxel count) for any
@@ -1213,7 +1228,7 @@ POST <api URL>/node/<UUID>/<data name>/indices
 		repeated LabelIndex indices = 1;
 	}
 
-	where LabelIndex is defined by the protobuf above in the POST /index documentation.
+	where LabelIndex is defined by the protobuf in the /index endpoint documentation.
 	A label index can be deleted as per the POST /index documentation by having an empty
 	blocks map.
 
@@ -3207,7 +3222,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		d.handleIndex(ctx, w, r, parts)
 
 	case "indices":
-		d.handleIngestIndices(ctx, w, r)
+		d.handleIndices(ctx, w, r)
 
 	case "mappings":
 		d.handleMappings(ctx, w, r)
@@ -3534,7 +3549,8 @@ func (d *Data) handleIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 	timedLog.Infof("HTTP %s index for label %d (%s)", r.Method, label, r.URL)
 }
 
-func (d *Data) handleIngestIndices(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+func (d *Data) handleIndices(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+	// GET <api URL>/node/<UUID>/<data name>/indices
 	// POST <api URL>/node/<UUID>/<data name>/indices
 	timedLog := dvid.NewTimeLog()
 
@@ -3546,52 +3562,97 @@ func (d *Data) handleIngestIndices(ctx *datastore.VersionedCtx, w http.ResponseW
 		defer server.ThrottledOpDone()
 	}
 
-	if strings.ToLower(r.Method) != "post" {
-		server.BadRequest(w, r, "only POST action allowed for /indices endpoint")
+	method := strings.ToLower(r.Method)
+	switch method {
+	case "post":
+	case "get":
+	default:
+		server.BadRequest(w, r, "only GET and POST actions allowed for /indices endpoint")
 		return
 	}
 	if r.Body == nil {
-		server.BadRequest(w, r, fmt.Errorf("no data POSTed"))
+		server.BadRequest(w, r, fmt.Errorf("expected data to be sent for /indices request"))
 		return
 	}
-	serialization, err := ioutil.ReadAll(r.Body)
+	dataIn, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		server.BadRequest(w, r, err)
 	}
-	indices := new(proto.LabelIndices)
-	if err := indices.Unmarshal(serialization); err != nil {
-		server.BadRequest(w, r, err)
-		return
-	}
-	var numDeleted int
-	for i, protoIdx := range indices.Indices {
-		if protoIdx == nil {
-			server.BadRequest(w, r, "indices included a nil index in position %d", i)
-			return
-		}
-		if protoIdx.Label == 0 {
-			server.BadRequest(w, r, "index %d had label 0, which is a reserved label", i)
-			return
-		}
-		if len(protoIdx.Blocks) == 0 {
-			if err := deleteLabelIndex(ctx, protoIdx.Label); err != nil {
-				server.BadRequest(w, r, err)
-				return
-			}
-			numDeleted++
-			continue
-		}
-		idx := labels.Index{LabelIndex: *protoIdx}
-		if err := putCachedLabelIndex(d, ctx.VersionID(), &idx); err != nil {
+	var numLabels int
+	if method == "post" {
+		indices := new(proto.LabelIndices)
+		if err := indices.Unmarshal(dataIn); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
+		numLabels = len(indices.Indices)
+		var numDeleted int
+		for i, protoIdx := range indices.Indices {
+			if protoIdx == nil {
+				server.BadRequest(w, r, "indices included a nil index in position %d", i)
+				return
+			}
+			if protoIdx.Label == 0 {
+				server.BadRequest(w, r, "index %d had label 0, which is a reserved label", i)
+				return
+			}
+			if len(protoIdx.Blocks) == 0 {
+				if err := deleteLabelIndex(ctx, protoIdx.Label); err != nil {
+					server.BadRequest(w, r, err)
+					return
+				}
+				numDeleted++
+				continue
+			}
+			idx := labels.Index{LabelIndex: *protoIdx}
+			if err := putCachedLabelIndex(d, ctx.VersionID(), &idx); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+		}
+		if numDeleted > 0 {
+			timedLog.Infof("HTTP POST indices for %d labels, %d deleted (%s)", len(indices.Indices), numDeleted, r.URL)
+			return
+		}
+	} else { // GET
+		var labelList []uint64
+		if err := json.Unmarshal(dataIn, &labelList); err != nil {
+			server.BadRequest(w, r, fmt.Sprintf("expected JSON label list for GET /indices: %v", err))
+			return
+		}
+		var indices proto.LabelIndices
+		indices.Indices = make([]*proto.LabelIndex, len(labelList))
+		for i, label := range labelList {
+			idx, err := getCachedLabelIndex(d, ctx.VersionID(), label)
+			if err != nil {
+				server.BadRequest(w, r, "could not get label %d index in position %d: %v", label, i, err)
+				return
+			}
+			indices.Indices[i] = &(idx.LabelIndex)
+		}
+		dataOut, err := indices.Marshal()
+		if err != nil {
+			server.BadRequest(w, r, "could not serialize %d label indices: %v", len(labelList), err)
+			return
+		}
+		requestSize := int64(len(dataOut))
+		if requestSize > server.MaxDataRequest {
+			server.BadRequest(w, r, "requested payload (%d bytes) exceeds this DVID server's set limit (%d)",
+				requestSize, server.MaxDataRequest)
+			return
+		}
+		w.Header().Set("Content-type", "application/octet-stream")
+		n, err := w.Write(dataOut)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if n != len(dataOut) {
+			server.BadRequest(w, r, "unable to write all %d bytes of serialized label indices: only %d bytes written", len(dataOut), n)
+			return
+		}
 	}
-	if numDeleted > 0 {
-		timedLog.Infof("HTTP POST indices for %d labels, %d deleted (%s)", len(indices.Indices), numDeleted, r.URL)
-		return
-	}
-	timedLog.Infof("HTTP POST indices for %d labels (%s)", len(indices.Indices), r.URL)
+	timedLog.Infof("HTTP %s indices for %d labels (%s)", method, numLabels, r.URL)
 }
 
 func (d *Data) handleMappings(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {

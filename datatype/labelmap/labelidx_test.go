@@ -15,6 +15,35 @@ import (
 	"github.com/janelia-flyem/dvid/server"
 )
 
+func checkGetIndices(t *testing.T, uuid dvid.UUID, indices ...*labels.Index) {
+	labelList := make([]uint64, len(indices))
+	for i, index := range indices {
+		labelList[i] = index.Label
+	}
+	jsonBytes, err := json.Marshal(labelList)
+	if err != nil {
+		t.Fatalf("couldn't marshal labels: %v\n", err)
+	}
+	url := fmt.Sprintf("http://%snode/%s/labels/indices", server.WebAPIPath, uuid)
+	data := server.TestHTTP(t, "GET", url, bytes.NewBuffer(jsonBytes))
+	if len(data) == 0 {
+		t.Fatalf("Read indices returned no bytes\n")
+	}
+	indicesRet := new(proto.LabelIndices)
+	if err := indicesRet.Unmarshal(data); err != nil {
+		t.Fatalf("couldn't unmarshal indices: %v\n", err)
+	}
+	if len(indicesRet.Indices) != 3 {
+		t.Fatalf("expected 3 returned label indices, got %d\n", len(indicesRet.Indices))
+	}
+	for i, index := range indices {
+		indexRet := labels.Index{*(indicesRet.Indices[i])}
+		if !index.Equal(indexRet) {
+			t.Fatalf("expected index %d to be\n%v\n  but GOT:\n%v\n", i, index, indexRet)
+		}
+	}
+}
+
 func TestIngest(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
@@ -117,6 +146,7 @@ func TestIngest(t *testing.T) {
 	idx1 := body1.getIndex(t)
 	idx2 := body2.getIndex(t)
 	idx3 := body3.getIndex(t)
+	checkGetIndices(t, child1, idx1, idx2, idx3)
 
 	if err := idx1.Add(idx2); err != nil {
 		t.Fatal(err)
