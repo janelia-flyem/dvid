@@ -519,6 +519,7 @@ func addSplitToMapping(d dvid.Data, v dvid.VersionID, op labels.SplitOp) error {
 	m.Lock()
 	vid, err := m.createShortVersion(v)
 	if err != nil {
+		m.Unlock()
 		return err
 	}
 	deleteSupervoxels := make(labels.Set)

@@ -33,8 +33,8 @@ var (
 	metaHits     uint64
 )
 
-// Initialize makes sure index caching is initialized if cache size is specified
-// in the server configuration.
+// Initialize establishes the in-memory labelmap and index caching
+// if cache size is specified in the server configuration.
 func (d *Data) Initialize() {
 	numBytes := server.CacheSize("labelmap")
 	if indexCache == nil {
@@ -47,6 +47,23 @@ func (d *Data) Initialize() {
 		indexCache = nil
 	} else {
 		indexCache.Clear()
+	}
+
+	ancestry, err := datastore.GetBranchVersions(d.RootUUID(), "")
+	if err != nil {
+		dvid.Criticalf("Unable to get ancestry of master branch: %v\n", err)
+		return
+	}
+	if len(ancestry) == 0 {
+		dvid.Infof("No versions in master branch -- not loading labelmap %q\n", d.DataName())
+		return
+	}
+	masterLeafV, err := datastore.VersionFromUUID(ancestry[0])
+	if err != nil {
+		dvid.Criticalf("Unable to get version ID from master leaf UUID %s: %v\n", ancestry[0], err)
+	}
+	if _, err := getMapping(d, masterLeafV); err != nil {
+		dvid.Criticalf("Unable to initialize in-memory labelmap for data %q: %v\n", d.DataName(), err)
 	}
 }
 

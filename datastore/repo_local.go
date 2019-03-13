@@ -128,6 +128,10 @@ func Initialize(initMetadata bool, iconfig Config) error {
 			return fmt.Errorf("Error loading metadata: %v", err)
 		}
 	}
+	// Set the package variable.  We are good to go...
+	manager = m
+
+	// Allow data instance to initialize if desired.
 	for _, data := range m.iids {
 		if data.IsDeleted() {
 			continue
@@ -137,8 +141,6 @@ func Initialize(initMetadata bool, iconfig Config) error {
 			go d.Initialize()
 		}
 	}
-	// Set the package variable.  We are good to go...
-	manager = m
 
 	return nil
 }
@@ -205,7 +207,7 @@ func ReloadMetadata() error {
 	}
 
 	// Load the repo metadata
-	dvid.TimeInfof("Loading metadata from storage...\n")
+	dvid.TimeInfof("Reloading metadata from storage...\n")
 	if err = m.loadMetadata(); err != nil {
 		return fmt.Errorf("Error loading metadata: %v", err)
 	}
@@ -1129,6 +1131,14 @@ func (m *repoManager) getBranchVersionsJSON(uuid dvid.UUID, name string) (string
 	}
 	jsonStr += "]"
 	return jsonStr, nil
+}
+
+func (m *repoManager) getBranchVersions(uuid dvid.UUID, name string) ([]dvid.UUID, error) {
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return nil, err
+	}
+	return r.dag.getAncestryByBranch(name)
 }
 
 func (m *repoManager) getRepoAlias(uuid dvid.UUID) (string, error) {
