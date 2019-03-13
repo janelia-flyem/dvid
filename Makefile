@@ -18,7 +18,7 @@ ifndef CONDA_PREFIX
     ERROR: Dvid requires an active conda environment, with dependencies already installed.
            See GUIDE.md for details. Here's the gist of it:
     
-        $$ conda create -n dvid-devel && source activate dvid-devel
+        $$ conda create -n dvid-devel && conda activate dvid-devel
         $$ ./scripts/install-developer-dependencies.sh
     
     

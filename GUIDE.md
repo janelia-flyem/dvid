@@ -25,7 +25,7 @@ $ conda create -n dvidenv -c flyem-forge dvid
 Run:
 
 ```
-$ source activate dvidenv
+$ conda activate dvidenv
 $ dvid about
 ```
 
@@ -37,18 +37,14 @@ Setup
 -----
 
 1. If you are using a bare OS, you will need some essentials before installing anything else: `sudo apt-get install build-essential gcc bzip2`.
-Then Install `conda`.
+Then Install `conda` and enable the `activate` command for your shell (e.g. by running `conda init bash`).
 
-   **Note:** These developer instructions are not yet compatible with conda 4.6 (released in January 2019).
-   Please use conda 4.5, which can be downloaded here:
-
-   - Linux: https://repo.anaconda.com/miniconda/Miniconda2-4.5.12-Linux-x86_64.sh
-   - Mac: https://repo.anaconda.com/miniconda/Miniconda2-4.5.12-MacOSX-x86_64.sh
+   **Note:** These developer instructions assume you are using conda 4.5 or greater.
 
 2. Install `conda-build` and `anaconda-client`:
 
     ```
-    $ source activate base
+    $ conda activate base
     $ conda install conda-build anaconda-client
     ```
     
@@ -71,8 +67,8 @@ Then Install `conda`.
 4. Create a conda environment for dvid development.  Activate it.
 
     ```
-    $ conda create -n dvid-devel
-    $ source activate dvid-devel
+    $ conda create -y -n dvid-devel
+    $ conda activate dvid-devel
     ```
 
 5. Define `GOPATH` and clone the dvid source code into the appropriate subdirectory:
@@ -122,7 +118,7 @@ For each platform (Mac and Linux):
 2. Build the conda package and upload it to the `flyem-forge` channel on `http://anaconda.org`:
 
     ```
-    $ source activate base
+    $ conda activate base
     $ conda build scripts/conda-recipe
     $ anaconda upload -u flyem-forge $(conda info --base)/conda-bld/osx-64/dvid-0.8.20-0.tar.bz2 # Mac
     $ anaconda upload -u flyem-forge $(conda info --base)/conda-bld/linux-64/dvid-0.8.20-0.tar.bz2 # Linux
