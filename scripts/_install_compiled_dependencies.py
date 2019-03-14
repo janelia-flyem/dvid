@@ -1,4 +1,5 @@
 import os
+import sys
 import datetime
 import tempfile
 import subprocess
@@ -6,6 +7,19 @@ import yaml
 
 print("Determining compiled dependencies...")
 print("(This may take several seconds.)")
+
+nocgo_lines = subprocess.check_output('conda list nocgo', shell=True)
+nocgo_lines = nocgo_lines.decode('utf-8').split('\n')
+nocgo_lines = list(filter(lambda line: line and not line.startswith('#'), nocgo_lines))
+if nocgo_lines:
+    msg = (
+        "*** ERROR: ***\n"
+        "You have go-nocgo (or an associated package) installed in this environment.\n"
+        "That is not compatible with go-cgo, which is necessary for DVID.\n"
+        "Please remove all 'no-cgo' packages, or activate a different environment.\n"
+        "**************\n")
+    sys.stderr.write(msg)
+    sys.exit(1)
 
 # The compiled dependencies are listed in conda-recipe/meta.yaml,
 # in the requirements:build section.

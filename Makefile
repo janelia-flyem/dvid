@@ -2,14 +2,12 @@ ifndef GOPATH
 $(error GOPATH must be defined)
 endif
 
-
 # When building in the context of the conda-recipe,
 # use the "host" PREFIX, (not the "build" env prefix),
 # which is set by conda-build.
 ifdef CONDA_BUILD
     CONDA_PREFIX = ${PREFIX}
 endif
-
 
 ifndef CONDA_PREFIX
     define ERRMSG
@@ -18,7 +16,7 @@ ifndef CONDA_PREFIX
     ERROR: Dvid requires an active conda environment, with dependencies already installed.
            See GUIDE.md for details. Here's the gist of it:
     
-        $$ conda create -n dvid-devel && source activate dvid-devel
+        $$ conda create -n dvid-devel && conda activate dvid-devel
         $$ ./scripts/install-developer-dependencies.sh
     
     
@@ -27,6 +25,7 @@ ifndef CONDA_PREFIX
     $(error ${ERRMSG} )
 endif
 
+CONDA_BASE = $(shell conda info --base)
 
 ifndef DVID_BACKENDS
     DVID_BACKENDS = basholeveldb filestore gbucket swift
@@ -62,7 +61,7 @@ bin/dvid-gen-version: cmd/gen-version/main.go
 # .last-build-git-description to force a re-build of server/version.go
 # if the git SHA has changed since the last build
 server/version.go: bin/dvid-gen-version \
-				   $(shell python scripts/record-git-description.py . .last-build-git-description)
+				   $(shell "${CONDA_BASE}/bin/python" scripts/record-git-description.py . .last-build-git-description)
 	bin/dvid-gen-version -o server/version.go
 
 # FIXME: This finds ALL go source files, not just the selection of sources that are needed for dvid.
