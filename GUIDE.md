@@ -19,7 +19,7 @@ Alternatively, [conda](https://conda.io/docs) users can simply install the `dvid
 Install:
 
 ```
-$ conda create -n dvidenv -c flyem-forge dvid
+$ conda create -n dvidenv -c flyem-forge -c conda-forge/label/cf201901 dvid
 ```
 
 Run:
