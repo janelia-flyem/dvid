@@ -26,7 +26,7 @@ if [ -z "${CONDA_PREFIX}" ]; then
 fi
 
 if [[ "${CONDA_PREFIX}" == "$(conda info --base)" ]]; then
-     1>&2 echo "The root conda environment is currently active.  Please use a non-root environment."
+     1>&2 echo "The base conda environment is currently active.  Please use a non-base environment."
      exit 1
 fi
 

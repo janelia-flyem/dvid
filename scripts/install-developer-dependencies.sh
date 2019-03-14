@@ -7,8 +7,8 @@ if [ -z "${CONDA_PREFIX}" ]; then
      exit 1
 fi
 
-if [[ "${CONDA_PREFIX}" == "$(conda info --root)" ]]; then
-     1>&2 echo "The root conda environment is currently active.  Please use a non-root environment."
+if [[ "${CONDA_PREFIX}" == "$(conda info --base)" ]]; then
+     1>&2 echo "The base conda environment is currently active.  Please use a non-base environment."
      exit 1
 fi
 
@@ -21,7 +21,7 @@ cd ${THIS_SCRIPT_DIR}
 # The following python script requires the 'yaml' python module,
 # which happens to be available in the conda base interpreter,
 # so we use that interpreter to run it.
-CONDA_PYTHON=$(conda info --root)/bin/python
+CONDA_PYTHON=$(conda info --base)/bin/python
 ${CONDA_PYTHON} _install_compiled_dependencies.py
 
 # Some of those dependencies (namely, gcc) may have installed scripts to
@@ -38,7 +38,7 @@ else
     # you explicitly define it by sourcing the activate script.
     # Super-annoying.
     # https://github.com/conda/conda/issues/7980#issuecomment-441358406
-    CONDA_BASE=$(conda info --root)
+    CONDA_BASE=$(conda info --base)
     source ${CONDA_BASE}/etc/profile.d/conda.sh
     conda activate ${CONDA_DEFAULT_ENV}
 fi

@@ -16,7 +16,7 @@ fi
 
 echo "Building DVID distro from latest conda packages"
 
-DVID_DISTRO_ENV=$(conda info --root)/envs/dvid-distro
+DVID_DISTRO_ENV=$(conda info --base)/envs/dvid-distro
 
 # Cleanup from the previous distro env, if it exists.
 if [ -d ${DVID_DISTRO_ENV} ]; then
@@ -33,7 +33,7 @@ cp ${THIS_SCRIPT_DIR}/distro-files/* ${DVID_DISTRO_ENV}
 list_out=($(conda list -n dvid-distro dvid | grep -v '#' | head -n1))
 version=${list_out[1]}
 
-cd $(conda info --root)/envs
+cd $(conda info --base)/envs
 
 DIST_NAME=dvid-${version}-dist-${OS}
 TARBALL_NAME=${DIST_NAME}.tar.bz2
