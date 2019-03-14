@@ -54,13 +54,13 @@ Then Install `conda` and enable the `activate` command for your shell (e.g. by r
     $ conda update -n base conda-build anaconda-client
     ```
 
-3. Add `flyem-forge` and `conda-forge` to your `.condarc` file:
+3. Add `flyem-forge` and `conda-forge/label/cf201901` to your `.condarc` file:
 
     ```
      $ cat ~/.condarc
      channels:
      - flyem-forge
-     - conda-forge
+     - conda-forge/label/cf201901
      - defaults
     ```
 
@@ -164,7 +164,7 @@ Build Maintenance Notes
 
 - New compiled (C/C++) dependencies should be packaged for conda and uploaded
   to the `flyem-forge` channel, if they aren't already available on the 
-  `conda-forge` channel. Then list them in the `requirements` sections of
+  `conda-forge/label/cf201901` channel. Then list them in the `requirements` sections of
   `scripts/conda-recipe/meta.yaml`.
 
 - New third-party Go dependencies can simply be added to `scripts/get-go-dependencies.sh`,
