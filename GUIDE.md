@@ -165,7 +165,8 @@ Build Maintenance Notes
 - New compiled (C/C++) dependencies should be packaged for conda and uploaded
   to the `flyem-forge` channel, if they aren't already available on the 
   `conda-forge/label/cf201901` channel. Then list them in the `requirements` sections of
-  `scripts/conda-recipe/meta.yaml`.
+  `scripts/conda-recipe/meta.yaml`.  Also add them to the appropriate line of
+  `scripts/install-developer-dependencies.sh`.
 
 - New third-party Go dependencies can simply be added to `scripts/get-go-dependencies.sh`,
   but the conda recipe will build faster if you also add a corresponding entry

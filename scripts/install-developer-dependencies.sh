@@ -1,7 +1,5 @@
 #!/bin/bash
 
-set -e
-
 if [ -z "${CONDA_PREFIX}" ]; then
      1>&2 echo "A conda environment must be active"
      exit 1
@@ -12,25 +10,38 @@ if [[ "${CONDA_PREFIX}" == "$(conda info --base)" ]]; then
      exit 1
 fi
 
+
+if conda list nocgo | grep nocgo; then
+    1>&2 echo "*** ERROR: ***"
+    1>&2 echo "You have go-nocgo (or an associated package) installed in this environment."
+    1>&2 echo "That is not compatible with go-cgo, which is necessary for DVID."
+    1>&2 echo "Please remove all 'nocgo' packages, or activate a different environment."
+    1>&2 echo "**************"
+    exit
+fi
+
+set -e
+
 THIS_SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd ${THIS_SCRIPT_DIR}
 
-##
-## Install compiled (conda) dependencies.
-##
-# The following python script requires the 'yaml' python module,
-# which happens to be available in the conda base interpreter,
-# so we use that interpreter to run it.
-CONDA_PYTHON=$(conda info --base)/bin/python
-${CONDA_PYTHON} _install_compiled_dependencies.py
+GO_VERSION=1.11.3
+
+if [[ $(uname) == "Darwin" ]]; then
+    GO_PLATFORM_PKG=go-cgo_osx-64
+    COMPILER_PACKAGE=clangxx_osx-64
+else
+    GO_PLATFORM_PKG=go-cgo_linux-64
+    COMPILER_PACKAGE=gxx_linux-64
+fi
+
+CMD="conda install -y snappy basholeveldb lz4 'librdkafka>=0.11.4' go-cgo=${GO_VERSION} ${GO_PLATFORM_PKG} pkg-config ${COMPILER_PACKAGE}"
+echo ${CMD}
+${CMD}
 
 # Some of those dependencies (namely, gcc) may have installed scripts to
 # ${CONDA_PREFIX}/etc/conda/activate.d/
 # so re-activate the current environment to ensure that those scripts have been run.
-
-# Old versions of conda sourced an 'activate' script;
-# new versions use the 'conda activate' command
-
 if which activate > /dev/null 2>&1; then
     source activate ${CONDA_DEFAULT_ENV}
 else

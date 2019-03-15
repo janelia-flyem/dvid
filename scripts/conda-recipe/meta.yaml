@@ -43,8 +43,9 @@ requirements:
     ## To install go-cgo, you must actually install two separate packages:
     ## go-cgo and go-cgo_linux-64 (or go-cgo_osx-64)
 
-    # This package provides the go compiler itself, with CGO support
-    - go-cgo
+    # This package provides the go compiler itself, with CGO support.
+    # If you change this, also edit GO_VERSION in scripts/install-developer-dependencies.sh
+    - go-cgo=1.11.3 
     
     # This provides the activation script that sets
     # environment variables needed by golang,
@@ -63,6 +64,10 @@ requirements:
 
   # The 'host' environment is for libraries that
   # will be included/linked into dvid.
+  #
+  # Note:
+  #  If you add/change anything in this 'host' list (or the 'build' list above),
+  #  please also edit scripts/install-developer-dependencies.sh
   host:
     - snappy
     - basholeveldb
