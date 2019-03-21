@@ -55,10 +55,12 @@ requirements:
     - go-cgo_linux-64 # [linux]
     - go-cgo_osx-64   # [osx]
 
-    # Anaconda's gcc build
-    - {{ compiler('c') }}       # [unix]
-    - {{ compiler('cxx') }}     # [unix]
-    - {{ compiler('fortran') }} # [unix]
+    # Anaconda's gcc build -- on Linux only for now
+    # (getting their clang binary to work on recent versions of MacOS is
+    # tricky for some reason, related to SDK versions, etc.)
+    - {{ compiler('c') }}       # [linux]
+    - {{ compiler('cxx') }}     # [linux]
+    - {{ compiler('fortran') }} # [linux]
 
     - pkg-config
 

@@ -29,7 +29,10 @@ GO_VERSION=1.11.3
 
 if [[ $(uname) == "Darwin" ]]; then
     GO_PLATFORM_PKG=go-cgo_osx-64
-    COMPILER_PACKAGE=clangxx_osx-64
+    
+    # For now, we don't use Anaconda's clang compiler, since it doesn't
+    # seem to work on Bill's machine with the latest MacOS.
+    #COMPILER_PACKAGE=clangxx_osx-64
 else
     GO_PLATFORM_PKG=go-cgo_linux-64
     COMPILER_PACKAGE=gxx_linux-64
