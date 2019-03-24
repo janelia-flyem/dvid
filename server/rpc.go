@@ -95,6 +95,31 @@ EXPERIMENTAL COMMANDS
 			A transmit "flatten" will copy just the version specified and
 			flatten the key/values so there is no history.
 
+	repo <UUID> transfer-data <old store> <new store> <transfer config file>
+
+		Transfers data from an old store to a new store (specified by nicknames in 
+		TOML file) using settings specified in a transfer JSON config file.  The
+		transfer config file must establish the set of versions to be transferred.
+
+		An example of the transfer JSON configuration file format:
+		{
+			"Versions": [
+				"8a90ec0d257c415cae29f8c46603bcae",
+				"a5682904bb824c06aba470c0a0cbffab",
+				...
+			},
+			"Metadata": true,
+		}
+
+		All ancestors of desired leaf nodes should be specified because
+		key-value pair transfer only occurs if the version in which
+		it was saved is specified on the list.  This is useful for editing 
+		a preexisting store with new versions.
+
+		If Metadata property is true, then if metadata exists in the old store,
+		it is transferred to the new store with only the versions specified
+		appearing in the DAG.
+					
 	repo <UUID> copy <source instance name> <clone instance name> <settings...>
     
         A local data instance copy with optional datatype-specific delimiter,
@@ -474,6 +499,25 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 				}
 			}()
 			reply.Text = fmt.Sprintf("Started copy of uuid %s data instance %q to %q...\n", uuid, source, target)
+
+		case "transfer-data":
+			var oldStoreName, dstStoreName, configFName string
+			cmd.CommandArgs(3, &oldStoreName, &dstStoreName, &configFName)
+			var srcStore, dstStore dvid.Store
+			srcStore, err = storage.GetStoreByAlias(storage.Alias(oldStoreName))
+			if err != nil {
+				return
+			}
+			dstStore, err = storage.GetStoreByAlias(storage.Alias(dstStoreName))
+			if err != nil {
+				return
+			}
+			go func() {
+				if err = datastore.TransferData(uuid, srcStore, dstStore, configFName); err != nil {
+					dvid.Errorf("transfer-data error: %v\n", err)
+				}
+			}()
+			reply.Text = fmt.Sprintf("Started data transfer of repo %s from store %q to %q\n", uuid, oldStoreName, dstStoreName)
 
 		case "push":
 			var target string

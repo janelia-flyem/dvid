@@ -149,12 +149,28 @@ func (k Key) IsTombstone() bool {
 	return false
 }
 
+// IsMetadataKey returns true if the given key is in the metadata keyspace (instead of data or blob).
+func (k Key) IsMetadataKey() bool {
+	if k[0] != metadataKeyPrefix {
+		return false
+	}
+	return true
+}
+
 // IsDataKey returns true if the given key is in the data keyspace (instead of metadata or blob).
 func (k Key) IsDataKey() bool {
 	if len(k) < 14 {
 		return false
 	}
 	if k[0] != dataKeyPrefix {
+		return false
+	}
+	return true
+}
+
+// IsBlobKey returns true if the given key is in the metadata keyspace (instead of data or blob).
+func (k Key) IsBlobKey() bool {
+	if k[0] != blobKeyPrefix {
 		return false
 	}
 	return true
@@ -427,6 +443,16 @@ func (ctx *DataContext) KeyRange() (min, max Key) {
 	return min, max
 }
 
+func MinDataKey() Key {
+	var minInstanceID dvid.InstanceID
+	return append([]byte{dataKeyPrefix}, minInstanceID.Bytes()...)
+}
+
+func MaxDataKey() Key {
+	var maxInstanceID dvid.InstanceID = dvid.MaxInstanceID
+	return append([]byte{dataKeyPrefix}, maxInstanceID.Bytes()...)
+}
+
 // TKeyRange returns min and max type-specific keys.  The max key is not guaranteed to be the theoretical maximum TKey but
 // should be so for any TKey of 128 bytes or less.  The DataContext can be nil.
 func (ctx *DataContext) TKeyRange() (min, max TKey) {
@@ -454,6 +480,21 @@ func (ctx *DataContext) VersionFromKey(key Key) (dvid.VersionID, error) {
 	}
 	if key[0] != dataKeyPrefix {
 		return 0, fmt.Errorf("Cannot extract DataContext version from different key type")
+	}
+	if len(key) < dvid.InstanceIDSize+dvid.VersionIDSize+dvid.ClientIDSize+2 { // TKey must be 0 or larger.
+		return 0, fmt.Errorf("Cannot extract version from DataKey that is only %d bytes", len(key))
+	}
+	start := len(key) - dvid.VersionIDSize - dvid.ClientIDSize - 1 // subtract version, client, and tombstone
+	return dvid.VersionIDFromBytes(key[start : start+dvid.VersionIDSize]), nil
+}
+
+// VersionFromDataKey returns a version ID from a data key.
+func VersionFromDataKey(key Key) (dvid.VersionID, error) {
+	if key == nil {
+		return 0, fmt.Errorf("Cannot extract version from nil key")
+	}
+	if key[0] != dataKeyPrefix {
+		return 0, fmt.Errorf("Cannot extract version from non-data key type")
 	}
 	if len(key) < dvid.InstanceIDSize+dvid.VersionIDSize+dvid.ClientIDSize+2 { // TKey must be 0 or larger.
 		return 0, fmt.Errorf("Cannot extract version from DataKey that is only %d bytes", len(key))

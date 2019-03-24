@@ -9,13 +9,16 @@
 package datastore
 
 import (
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
-	"github.com/janelia-flyem/go/go-humanize"
+	humanize "github.com/janelia-flyem/go/go-humanize"
 )
 
 type txStats struct {
@@ -146,6 +149,125 @@ func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, oldStore dvid.Sto
 	}()
 
 	dvid.Infof("Migrating data %q from store %q to store %q ...\n", d.DataName(), oldKV, curKV)
+	return nil
+}
+
+type TransferConfig struct {
+	Versions []dvid.UUID
+	Metadata bool
+}
+
+func getTransferConfig(configFName string) (tc TransferConfig, okVersions map[dvid.VersionID]bool, err error) {
+	var f *os.File
+	if f, err = os.Open(configFName); err != nil {
+		return
+	}
+	var data []byte
+	if data, err = ioutil.ReadAll(f); err != nil {
+		return
+	}
+	if err = json.Unmarshal(data, &tc); err != nil {
+		return
+	}
+	okVersions = make(map[dvid.VersionID]bool, len(tc.Versions))
+	for _, uuid := range tc.Versions {
+		var v dvid.VersionID
+		if v, err = VersionFromUUID(uuid); err != nil {
+			return
+		}
+		okVersions[v] = true
+	}
+	return
+}
+
+// TransferData copies key-value pairs from one repo to store and apply filtering as specified
+// by the JSON configuration in the file specified by configFName.
+// An example of the transfer JSON configuration file format:
+// {
+// 	"Versions": [
+// 		"8a90ec0d257c415cae29f8c46603bcae",
+// 		"a5682904bb824c06aba470c0a0cbffab",
+// 		...
+// 	},
+// 	"Metadata": true,
+// }
+//
+// All ancestors of desired leaf nodes should be specified because
+// key-value pair transfer only occurs if the version in which
+// it was saved is specified on the list.  This is useful for editing
+// a preexisting store with new versions.
+//
+// If Metadata property is true, then if metadata exists in the old store,
+// it is transferred to the new store with only the versions specified
+// appearing in the DAG.
+func TransferData(uuid dvid.UUID, srcStore, dstStore dvid.Store, configFName string) error {
+	tc, okVersions, err := getTransferConfig(configFName)
+	if err != nil {
+		return err
+	}
+	srcKVDB, ok := srcStore.(storage.OrderedKeyValueDB)
+	if !ok {
+		return fmt.Errorf("source store %q is not an ordered keyvalue store", srcStore)
+	}
+	dstKVDB, ok := dstStore.(storage.KeyValueDB)
+	if !ok {
+		return fmt.Errorf("destination store %q must at least be a key-value store", dstStore)
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	stats := new(txStats)
+	stats.lastTime = time.Now()
+
+	var kvTotal, kvSent int
+	var bytesTotal, bytesSent uint64
+
+	ch := make(chan *storage.KeyValue, 1000)
+	go func() {
+		for {
+			kv := <-ch
+			if kv == nil {
+				wg.Done()
+				dvid.Infof("Sent %d key-value pairs (%s, out of %d kv pairs, %s)\n",
+					kvSent, humanize.Bytes(bytesSent), kvTotal, humanize.Bytes(bytesTotal))
+				stats.printStats()
+				return
+			}
+			kvTotal++
+			curBytes := uint64(len(kv.V) + len(kv.K))
+			bytesTotal += curBytes
+			if kv.K.IsMetadataKey() {
+				// transmit it all even though we might be filtering versions
+			} else if kv.K.IsDataKey() {
+				v, err := storage.VersionFromDataKey(kv.K)
+				if err != nil {
+					dvid.Errorf("couldn't get version from Key %v: %v\n", kv.K, err)
+					continue
+				}
+				if !okVersions[v] {
+					continue
+				}
+			}
+			kvSent++
+			bytesSent += curBytes
+			if err := dstKVDB.RawPut(kv.K, kv.V); err != nil {
+				dvid.Errorf("can't put k/v pair to store %q: %v\n", dstStore, err)
+			}
+			stats.addKV(kv.K, kv.V)
+		}
+	}()
+
+	var begKey storage.Key
+	endKey := storage.ConstructBlobKey([]byte{})
+	if tc.Metadata {
+		begKey, _ = storage.MetadataContext{}.KeyRange()
+	} else {
+		begKey = storage.MinDataKey()
+	}
+	if err = srcKVDB.RawRangeQuery(begKey, endKey, false, ch, nil); err != nil {
+		return fmt.Errorf("transfer data range query: %v", err)
+	}
+	wg.Wait()
 	return nil
 }
 
