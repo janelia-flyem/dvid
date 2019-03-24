@@ -29,6 +29,9 @@ var (
 // assume very low throughput needed and therefore always one partition
 const partitionID = 0
 
+// KafkaMaxMessageSize is the max message size in bytes for a Kafka message.
+const KafkaMaxMessageSize = 980 * dvid.Kilo
+
 // KafkaConfig describes kafka servers and an optional local file directory into which
 // failed messages will be stored.
 type KafkaConfig struct {
@@ -126,7 +129,7 @@ func KafkaProduceMsg(value []byte, topic string) error {
 		}
 		if err := kafkaProducer.Produce(kafkaMsg, nil); err != nil {
 			// Store data in append-only log
-			storeFailedMsg("kafka-"+topic, value)
+			storeFailedMsg("failed-kafka-"+topic, value)
 
 			// Notify via email at least once per 10 minutes
 			notification := fmt.Sprintf("Error in kafka messaging to topic %q, partition id %d: %v\n", topic, partitionID, err)

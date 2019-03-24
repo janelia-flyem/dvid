@@ -20,6 +20,7 @@ import (
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 type sizeChange struct {
@@ -199,9 +200,18 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 		"UUID":               string(versionuuid),
 		"Timestamp":          time.Now().String(),
 	}
-	jsonmsg, _ := json.Marshal(msginfo)
-	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
-		dvid.Errorf("error on sending split op to kafka: %v", err)
+	jsonBytes, _ := json.Marshal(msginfo)
+	if len(jsonBytes) > storage.KafkaMaxMessageSize {
+		var postRef string
+		if postRef, err = d.PutBlob(jsonBytes); err != nil {
+			dvid.Errorf("couldn't post large payload for cleave labelmap %q: %v", d.DataName(), err)
+		}
+		delete(msginfo, "CleavedSupervoxels")
+		msginfo["DataRef"] = postRef
+		jsonBytes, _ = json.Marshal(msginfo)
+	}
+	if err = d.ProduceKafkaMsg(jsonBytes); err != nil {
+		dvid.Errorf("error on sending cleave op to kafka: %v\n", err)
 	}
 
 	d.StartUpdate()
@@ -237,9 +247,9 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 		"UUID":       string(versionuuid),
 		"Timestamp":  time.Now().String(),
 	}
-	jsonmsg, _ = json.Marshal(msginfo)
-	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
-		dvid.Errorf("error on sending cleave complete op to kafka: %v", err)
+	jsonBytes, _ = json.Marshal(msginfo)
+	if err = d.ProduceKafkaMsg(jsonBytes); err != nil {
+		dvid.Errorf("error on sending cleave complete op to kafka: %v\n", err)
 	}
 	return
 }
@@ -604,7 +614,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
-		dvid.Errorf("error on sending split op to kafka: %v", err)
+		dvid.Errorf("error on sending split op to kafka: %v\n", err)
 	}
 
 	// 2nd pass: go through all blocks with affected supervoxels, compare affected supervoxels counts
@@ -659,7 +669,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 	}
 	jsonmsg, _ = json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
-		dvid.Errorf("error on sending split complete op to kafka: %v", err)
+		dvid.Errorf("error on sending split complete op to kafka: %v\n", err)
 	}
 	return
 }

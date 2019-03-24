@@ -446,7 +446,7 @@ func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, chunkPt dvid.ChunkPoint3
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
-		dvid.Errorf("unable to write merge to kafka for data %q: %v\n", d.DataName(), err)
+		dvid.Errorf("unable to write ingest-block to kafka for data %q: %v\n", d.DataName(), err)
 	}
 }
 
@@ -601,8 +601,17 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 			"Timestamp":  time.Now().String(),
 			"Delta":      delta,
 		}
-		jsonmsg, _ := json.Marshal(msginfo)
-		if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
+		jsonBytes, _ := json.Marshal(msginfo)
+		if len(jsonBytes) > storage.KafkaMaxMessageSize {
+			var postRef string
+			if postRef, err = d.PutBlob(jsonBytes); err != nil {
+				dvid.Errorf("couldn't post large payload for merge annotations %q: %v", d.DataName(), err)
+			}
+			delete(msginfo, "Delta")
+			msginfo["DataRef"] = postRef
+			jsonBytes, _ = json.Marshal(msginfo)
+		}
+		if err := d.ProduceKafkaMsg(jsonBytes); err != nil {
 			dvid.Errorf("unable to write merge to kafka for data %q: %v\n", d.DataName(), err)
 		}
 	}
@@ -687,8 +696,17 @@ func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, o
 			"Timestamp":  time.Now().String(),
 			"Delta":      delta,
 		}
-		jsonmsg, _ := json.Marshal(msginfo)
-		if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
+		jsonBytes, _ := json.Marshal(msginfo)
+		if len(jsonBytes) > storage.KafkaMaxMessageSize {
+			var postRef string
+			if postRef, err = d.PutBlob(jsonBytes); err != nil {
+				dvid.Errorf("couldn't post large payload for cleave annotations %q: %v", d.DataName(), err)
+			}
+			delete(msginfo, "Delta")
+			msginfo["DataRef"] = postRef
+			jsonBytes, _ = json.Marshal(msginfo)
+		}
+		if err := d.ProduceKafkaMsg(jsonBytes); err != nil {
 			dvid.Errorf("unable to write cleave to kafka for data %q: %v\n", d.DataName(), err)
 		}
 	}
@@ -792,8 +810,17 @@ func (d *Data) splitLabelsCoarse(batcher storage.KeyValueBatcher, v dvid.Version
 		"Timestamp": time.Now().String(),
 		"Delta":     delta,
 	}
-	jsonmsg, _ := json.Marshal(msginfo)
-	if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
+	jsonBytes, _ := json.Marshal(msginfo)
+	if len(jsonBytes) > storage.KafkaMaxMessageSize {
+		var postRef string
+		if postRef, err = d.PutBlob(jsonBytes); err != nil {
+			dvid.Errorf("couldn't post large payload for coarse split annotations %q: %v", d.DataName(), err)
+		}
+		delete(msginfo, "Delta")
+		msginfo["DataRef"] = postRef
+		jsonBytes, _ = json.Marshal(msginfo)
+	}
+	if err := d.ProduceKafkaMsg(jsonBytes); err != nil {
 		dvid.Errorf("unable to write coarse split to kafka for data %q: %v\n", d.DataName(), err)
 	}
 	return nil
@@ -906,8 +933,18 @@ func (d *Data) splitLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 		"Timestamp": time.Now().String(),
 		"Delta":     delta,
 	}
-	jsonmsg, _ := json.Marshal(msginfo)
-	if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
+	jsonBytes, _ := json.Marshal(msginfo)
+	if len(jsonBytes) > storage.KafkaMaxMessageSize {
+		var err error
+		var postRef string
+		if postRef, err = d.PutBlob(jsonBytes); err != nil {
+			dvid.Errorf("couldn't post large payload for aplit annotations %q: %v", d.DataName(), err)
+		}
+		delete(msginfo, "Delta")
+		msginfo["DataRef"] = postRef
+		jsonBytes, _ = json.Marshal(msginfo)
+	}
+	if err := d.ProduceKafkaMsg(jsonBytes); err != nil {
 		dvid.Errorf("unable to write split to kafka for data %q: %v\n", d.DataName(), err)
 	}
 	return nil
