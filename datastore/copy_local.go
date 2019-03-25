@@ -205,7 +205,18 @@ func LimitVersions(uui dvid.UUID, configFName string) error {
 	for _, uuid := range tc.Versions {
 		okUUIDs[uuid] = true
 		if v, found := manager.uuidToVersion[uuid]; found {
-			okVersions[v] = true
+			ancestry, err := manager.getAncestry(v)
+			if err != nil {
+				return err
+			}
+			for _, ancestorV := range ancestry {
+				ancestorUUID, found := manager.versionToUUID[ancestorV]
+				if !found {
+					return fmt.Errorf("version %d has no UUID equivalent", ancestorV)
+				}
+				okUUIDs[ancestorUUID] = true
+				okVersions[ancestorV] = true
+			}
 		}
 	}
 	var repo *repoT
