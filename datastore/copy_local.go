@@ -208,8 +208,13 @@ func LimitVersions(uui dvid.UUID, configFName string) error {
 			okVersions[v] = true
 		}
 	}
-	for uuid := range manager.repos {
-		if _, found := okUUIDs[uuid]; !found {
+	var repo *repoT
+	for uuid, r := range manager.repos {
+		if _, found := okUUIDs[uuid]; found {
+			if repo == nil {
+				repo = r
+			}
+		} else {
 			delete(manager.repos, uuid)
 			delete(manager.uuidToVersion, uuid)
 		}
@@ -217,6 +222,25 @@ func LimitVersions(uui dvid.UUID, configFName string) error {
 	for v := range manager.versionToUUID {
 		if !okVersions[v] {
 			delete(manager.versionToUUID, v)
+		}
+	}
+	for v, node := range repo.dag.nodes {
+		if !okVersions[v] {
+			delete(repo.dag.nodes, v)
+		} else {
+			var parents, children []dvid.VersionID
+			for _, parent := range node.parents {
+				if okVersions[parent] {
+					parents = append(parents, parent)
+				}
+			}
+			node.parents = parents
+			for _, child := range node.children {
+				if okVersions[child] {
+					children = append(children, child)
+				}
+			}
+			node.children = children
 		}
 	}
 	manager.repoMutex.Unlock()
