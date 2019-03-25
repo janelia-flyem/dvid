@@ -180,6 +180,50 @@ func getTransferConfig(configFName string) (tc TransferConfig, okVersions map[dv
 	return
 }
 
+// LimitVersions removes versions from the metadata that are not present in a
+// configuration file.
+func LimitVersions(uui dvid.UUID, configFName string) error {
+	if manager == nil {
+		return fmt.Errorf("can't limit versions with uninitialized manager")
+	}
+	f, err := os.Open(configFName)
+	if err != nil {
+		return err
+	}
+	data, err := ioutil.ReadAll(f)
+	if err != nil {
+		return err
+	}
+	var tc TransferConfig
+	if err := json.Unmarshal(data, &tc); err != nil {
+		return err
+	}
+	manager.repoMutex.Lock()
+	manager.idMutex.Lock()
+	okUUIDs := make(map[dvid.UUID]bool, len(tc.Versions))
+	okVersions := make(map[dvid.VersionID]bool, len(tc.Versions))
+	for _, uuid := range tc.Versions {
+		okUUIDs[uuid] = true
+		if v, found := manager.uuidToVersion[uuid]; found {
+			okVersions[v] = true
+		}
+	}
+	for uuid := range manager.repos {
+		if _, found := okUUIDs[uuid]; !found {
+			delete(manager.repos, uuid)
+			delete(manager.uuidToVersion, uuid)
+		}
+	}
+	for v := range manager.versionToUUID {
+		if !okVersions[v] {
+			delete(manager.versionToUUID, v)
+		}
+	}
+	manager.repoMutex.Unlock()
+	manager.idMutex.Unlock()
+	return nil
+}
+
 // TransferData copies key-value pairs from one repo to store and apply filtering as specified
 // by the JSON configuration in the file specified by configFName.
 // An example of the transfer JSON configuration file format:

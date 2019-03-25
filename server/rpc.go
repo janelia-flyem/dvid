@@ -119,6 +119,18 @@ EXPERIMENTAL COMMANDS
 		If Metadata property is true, then if metadata exists in the old store,
 		it is transferred to the new store with only the versions specified
 		appearing in the DAG.
+	
+	repo <UUID> limit-versions <version config file>
+
+		Removes versions not present in the transfer config file from the metadata.
+		An example of the version JSON configuration file format:
+		{
+			"Versions": [
+				"8a90ec0d257c415cae29f8c46603bcae",
+				"a5682904bb824c06aba470c0a0cbffab",
+				...
+			}
+		}
 					
 	repo <UUID> copy <source instance name> <clone instance name> <settings...>
     
@@ -518,6 +530,14 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 				}
 			}()
 			reply.Text = fmt.Sprintf("Started data transfer of repo %s from store %q to %q\n", uuid, oldStoreName, dstStoreName)
+
+		case "limit-versions":
+			var configFName string
+			cmd.CommandArgs(3, &configFName)
+			if err = datastore.LimitVersions(uuid, configFName); err != nil {
+				dvid.Errorf("limit-versions error: %v\n", err)
+			}
+			reply.Text = fmt.Sprintf("Limited metadata versions for repo %s\n", uuid)
 
 		case "push":
 			var target string
