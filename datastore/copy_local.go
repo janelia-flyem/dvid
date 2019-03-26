@@ -198,8 +198,6 @@ func LimitVersions(uui dvid.UUID, configFName string) error {
 	if err := json.Unmarshal(data, &tc); err != nil {
 		return err
 	}
-	manager.repoMutex.Lock()
-	manager.idMutex.Lock()
 	okUUIDs := make(map[dvid.UUID]bool, len(tc.Versions))
 	okVersions := make(map[dvid.VersionID]bool, len(tc.Versions))
 	for _, uuid := range tc.Versions {
@@ -219,6 +217,8 @@ func LimitVersions(uui dvid.UUID, configFName string) error {
 			}
 		}
 	}
+	manager.repoMutex.Lock()
+	manager.idMutex.Lock()
 	var repo *repoT
 	for uuid, r := range manager.repos {
 		if _, found := okUUIDs[uuid]; found {
@@ -254,8 +254,8 @@ func LimitVersions(uui dvid.UUID, configFName string) error {
 			node.children = children
 		}
 	}
-	manager.repoMutex.Unlock()
 	manager.idMutex.Unlock()
+	manager.repoMutex.Unlock()
 	return nil
 }
 
