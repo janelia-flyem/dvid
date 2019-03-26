@@ -100,14 +100,21 @@ func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, oldStore dvid.Sto
 		return ErrManagerNotInitialized
 	}
 
-	// Get flatten or not
-	transmit, _, err := c.GetString("transmit")
+	transmitStr, _, err := c.GetString("transmit")
 	if err != nil {
 		return err
 	}
 	var flatten bool
-	if transmit == "flatten" {
+	if transmitStr == "flatten" {
 		flatten = true
+	}
+	deleteStr, _, err := c.GetString("delete")
+	if err != nil {
+		return err
+	}
+	var deleteSrc bool
+	if deleteStr == "true" {
+		deleteSrc = true
 	}
 
 	// Get the source data instance.
@@ -139,12 +146,13 @@ func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, oldStore dvid.Sto
 			dvid.Errorf("error in migration of data %q: %v\n", source, err)
 			return
 		}
-		// delete data off old store.
-		dvid.Infof("Starting delete of instance %q from old storage %q\n", d.DataName(), oldKV)
-		ctx := storage.NewDataContext(d, 0)
-		if err := oldKV.DeleteAll(ctx, true); err != nil {
-			dvid.Errorf("deleting instance %q from %q after copy to %q: %v\n", d.DataName(), oldKV, curKV, err)
-			return
+		if deleteSrc {
+			dvid.Infof("Starting delete of instance %q from old storage %q\n", d.DataName(), oldKV)
+			ctx := storage.NewDataContext(d, 0)
+			if err := oldKV.DeleteAll(ctx, true); err != nil {
+				dvid.Errorf("deleting instance %q from %q after copy to %q: %v\n", d.DataName(), oldKV, curKV, err)
+				return
+			}
 		}
 	}()
 

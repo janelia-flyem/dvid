@@ -87,7 +87,14 @@ EXPERIMENTAL COMMANDS
 		will use the target store and then restart the DVID server.
 		If successful, this command will initiate a delete on the old store of this
 		data instance.
-			
+
+		Settings:
+
+		delete=[false | true]
+
+			The default is false where the instance will not be deleted from the
+			source store.
+
 		transmit=[all | flatten]
 
 			The default transmit "all" copies all versions of the source.
