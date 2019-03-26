@@ -60,12 +60,12 @@ $ dvid node <UUID> <data name> reload <settings...>
 
 	Forces asynchornous denormalization of all annotations for labels and tags.  Because
 	this is a special request for mass mutations that require static "normalized" data
-	(only verifies and changes the label and tag denormalizations), it can only be run
-	on locked nodes.
+	(only verifies and changes the label and tag denormalizations), any POST requests
+	while this is running results in an error.
 
     Configuration Settings (case-insensitive keys)
 
-	check 		"false": (default "true") check denormalizations, writing to log when issues
+	check 		"true": (default "false") check denormalizations, writing to log when issues
 					are detected, and only replacing denormalization when it is incorrect.
 	inmemory 	"false": (default "true") use in-memory reload, which assumes the server
 					has enough memory to hold all annotations in memory.
@@ -299,6 +299,21 @@ The "Rel" property can be one of "UnknownRelationship", "PostSynTo", "PreSynTo",
 The "Tags" property will be indexed and so can be costly if used for very large numbers of synapse elements.
 
 The "Prop" property is an arbitrary object with string values.  The "Prop" object's key are not indexed.
+
+--------
+
+POST <api URL>/node/<UUID>/<data name>/reload[?<options>]
+
+	Forces asynchronous recreation of its tag and label indexed denormalizations.  Can be 
+	used to initialize a newly added instance.  Note that this instance will return errors
+	for any POST request while denormalization is ongoing.
+
+	POST Query-string Options:
+
+	check 		"true": (default "false") check denormalizations, writing to log when issues
+					are detected, and only replacing denormalization when it is incorrect.
+	inmemory 	"false": (default "true") use in-memory reload, which assumes the server
+					has enough memory to hold all annotations in memory.
 `
 
 var (
@@ -1063,6 +1078,8 @@ type Data struct {
 
 	// Cached in-memory so we only have to lookup block size once.
 	cachedBlockSize *dvid.Point3d
+
+	denormOngoing bool // true if we are doing denormalizations so avoid ops on them.
 
 	sync.RWMutex // For CAS ops.  TODO: Make more specific (e.g., point locks) for efficiency.
 }
@@ -2343,6 +2360,15 @@ type denormElems struct {
 // If check is true, checks denormalizations, logging any issues, and only replaces denormalizations
 // when they are incorrect.
 func (d *Data) resyncInMemory(ctx *datastore.VersionedCtx, check bool) {
+	d.Lock()
+	d.denormOngoing = true
+	d.Unlock()
+	defer func() {
+		d.Lock()
+		d.denormOngoing = false
+		d.Unlock()
+	}()
+
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		dvid.Errorf("Annotation %q had error initializing store: %v\n", d.DataName(), err)
@@ -2477,6 +2503,15 @@ func (d *Data) resyncInMemory(ctx *datastore.VersionedCtx, check bool) {
 
 // Get all keyBlock kv pairs, forcing the label and tag denormalizations.
 func (d *Data) resyncLowMemory(ctx *datastore.VersionedCtx) {
+	d.Lock()
+	d.denormOngoing = true
+	d.Unlock()
+	defer func() {
+		d.Lock()
+		d.denormOngoing = false
+		d.Unlock()
+	}()
+
 	timedLog := dvid.NewTimeLog()
 
 	store, err := datastore.GetOrderedKeyValueDB(d)
@@ -2682,13 +2717,6 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		if err != nil {
 			return err
 		}
-		locked, err := datastore.LockedUUID(uuid)
-		if err != nil {
-			return err
-		}
-		if !locked {
-			return fmt.Errorf("cannot reload annotation %q unless it is locked (uuid %s)", d.DataName(), uuid)
-		}
 		if err = datastore.AddToNodeLog(uuid, []string{req.Command.String()}); err != nil {
 			return err
 		}
@@ -2698,7 +2726,7 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 			inMemory = true
 		}
 		setting, found = req.Setting("check")
-		if !found || setting != "false" {
+		if found && setting == "true" {
 			check = true
 		}
 		ctx := datastore.NewVersionedCtx(d, v)
@@ -2719,6 +2747,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 	// Get the action (GET, POST)
 	action := strings.ToLower(r.Method)
+	d.RLock()
+	if d.denormOngoing && action == "post" {
+		d.RUnlock()
+		server.BadRequest(w, r, "cannot run POST commands while %q instance is being reloaded", d.DataName())
+		return
+	}
+	d.RUnlock()
 
 	// Add user to context if provided
 	user := r.URL.Query().Get("u")
@@ -2996,6 +3031,16 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		timedLog.Infof("HTTP %s: move synaptic element from %s to %s (%s)", r.Method, fromPt, toPt, r.URL)
+
+	case "reload":
+		// POST <api URL>/node/<UUID>/<data name>/reload
+		if action != "post" {
+			server.BadRequest(w, r, "Only POST action is available on 'reload' endpoint.")
+			return
+		}
+		inMemory := !(r.URL.Query().Get("inmemory") == "false")
+		check := r.URL.Query().Get("check") == "true"
+		d.RecreateDenormalizations(ctx, inMemory, check)
 
 	default:
 		server.BadAPIRequest(w, r, d)
