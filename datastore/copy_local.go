@@ -95,7 +95,7 @@ func (t *txStats) printStats() {
 // MigrateInstance migrates a data instance locally from an old storage
 // engine to the current configured storage.  After completion of the copy,
 // the data instance in the old storage is deleted.
-func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, oldStore dvid.Store, c dvid.Config) error {
+func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, srcStore, dstStore dvid.Store, c dvid.Config) error {
 	if manager == nil {
 		return ErrManagerNotInitialized
 	}
@@ -123,40 +123,40 @@ func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, oldStore dvid.Sto
 		return err
 	}
 
-	// Get the current store for this data instance.
-	curKV, err := GetOrderedKeyValueDB(d)
+	// Get the destination store.
+	dstKV, ok := dstStore.(storage.OrderedKeyValueDB)
 	if err != nil {
-		return fmt.Errorf("unable to get backing store for data %q: %v", source, err)
+		return fmt.Errorf("unable to get destination store %q: %v", dstStore, err)
 	}
 
-	// Get the old store.
-	oldKV, ok := oldStore.(storage.OrderedKeyValueDB)
+	// Get the src store.
+	srcKV, ok := srcStore.(storage.OrderedKeyValueDB)
 	if !ok {
-		return fmt.Errorf("unable to migrate data %q from store %s which isn't ordered kv store", source, oldStore)
+		return fmt.Errorf("unable to migrate data %q from store %s which isn't ordered kv store", source, srcStore)
 	}
 
 	// Abort if the two stores are the same.
-	if curKV == oldKV {
+	if dstKV == srcKV {
 		return fmt.Errorf("old store for data %q seems same as current store", source)
 	}
 
 	// Migrate data asynchronously.
 	go func() {
-		if err := copyData(oldKV, curKV, d, nil, uuid, nil, flatten); err != nil {
+		if err := copyData(srcKV, dstKV, d, nil, uuid, nil, flatten); err != nil {
 			dvid.Errorf("error in migration of data %q: %v\n", source, err)
 			return
 		}
 		if deleteSrc {
-			dvid.Infof("Starting delete of instance %q from old storage %q\n", d.DataName(), oldKV)
+			dvid.Infof("Starting delete of instance %q from store %q\n", d.DataName(), srcKV)
 			ctx := storage.NewDataContext(d, 0)
-			if err := oldKV.DeleteAll(ctx, true); err != nil {
-				dvid.Errorf("deleting instance %q from %q after copy to %q: %v\n", d.DataName(), oldKV, curKV, err)
+			if err := srcKV.DeleteAll(ctx, true); err != nil {
+				dvid.Errorf("deleting instance %q from %q after copy to %q: %v\n", d.DataName(), srcKV, dstKV, err)
 				return
 			}
 		}
 	}()
 
-	dvid.Infof("Migrating data %q from store %q to store %q ...\n", d.DataName(), oldKV, curKV)
+	dvid.Infof("Migrating data %q from store %q to store %q ...\n", d.DataName(), srcKV, dstKV)
 	return nil
 }
 

@@ -79,14 +79,13 @@ EXPERIMENTAL COMMANDS
 		Makes a log of all mutations from ancestors up to given UUID for
 		the given data UUID.
 
-	repo <UUID> migrate <instance name> <old store config nickname> <settings...>
+	repo <UUID> migrate <instance name> <src store> <dst store> <settings...>
     
-        Migrates all data from an old store (specified by the nickname in TOML file)
-		to the current store designated for this instance name.  Before running this
-		command, you must modify the config TOML file so the given data instance
-		will use the target store and then restart the DVID server.
-		If successful, this command will initiate a delete on the old store of this
-		data instance.
+		Migrates all of this instance's data from a source store (specified by 
+		the nickname in TOML file) to a new store.  Before running this command,
+		you must modify the config TOML file so the destination store is available.
+		To start using the destination store for the instance, you must restart
+		the server and specify that store via a TOML configuration change.
 
 		Settings:
 
@@ -493,20 +492,24 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			}
 
 		case "migrate":
-			var source, oldStoreName string
-			cmd.CommandArgs(3, &source, &oldStoreName)
-			var store dvid.Store
-			store, err = storage.GetStoreByAlias(storage.Alias(oldStoreName))
+			var source, srcStoreName, dstStoreName string
+			cmd.CommandArgs(3, &source, &srcStoreName, &dstStoreName)
+			var srcStore, dstStore dvid.Store
+			srcStore, err = storage.GetStoreByAlias(storage.Alias(srcStoreName))
+			if err != nil {
+				return
+			}
+			dstStore, err = storage.GetStoreByAlias(storage.Alias(dstStoreName))
 			if err != nil {
 				return
 			}
 			config := cmd.Settings()
 			go func() {
-				if err = datastore.MigrateInstance(uuid, dvid.InstanceName(source), store, config); err != nil {
+				if err = datastore.MigrateInstance(uuid, dvid.InstanceName(source), srcStore, dstStore, config); err != nil {
 					dvid.Errorf("migrate error: %v\n", err)
 				}
 			}()
-			reply.Text = fmt.Sprintf("Started migration of uuid %s data instance %q from old store %q...\n", uuid, source, oldStoreName)
+			reply.Text = fmt.Sprintf("Started migration of uuid %s data instance %q from store %q to %q\n", uuid, source, srcStoreName, dstStoreName)
 
 		case "copy":
 			var source, target string
