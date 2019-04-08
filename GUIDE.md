@@ -36,12 +36,12 @@ Developer Guide
 Setup
 -----
 
-1. If you are using a bare OS, you will need some essentials before installing anything else: `sudo apt-get install build-essential gcc bzip2`.
-Then Install `conda` and enable the `activate` command for your shell (e.g. by running `conda init bash`).
+1. If you are using a bare OS, you will need some essentials (gcc, bzip2, etc) before installing anything else.  In Ubuntu, you can easily install this with `sudo apt-get install build-essential gcc bzip2`.
+Then Install `conda` (specifically the [miniconda distribution](https://docs.conda.io/en/latest/miniconda.html)) and enable the `activate` command for your shell.  (If you are installing conda >= 4.6, you'll need to run `conda init bash` or whatever depending on your shell.)
 
    **Note:** These developer instructions assume you are using conda 4.5 or greater.
 
-2. Install `conda-build` and `anaconda-client`:
+2. Upgrade conda and install `conda-build` and `anaconda-client`:
 
     ```
     $ conda activate base
