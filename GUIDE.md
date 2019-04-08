@@ -37,23 +37,33 @@ Setup
 -----
 
 1. If you are using a bare OS, you will need some essentials (gcc, bzip2, etc) before installing anything else.  In Ubuntu, you can easily install this with `sudo apt-get install build-essential gcc bzip2`.
-Then Install `conda` (specifically the [miniconda distribution](https://docs.conda.io/en/latest/miniconda.html)) and enable the `activate` command for your shell.  (If you are installing conda >= 4.6, you'll need to run `conda init bash` or whatever depending on your shell.)
+Then Install `conda` (specifically the [miniconda distribution][miniconda]) and enable the `activate` command for your shell.
 
-   **Note:** These developer instructions assume you are using conda 4.5 or greater.
+    [miniconda]: https://docs.conda.io/en/latest/miniconda.html
 
-2. Upgrade conda and install `conda-build` and `anaconda-client`:
+    **Note:** At the time of this writing, the Miniconda installer will give you conda-4.5, but these instructions require conda-4.6.
+    Immediately after installing Miniconda, upgrade `conda`:
+   
+    ```
+    $ conda update -n base -c defaults conda
+    ```
+   
+    ...and then activate it for your shell:
+   
+    ```
+    $ conda init bash
+    ```
+   
+    ...and then open a new terminal window.
+
+
+2. Install (or upgrade) `conda-build` and `anaconda-client`:
 
     ```
     $ conda activate base
-    $ conda install conda-build anaconda-client
+    $ conda install -n base -c defaults conda-build anaconda-client
     ```
     
-    If you already had those installed, be sure to update to the latest versions:
-    
-    ```
-    $ conda update -n base conda-build anaconda-client
-    ```
-
 3. Add `flyem-forge` and `conda-forge/label/cf201901` to your `.condarc` file:
 
     ```
