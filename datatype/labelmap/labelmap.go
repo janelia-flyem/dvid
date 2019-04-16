@@ -3628,7 +3628,9 @@ func (d *Data) handleIndices(ctx *datastore.VersionedCtx, w http.ResponseWriter,
 				server.BadRequest(w, r, "could not get label %d index in position %d: %v", label, i, err)
 				return
 			}
-			indices.Indices[i] = &(idx.LabelIndex)
+			if idx != nil {
+				indices.Indices[i] = &(idx.LabelIndex)
+			}
 		}
 		dataOut, err := indices.Marshal()
 		if err != nil {
