@@ -222,6 +222,7 @@ func Shutdown() {
 		}
 		manager.setup = false
 	}
+	KafkaShutdown()
 	manager = managerT{}
 }
 

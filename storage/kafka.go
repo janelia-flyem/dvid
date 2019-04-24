@@ -104,6 +104,26 @@ func (kc KafkaConfig) Initialize(hostID string) error {
 	return nil
 }
 
+// KafkaShutdown makes sure that the kafka queue is flushed before stopping.
+func KafkaShutdown() {
+	if kafkaProducer != nil {
+		dvid.Infof("Shutting down kafka producer %q...\n", kafkaProducer.String())
+		var numTries int
+		for {
+			queueRemain := kafkaProducer.Flush(15 * 1000) // wait for max 15 seconds
+			dvid.Infof("Kafka queue remaining: %d\n", queueRemain)
+			if queueRemain == 0 {
+				break
+			}
+			numTries++
+			if numTries == 4 {
+				dvid.Criticalf("Flushed for 60 seconds but still have %d in kafka queue.  Aborting.\n", numTries)
+				break
+			}
+		}
+	}
+}
+
 // LogActivityToKafka publishes activity
 func LogActivityToKafka(activity map[string]interface{}) {
 	if kafkaActivityTopic != "" {
