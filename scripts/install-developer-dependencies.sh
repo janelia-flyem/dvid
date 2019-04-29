@@ -25,7 +25,7 @@ set -e
 THIS_SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd ${THIS_SCRIPT_DIR}
 
-GO_VERSION=1.11.3
+GO_VERSION=1.11.9
 
 if [[ $(uname) == "Darwin" ]]; then
     GO_PLATFORM_PKG=go-cgo_osx-64

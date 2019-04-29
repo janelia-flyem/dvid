@@ -98,6 +98,9 @@ go get github.com/boltdb/bolt
 # gomdb
 go get github.com/DocSavage/gomdb
 
+# badger
+go get github.com/dgraph-io/badger/...
+
 # kafka
 CONFLUENTINC_DIR=${GOPATH}/src/github.com/confluentinc
 KAFKA_GO_DIR=${CONFLUENTINC_DIR}/confluent-kafka-go
