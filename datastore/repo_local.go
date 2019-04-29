@@ -1552,7 +1552,9 @@ func (m *repoManager) newVersion(parent dvid.UUID, note string, branchname strin
 	node.updated = time.Now()
 
 	r.Lock()
+	r.dag.Lock()
 	r.dag.nodes[childV] = child
+	r.dag.Unlock()
 	r.updated = time.Now()
 	r.Unlock()
 
