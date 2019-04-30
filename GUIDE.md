@@ -96,6 +96,15 @@ Then Install `conda` (specifically the [miniconda distribution][miniconda]) and 
     $ ./scripts/install-developer-dependencies.sh
     ```
 
+7. Reactivate the environment
+
+   **Important:** Yes, you must do this after `install-developer-dependencies.sh`, even though your `dvid-devel` environment is already active.
+   Activating the environment again ensures that environment variables like `CC` and `CXX` are set correctly.
+
+    ```
+    $ conda activate dvid-devel
+    ```
+
 
 Build and Test
 --------------
