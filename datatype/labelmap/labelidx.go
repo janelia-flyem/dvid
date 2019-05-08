@@ -1449,7 +1449,7 @@ func (d *Data) writeMappings(w io.Writer, v dvid.VersionID, binaryFormat bool) e
 			if supervoxel != label && label != 0 {
 				var err error
 				if binaryFormat {
-					err := binary.Write(w, binary.LittleEndian, supervoxel)
+					err = binary.Write(w, binary.LittleEndian, supervoxel)
 					if err == nil {
 						err = binary.Write(w, binary.LittleEndian, label)
 					}
