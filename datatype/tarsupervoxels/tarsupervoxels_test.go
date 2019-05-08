@@ -222,5 +222,6 @@ func testTarball(t *testing.T, storetype storage.Alias) {
 
 func TestTarballRoundTrip(t *testing.T) {
 	testTarball(t, "filestore")
-	testTarball(t, "basholeveldb")
+	testTarball(t, "badger")
+	// testTarball(t, "basholeveldb")
 }

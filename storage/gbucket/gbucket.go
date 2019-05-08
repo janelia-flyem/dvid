@@ -1939,7 +1939,7 @@ func (db *GBucket) DeleteRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) e
 
 // DeleteAll removes all key-value pairs for the context.  If allVersions is true,
 // then all versions of the data instance are deleted.  Will not produce any tombstones.
-func (db *GBucket) DeleteAll(ctx storage.Context, allVersions bool) error {
+func (db *GBucket) DeleteAll(ctx storage.Context) error {
 	if db == nil {
 		return fmt.Errorf("Can't call DeleteAll() on nil Google bucket")
 	}
@@ -1948,96 +1948,42 @@ func (db *GBucket) DeleteAll(ctx storage.Context, allVersions bool) error {
 	}
 
 	var err error
-	if allVersions {
-		// do batched RAW delete of latest version
-		vctx, versioned := ctx.(storage.VersionedCtx)
-		var minKey, maxKey storage.Key
-		if versioned {
-			minTKey := storage.MinTKey(storage.TKeyMinClass)
-			maxTKey := storage.MaxTKey(storage.TKeyMaxClass)
-			minKey, err = vctx.MinVersionKey(minTKey)
-			if err != nil {
-				return err
-			}
-			maxKey, err = vctx.MaxVersionKey(maxTKey)
-			if err != nil {
-				return err
-			}
-		} else {
-			minKey, maxKey = ctx.KeyRange()
-		}
 
-		// fetch all matching keys for context
-		keys, _ := db.getKeysInRangeRaw(ctx, minKey, maxKey)
-
-		// wait for all deletes to complete -- batch??
-		var wg sync.WaitGroup
-		for _, key := range keys {
-			wg.Add(1)
-			db.grabOpResource()
-			go func(lkey storage.Key) {
-				defer func() {
-					wg.Done()
-					db.releaseOpResource()
-				}()
-				db.rawDelete(ctx, lkey)
-			}(key)
-		}
-		wg.Wait()
-	} else {
-		vctx, versioned := ctx.(storage.VersionedCtx)
-		if !versioned {
-			return fmt.Errorf("Can't ask for versioned delete from unversioned context: %s", ctx)
-		}
+	// do batched RAW delete of latest version
+	vctx, versioned := ctx.(storage.VersionedCtx)
+	var minKey, maxKey storage.Key
+	if versioned {
 		minTKey := storage.MinTKey(storage.TKeyMinClass)
 		maxTKey := storage.MaxTKey(storage.TKeyMaxClass)
-		minKey, err := vctx.MinVersionKey(minTKey)
+		minKey, err = vctx.MinVersionKey(minTKey)
 		if err != nil {
 			return err
 		}
-		maxKey, err := vctx.MaxVersionKey(maxTKey)
+		maxKey, err = vctx.MaxVersionKey(maxTKey)
 		if err != nil {
 			return err
 		}
-
-		// fetch all matching keys for context
-		keys, err := db.getKeysInRangeRaw(ctx, minKey, maxKey)
-
-		// wait for all deletes to complete -- batch??
-		var wg sync.WaitGroup
-
-		currversion := ctx.VersionID()
-		for _, key := range keys {
-			// filter keys that are not current version
-			keyversion, _ := ctx.(storage.VersionedCtx).VersionFromKey(key)
-			if db.version >= VALUEVERSION && ctx.Versioned() {
-				// if base version, delete or return key to exact version
-				if keyversion == 0 {
-					wg.Add(1)
-					db.grabOpResource()
-					go func(lkey storage.Key) {
-						defer func() {
-							wg.Done()
-							db.releaseOpResource()
-						}()
-						// delete specific version
-						db.deleteVersion(ctx, key, currversion, false)
-					}(key)
-				}
-			} else if keyversion == currversion {
-				wg.Add(1)
-				db.grabOpResource()
-				go func(lkey storage.Key) {
-					defer func() {
-						wg.Done()
-						db.releaseOpResource()
-					}()
-					db.rawDelete(ctx, lkey)
-				}(key)
-			}
-		}
-		wg.Wait()
+	} else {
+		minKey, maxKey = ctx.KeyRange()
 	}
+
+	// fetch all matching keys for context
+	keys, _ := db.getKeysInRangeRaw(ctx, minKey, maxKey)
+
+	// wait for all deletes to complete -- batch??
+	var wg sync.WaitGroup
+	for _, key := range keys {
+		wg.Add(1)
+		db.grabOpResource()
+		go func(lkey storage.Key) {
+			defer func() {
+				wg.Done()
+				db.releaseOpResource()
+			}()
+			db.rawDelete(ctx, lkey)
+		}(key)
+	}
+	wg.Wait()
 
 	return nil
 }

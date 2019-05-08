@@ -395,7 +395,7 @@ func DeleteDataInstance(data dvid.Data) error {
 
 	dvid.Infof("Starting delete of instance %d: name %q, type %s\n", data.InstanceID(), data.DataName(), data.TypeName())
 	ctx := NewDataContext(data, 0)
-	if err := db.DeleteAll(ctx, true); err != nil {
+	if err := db.DeleteAll(ctx); err != nil {
 		return err
 	}
 	return nil

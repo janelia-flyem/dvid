@@ -431,11 +431,11 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 // GetBlocks returns a slice of bytes corresponding to all the blocks along a span in X
 func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int32) ([]byte, error) {
 	timedLog := dvid.NewTimeLog()
-	defer timedLog.Infof("GetBlocks %s, span %d", start, span)
+	defer timedLog.Infof("GetBlocks start at %s, span %d", start, span)
 
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
-		return nil, fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
+		return nil, fmt.Errorf("data type imageblk had error initializing store: %v", err)
 	}
 
 	indexBeg := dvid.IndexZYX(start)
@@ -461,6 +461,7 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int32) 
 	// Write the blocks that we can get concurrently on this byte slice.
 	ctx := datastore.NewVersionedCtx(d, v)
 
+	var numBlocks int
 	var wg sync.WaitGroup
 	err = store.ProcessRange(ctx, keyBeg, keyEnd, &storage.ChunkOp{}, func(c *storage.Chunk) error {
 		if c == nil || c.TKeyValue == nil {
@@ -485,6 +486,7 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int32) 
 		j := i + blockBytes
 
 		// Spawn goroutine to transfer data
+		numBlocks++
 		wg.Add(1)
 		go xferBlock(buf[i:j], c, &wg)
 		return nil

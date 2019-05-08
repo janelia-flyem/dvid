@@ -1589,19 +1589,19 @@ func TestConcurrentMutations(t *testing.T) {
 
 	// Run concurrent split/merge ops on each body where split is random location in X.
 	wg := new(sync.WaitGroup)
-	wg.Add(750)
+	wg.Add(300)
 	go func() {
-		for n := 0; n < 250; n++ {
+		for n := 0; n < 100; n++ {
 			tbody1.splitmerge(t, wg, uuid, "labels")
 		}
 	}()
 	go func() {
-		for n := 0; n < 250; n++ {
+		for n := 0; n < 100; n++ {
 			tbody2.splitmerge(t, wg, uuid, "labels")
 		}
 	}()
 	go func() {
-		for n := 0; n < 250; n++ {
+		for n := 0; n < 100; n++ {
 			tbody3.splitmerge(t, wg, uuid, "labels")
 		}
 	}()

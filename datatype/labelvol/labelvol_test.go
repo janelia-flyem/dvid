@@ -969,7 +969,9 @@ func TestMergeSplitLabel(t *testing.T) {
 	}
 
 	// Make sure label 3 sparsevol has been removed.
-	reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 3)
+	fmt.Printf("testing if merge has been done correctly\n")
+	reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/3", server.WebAPIPath, uuid, "bodies")
+	fmt.Printf("Got back from sparsevol 3: %d bytes\n", len(reqStr))
 	server.TestBadHTTP(t, "GET", reqStr, nil)
 
 	retrieved := newTestVolume(128, 128, 128)

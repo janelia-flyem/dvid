@@ -696,7 +696,8 @@ func (s *Store) DeleteRange(context storage.Context, kStart, kEnd storage.TKey) 
 }
 
 // DeleteAll removes all key-value pairs for the context.
-func (s *Store) DeleteAll(context storage.Context, allVersions bool) error {
+func (s *Store) DeleteAll(context storage.Context) error {
+	allVersions := true // DeleteAll was modified to not allow specific version removal, but keep code in case we re-add after larger refactor.
 	var typeKeys []storage.TKey
 
 	// Helper function which deletes all provided object names.

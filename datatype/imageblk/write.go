@@ -296,15 +296,15 @@ func (d *Data) PutBlocks(v dvid.VersionID, mutID uint64, start dvid.ChunkPoint3d
 				break
 			}
 			if err == io.EOF {
-				return fmt.Errorf("Block data ceased before all block data read")
+				return fmt.Errorf("block data ceased before all block data read")
 			}
 			if err != nil {
-				return fmt.Errorf("Error reading blocks: %v\n", err)
+				return fmt.Errorf("error reading blocks: %v", err)
 			}
 		}
 
 		if readBytes != numBlockBytes {
-			return fmt.Errorf("Expected %d bytes in block read, got %d instead!  Aborting.", numBlockBytes, readBytes)
+			return fmt.Errorf("expected %d bytes in block read, got %d instead, aborting", numBlockBytes, readBytes)
 		}
 
 		serialization, err := dvid.SerializeData(buf, d.Compression(), d.Checksum())
@@ -319,7 +319,7 @@ func (d *Data) PutBlocks(v dvid.VersionID, mutID uint64, start dvid.ChunkPoint3d
 		if mutate {
 			oldBlock, err = d.GetBlock(v, tk)
 			if err != nil {
-				return fmt.Errorf("Unable to load previous block in %q, key %v: %v\n", d.DataName(), tk, err)
+				return fmt.Errorf("unable to load previous block in %q, key %v: %v", d.DataName(), tk, err)
 			}
 		}
 
@@ -348,12 +348,13 @@ func (d *Data) PutBlocks(v dvid.VersionID, mutID uint64, start dvid.ChunkPoint3d
 		finish := (readBlocks == span)
 		if finish || readBlocks%BatchSize == 0 {
 			if err := batch.Commit(); err != nil {
-				return fmt.Errorf("Error on batch commit, block %d: %v\n", readBlocks, err)
+				return fmt.Errorf("error on batch commit, block %d: %v", readBlocks, err)
 			}
-			batch = batcher.NewBatch(ctx)
-		}
-		if finish {
-			break
+			if finish {
+				break
+			} else {
+				batch = batcher.NewBatch(ctx)
+			}
 		}
 	}
 	return nil

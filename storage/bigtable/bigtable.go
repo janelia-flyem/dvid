@@ -867,9 +867,8 @@ func (db *BigTable) DeleteRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) 
 	return err
 }
 
-// DeleteAll removes all key-value pairs for the context.  If allVersions is true,
-// then all versions of the data instance are deleted.
-func (db *BigTable) DeleteAll(ctx storage.Context, allVersions bool) error {
+// DeleteAll removes all key-value pairs for the context.
+func (db *BigTable) DeleteAll(ctx storage.Context) error {
 	if db == nil {
 		return fmt.Errorf("Can't call DeleteAll() on nil BigTable")
 	}
@@ -889,41 +888,11 @@ func (db *BigTable) DeleteAll(ctx storage.Context, allVersions bool) error {
 			return false
 		}
 
-		if allVersions {
-
-			mut := api.NewMutation()
-			mut.DeleteRow()
-			err := tbl.Apply(db.ctx, encodeKey(unvKeyRow), mut)
-			if err != nil {
-				dvid.Errorf("Failed to delete row")
-			}
-		} else {
-
-			emptyTkey := make([]byte, 0)
-			_, versionToDelete, err := ctx.SplitKey(emptyTkey)
-			if err != nil {
-				dvid.Errorf("Error in DeleteAll(): %v\n", err)
-				return false
-			}
-
-			for _, readItem := range r[familyName] {
-
-				verKey, err := decodeKey(readItem.Column)
-				if err != nil {
-					dvid.Errorf("Error in DeleteAll(): %v\n", err)
-					return false
-				}
-
-				if bytes.Equal(verKey, versionToDelete) {
-					mut := api.NewMutation()
-					mut.DeleteCellsInColumn(familyName, encodeKey(verKey))
-					err := tbl.Apply(db.ctx, encodeKey(unvKeyRow), mut)
-					if err != nil {
-						dvid.Errorf("Failed to DeleteCellsInColumn in DeleteAll()")
-					}
-					return true // One I found the version I don't have to keep serching for it.
-				}
-			}
+		mut := api.NewMutation()
+		mut.DeleteRow()
+		err := tbl.Apply(db.ctx, encodeKey(unvKeyRow), mut)
+		if err != nil {
+			dvid.Errorf("Failed to delete row")
 		}
 
 		return true // keep going

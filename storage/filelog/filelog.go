@@ -387,15 +387,12 @@ func (flogs *fileLogs) Equal(config dvid.StoreConfig) bool {
 
 // ---- TestableEngine interface implementation -------
 
-// AddTestConfig sets the filelog as the default append-only log.  If another engine is already
-// set for the append-only log, it returns an error since only one append-only log backend should
-// be tested via tags.
+// AddTestConfig sets the filelog as the default append-only log if it already hasn't been set.
 func (e Engine) AddTestConfig(backend *storage.Backend) (storage.Alias, error) {
 	alias := storage.Alias("filelog")
-	if backend.DefaultLog != "" {
-		return alias, fmt.Errorf("filelog can't be testable log.  DefaultLog already set to %s", backend.DefaultLog)
+	if backend.DefaultLog == "" {
+		backend.DefaultLog = alias
 	}
-	backend.DefaultLog = alias
 	if backend.Stores == nil {
 		backend.Stores = make(map[storage.Alias]dvid.StoreConfig)
 	}

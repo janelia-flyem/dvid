@@ -149,7 +149,7 @@ func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, srcStore, dstStor
 		if deleteSrc {
 			dvid.Infof("Starting delete of instance %q from store %q\n", d.DataName(), srcKV)
 			ctx := storage.NewDataContext(d, 0)
-			if err := srcKV.DeleteAll(ctx, true); err != nil {
+			if err := srcKV.DeleteAll(ctx); err != nil {
 				dvid.Errorf("deleting instance %q from %q after copy to %q: %v\n", d.DataName(), srcKV, dstKV, err)
 				return
 			}

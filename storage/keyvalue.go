@@ -207,7 +207,8 @@ type KeyValueTimestampGetter interface {
 }
 
 type KeyValueChecker interface {
-	// Exists returns true if the given key is present
+	// Exists returns true if the given key is present for that precise version.
+	// Currently only used with versionless tarsupervoxels.
 	Exists(ctx Context, k TKey) (bool, error)
 }
 
@@ -279,14 +280,8 @@ type OrderedKeyValueSetter interface {
 	// unlike RawDelete or DeleteAll.
 	DeleteRange(ctx Context, kStart, kEnd TKey) error
 
-	// DeleteAll removes all key-value pairs for the context.  If allVersions is true,
-	// then all versions of the data instance are deleted.
-	DeleteAll(ctx Context, allVersions bool) error
-}
-
-// TKeyClassDeleter is an interface that allows deletion of a class of type-specific keys.
-type TKeyClassDeleter interface {
-	DeleteTKeyClass(ctx Context, tkc TKeyClass, allVersions bool) error
+	// DeleteAll removes all key-value pairs for the context.
+	DeleteAll(ctx Context) error
 }
 
 // KeyValueDB provides an interface to the simplest storage API: a key-value store.

@@ -28,7 +28,7 @@ import (
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 
-	"github.com/janelia-flyem/go/go-humanize"
+	humanize "github.com/janelia-flyem/go/go-humanize"
 
 	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
@@ -1000,6 +1000,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				server.BadRequest(w, r, err)
 				return
 			}
+			fmt.Printf("Sparsevol on %d returned %d bytes\n", label, len(data))
 			if data == nil {
 				w.WriteHeader(http.StatusNotFound)
 				return

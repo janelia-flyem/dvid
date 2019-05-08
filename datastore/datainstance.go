@@ -89,9 +89,35 @@ func (vctx *VersionedCtx) VersionedKeyValue(values []*storage.KeyValue) (*storag
 	return kv, err
 }
 
+// GetBestKeyVersion returns the key that most closely matches this context's version.
+// If no suitable key or a tombstone is encountered closed to the version, nil is returned.
+func (vctx *VersionedCtx) GetBestKeyVersion(keys []storage.Key) (storage.Key, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	// Set up a map[VersionID]Key
+	versionMap := make(kvVersions, len(keys))
+	for _, k := range keys {
+		vid, err := vctx.VersionFromKey(k)
+		if err != nil {
+			return nil, err
+		}
+		kv := storage.KeyValue{K: k}
+		versionMap[vid] = kvvNode{kv: &kv}
+		// fmt.Printf("Found version %d for %s\n", vid, ctx)
+	}
+
+	// Get the correct key-value for this version among all ancestors, some of which might have
+	// a value.
+	kv, _, err := versionMap.FindMatch(vctx.VersionID())
+	if kv == nil {
+		return nil, nil
+	}
+	return kv.K, err
+}
+
 // Head checks whether this the open head of the master branch
 func (vctx *VersionedCtx) Head() bool {
-
 	rootversion, _ := UUIDFromVersion(vctx.VersionID())
 	r, _ := manager.repos[rootversion]
 	node, _ := r.dag.nodes[vctx.VersionID()]

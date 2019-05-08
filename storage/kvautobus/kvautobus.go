@@ -807,12 +807,9 @@ func (db *KVAutobus) DeleteRange(ctx storage.Context, kStart, kEnd storage.TKey)
 }
 
 // DeleteAll deletes all key-value associated with a context (data instance and version).
-func (db *KVAutobus) DeleteAll(ctx storage.Context, allVersions bool) error {
+func (db *KVAutobus) DeleteAll(ctx storage.Context) error {
 	if ctx == nil {
 		return fmt.Errorf("Received nil context in DeleteAll()")
-	}
-	if !allVersions {
-		return fmt.Errorf("DeleteAll() not supported for immutable store unless for all versions")
 	}
 	keyBeg, keyEnd := ctx.KeyRange()
 	return db.deleteRange(keyBeg, keyEnd)

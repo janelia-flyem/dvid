@@ -131,13 +131,18 @@ func GetEngine(name string) Engine {
 	return e
 }
 
-// GetTestableBackend returns testable engines and a storage backend that combines all
-// testable engine configurations.
+// GetTestableBackend returns a testable engine and backend.
 func GetTestableBackend(kvMap, logMap DataMap) (map[Alias]TestableEngine, *Backend, error) {
+	// any engine used for testing should be added below.
+	kvTestPreferences := []string{"badger", "basholeveldb", "filelog", "filestore"}
 	var found bool
 	engines := make(map[Alias]TestableEngine)
 	backend := new(Backend)
-	for _, e := range availEngines {
+	for _, name := range kvTestPreferences {
+		e, ok := availEngines[name]
+		if !ok {
+			continue
+		}
 		tEng, ok := e.(TestableEngine)
 		if ok {
 			alias, err := tEng.AddTestConfig(backend)

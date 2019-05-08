@@ -71,13 +71,16 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 	// Asynchronously perform merge and handle any concurrent requests using the cache map until
 	// labelvol and labelblk are updated and consistent.
 	go func() {
+		fmt.Printf("Starting merge %v\n", m)
 		d.asyncMergeLabels(v, m)
+		fmt.Printf("Finished merge %v\n", m)
 
 		// Remove dirty labels and updating flag when done.
 		labels.MergeStop(d.getMergeIV(v), m)
 		d.StopUpdate()
 		dvid.Infof("Finished with merge of labels %s.\n", m)
 	}()
+	fmt.Printf("async return from merge on %v\n", m)
 
 	return nil
 }
@@ -155,6 +158,7 @@ func (d *Data) asyncMergeLabels(v dvid.VersionID, m labels.MergeOp) {
 		minTKey := NewTKey(fromLabel, dvid.MinIndexZYX.ToIZYXString())
 		maxTKey := NewTKey(fromLabel, dvid.MaxIndexZYX.ToIZYXString())
 		ctx := datastore.NewVersionedCtx(d, v)
+		fmt.Printf("Deleting all versions of label %d, key %v to %v\n", fromLabel, minTKey, maxTKey)
 		if err := store.DeleteRange(ctx, minTKey, maxTKey); err != nil {
 			dvid.Criticalf("Can't delete label %d RLEs: %v", fromLabel, err)
 		}
@@ -181,6 +185,7 @@ func (d *Data) asyncMergeLabels(v dvid.VersionID, m labels.MergeOp) {
 		if err != nil {
 			dvid.Errorf("Error serializing RLEs for label %d: %v\n", toLabel, err)
 		}
+		fmt.Printf("Updating new merged key %v\n", tk)
 		batch.Put(tk, serialization)
 	}
 	if err := batch.Commit(); err != nil {

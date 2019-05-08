@@ -64,6 +64,10 @@ type Context interface {
 type VersionedCtx interface {
 	Context
 
+	// UnversionedKeyPrefix returns a byte slice that is the common prefix
+	// for all versions of this particular TKey.
+	UnversionedKeyPrefix(TKey) Key
+
 	// UnversionedKey returns a unversioned Key and the version id
 	// as separate components.  This can be useful for storage systems
 	// like column stores where the row key is the unversioned Key and
@@ -94,6 +98,10 @@ type VersionedCtx interface {
 
 	// Returns upper bound key for versions.
 	MaxVersionKey(TKey) (Key, error)
+
+	// GetBestKeyVersion returns the key that most closely matches this context's version.
+	// If no suitable key or a tombstone is encountered closed to the version, nil is returned.
+	GetBestKeyVersion([]Key) (Key, error)
 
 	// VersionedKeyValue returns the key-value pair corresponding to this key's version
 	// given a list of key-value pairs across many versions.  If no suitable key-value
@@ -242,6 +250,10 @@ const (
 	dataKeyPrefix
 	blobKeyPrefix
 )
+
+func MetadataKeyPrefix() []byte {
+	return []byte{metadataKeyPrefix}
+}
 
 // ConstructBlobKey returns a blob Key, partitioned from other key spaces, for a given key.
 func ConstructBlobKey(k []byte) Key {
@@ -568,6 +580,14 @@ func (ctx *DataContext) String() string {
 }
 
 // ----- partial storage.VersionedCtx implementation
+
+// UnversionedKeyPrefix returns a byte slice that is the common prefix
+// for all versions of this particular TKey.
+func (ctx *DataContext) UnversionedKeyPrefix(tk TKey) Key {
+	key := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
+	key = append(key, tk...)
+	return Key(key)
+}
 
 // UnversionedKey returns a unversioned Key and the version id
 // as separate components.  This can be useful for storage systems

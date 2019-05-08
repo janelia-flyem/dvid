@@ -389,6 +389,9 @@ func TestBlockAPI(t *testing.T) {
 	server.TestHTTP(t, "POST", blockReq, bytes.NewBuffer(blockData))
 
 	// read same span of blocks
+	if err := datastore.BlockOnUpdating(uuid, "grayscale"); err != nil {
+		t.Fatalf("Error blocking on POST of grayscale: %v\n", err)
+	}
 	returnedData := server.TestHTTP(t, "GET", blockReq, nil)
 
 	// make sure blocks are same

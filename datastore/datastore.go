@@ -474,6 +474,7 @@ func DeleteConflicts(uuid dvid.UUID, data DataService, oldParents, newParents []
 	if manager == nil {
 		return ErrManagerNotInitialized
 	}
+	fmt.Printf("data %q, old parents %v, newParents %v\n", data, oldParents, newParents)
 
 	// Convert UUIDs to versions + bool for whether it's a child suitable for add deletions.
 	parents := make(map[dvid.VersionID]*extensionNode, len(oldParents))
@@ -511,12 +512,14 @@ func DeleteConflicts(uuid dvid.UUID, data DataService, oldParents, newParents []
 			kv := <-ch
 			if kv == nil {
 				curTK = nil
+				fmt.Printf("got nil kv\n")
 			} else {
 				curV, err = baseCtx.VersionFromKey(kv.K)
 				if err != nil {
 					dvid.Errorf("Can't decode key when deleting conflicts for %s", data.DataName())
 					continue
 				}
+				fmt.Printf("got version %d from kv.K %v, kv.V bytes %d\n", curV, kv.K, len(kv.V))
 
 				// If we have a different TKey, then process the batch of versions.
 				curTK, err = storage.TKeyFromKey(kv.K)
@@ -567,7 +570,9 @@ func DeleteConflicts(uuid dvid.UUID, data DataService, oldParents, newParents []
 	if err := store.RawRangeQuery(minKey, maxKey, keysOnly, ch, nil); err != nil {
 		return err
 	}
+	fmt.Printf("Finished with RawRangeQuery\n")
 	wg.Wait()
+	fmt.Printf("Finished with Wait()\n")
 
 	// Return the new parents which were needed for deletions.
 	//newParents = make([]dvid.UUID, len(oldParents))
