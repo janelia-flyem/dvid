@@ -1403,7 +1403,7 @@ func (d *Data) writeSVCounts(f *os.File, outPath string, v dvid.VersionID) {
 }
 
 func (d *Data) writeFileMappings(f *os.File, outPath string, v dvid.VersionID) {
-	if err := d.writeMappings(f, v); err != nil {
+	if err := d.writeMappings(f, v, false); err != nil {
 		dvid.Errorf("error writing mapping to file %q: %v\n", outPath, err)
 		return
 	}
@@ -1412,7 +1412,7 @@ func (d *Data) writeFileMappings(f *os.File, outPath string, v dvid.VersionID) {
 	}
 }
 
-func (d *Data) writeMappings(w io.Writer, v dvid.VersionID) error {
+func (d *Data) writeMappings(w io.Writer, v dvid.VersionID, binaryFormat bool) error {
 	timedLog := dvid.NewTimeLog()
 
 	svm, err := getMapping(d, v)
@@ -1447,8 +1447,18 @@ func (d *Data) writeMappings(w io.Writer, v dvid.VersionID) error {
 		if present {
 			numMappings++
 			if supervoxel != label && label != 0 {
-				line := fmt.Sprintf("%d %d\n", supervoxel, label)
-				if _, err := w.Write([]byte(line)); err != nil {
+				var err error
+				if binaryFormat {
+					err := binary.Write(w, binary.LittleEndian, supervoxel)
+					if err == nil {
+						err = binary.Write(w, binary.LittleEndian, label)
+					}
+				} else {
+					line := fmt.Sprintf("%d %d\n", supervoxel, label)
+					_, err = w.Write([]byte(line))
+				}
+
+				if err != nil {
 					numErrors++
 					if numErrors < 100 {
 						return fmt.Errorf("unable to write data for mapping of supervoxel %d -> %d, data %q: %v", supervoxel, label, d.DataName(), err)

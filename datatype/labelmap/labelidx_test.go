@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"encoding/binary"
 	"fmt"
 	"strings"
 	"testing"
@@ -137,6 +138,29 @@ func TestIngest(t *testing.T) {
 			expectedLabel, found := expected[supervoxel]
 			if !found {
 				t.Errorf("got unknown mapping in line %d: %d -> %d\n", i, supervoxel, label)
+			} else if expectedLabel != label {
+				t.Errorf("expected supervoxel %d -> label %d, got %d\n", supervoxel, expectedLabel, label)
+			}
+		}
+	}
+
+	// Same check as above, but with binary format
+	binaryMappingReq := fmt.Sprintf("%snode/%s/labels/mappings?format=binary", server.WebAPIPath, child1)
+	server.TestHTTP(t, "POST", binaryMappingReq, bytes.NewBuffer(serialization))
+
+	binaryMappingData := server.TestHTTP(t, "GET", binaryMappingReq, nil)
+	if len(binaryMappingData) != 3*8*2 {
+		t.Errorf("expected 3 pairs of uint64 but got %d bytes \n", len(binaryMappingData))
+	} else {
+		expected := map[uint64]uint64{1: 7, 2: 7, 3: 8}
+		r := bytes.NewReader(binaryMappingData)
+		for i := 0; i < 3; i++ {
+			var supervoxel, label uint64
+			binary.Read(r, binary.LittleEndian, &supervoxel)
+			binary.Read(r, binary.LittleEndian, &label)
+			expectedLabel, found := expected[supervoxel]
+			if !found {
+				t.Errorf("got unknown mapping in pair %d: %d -> %d\n", i, supervoxel, label)
 			} else if expectedLabel != label {
 				t.Errorf("expected supervoxel %d -> label %d, got %d\n", supervoxel, expectedLabel, label)
 			}
