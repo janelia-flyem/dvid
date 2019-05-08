@@ -1232,7 +1232,7 @@ POST <api URL>/node/<UUID>/<data name>/indices
 	A label index can be deleted as per the POST /index documentation by having an empty
 	blocks map.
 
-GET <api URL>/node/<UUID>/<data name>/mappings
+GET <api URL>/node/<UUID>/<data name>/mappings[?queryopts]
 
 	Streams space-delimited mappings for the given UUID, one mapping per line:
 
@@ -1243,6 +1243,11 @@ GET <api URL>/node/<UUID>/<data name>/mappings
 		supervoxelN mappedToN
 	
 	Note that only non-identity mappings are transmitted.
+
+	Query-string Options:
+
+		format: If format=binary, the data is returned as little-endian binary uint64 pairs,
+				in the same order as shown in the CSV format above.
 
 POST <api URL>/node/<UUID>/<data name>/mappings
 
@@ -3669,6 +3674,8 @@ func (d *Data) handleMappings(ctx *datastore.VersionedCtx, w http.ResponseWriter
 		defer server.ThrottledOpDone()
 	}
 
+	format := queryStrings.Get("format")
+
 	switch strings.ToLower(r.Method) {
 	case "post":
 		if r.Body == nil {
@@ -3689,7 +3696,7 @@ func (d *Data) handleMappings(ctx *datastore.VersionedCtx, w http.ResponseWriter
 		timedLog.Infof("HTTP POST %d merges (%s)", len(mappings.Mappings), r.URL)
 
 	case "get":
-		if err := d.writeMappings(w, ctx.VersionID()); err != nil {
+		if err := d.writeMappings(w, ctx.VersionID(), (format == "binary")); err != nil {
 			server.BadRequest(w, r, "unable to write mappings: %v", err)
 		}
 		timedLog.Infof("HTTP GET mappings (%s)", r.URL)
