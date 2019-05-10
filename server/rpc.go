@@ -106,13 +106,12 @@ EXPERIMENTAL COMMANDS
 				"8a90ec0d257c415cae29f8c46603bcae",
 				"a5682904bb824c06aba470c0a0cbffab",
 				...
-			},
+			],
 			"Metadata": true,
 		}
-
-		All ancestors of desired leaf nodes should be specified because
-		key-value pair transfer only occurs if the version in which
-		it was saved is specified on the list.  This is useful for editing 
+		If no versions are specified, a copy of all versions is done.  If some
+		versions are specified, key-value pair transfer only occurs if the version 
+		in which it was saved is specified on the list.  This is useful for editing 
 		a preexisting store with new versions.
 
 		If Metadata property is true, then if metadata exists in the old store,
@@ -528,11 +527,13 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 				return
 			}
 			go func() {
+				SetReadOnly(true)
 				if err = datastore.TransferData(uuid, srcStore, dstStore, configFName); err != nil {
 					dvid.Errorf("transfer-data error: %v\n", err)
 				}
+				SetReadOnly(false)
 			}()
-			reply.Text = fmt.Sprintf("Started data transfer of repo %s from store %q to %q\n", uuid, oldStoreName, dstStoreName)
+			reply.Text = fmt.Sprintf("Started data transfer of repo %s from store %q to %q.  Server now in read-only mode.\n", uuid, oldStoreName, dstStoreName)
 
 		case "limit-versions":
 			var configFName string

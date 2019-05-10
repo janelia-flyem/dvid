@@ -292,6 +292,9 @@ func TransferData(uuid dvid.UUID, srcStore, dstStore dvid.Store, configFName str
 	if err != nil {
 		return err
 	}
+	if len(okVersions) == 0 {
+		dvid.Infof("no specific versions specified for data transfer, so full copy will be done\n")
+	}
 	srcKVDB, ok := srcStore.(storage.OrderedKeyValueDB)
 	if !ok {
 		return fmt.Errorf("source store %q is not an ordered keyvalue store", srcStore)
@@ -323,16 +326,18 @@ func TransferData(uuid dvid.UUID, srcStore, dstStore dvid.Store, configFName str
 			kvTotal++
 			curBytes := uint64(len(kv.V) + len(kv.K))
 			bytesTotal += curBytes
-			if kv.K.IsMetadataKey() {
-				// transmit it all even though we might be filtering versions
-			} else if kv.K.IsDataKey() {
-				v, err := storage.VersionFromDataKey(kv.K)
-				if err != nil {
-					dvid.Errorf("couldn't get version from Key %v: %v\n", kv.K, err)
-					continue
-				}
-				if !okVersions[v] {
-					continue
+			if len(okVersions) != 0 {
+				if kv.K.IsMetadataKey() {
+					// transmit it all even though we might be filtering versions
+				} else if kv.K.IsDataKey() {
+					v, err := storage.VersionFromDataKey(kv.K)
+					if err != nil {
+						dvid.Errorf("couldn't get version from Key %v: %v\n", kv.K, err)
+						continue
+					}
+					if !okVersions[v] {
+						continue
+					}
 				}
 			}
 			kvSent++
