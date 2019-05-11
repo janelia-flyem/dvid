@@ -703,7 +703,6 @@ func (db *BadgerDB) ProcessRange(ctx storage.Context, kStart, kEnd storage.TKey,
 		if result.KeyValue == nil {
 			return nil
 		}
-		fmt.Printf("Processing key %v with value %d bytes\n", result.KeyValue.K, len(result.KeyValue.V))
 		if op != nil && op.Wg != nil {
 			op.Wg.Add(1)
 		}
