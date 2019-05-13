@@ -464,6 +464,18 @@ GET <api URL>/node/<UUID>/<data name>/labels[?queryopts]
 	                of previous level.  Level 0 is the highest resolution.
     hash          MD5 hash of request body content in hexidecimal string format.
 
+GET <api URL>/node/<UUID>/<data name>/history/<label>/<from UUID>/<to UUID>
+
+	Returns JSON for the all mutations pertinent to the label in the region of versions.
+	
+    Arguments:
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of labelmap instance.
+	label     	  The label ID as exists in the later version specified by <to UUID>.
+	from UUID     The UUID of the earlier version in time range.
+	to UUID       The UUID of the later version in time range.
+
+
 GET <api URL>/node/<UUID>/<data name>/mapping[?queryopts]
 
 	Returns JSON for mapped labels given a list of supervoxels.  Expects JSON in GET body:
@@ -3232,6 +3244,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "mappings":
 		d.handleMappings(ctx, w, r)
 
+	case "history":
+		d.handleHistory(ctx, w, r, parts)
+
 	default:
 		server.BadAPIRequest(w, r, d)
 	}
@@ -3704,6 +3719,45 @@ func (d *Data) handleMappings(ctx *datastore.VersionedCtx, w http.ResponseWriter
 	default:
 		server.BadRequest(w, r, "only POST action allowed for /mappings endpoint")
 	}
+}
+
+func (d *Data) handleHistory(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
+	// GET <api URL>/node/<UUID>/<data name>/history/<label>/<from UUID>/<to UUID>
+	if len(parts) < 7 {
+		server.BadRequest(w, r, "ERROR: DVID requires label ID, 'from' UUID, and 'to' UUID to follow 'history' command")
+		return
+	}
+	timedLog := dvid.NewTimeLog()
+
+	if strings.ToLower(r.Method) != "get" {
+		server.BadRequest(w, r, "only GET action allowed for /history endpoint")
+		return
+	}
+
+	label, err := strconv.ParseUint(parts[4], 10, 64)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	if label == 0 {
+		server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
+		return
+	}
+	fromUUID, _, err := datastore.MatchingUUID(parts[5])
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	toUUID, _, err := datastore.MatchingUUID(parts[6])
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+
+	if err := d.GetMutationHistory(w, fromUUID, toUUID, label); err != nil {
+		server.BadRequest(w, r, "unable to get mutation history: %v", err)
+	}
+	timedLog.Infof("HTTP GET history (%s)", r.URL)
 }
 
 func (d *Data) handlePseudocolor(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
