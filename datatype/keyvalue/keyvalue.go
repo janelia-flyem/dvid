@@ -110,6 +110,7 @@ GET  <api URL>/node/<UUID>/<data name>/keyrange/<key1>/<key2>
 GET  <api URL>/node/<UUID>/<data name>/key/<key>
 POST <api URL>/node/<UUID>/<data name>/key/<key>
 DEL  <api URL>/node/<UUID>/<data name>/key/<key> 
+HEAD <api URL>/node/<UUID>/<data name>/key/<key> 
 
 	Performs operations on a key-value pair depending on the HTTP verb.  
 
@@ -122,6 +123,10 @@ DEL  <api URL>/node/<UUID>/<data name>/key/<key>
 
 	The "Content-type" of the HTTP response (and usually the request) are
 	"application/octet-stream" for arbitrary binary data.
+
+	For HEAD returns:
+	200 (OK) if a sparse volume of the given label exists within any optional bounds.
+	204 (No Content) if there is no sparse volume for the given label within any optional bounds.
 
 	Arguments:
 
@@ -275,6 +280,19 @@ func (d *Data) GobEncode() ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// KeyExists returns true if a key is found.
+func (d *Data) KeyExists(ctx storage.Context, keyStr string) (bool, error) {
+	db, err := datastore.GetKeyValueDB(d)
+	if err != nil {
+		return false, err
+	}
+	tk, err := NewTKey(keyStr)
+	if err != nil {
+		return false, err
+	}
+	return db.Exists(ctx, tk)
 }
 
 func (d *Data) GetKeysInRange(ctx storage.Context, keyBeg, keyEnd string) ([]string, error) {
@@ -548,6 +566,19 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		keyStr := parts[4]
 
 		switch action {
+		case "head":
+			found, err := d.KeyExists(ctx, keyStr)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			if found {
+				w.WriteHeader(http.StatusOK)
+			} else {
+				w.WriteHeader(http.StatusNoContent)
+			}
+			return
+
 		case "get":
 			// Return value of single key
 			value, found, err := d.GetData(ctx, keyStr)

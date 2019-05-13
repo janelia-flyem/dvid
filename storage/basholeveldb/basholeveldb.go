@@ -432,46 +432,7 @@ func (db *LevelDB) metadataExists() (bool, error) {
 	return false, nil
 }
 
-// ---- KeyValueChecker interface ------
-
-// Exists returns true if the key exists.
-func (db *LevelDB) Exists(ctx storage.Context, tk storage.TKey) (found bool, err error) {
-	if db == nil {
-		return false, fmt.Errorf("Can't call Exists() on nil LevelDB")
-	}
-	if db.options == nil {
-		return false, fmt.Errorf("Can't call Exists() on db with nil options: %v", db)
-	}
-	if ctx == nil {
-		return false, fmt.Errorf("Received nil context in Exists()")
-	}
-	dvid.StartCgo()
-	ro := levigo.NewReadOptions()
-	it := db.ldb.NewIterator(ro)
-	defer func() {
-		it.Close()
-		dvid.StopCgo()
-	}()
-
-	var key storage.Key
-	if ctx.Versioned() {
-		vctx, ok := ctx.(storage.VersionedCtx)
-		if !ok {
-			return false, fmt.Errorf("Bad Exists(): context is versioned but doesn't fulfill interface: %v", ctx)
-		}
-		v := vctx.VersionID()
-		key = vctx.ConstructKeyVersion(tk, v)
-	} else {
-		key = ctx.ConstructKey(tk)
-	}
-	it.Seek(key)
-	if it.Valid() && bytes.Compare(it.Key(), key) == 0 {
-		return true, nil
-	}
-	return false, nil
-}
-
-// ---- OrderedKeyValueGetter interface ------
+// ---- KeyValueGetter interface ------
 
 // Get returns a value given a key.
 func (db *LevelDB) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
@@ -509,6 +470,53 @@ func (db *LevelDB) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 		storage.StoreValueBytesRead <- len(v)
 		return v, err
 	}
+}
+
+// Exists returns true if the key exists.
+func (db *LevelDB) Exists(ctx storage.Context, tk storage.TKey) (found bool, err error) {
+	if db == nil {
+		return false, fmt.Errorf("Can't call Exists() on nil LevelDB")
+	}
+	if db.options == nil {
+		return false, fmt.Errorf("Can't call Exists() on db with nil options: %v", db)
+	}
+	if ctx == nil {
+		return false, fmt.Errorf("Received nil context in Exists()")
+	}
+	dvid.StartCgo()
+	ro := levigo.NewReadOptions()
+	it := db.ldb.NewIterator(ro)
+	defer func() {
+		it.Close()
+		dvid.StopCgo()
+	}()
+
+	var key storage.Key
+	if ctx.Versioned() {
+		vctx, ok := ctx.(storage.VersionedCtx)
+		if !ok {
+			return false, fmt.Errorf("Bad Exists(): context is versioned but doesn't fulfill interface: %v", ctx)
+		}
+		// Get all versions of this key and return the most recent
+		values, err := db.getSingleKeyVersions(vctx, tk)
+		if err != nil {
+			return false, err
+		}
+		kv, err := vctx.VersionedKeyValue(values)
+		if err != nil {
+			return false, err
+		}
+		if kv != nil {
+			return true, nil
+		}
+	} else {
+		key = ctx.ConstructKey(tk)
+		it.Seek(key)
+		if it.Valid() && bytes.Compare(it.Key(), key) == 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // getSingleKeyVersions returns all versions of a key.  These key-value pairs will be sorted

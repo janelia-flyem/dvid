@@ -206,15 +206,12 @@ type KeyValueTimestampGetter interface {
 	GetWithTimestamp(ctx Context, k TKey) ([]byte, time.Time, error)
 }
 
-type KeyValueChecker interface {
-	// Exists returns true if the given key is present for that precise version.
-	// Currently only used with versionless tarsupervoxels.
-	Exists(ctx Context, k TKey) (bool, error)
-}
-
 type KeyValueGetter interface {
 	// Get returns a value given a key.
 	Get(ctx Context, k TKey) ([]byte, error)
+
+	// Exists returns true if a key has been set.
+	Exists(ctx Context, k TKey) (bool, error)
 }
 
 type OrderedKeyValueGetter interface {

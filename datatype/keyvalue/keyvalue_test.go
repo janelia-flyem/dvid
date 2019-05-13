@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -165,11 +166,21 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 		t.Fatalf("Returned new data instance is not keyvalue.Data\n")
 	}
 
-	// PUT a value
 	key1 := "mykey"
-	value1 := "some stuff"
 	key1req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), key1)
+	resp := server.TestHTTPResponse(t, "HEAD", key1req, nil)
+	if resp.Code != http.StatusNoContent {
+		t.Errorf("HEAD on %s did not return 204 (No Content).  Status = %d\n", key1req, resp.Code)
+	}
+
+	// PUT a value
+	value1 := "some stuff"
 	server.TestHTTP(t, "POST", key1req, strings.NewReader(value1))
+
+	resp = server.TestHTTPResponse(t, "HEAD", key1req, nil)
+	if resp.Code != http.StatusOK {
+		t.Errorf("HEAD on %s did not return 200 (OK).  Status = %d\n", key1req, resp.Code)
+	}
 
 	// Get back k/v
 	returnValue := server.TestHTTP(t, "GET", key1req, nil)
@@ -183,9 +194,20 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 
 	// Add 2nd k/v
 	key2 := "my2ndkey"
-	value2 := "more good stuff"
 	key2req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), key2)
+
+	resp = server.TestHTTPResponse(t, "HEAD", key2req, nil)
+	if resp.Code != http.StatusNoContent {
+		t.Errorf("HEAD on %s did not return 204 (No Content).  Status = %d\n", key2req, resp.Code)
+	}
+
+	value2 := "more good stuff"
 	server.TestHTTP(t, "POST", key2req, strings.NewReader(value2))
+
+	resp = server.TestHTTPResponse(t, "HEAD", key2req, nil)
+	if resp.Code != http.StatusOK {
+		t.Errorf("HEAD on %s did not return 200 (OK).  Status = %d\n", key2req, resp.Code)
+	}
 
 	// Add 3rd k/v
 	key3 := "heresanotherkey"

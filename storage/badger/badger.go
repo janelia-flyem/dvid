@@ -291,48 +291,7 @@ func (db *BadgerDB) metadataExists() (bool, error) {
 	return found, nil
 }
 
-// ---- KeyValueChecker interface ------
-
-// Exists returns true if the key exists for exactly that version (not inherited).
-func (db *BadgerDB) Exists(ctx storage.Context, tk storage.TKey) (found bool, err error) {
-	if db == nil {
-		return false, fmt.Errorf("Can't call Exists() on nil BadgerDB")
-	}
-	if db.options == nil {
-		return false, fmt.Errorf("Can't call Exists() on db with nil options: %v", db)
-	}
-	if ctx == nil {
-		return false, fmt.Errorf("Received nil context in Exists()")
-	}
-	var key storage.Key
-	if ctx.Versioned() {
-		vctx, ok := ctx.(storage.VersionedCtx)
-		if !ok {
-			return false, fmt.Errorf("Bad Exists(): context is versioned but doesn't fulfill interface: %v", ctx)
-		}
-		v := vctx.VersionID()
-		key = vctx.ConstructKeyVersion(tk, v)
-	} else {
-		key = ctx.ConstructKey(tk)
-	}
-	k := []byte(key)
-	var retKey []byte
-	db.bdp.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false // key only
-		it := txn.NewIterator(opts)
-		defer it.Close()
-		it.Seek(k)
-		if it.Valid() {
-			item := it.Item()
-			retKey = item.KeyCopy(nil)
-		}
-		return nil
-	})
-	return bytes.Equal(k, retKey), nil
-}
-
-// ---- OrderedKeyValueGetter interface ------
+// ---- KeyValueGetter interface ------
 
 // Get returns a value given a key.
 func (db *BadgerDB) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
@@ -390,6 +349,55 @@ func (db *BadgerDB) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 		})
 		storage.StoreValueBytesRead <- len(v)
 		return v, err
+	}
+}
+
+// Exists returns true if the key exists for exactly that version (not inherited).
+func (db *BadgerDB) Exists(ctx storage.Context, tk storage.TKey) (exists bool, err error) {
+	if db == nil {
+		return false, fmt.Errorf("Can't call Exists() on nil BadgerDB")
+	}
+	if db.options == nil {
+		return false, fmt.Errorf("Can't call Exists() on db with nil options: %v", db)
+	}
+	if ctx == nil {
+		return false, fmt.Errorf("Received nil context in Exists()")
+	}
+	var key storage.Key
+	if ctx.Versioned() {
+		vctx, ok := ctx.(storage.VersionedCtx)
+		if !ok {
+			return false, fmt.Errorf("Bad Exists(): context is versioned but doesn't fulfill interface: %v", ctx)
+		}
+		keys, err := db.getKeyVersions(vctx, tk)
+		if err != nil {
+			return false, err
+		}
+		key, err := vctx.GetBestKeyVersion(keys)
+		if err != nil {
+			return false, err
+		}
+		if key == nil {
+			return false, nil
+		}
+		return true, nil
+	} else {
+		key = ctx.ConstructKey(tk)
+		k := []byte(key)
+		var retKey []byte
+		db.bdp.View(func(txn *badger.Txn) error {
+			opts := badger.DefaultIteratorOptions
+			opts.PrefetchValues = false // key only
+			it := txn.NewIterator(opts)
+			defer it.Close()
+			it.Seek(k)
+			if it.Valid() {
+				item := it.Item()
+				retKey = item.KeyCopy(nil)
+			}
+			return nil
+		})
+		return bytes.Equal(k, retKey), nil
 	}
 }
 

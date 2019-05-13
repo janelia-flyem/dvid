@@ -258,29 +258,6 @@ func (fs *fileStore) GetWithTimestamp(ctx storage.Context, tk storage.TKey) (dat
 	return
 }
 
-// ---- KeyValueChecker interface -----
-
-// Exists returns true if the key exists.
-func (fs *fileStore) Exists(ctx storage.Context, tk storage.TKey) (found bool, err error) {
-	if fs == nil {
-		err = fmt.Errorf("bad fileStore specified for Exists on %s", ctx)
-		return
-	}
-	var dirpath, filename string
-	if dirpath, filename, err = fs.filepathFromTKey(ctx, tk); err != nil {
-		return
-	}
-	fpath := filepath.Join(dirpath, filename)
-	_, err = os.Stat(fpath)
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 // ---- KeyValueSetter interface ------
 
 // Put writes a value with given key.
@@ -306,6 +283,27 @@ func (fs *fileStore) Put(ctx storage.Context, tk storage.TKey, v []byte) error {
 	}
 	f.Close()
 	return nil
+}
+
+// Exists returns true if the key exists.
+func (fs *fileStore) Exists(ctx storage.Context, tk storage.TKey) (found bool, err error) {
+	if fs == nil {
+		err = fmt.Errorf("bad fileStore specified for Exists on %s", ctx)
+		return
+	}
+	var dirpath, filename string
+	if dirpath, filename, err = fs.filepathFromTKey(ctx, tk); err != nil {
+		return
+	}
+	fpath := filepath.Join(dirpath, filename)
+	_, err = os.Stat(fpath)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // Delete removes a value with given key.

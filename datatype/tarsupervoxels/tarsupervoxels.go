@@ -507,7 +507,6 @@ func (d *Data) handleExistence(uuid dvid.UUID, w http.ResponseWriter, r *http.Re
 		server.BadRequest(w, r, err)
 		return
 	}
-	checker, isChecker := db.(storage.KeyValueChecker)
 	ctx, err := d.getRootContext(uuid)
 	if err != nil {
 		server.BadRequest(w, r, err)
@@ -526,20 +525,11 @@ func (d *Data) handleExistence(uuid dvid.UUID, w http.ResponseWriter, r *http.Re
 			server.BadRequest(w, r, err)
 			return
 		}
-		if isChecker {
-			dataPresent, err := checker.Exists(ctx, tk)
-			if err != nil || !dataPresent {
-				fmt.Fprintf(buf, "false")
-			} else {
-				fmt.Fprintf(buf, "true")
-			}
+		dataPresent, err := db.Exists(ctx, tk)
+		if err != nil || !dataPresent {
+			fmt.Fprintf(buf, "false")
 		} else {
-			data, err := db.Get(ctx, tk)
-			if err != nil || len(data) == 0 {
-				fmt.Fprintf(buf, "false")
-			} else {
-				fmt.Fprintf(buf, "true")
-			}
+			fmt.Fprintf(buf, "true")
 		}
 		sep = true
 	}
@@ -576,7 +566,6 @@ func (d *Data) handleMissing(uuid dvid.UUID, w http.ResponseWriter, label uint64
 	if len(supervoxels) == 0 {
 		return fmt.Errorf("label %d has no supervoxels", label)
 	}
-	checker, isChecker := db.(storage.KeyValueChecker)
 
 	var missing []string
 	for supervoxel := range supervoxels {
@@ -584,22 +573,12 @@ func (d *Data) handleMissing(uuid dvid.UUID, w http.ResponseWriter, label uint64
 		if err != nil {
 			return err
 		}
-		if isChecker {
-			dataPresent, err := checker.Exists(ctx, tk)
-			if err != nil {
-				return err
-			}
-			if !dataPresent {
-				missing = append(missing, fmt.Sprintf("%d", supervoxel))
-			}
-		} else {
-			data, err := db.Get(ctx, tk)
-			if err != nil {
-				return err
-			}
-			if len(data) == 0 {
-				missing = append(missing, fmt.Sprintf("%d", supervoxel))
-			}
+		dataPresent, err := db.Exists(ctx, tk)
+		if err != nil {
+			return err
+		}
+		if !dataPresent {
+			missing = append(missing, fmt.Sprintf("%d", supervoxel))
 		}
 	}
 	out := "[" + strings.Join(missing, ",") + "]"
@@ -615,7 +594,6 @@ func (d *Data) checkTarfile(w http.ResponseWriter, uuid dvid.UUID, label uint64)
 	if err != nil {
 		return err
 	}
-	checker, isChecker := db.(storage.KeyValueChecker)
 	ldata := d.getSyncedLabels()
 	if ldata == nil {
 		return fmt.Errorf("data %q is not synced with any labelmap instance", d.DataName())
@@ -641,23 +619,12 @@ func (d *Data) checkTarfile(w http.ResponseWriter, uuid dvid.UUID, label uint64)
 		if err != nil {
 			return err
 		}
-		if isChecker {
-			allPresent, err = checker.Exists(ctx, tk)
-			if err != nil {
-				return err
-			}
-			if !allPresent {
-				break
-			}
-		} else {
-			data, err := db.Get(ctx, tk)
-			if err != nil {
-				return err
-			}
-			if len(data) == 0 {
-				allPresent = false
-				break
-			}
+		allPresent, err = db.Exists(ctx, tk)
+		if err != nil {
+			return err
+		}
+		if !allPresent {
+			break
 		}
 	}
 	if !allPresent {
