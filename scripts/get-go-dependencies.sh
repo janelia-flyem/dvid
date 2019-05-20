@@ -90,16 +90,22 @@ go get github.com/gogo/protobuf/gogoproto
 go get github.com/gogo/protobuf/protoc-gen-gogoslick
 
 # gofuse
-go get bazil.org/fuse
+# go get bazil.org/fuse
 
 # gobolt
-go get github.com/boltdb/bolt
+# go get github.com/boltdb/bolt
 
 # gomdb
-go get github.com/DocSavage/gomdb
+#go get github.com/DocSavage/gomdb
 
 # badger
 go get github.com/dgraph-io/badger/...
+
+# freecache
+go get github.com/coocood/freecache
+
+# Openstack Swift
+go get github.com/ncw/swift
 
 # kafka
 CONFLUENTINC_DIR=${GOPATH}/src/github.com/confluentinc
@@ -136,11 +142,5 @@ if [ $(uname) == "Linux" ]; then
 else
     go build github.com/confluentinc/confluent-kafka-go/kafka
 fi
-
-# freecache
-go get github.com/coocood/freecache
-
-# Openstack Swift
-go get github.com/ncw/swift
 
 echo "Done fetching third-party go sources."

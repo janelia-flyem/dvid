@@ -16,7 +16,7 @@ set -e
 THIS_SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd ${THIS_SCRIPT_DIR}
 
-GO_VERSION=1.11
+GO_VERSION=1.12.5
 
 if [[ $(uname) == "Darwin" ]]; then
     COMPILER_PACKAGE=clangxx_osx-64
