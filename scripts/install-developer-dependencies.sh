@@ -11,34 +11,20 @@ if [[ "${CONDA_PREFIX}" == "$(conda info --base)" ]]; then
 fi
 
 
-if conda list nocgo | grep nocgo; then
-    1>&2 echo "*** ERROR: ***"
-    1>&2 echo "You have go-nocgo (or an associated package) installed in this environment."
-    1>&2 echo "That is not compatible with go-cgo, which is necessary for DVID."
-    1>&2 echo "Please remove all 'nocgo' packages, or activate a different environment."
-    1>&2 echo "**************"
-    exit
-fi
-
 set -e
 
 THIS_SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd ${THIS_SCRIPT_DIR}
 
-GO_VERSION=1.11.9
+GO_VERSION=1.12.5
 
 if [[ $(uname) == "Darwin" ]]; then
-    GO_PLATFORM_PKG=go-cgo_osx-64
-    
-    # For now, we don't use Anaconda's clang compiler, since it doesn't
-    # seem to work on Bill's machine with the latest MacOS.
-    #COMPILER_PACKAGE=clangxx_osx-64
+    COMPILER_PACKAGE=clangxx_osx-64
 else
-    GO_PLATFORM_PKG=go-cgo_linux-64
     COMPILER_PACKAGE=gxx_linux-64
 fi
 
-CMD="conda install -y snappy basholeveldb lz4-c 'librdkafka>=0.11.4' go-cgo=${GO_VERSION} ${GO_PLATFORM_PKG} pkg-config ${COMPILER_PACKAGE}"
+CMD="conda install -y snappy basholeveldb lz4-c 'librdkafka>=0.11.4' go=${GO_VERSION} pkg-config ${COMPILER_PACKAGE}"
 echo ${CMD}
 ${CMD}
 
