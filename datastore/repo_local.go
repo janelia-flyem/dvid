@@ -2652,6 +2652,9 @@ func (d *dagT) getAncestryByBranch(branch string) (ancestry []dvid.UUID, err err
 	for _, node := range d.nodes {
 		if node.branch == branch || (branch == "master" && node.branch == "") {
 			if len(node.children) == 0 {
+				if leaf != nil {
+					return nil, fmt.Errorf("multiple paths for branch %q were detected", branch)
+				}
 				leaf = node
 			}
 		}

@@ -252,6 +252,9 @@ Repo-Level REST endpoints
 	Returns a JSON list of version UUIDs for the given branch name, starting with the
 	current leaf and working back to the root.  Use "master" for the default branch.
 
+	If a repository predates the introduction of branch names and has multiple paths
+	for the given branch name, the endpoint will return an Bad Request Error (400).
+
  POST /api/repo/{uuid}/merge
 
 	Creates a conflict-free merge of a set of committed parent UUIDs into a child.  Note
