@@ -26,7 +26,7 @@ requirements:
   # or incorporated into the executable in any way.
   build:
     
-    - go=1.11 # From flyem-forge, not conda-forge!
+    - go=1.12 # From flyem-forge, not conda-forge!
 
     # Anaconda's gcc build -- on Linux only for now
     # (getting their clang binary to work on recent versions of MacOS is
