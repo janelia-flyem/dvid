@@ -176,7 +176,13 @@ source:
     git_tag: master
     folder:  src/github.com/coocood/freecache
 
-    # Openstack Swift
+  # Openstack Swift
   - git_url: https://github.com/ncw/swift
     git_tag: master
     folder:  src/github.com/ncw/swift
+
+  # badger
+  - git_url: https://github.com/dgraph-io/badger
+    git_tag: v2.0.0-rc.2 # Don't change this without also changing it in get-go-dependencies.sh!!!
+    folder:  src/github.com/dgraph-io/badger
+    
