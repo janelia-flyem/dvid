@@ -19,7 +19,7 @@ Alternatively, [conda](https://conda.io/docs) users can simply install the `dvid
 Install:
 
 ```
-$ conda create -n dvidenv -c flyem-forge -c conda-forge/label/cf201901 dvid
+$ conda create -n dvidenv -c flyem-forge -c conda-forge dvid
 ```
 
 Run:
@@ -64,13 +64,13 @@ Then Install `conda` (specifically the [miniconda distribution][miniconda]) and 
     $ conda install -n base -c defaults conda-build anaconda-client
     ```
     
-3. Add `flyem-forge` and `conda-forge/label/cf201901` to your `.condarc` file:
+3. Add `flyem-forge` and `conda-forge` to your `.condarc` file:
 
     ```
      $ cat ~/.condarc
      channels:
      - flyem-forge
-     - conda-forge/label/cf201901
+     - conda-forge
      - defaults
     ```
 
@@ -198,7 +198,7 @@ Build Maintenance Notes
 
 - New compiled (C/C++) dependencies should be packaged for conda and uploaded
   to the `flyem-forge` channel, if they aren't already available on the 
-  `conda-forge/label/cf201901` channel. Then list them in the `requirements` sections of
+  `conda-forge` channel. Then list them in the `requirements` sections of
   `scripts/conda-recipe/meta.yaml`.  Also add them to the appropriate line of
   `scripts/install-developer-dependencies.sh`.
 
