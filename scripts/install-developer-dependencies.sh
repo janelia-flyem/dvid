@@ -24,7 +24,7 @@ else
     COMPILER_PACKAGE=gxx_linux-64
 fi
 
-CMD="conda install -y snappy basholeveldb lz4-c 'librdkafka>=0.11.4' go=${GO_VERSION} pkg-config ${COMPILER_PACKAGE}"
+CMD="conda install -y -c flyem-forge -c conda-forge snappy basholeveldb lz4-c 'librdkafka>=0.11.4' go=${GO_VERSION} pkg-config ${COMPILER_PACKAGE}"
 echo ${CMD}
 ${CMD}
 
