@@ -4178,6 +4178,10 @@ func (d *Data) handleSparsevolSize(ctx *datastore.VersionedCtx, w http.ResponseW
 			server.BadRequest(w, r, "error limiting label %d index to supervoxel %d: %v\n", idx.Label, label, err)
 			return
 		}
+		if idx == nil || len(idx.Blocks) == 0 {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 	}
 
 	w.Header().Set("Content-type", "application/json")
