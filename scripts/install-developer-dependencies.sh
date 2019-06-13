@@ -19,7 +19,9 @@ cd ${THIS_SCRIPT_DIR}
 GO_VERSION=1.12.5
 
 if [[ $(uname) == "Darwin" ]]; then
-    COMPILER_PACKAGE=clangxx_osx-64
+    # Force MacOS builds to use current Xcode rather than download.
+    # COMPILER_PACKAGE=clangxx_osx-64
+    echo "skipping install of clang for MacOSX"
 else
     COMPILER_PACKAGE=gxx_linux-64
 fi
