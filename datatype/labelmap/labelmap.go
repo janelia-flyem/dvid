@@ -1465,6 +1465,18 @@ type Data struct {
 	voxelMu sync.Mutex // Only allow voxel-level label mutation ops sequentially.
 }
 
+// --- LogReadable interface ---
+
+func (d *Data) ReadLogRequired() bool {
+	return true
+}
+
+// --- LogWritable interface ---
+
+func (d *Data) WriteLogRequired() bool {
+	return true
+}
+
 // GetMaxDownresLevel returns the number of down-res levels, where level 0 = high-resolution
 // and each subsequent level has one-half the resolution.
 func (d *Data) GetMaxDownresLevel() uint8 {
@@ -1544,9 +1556,16 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 	if _, found := c.Get("Compression"); !found {
 		c.Set("Compression", "gzip")
 	}
+	// Note that labelmap essentially piggybacks off the associated imageblk Data.
 	imgblkData, err := dtype.Type.NewData(uuid, id, name, c)
 	if err != nil {
 		return nil, err
+	}
+	if imgblkData.GetWriteLog() == nil {
+		return nil, fmt.Errorf("labelmap %q instance needs a readable log yet has none assigned", name)
+	}
+	if imgblkData.GetReadLog() == nil {
+		return nil, fmt.Errorf("labelmap %q instance needs a readable log yet has none assigned", name)
 	}
 
 	data := &Data{

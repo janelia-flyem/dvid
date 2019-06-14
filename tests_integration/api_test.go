@@ -237,7 +237,8 @@ func TestReloadMetadata(t *testing.T) {
 	// Add data instances
 	var config dvid.Config
 	server.CreateTestInstance(t, uuid, "keyvalue", "foo", config)
-	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelblk", "labeldata", config)
+	server.CreateTestInstance(t, uuid, "labelmap", "segmentation", config)
 	server.CreateTestInstance(t, uuid, "roi", "someroi", config)
 
 	// Reload the metadata
@@ -268,9 +269,33 @@ func TestReloadMetadata(t *testing.T) {
 	if err != nil {
 		t.Errorf("Couldn't get keyvalue data instance after reload\n")
 	}
-	_, err = datastore.GetDataByUUIDName(uuid, "labels")
+	_, err = datastore.GetDataByUUIDName(uuid, "labeldata")
 	if err != nil {
 		t.Errorf("Couldn't get labelblk data instance after reload\n")
+	}
+	_, err = datastore.GetDataByUUIDName(uuid, "segmentation")
+	if err != nil {
+		t.Errorf("Couldn't get labelmap data instance after reload\n")
+	}
+	_, err = datastore.GetDataByUUIDName(uuid, "someroi")
+	if err != nil {
+		t.Errorf("Couldn't get roi data instance after reload\n")
+	}
+
+	datastore.CloseReopenTest()
+
+	// Make sure the data instances are still there.
+	_, err = datastore.GetDataByUUIDName(uuid, "foo")
+	if err != nil {
+		t.Errorf("Couldn't get keyvalue data instance after reload\n")
+	}
+	_, err = datastore.GetDataByUUIDName(uuid, "labeldata")
+	if err != nil {
+		t.Errorf("Couldn't get labelblk data instance after reload\n")
+	}
+	_, err = datastore.GetDataByUUIDName(uuid, "segmentation")
+	if err != nil {
+		t.Errorf("Couldn't get labelmap data instance after reload\n")
 	}
 	_, err = datastore.GetDataByUUIDName(uuid, "someroi")
 	if err != nil {

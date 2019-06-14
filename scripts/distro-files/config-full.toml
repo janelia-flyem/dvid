@@ -74,10 +74,13 @@ blobstore = "raid6"
 [backend]
     [backend.default]
     store = "raid6"
-    log = "mutationlog"
 
-    [backend.labelblk]
+    [backend.labelblk]   # This maps all instances of labelblk type
     store = "ssd"
+
+    [backend.labelmap]   # This maps all instances of labelmap type
+    store = "ssd"
+    log = "mutationlog"  # Note a log must be specified if you are using labelmap type.
 
     [backend."grayscale:99ef22cd85f143f58a623bd22aad0ef7"]
     store = "kvautobus"

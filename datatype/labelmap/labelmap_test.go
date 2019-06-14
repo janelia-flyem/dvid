@@ -956,8 +956,8 @@ func TestLabelarrayRepoPersistence(t *testing.T) {
 	}
 	config.Set("BlockSize", "64,32,16")
 	dataservice, err = datastore.NewData(uuid, labelsT, "mylabels", config)
-	if err != nil {
-		t.Errorf("Unable to create labels instance: %v\n", err)
+	if err != nil || dataservice == nil {
+		t.Fatalf("Unable to create labels instance: %v\n", err)
 	}
 	lbls, ok := dataservice.(*Data)
 	if !ok {

@@ -2,6 +2,9 @@
 # See config-multidb.toml for full range of configurations including
 # email notifications, authentication, and backend assignments.
 
+# NOTE: If you plan to use labelmap type, you MUST specify a log and therefore
+# need to specify both "backend" and "store" sections.  See config-full.toml.
+
 [server]
 # host = "mygreatserver.test.com"  # Lets you specify a user-friendly alias for help messages.
 httpAddress = "localhost:8000"

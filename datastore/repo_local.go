@@ -136,6 +136,20 @@ func Initialize(initMetadata bool, iconfig Config) error {
 		if data.IsDeleted() {
 			continue
 		}
+		logwriter, ok := data.(storage.LogWritable)
+		if ok && logwriter.WriteLogRequired() {
+			writeLog := logwriter.GetWriteLog()
+			if writeLog == nil {
+				return fmt.Errorf("data %q (type %s) requires a write log yet has none assigned", data.DataName(), data.TypeName())
+			}
+		}
+		logreader, ok := data.(storage.LogReadable)
+		if ok && logreader.ReadLogRequired() {
+			readLog := logreader.GetReadLog()
+			if readLog == nil {
+				return fmt.Errorf("data %q (type %s) requires a read log yet has none assigned", data.DataName(), data.TypeName())
+			}
+		}
 		d, ok := data.(Initializer)
 		if ok {
 			go d.Initialize()

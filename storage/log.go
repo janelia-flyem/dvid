@@ -33,10 +33,12 @@ type ReadLog interface {
 }
 
 type LogReadable interface {
+	ReadLogRequired() bool
 	GetReadLog() ReadLog
 }
 
 type LogWritable interface {
+	WriteLogRequired() bool
 	GetWriteLog() WriteLog
 }
 
