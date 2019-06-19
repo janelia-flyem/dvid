@@ -26,7 +26,7 @@ type testData struct {
 	name       dvid.InstanceName
 	instanceID dvid.InstanceID
 	kvStore    dvid.Store
-	logStore   WriteLog
+	logStore   dvid.Store
 	syncData   dvid.UUIDSet
 	mutID      uint64
 	tags       map[string]string
@@ -112,7 +112,7 @@ func (d *testData) SetKVStore(kvStore dvid.Store) {
 	d.kvStore = kvStore
 }
 
-func (d *testData) SetLogStore(logStore WriteLog) {
+func (d *testData) SetLogStore(logStore dvid.Store) {
 	d.logStore = logStore
 }
 

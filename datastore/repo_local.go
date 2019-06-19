@@ -550,13 +550,18 @@ func (m *repoManager) loadVersion0() error {
 			m.iids[dataservice.InstanceID()] = dataservice
 			m.dataByUUID[dataservice.DataUUID()] = dataservice
 
-			// Cache the assigned store.
+			// Cache the assigned store and log
 			typename := dataservice.TypeName()
 			store, err := storage.GetAssignedStore(dataname, dataservice.RootUUID(), dataservice.Tags(), typename)
 			if err != nil {
 				return err
 			}
 			dataservice.SetKVStore(store)
+			lstore, err := storage.GetAssignedLog(dataname, dataservice.RootUUID(), dataservice.Tags(), typename)
+			if err != nil {
+				return err
+			}
+			dataservice.SetLogStore(lstore)
 
 			// Initialize any dataservice that's initializable, e.g., start sync processing goroutines.
 			initializer, initializable := dataservice.(DataInitializer)

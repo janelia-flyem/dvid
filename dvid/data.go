@@ -292,8 +292,8 @@ type Data interface {
 // DataSetter provides interface for setting main properties of Data during
 // initialization and remote transmission.
 type DataSetter interface {
-	// SetKVStore sets the data store used for this data.
 	SetKVStore(Store)
+	SetLogStore(Store)
 
 	SetInstanceID(InstanceID)
 	SetDataUUID(UUID)

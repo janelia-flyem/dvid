@@ -449,7 +449,12 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 	if d.logStore != nil {
 		logStore = d.logStore.String()
 	} else {
-		logStore = "no mutation log set"
+		lstore := d.GetWriteLog()
+		if lstore == nil {
+			logStore = "no mutation log set"
+		} else {
+			logStore = lstore.String()
+		}
 	}
 	return json.Marshal(struct {
 		TypeName    dvid.TypeString
@@ -656,7 +661,7 @@ func (d *Data) SetKVStore(kvStore dvid.Store) {
 	d.kvStore = kvStore
 }
 
-func (d *Data) SetLogStore(logStore storage.WriteLog) {
+func (d *Data) SetLogStore(logStore dvid.Store) {
 	d.logStore = logStore
 }
 

@@ -126,6 +126,7 @@ func GetAssignedStore(dataname dvid.InstanceName, root dvid.UUID, tags map[strin
 	}
 	dataid := dvid.GetDataSpecifier(dataname, root)
 	store, found := manager.instanceStore[dataid]
+	dvid.Infof("GetAssignedStore(%s): %t %s\n", dataname, found, store)
 	var err error
 	if !found {
 		// see if any tags have been assigned a store.
