@@ -1214,7 +1214,7 @@ POST <api URL>/node/<UUID>/<data name>/index/<label>
 GET <api URL>/node/<UUID>/<data name>/indices
 
 	Allows bulk GET of indices (blocks per supervoxel and their voxel count) by
-	including in the GET body a JSON array of requested labels:
+	including in the GET body a JSON array of requested labels (max 50,000 labels):
 
 		[ 1028193, 883177046, ... ]
 
@@ -3657,6 +3657,10 @@ func (d *Data) handleIndices(ctx *datastore.VersionedCtx, w http.ResponseWriter,
 		var labelList []uint64
 		if err := json.Unmarshal(dataIn, &labelList); err != nil {
 			server.BadRequest(w, r, fmt.Sprintf("expected JSON label list for GET /indices: %v", err))
+			return
+		}
+		if len(labelList) > 50000 {
+			server.BadRequest(w, r, fmt.Sprintf("only 50,000 label indices can be returned at a time, %d given", len(labelList)))
 			return
 		}
 		var indices proto.LabelIndices
