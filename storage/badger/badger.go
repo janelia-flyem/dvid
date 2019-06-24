@@ -1066,7 +1066,7 @@ func (batch *goBatch) Delete(tk storage.TKey) {
 	key := batch.ctx.ConstructKey(tk)
 	if batch.vctx != nil {
 		tombstone := batch.vctx.TombstoneKey(tk) // This will now have current version
-		batch.WriteBatch.Set(tombstone, dvid.EmptyValue(), 0)
+		batch.WriteBatch.Set(tombstone, dvid.EmptyValue())
 	}
 	// fmt.Printf("Batch delete of key %v\n", key)
 	if err := batch.WriteBatch.Delete(key); err != nil {
@@ -1087,7 +1087,7 @@ func (batch *goBatch) Put(tk storage.TKey, v []byte) {
 	}
 	storage.StoreKeyBytesWritten <- len(key)
 	storage.StoreValueBytesWritten <- len(v)
-	if err := batch.WriteBatch.Set(key, v, 0); err != nil {
+	if err := batch.WriteBatch.Set(key, v); err != nil {
 		dvid.Criticalf("unable to write key-value with key %v, value %d bytes: %v\n", key, len(v), err)
 	}
 }
