@@ -227,8 +227,32 @@ func (s *Store) getObject(key storage.Key) ([]byte, error) {
 		time.Sleep(delay)
 		delay *= 2
 	}
+}
 
-	return nil, nil
+// objectExists returns true if an object for the given key, retrying a few times if
+// there is an error. This returns info about the object, which is presumably faster
+// than actually reading the object.
+func (s *Store) objectExists(key storage.Key) (bool, error) {
+	delay := initialDelay
+
+	for {
+		// Attempt to get the object info
+		rateLimit <- struct{}{}
+		_, _, err := s.conn.Object(s.container, encodeKey(key))
+		<-rateLimit
+		if err == swift.ObjectNotFound {
+			return false, nil
+		} else if err == nil {
+			return true, nil
+		}
+
+		// There was an error. Retry with increasing delays.
+		if delay > maximumDelay {
+			return false, fmt.Errorf(`Maximum object info download retries exceeded: %s`, err)
+		}
+		time.Sleep(delay)
+		delay *= 2
+	}
 }
 
 /*********** KeyValueGetter interface ***********/
@@ -273,6 +297,46 @@ func (s *Store) Get(context storage.Context, key storage.TKey) ([]byte, error) {
 
 	// Load the object.
 	return s.getObject(accessKey)
+}
+
+// Exists returns true if a key exists.
+func (s *Store) Exists(context storage.Context, key storage.TKey) (bool, error) {
+	var accessKey storage.Key
+	if context.Versioned() {
+		versionedContext, ok := context.(storage.VersionedCtx)
+		if !ok {
+			return false, errors.New("Context is marked as versioned but isn't actually versioned")
+		}
+
+		// Determine the right key from a range of keys.
+		startKey, err := versionedContext.MinVersionKey(key)
+		if err != nil {
+			return false, err
+		}
+		endKey, err := versionedContext.MaxVersionKey(key)
+		if err != nil {
+			return false, err
+		}
+		keys, err := s.objectNames(startKey, endKey)
+		if err != nil {
+			return false, fmt.Errorf(`Unable to list Swift object names: %s`, err)
+		}
+		var keyValues []*storage.KeyValue
+		for _, key := range keys {
+			keyValues = append(keyValues, &storage.KeyValue{K: key})
+		}
+		keyValue, err := versionedContext.VersionedKeyValue(keyValues)
+		if err != nil {
+			return false, fmt.Errorf(`Unable to determine correct version key from a list: %s`, err)
+		} else if keyValue == nil {
+			return false, nil
+		}
+		accessKey = keyValue.K
+	} else {
+		// Context is unversioned.
+		accessKey = context.ConstructKey(key)
+	}
+	return s.objectExists(accessKey)
 }
 
 /*********** KeyValueSetter interface ***********/

@@ -1562,7 +1562,7 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 		return nil, err
 	}
 	if imgblkData.GetWriteLog() == nil {
-		return nil, fmt.Errorf("labelmap %q instance needs a readable log yet has none assigned", name)
+		return nil, fmt.Errorf("labelmap %q instance needs a writable log yet has none assigned", name)
 	}
 	if imgblkData.GetReadLog() == nil {
 		return nil, fmt.Errorf("labelmap %q instance needs a readable log yet has none assigned", name)

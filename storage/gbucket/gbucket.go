@@ -1591,6 +1591,20 @@ func (db *GBucket) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 	return val, nil
 }
 
+// Exists returns true if a key exists.
+func (db *GBucket) Exists(ctx storage.Context, tk storage.TKey) (bool, error) {
+	db.grabOpResource()
+	defer db.releaseOpResource()
+
+	basekey := ctx.ConstructKeyVersion(tk, dvid.VersionID(0))
+	baseval, _, err := db.getValueGen(ctx, basekey)
+	if err != nil {
+		return false, err
+	}
+	exists, hastombstone := db.hasVersion(baseval, ctx.VersionID())
+	return exists && !hastombstone, nil
+}
+
 // KeysInRange returns a range of type-specific key components spanning (TkBeg, TkEnd).
 func (db *GBucket) KeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) ([]storage.TKey, error) {
 	if db == nil {

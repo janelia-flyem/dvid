@@ -126,14 +126,17 @@ func GetAssignedStore(dataname dvid.InstanceName, root dvid.UUID, tags map[strin
 	}
 	dataid := dvid.GetDataSpecifier(dataname, root)
 	store, found := manager.instanceStore[dataid]
-	dvid.Infof("GetAssignedStore(%s): %t %s\n", dataname, found, store)
 	var err error
-	if !found {
+	var byMethod string
+	if found {
+		byMethod = fmt.Sprintf("direct specification %q", dataid)
+	} else {
 		// see if any tags have been assigned a store.
 		for tag, value := range tags {
 			dataid = dvid.GetDataSpecifierByTag(tag, value)
 			store, found = manager.instanceStore[dataid]
 			if found {
+				byMethod = fmt.Sprintf("tag specification %q", dataid)
 				break
 			}
 		}
@@ -144,8 +147,10 @@ func GetAssignedStore(dataname dvid.InstanceName, root dvid.UUID, tags map[strin
 			if err != nil {
 				return nil, fmt.Errorf("Cannot get assigned store for data %q, type %q", dataname, typename)
 			}
+			byMethod = fmt.Sprintf("type specification %q", typename)
 		}
 	}
+	dvid.Infof("GetAssignedStore(%s) by %s: %s\n", dataname, byMethod, store)
 
 	// See if this is using caching and if so, establish a wrapper around it.
 	if _, supported := manager.gcache.supported[dataid]; supported {

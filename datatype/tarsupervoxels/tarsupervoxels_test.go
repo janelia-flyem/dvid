@@ -219,9 +219,3 @@ func testTarball(t *testing.T, storetype storage.Alias) {
 	apiStr = fmt.Sprintf("%snode/%s/%s/tarfile/30", server.WebAPIPath, uuid, tarsvname)
 	server.TestHTTP(t, "HEAD", apiStr, nil) // now has every supervoxel including 15
 }
-
-func TestTarballRoundTrip(t *testing.T) {
-	testTarball(t, "filestore")
-	testTarball(t, "badger")
-	// testTarball(t, "basholeveldb")
-}
