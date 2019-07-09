@@ -59,6 +59,21 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		lbls = append(lbls, label)
 	}
 
+	// Get all the affected blocks in the merge.
+	var targetIdx, mergeIdx *labels.Index
+	if targetIdx, err = GetLabelIndex(d, v, op.Target, false); err != nil {
+		err = fmt.Errorf("can't get block indices of to merge target label %d: %v", op.Target, err)
+		return
+	}
+	if targetIdx == nil {
+		err = fmt.Errorf("can't merge into a non-existent label %d", op.Target)
+		return
+	}
+	if mergeIdx, err = GetMultiLabelIndex(d, v, op.Merged, dvid.Bounds{}); err != nil {
+		err = fmt.Errorf("can't get block indices of merge labels %s: %v", op.Merged, err)
+		return
+	}
+
 	versionuuid, _ := datastore.UUIDFromVersion(v)
 	msginfo := map[string]interface{}{
 		"Action":     "merge",
@@ -77,21 +92,6 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 	evt := datastore.SyncEvent{d.DataUUID(), labels.MergeStartEvent}
 	msg := datastore.SyncMessage{labels.MergeStartEvent, v, labels.DeltaMergeStart{op}}
 	if err = datastore.NotifySubscribers(evt, msg); err != nil {
-		return
-	}
-
-	// Get all the affected blocks in the merge.
-	var targetIdx, mergeIdx *labels.Index
-	if targetIdx, err = GetLabelIndex(d, v, op.Target, false); err != nil {
-		err = fmt.Errorf("can't get block indices of to merge target label %d: %v", op.Target, err)
-		return
-	}
-	if targetIdx == nil {
-		err = fmt.Errorf("can't merge into a non-existent label %d", op.Target)
-		return
-	}
-	if mergeIdx, err = GetMultiLabelIndex(d, v, op.Merged, dvid.Bounds{}); err != nil {
-		err = fmt.Errorf("can't get block indices of merge labels %s: %v", op.Merged, err)
 		return
 	}
 
