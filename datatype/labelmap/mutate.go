@@ -83,6 +83,12 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		"MutationID": mutID,
 		"Timestamp":  time.Now().String(),
 	}
+	if info.User != "" {
+		msginfo["User"] = info.User
+	}
+	if info.App != "" {
+		msginfo["App"] = info.App
+	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
 		dvid.Errorf("can't send merge op for %q to kafka: %v\n", d.DataName(), err)
@@ -199,6 +205,12 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 		"MutationID":         mutID,
 		"UUID":               string(versionuuid),
 		"Timestamp":          time.Now().String(),
+	}
+	if info.User != "" {
+		msginfo["User"] = info.User
+	}
+	if info.App != "" {
+		msginfo["App"] = info.App
 	}
 	jsonBytes, _ := json.Marshal(msginfo)
 	if len(jsonBytes) > storage.KafkaMaxMessageSize {
@@ -612,6 +624,12 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 		"SVSplits":   svsplit.Splits,
 		"Timestamp":  time.Now().String(),
 	}
+	if info.User != "" {
+		msginfo["User"] = info.User
+	}
+	if info.App != "" {
+		msginfo["App"] = info.App
+	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
 		dvid.Errorf("error on sending split op to kafka: %v\n", err)
@@ -775,6 +793,12 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 		"MutationID":       mutID,
 		"UUID":             string(versionuuid),
 		"Timestamp":        time.Now().String(),
+	}
+	if info.User != "" {
+		msginfo["User"] = info.User
+	}
+	if info.App != "" {
+		msginfo["App"] = info.App
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
