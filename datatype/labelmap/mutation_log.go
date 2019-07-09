@@ -38,7 +38,7 @@ func (d *Data) GetMutationHistory(w http.ResponseWriter, fromUUID, toUUID dvid.U
 		supervoxels[i] = sv
 	}
 	mapped, _, err := d.GetMappedLabels(fromV, supervoxels)
-	var origBodies labels.Set
+	origBodies := make(labels.Set, len(mapped))
 	for _, label := range mapped {
 		origBodies[label] = struct{}{}
 	}
