@@ -327,8 +327,8 @@ GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format
 GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?queryopts]
 
     Retrieves either 2d images (PNG by default) or 3d binary data, depending on the dims parameter.  
-    The 3d binary data response has "Content-type" set to "application/octet-stream" and is an array of 
-    voxel values in ZYX order (X iterates most rapidly).
+	The 3d binary data response has "Content-type" set to "application/octet-stream" and is a packed
+	array of voxel values (little-endian uint64 per voxel) in ZYX order (X iterates most rapidly).
 
     Example: 
 
@@ -376,7 +376,9 @@ GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?qu
 POST <api URL>/node/<UUID>/<data name>/raw/0_1_2/<size>/<offset>[?queryopts]
 
     Ingests block-aligned supervoxel data using the block sizes defined for this data instance.  
-    For example, if the BlockSize = 32, offset and size must be multiples of 32.
+	For example, if the BlockSize = 32, offset and size must be multiples of 32.
+	The POST body should be a packed array of voxel values (little-endian uint64 per voxel) in ZYX order 
+	(X iterates most rapidly).
 
     Example: 
 

@@ -18,9 +18,15 @@ max_log_size = 500 # MB
 max_log_age = 30   # days
 
 # If no backend is specified, DVID will return an error unless there is only
-# one store, which will automatically be backend.default, as in this example.
+# one store, which will automatically be backend.default.
 #   See config-full.toml for example of [backend] use.
-
+# However, use of a labelmap instance requires at least a filelog store and
+# specification of a log, so a backend is required for servers with labelmap
+# instances.
+[backend]
+    [backend.default]
+    store = "raid6"
+    log = "mutationlog"  # required if you have a labelmap instance.
 
 # List the different storage systems available for metadata, data instances, etc.
 # Any nickname can be used for a store.  In this case, it's "raid6" to reflect
@@ -30,3 +36,7 @@ max_log_age = 30   # days
     [store.raid6]
     engine = "basholeveldb"
     path = "/tmp/basholeveldb"
+
+    [store.mutationlog]
+    engine = "filelog"
+    path = "/data/mutationlog"  # directory that holds mutation log per instance-UUID.
