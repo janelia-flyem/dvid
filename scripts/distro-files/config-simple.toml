@@ -7,8 +7,8 @@
 
 [server]
 # host = "mygreatserver.test.com"  # Lets you specify a user-friendly alias for help messages.
-httpAddress = "localhost:8000"
-rpcAddress = "localhost:8001"
+httpAddress = ":8000"
+rpcAddress = ":8001"
 webClient = "./http/dvid-web-console"
 webDefaultFile = "index.html" # contents of this file will be returned for any bad file path; required by dvid-console 3.0+
 

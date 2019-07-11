@@ -3,8 +3,8 @@
 
 [server]
 host = "mygreatserver.test.com"  # Lets you specify a user-friendly alias for help messages.
-httpAddress = "localhost:8000"
-rpcAddress = "localhost:8001"
+httpAddress = ":8000"
+rpcAddress = ":8001"
 webClient = "/path/to/webclient"
 
 # only one of the following should be used if the default file path is missing, with webRedirectPath
