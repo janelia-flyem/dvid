@@ -4874,8 +4874,6 @@ func (d *Data) GetLabelPoints(v dvid.VersionID, pts []dvid.Point3d, scale uint8,
 				err = fmt.Errorf("unable to get ancestry for version %d: %v", v, err)
 				return
 			}
-			mapping.RLock()
-			defer mapping.RUnlock()
 		}
 	}
 
@@ -4892,7 +4890,7 @@ func (d *Data) GetLabelPoints(v dvid.VersionID, pts []dvid.Point3d, scale uint8,
 		go func() {
 			for bptsI := range ch {
 				if len(ancestry) > 0 {
-					mapping.applyMappingToBlock(ancestry, bptsI.Block)
+					mapping.ApplyMappingToBlock(ancestry, bptsI.Block)
 				}
 				blockLabels := bptsI.Block.GetPointLabels(bptsI.pts)
 				labelsMu.Lock()
