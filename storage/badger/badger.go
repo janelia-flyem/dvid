@@ -128,6 +128,9 @@ func (e Engine) newDB(config dvid.StoreConfig) (*BadgerDB, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
+	opts.NumVersionsToKeep = 1
+	opts.SyncWrites = false
+	opts.ValueThreshold = 100
 
 	badgerDB := &BadgerDB{
 		directory: path,
