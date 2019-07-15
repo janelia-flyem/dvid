@@ -117,6 +117,8 @@ $ dvid node <UUID> <data name> dump <dump type> <file path>
 	
 	"mappings": Supervoxel to agglomerated label mappings in a space-delimted file where each supervoxel has a row:
 		<supervoxel id> <label>
+		Unlike the GET /mappings endpoint, the command-line version is consistent by default and will hold lock at
+		possible detriment to other users.
 	
 	"indices": Label indices in a space-delimted file where each supervoxel has a row with its agglomerated label:
 		<label> <supervoxel id> <block z> <block y> <block x> <# voxels>
@@ -1262,6 +1264,11 @@ GET <api URL>/node/<UUID>/<data name>/mappings[?queryopts]
 
 		format: If format=binary, the data is returned as little-endian binary uint64 pairs,
 				in the same order as shown in the CSV format above.
+		consistent: default is "false", use "true" if you want a lock to prevent any
+				concurrent mutations on the mappings.  For example, under default behavior,
+				the mappings endpoint will periodically release the lock to play nice with
+				other requesters, which allows a concurrent mutation to cause an inconsistent
+				mapping.
 
 POST <api URL>/node/<UUID>/<data name>/mappings
 
@@ -3715,6 +3722,10 @@ func (d *Data) handleMappings(ctx *datastore.VersionedCtx, w http.ResponseWriter
 	}
 
 	format := queryStrings.Get("format")
+	var consistent bool
+	if queryStrings.Get("consistent") == "true" {
+		consistent = true
+	}
 
 	switch strings.ToLower(r.Method) {
 	case "post":
@@ -3736,7 +3747,7 @@ func (d *Data) handleMappings(ctx *datastore.VersionedCtx, w http.ResponseWriter
 		timedLog.Infof("HTTP POST %d merges (%s)", len(mappings.Mappings), r.URL)
 
 	case "get":
-		if err := d.writeMappings(w, ctx.VersionID(), (format == "binary")); err != nil {
+		if err := d.writeMappings(w, ctx.VersionID(), (format == "binary"), consistent); err != nil {
 			server.BadRequest(w, r, "unable to write mappings: %v", err)
 		}
 		timedLog.Infof("HTTP GET mappings (%s)", r.URL)

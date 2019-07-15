@@ -11,6 +11,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/coocood/freecache"
 	"github.com/janelia-flyem/dvid/datastore"
@@ -1403,7 +1404,7 @@ func (d *Data) writeSVCounts(f *os.File, outPath string, v dvid.VersionID) {
 }
 
 func (d *Data) writeFileMappings(f *os.File, outPath string, v dvid.VersionID) {
-	if err := d.writeMappings(f, v, false); err != nil {
+	if err := d.writeMappings(f, v, false, true); err != nil {
 		dvid.Errorf("error writing mapping to file %q: %v\n", outPath, err)
 		return
 	}
@@ -1412,7 +1413,8 @@ func (d *Data) writeFileMappings(f *os.File, outPath string, v dvid.VersionID) {
 	}
 }
 
-func (d *Data) writeMappings(w io.Writer, v dvid.VersionID, binaryFormat bool) error {
+// does not hold lock for entire time so mappings stream could be altered if concurrent mutations occur.
+func (d *Data) writeMappings(w io.Writer, v dvid.VersionID, binaryFormat, consistent bool) error {
 	timedLog := dvid.NewTimeLog()
 
 	svm, err := getMapping(d, v)
@@ -1432,17 +1434,11 @@ func (d *Data) writeMappings(w io.Writer, v dvid.VersionID, binaryFormat bool) e
 		dvid.Infof("no mappings found for data %q\n", d.DataName())
 		return nil
 	}
-	mapping := make(map[uint64]vmap, len(svm.fm))
-	for supervoxel, vm := range svm.fm {
-		vmdup := make([]byte, len(vm))
-		copy(vmdup, vm)
-		mapping[supervoxel] = vmdup
-	}
 	svm.RUnlock()
-	timedLog.Infof("write mappings: made duplicate of %d mappings", len(mapping))
 
-	var numMappings, numErrors uint64
-	for supervoxel, vm := range mapping {
+	var elemNum, numMappings, numErrors uint64
+	svm.RLock()
+	for supervoxel, vm := range svm.fm {
 		label, present := vm.value(ancestry)
 		if present {
 			numMappings++
@@ -1460,13 +1456,23 @@ func (d *Data) writeMappings(w io.Writer, v dvid.VersionID, binaryFormat bool) e
 
 				if err != nil {
 					numErrors++
-					if numErrors < 100 {
+					if numErrors > 100 {
+						svm.RUnlock()
 						return fmt.Errorf("unable to write data for mapping of supervoxel %d -> %d, data %q: %v", supervoxel, label, d.DataName(), err)
 					}
 				}
 			}
 		}
+		if !consistent {
+			elemNum++
+			if elemNum%100000 == 0 { // don't hold lock for really long time.  Faster check than actual time compare.
+				svm.RUnlock()
+				time.Sleep(1 * time.Millisecond)
+				svm.RLock()
+			}
+		}
 	}
+	svm.RUnlock()
 	timedLog.Infof("Finished retrieving %d mappings (%d errors) for data %q, version %d", numMappings, numErrors, d.DataName(), v)
 	return nil
 }
