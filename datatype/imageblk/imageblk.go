@@ -1671,7 +1671,7 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		if err = datastore.AddToNodeLog(uuid, []string{req.Command.String()}); err != nil {
 			return err
 		}
-		reply.Text = fmt.Sprintf("Loading %d files into data instance %q @ node %s...\n", len(filenames), dataName, uuidStr)
+		reply.Text = fmt.Sprintf("Asynchronously loading %d files into data instance %q @ node %s (errors will be printed in server log) ...\n", len(filenames), dataName, uuidStr)
 		go func() {
 			err := d.LoadImages(versionID, offset, filenames)
 			if err != nil {

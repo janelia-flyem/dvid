@@ -2710,12 +2710,15 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		if err = datastore.AddToNodeLog(uuid, []string{req.Command.String()}); err != nil {
 			return err
 		}
-		if err = d.LoadImages(versionID, offset, filenames); err != nil {
-			return err
-		}
-		if err := datastore.SaveDataByUUID(uuid, d); err != nil {
-			return err
-		}
+		go func() {
+			if err = d.LoadImages(versionID, offset, filenames); err != nil {
+				dvid.Errorf("Cannot load images into data instance %q @ node %s: %v\n", dataName, uuidStr, err)
+			}
+			if err := datastore.SaveDataByUUID(uuid, d); err != nil {
+				dvid.Errorf("Could not store metadata changes into data instance %q @ node %s: %v\n", dataName, uuidStr, err)
+			}
+		}()
+		reply.Text = fmt.Sprintf("Asynchronously loading %d files into data instance %q @ node %s (errors will be printed in server log) ...\n", len(filenames), dataName, uuidStr)
 		return nil
 
 	case "composite":
