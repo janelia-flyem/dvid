@@ -69,6 +69,7 @@ func Initialize(initMetadata bool, iconfig Config) error {
 		repoToUUID:      make(map[dvid.RepoID]dvid.UUID),
 		versionToUUID:   make(map[dvid.VersionID]dvid.UUID),
 		uuidToVersion:   make(map[dvid.UUID]dvid.VersionID),
+		branchToUUID:    make(map[string]dvid.UUID),
 		repos:           make(map[dvid.UUID]*repoT),
 		repoID:          1,
 		versionID:       1,
@@ -205,6 +206,7 @@ func ReloadMetadata() error {
 		repoToUUID:      make(map[dvid.RepoID]dvid.UUID),
 		versionToUUID:   make(map[dvid.VersionID]dvid.UUID),
 		uuidToVersion:   make(map[dvid.UUID]dvid.VersionID),
+		branchToUUID:    make(map[string]dvid.UUID),
 		repos:           make(map[dvid.UUID]*repoT),
 		repoID:          manager.repoID,
 		versionID:       manager.versionID,
@@ -258,6 +260,10 @@ type repoManager struct {
 
 	// Map UUID to local VersionID -- this is not stored but generated on load
 	uuidToVersion map[dvid.UUID]dvid.VersionID
+
+	// Map branch name to HEAD UUID.
+	branchToUUID map[string]dvid.UUID
+	branchMutex  sync.RWMutex
 
 	// Counters that provide the local IDs of the next new repo, version, or data instance.
 	// Valid counters should be >= 1, so we can distinguish between valid ids and the
@@ -724,6 +730,23 @@ func (m *repoManager) loadMetadata() error {
 		if err := r.initMutationID(m.store, m.mutationIDStart); err != nil {
 			return err
 		}
+		branchHeads := r.branchHeads()
+		if len(branchHeads) > 0 {
+			dvid.Infof("Caching branch heads for repo with root %s:\n", root)
+			for branch, headUUID := range branchHeads {
+				if branch == "" {
+					branch = "master"
+				}
+				desc := string(root) + branch
+				leaf, found := m.branchToUUID[desc]
+				if found && leaf != headUUID {
+					dvid.Errorf("Branch %q multiple leaves: %s and %s\n", branch, leaf, headUUID)
+				} else {
+					m.branchToUUID[desc] = headUUID
+					dvid.Infof("Branch %q: UUID %s\n", branch, headUUID)
+				}
+			}
+		}
 	}
 	saveIDs := false
 
@@ -863,7 +886,21 @@ func (m *repoManager) versionFromUUID(uuid dvid.UUID) (dvid.VersionID, error) {
 // a datastore has nodes with UUID strings 3FA22..., 7CD11..., and 836EE...,
 // we can still find a match even if given the minimum 3 letters.  (We don't
 // allow UUID strings of less than 3 letters just to prevent mistakes.)
+// If the passed string has a colon, the string after the colon is parsed as a
+// case-sensitive branch name of the repo with the given UUID, and the UUID returned
+// will be the HEAD or uncommitted leaf of that branch.
+// Example "3FA22:master" returns the leaf UUID of branch "master" for the repo containing
+//  the 3FA22 UUID.
 func (m *repoManager) matchingUUID(str string) (dvid.UUID, dvid.VersionID, error) {
+	splits := strings.Split(str, ":")
+	var branch string
+	if len(splits) == 2 {
+		branch = splits[1]
+		str = splits[0]
+	} else if len(splits) > 2 {
+		return dvid.NilUUID, 0, fmt.Errorf("bad UUID specification %q", str)
+	}
+
 	var bestVersion dvid.VersionID
 	var bestUUID dvid.UUID
 	numMatches := 0
@@ -878,9 +915,28 @@ func (m *repoManager) matchingUUID(str string) (dvid.UUID, dvid.VersionID, error
 	m.idMutex.RUnlock()
 	var err error
 	if numMatches > 1 {
-		err = fmt.Errorf("more than one UUID matches %s", str)
+		return dvid.NilUUID, 0, fmt.Errorf("more than one UUID matches %s", str)
 	} else if numMatches == 0 {
-		err = fmt.Errorf("could not find UUID with partial match to %s", str)
+		return dvid.NilUUID, 0, fmt.Errorf("could not find UUID with partial match to %s", str)
+	}
+
+	if len(branch) != 0 {
+		repo, found := m.repos[bestUUID]
+		if !found {
+			return dvid.NilUUID, 0, fmt.Errorf("matched UUID %q not found among repos", bestUUID)
+		}
+		root := string(repo.uuid)
+
+		m.branchMutex.RLock()
+		bestUUID, found = m.branchToUUID[root+branch]
+		m.branchMutex.RUnlock()
+		if found {
+			bestVersion, found = m.uuidToVersion[bestUUID]
+			if !found {
+				err := fmt.Errorf("branch %q had leaf UUID (%s) without a version ID", str, bestUUID)
+				return dvid.NilUUID, 0, err
+			}
+		}
 	}
 	return bestUUID, bestVersion, err
 }
@@ -1563,6 +1619,14 @@ func (m *repoManager) newVersion(parent dvid.UUID, note string, branchname strin
 	child.note = note
 	child.branch = branchname
 
+	m.branchMutex.Lock()
+	if branchname == "" {
+		m.branchToUUID[string(r.uuid)+"master"] = childUUID
+	} else {
+		m.branchToUUID[string(r.uuid)+branchname] = childUUID
+	}
+	m.branchMutex.Unlock()
+
 	m.repoMutex.Lock()
 	m.repos[childUUID] = r
 	m.repoMutex.Unlock()
@@ -2112,6 +2176,16 @@ func newRepo(uuid dvid.UUID, v dvid.VersionID, id dvid.RepoID, passcode string) 
 	}
 	repo.dag = newDAG(uuid, v)
 	return repo
+}
+
+func (r *repoT) branchHeads() map[string]dvid.UUID {
+	branchToUUID := make(map[string]dvid.UUID)
+	for _, node := range r.dag.nodes {
+		if len(node.children) == 0 {
+			branchToUUID[node.branch] = node.uuid
+		}
+	}
+	return branchToUUID
 }
 
 func (r *repoT) deleteDataWithPasscode(name dvid.InstanceName, passcode string) error {

@@ -83,7 +83,16 @@ func VersionFromUUID(uuid dvid.UUID) (dvid.VersionID, error) {
 	return manager.versionFromUUID(uuid)
 }
 
-// MatchingUUID returns version identifiers that uniquely matches a uuid string.
+// MatchingUUID returns a local version ID and the full UUID from a potentially shortened UUID
+// string. Partial matches are accepted as long as they are unique for a datastore.  So if
+// a datastore has nodes with UUID strings 3FA22..., 7CD11..., and 836EE...,
+// we can still find a match even if given the minimum 3 letters.  (We don't
+// allow UUID strings of less than 3 letters just to prevent mistakes.)
+// If the passed string has a colon, the string after the colon is parsed as a
+// case-sensitive branch name of the repo with the given UUID, and the UUID returned
+// will be the HEAD or uncommitted leaf of that branch.
+// Example "3FA22:master" returns the leaf UUID of branch "master" for the repo containing
+//  the 3FA22 UUID.
 func MatchingUUID(uuidStr string) (dvid.UUID, dvid.VersionID, error) {
 	if manager == nil {
 		return dvid.NilUUID, 0, ErrManagerNotInitialized
@@ -142,6 +151,8 @@ func GetBranchVersionsJSON(uuid dvid.UUID, name string) (string, error) {
 	return manager.getBranchVersionsJSON(uuid, name)
 }
 
+// GetBranchVersions returns a slice of UUIDs for the given branch from the HEAD (leaf)
+// to the root.
 func GetBranchVersions(uuid dvid.UUID, name string) ([]dvid.UUID, error) {
 	if manager == nil {
 		return nil, ErrManagerNotInitialized
