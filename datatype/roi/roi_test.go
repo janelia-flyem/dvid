@@ -377,6 +377,11 @@ func TestROIPostAndDelete(t *testing.T) {
 	if string(returnedData) != "[]" {
 		t.Errorf("Bad ROI after ROI delete.  Should be [ ] got: %s\n", string(returnedData))
 	}
+	leafRequest := fmt.Sprintf("%snode/%s:master/%s/roi", server.WebAPIPath, uuid[:8], data.DataName())
+	returnedData = server.TestHTTP(t, "GET", leafRequest, nil)
+	if string(returnedData) != "[]" {
+		t.Errorf("Bad ROI after ROI delete.  Should be [ ] got: %s\n", string(returnedData))
+	}
 }
 
 func TestROICreateAndSerialize(t *testing.T) {

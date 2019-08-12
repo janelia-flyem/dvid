@@ -3,8 +3,8 @@ package labelmap
 import (
 	"bytes"
 	"compress/gzip"
-	"encoding/json"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -250,6 +250,8 @@ func TestIngest(t *testing.T) {
 
 	// Test result
 	checkSparsevolAPIs(t, child2)
+	alternateUUID := child1[:8] + ":master"
+	checkSparsevolAPIs(t, alternateUUID)
 	checkNoSparsevol(t, child2, 7)
 	checkNoSparsevol(t, child2, 8)
 

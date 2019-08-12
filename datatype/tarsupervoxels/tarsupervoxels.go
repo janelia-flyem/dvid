@@ -35,6 +35,16 @@ const helpMessage = `
 API for 'keyvalue' datatype (github.com/janelia-flyem/dvid/datatype/tarsupervoxels)
 =============================================================================
 
+Note: UUIDs referenced below are strings that may either be a unique prefix of a
+hexadecimal UUID string (e.g., 3FA22) or a branch leaf specification that adds
+a colon (":") followed by the case-dependent branch name.  In the case of a
+branch leaf specification, the unique UUID prefix just identifies the repo of
+the branch, and the UUID referenced is really the leaf of the branch name.
+For example, if we have a DAG with root A -> B -> C where C is the current
+HEAD or leaf of the "master" (default) branch, then asking for "B:master" is
+the same as asking for "C".  If we add another version so A -> B -> C -> D, then
+references to "B:master" now return the data from "D".
+
 Command-line:
 
 $ dvid repo <UUID> new tarsupervoxels <data name> <settings...>
