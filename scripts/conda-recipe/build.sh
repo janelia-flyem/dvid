@@ -1,10 +1,12 @@
 #!/bin/bash
 
 # Print some diagnostics about this build machine
+echo "Checking file descriptor limit..."
+ulimit -n
 if [ "$(uname)" == "Darwin" ]; then
-    vm_stat
+    top -l 1 -s 0 | grep PhysMem
 elif [ "$(expr substr $(uname -s) 1 5)" == "Linux" ]; then
-    vmstat
+    free -m
 fi
 
 # GOPATH is just the build 'work' dir 
