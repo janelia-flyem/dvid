@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# Print some diagnostics about this build machine
+if [ "$(uname)" == "Darwin" ]; then
+    vm_stat
+elif [ "$(expr substr $(uname -s) 1 5)" == "Linux" ]; then
+    vmstat
+fi
+
 # GOPATH is just the build 'work' dir 
 export GOPATH=$(pwd)
 
