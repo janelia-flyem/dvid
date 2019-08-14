@@ -102,6 +102,28 @@ const webHelp = `
 		"Bytes": ...
 	}
 
+ GET  /api/heartbeat[?u=<username>]
+
+	Preferred method to test whether server is alive.  If a username is provided, the
+	time it takes to respond to the request (including transmission to remote client)
+	is recorded.  A compilation of user latencies is available through the 
+	/api/user-latencies endpoint.
+
+GET /api/user-latencies[?u=<username]
+
+	Returns JSON for the all user latencies or a particular user if one is specified.
+	The format is:
+	[
+		{
+			"User": "Name",
+			"LastPing": <string timestamp in RFC3339 format>,
+			"LastLatency": <duration in milliseconds>,
+			"MinLatency": <duration in milliseconds>,
+			"MaxLatency": <duration in milliseconds>
+		},
+		...
+	]
+
  GET  /api/server/info
 
 	Returns JSON for server properties.
@@ -513,12 +535,27 @@ var (
 		*web.Mux
 		routesSetup bool
 	}
-	webMuxMu sync.Mutex // Can Lock() to prevent any kind of web requests from initiating actions.
+	webMuxMu      sync.Mutex // Can Lock() to prevent any kind of web requests from initiating actions.
+	userLatencies userLatencyMap
 )
+
+type userLatencyMap struct {
+	sync.RWMutex
+	data map[string]userLatency
+}
+
+type userLatency struct {
+	User        string
+	LastPing    string
+	LastLatency int64
+	MinLatency  int64
+	MaxLatency  int64
+}
 
 func init() {
 	webMux.Mux = web.New()
 	webMux.Use(middleware.RequestID)
+	userLatencies.data = make(map[string]userLatency)
 }
 
 // ThrottledHTTP checks if a request can continue under throttling.  If so, it returns
@@ -604,8 +641,13 @@ func initRoutes() {
 	webMuxMu.Lock()
 	silentMux := web.New()
 	webMux.Handle("/api/load", silentMux)
+	webMux.Handle("/api/heartbeat", silentMux)
+	webMux.Handle("/api/user-latencies", silentMux)
 	silentMux.Use(corsHandler)
+	silentMux.Use(latencyHandler)
 	silentMux.Get("/api/load", loadHandler)
+	silentMux.Get("/api/heartbeat", heartbeatHandler)
+	silentMux.Get("/api/user-latencies", latenciesHandler)
 
 	mainMux := web.New()
 	webMux.Handle("/*", mainMux)
@@ -836,6 +878,42 @@ func activityLogHandler(c *web.C, h http.Handler) http.Handler {
 				"remote_addr": r.RemoteAddr,
 			}
 			storage.LogActivityToKafka(activity)
+		}
+	}
+	return http.HandlerFunc(fn)
+}
+
+// Middleware that measures latency for a request
+func latencyHandler(c *web.C, h http.Handler) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) {
+		t0 := time.Now()
+		myw := wrapResponseWriter(w)
+		h.ServeHTTP(myw, r)
+		user := r.URL.Query().Get("u")
+		if user != "" {
+			t := time.Since(t0)
+			ms := int64(t.Seconds() * 1000.0)
+			userLatencies.Lock()
+			data, found := userLatencies.data[user]
+			if found {
+				data.LastPing = t0.Format(time.RFC3339)
+				if data.MinLatency > ms {
+					data.MinLatency = ms
+				}
+				if data.MaxLatency < ms {
+					data.MaxLatency = ms
+				}
+			} else {
+				data = userLatency{
+					User:        user,
+					LastPing:    t0.Format(time.RFC3339),
+					LastLatency: ms,
+					MinLatency:  ms,
+					MaxLatency:  ms,
+				}
+			}
+			userLatencies.data[user] = data
+			userLatencies.Unlock()
 		}
 	}
 	return http.HandlerFunc(fn)
@@ -1240,6 +1318,30 @@ func loadHandler(w http.ResponseWriter, r *http.Request) {
 		"active CGo routines":  dvid.NumberActiveCGo(),
 		"pending log messages": dvid.PendingLogMessages(),
 	})
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, string(m))
+}
+
+func heartbeatHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+	fmt.Fprintf(w, "OK")
+}
+
+func latenciesHandler(w http.ResponseWriter, r *http.Request) {
+	user := r.URL.Query().Get("u")
+	var m []byte
+	var err error
+	userLatencies.RLock()
+	if user != "" {
+		m, err = json.Marshal(userLatencies.data[user])
+	} else {
+		m, err = json.Marshal(userLatencies.data)
+	}
+	userLatencies.RUnlock()
 	if err != nil {
 		BadRequest(w, r, err)
 		return

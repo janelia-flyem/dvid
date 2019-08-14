@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"regexp"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -445,4 +446,38 @@ func TestStressConcurrentMetadataOps(t *testing.T) {
 	}
 	close(done)
 	wg.Wait()
+}
+
+func TestLatencies(t *testing.T) {
+	if err := OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer CloseTest()
+
+	wg := new(sync.WaitGroup)
+	wg.Add(50)
+	for i := 0; i < 50; i++ {
+		go func(i int) {
+			TestHTTP(t, "GET", WebAPIPath+"heartbeat?u=user"+strconv.Itoa(i%10), nil)
+			wg.Done()
+		}(i)
+	}
+	wg.Wait()
+
+	var resp map[string]userLatency
+	respData := TestHTTP(t, "GET", WebAPIPath+"user-latencies", nil)
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		t.Fatalf("Error parsing user latency JSON  Got %s\n", string(respData))
+	}
+	if len(resp) != 10 {
+		t.Fatalf("Expected 10 user latencies, got: %s\n", string(respData))
+	}
+	var resp1 userLatency
+	respData = TestHTTP(t, "GET", WebAPIPath+"user-latencies?u=user3", nil)
+	if err := json.Unmarshal(respData, &resp1); err != nil {
+		t.Fatalf("Error parsing user latency JSON  Got %s\n", string(respData))
+	}
+	if resp1.User != "user3" {
+		t.Fatalf("Got unexpected response to single user query to GET /user-latencies:\n%s\n", string(respData))
+	}
 }
