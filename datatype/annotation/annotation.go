@@ -937,7 +937,7 @@ func getElements(ctx *datastore.VersionedCtx, tk storage.TKey) (Elements, error)
 		return nil, err
 	}
 	if val == nil {
-		return nil, nil
+		return Elements{}, nil
 	}
 	var elems Elements
 	if err := json.Unmarshal(val, &elems); err != nil {
@@ -957,7 +957,7 @@ func getElementsNR(ctx *datastore.VersionedCtx, tk storage.TKey) (ElementsNR, er
 		return nil, err
 	}
 	if val == nil {
-		return nil, nil
+		return ElementsNR{}, nil
 	}
 	var elems ElementsNR
 	if err := json.Unmarshal(val, &elems); err != nil {

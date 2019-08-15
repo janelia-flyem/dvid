@@ -611,7 +611,7 @@ func getTag(tag Tag, elems Elements) Elements {
 	return result
 }
 
-var synapsesByBlocks = `{"1,0,0":[{"Pos":[33,30,31],"Kind":"PostSyn","Tags":["Synapse1","Zlt90"],"Prop":null,"Rels":[{"Rel":"PostSynTo","To":[15,27,35]}]}],"0,0,1":[{"Pos":[15,27,35],"Kind":"PreSyn","Tags":["Synapse1","Zlt90"],"Prop":{"I'm not a PSD":"sure","Im a T-Bar":"yes","i'm really special":""},"Rels":[{"Rel":"PreSynTo","To":[20,30,40]},{"Rel":"PreSynTo","To":[14,25,37]},{"Rel":"PreSynTo","To":[33,30,31]}]},{"Pos":[20,30,40],"Kind":"PostSyn","Tags":["Synapse1"],"Prop":null,"Rels":[{"Rel":"PostSynTo","To":[15,27,35]}]},{"Pos":[14,25,37],"Kind":"PostSyn","Tags":["Synapse1","Zlt90"],"Prop":null,"Rels":[{"Rel":"PostSynTo","To":[15,27,35]}]}],"2,1,2":[{"Pos":[88,47,80],"Kind":"PostSyn","Tags":["Synapse2"],"Prop":null,"Rels":[{"Rel":"GroupedWith","To":[14,25,37]},{"Rel":"PostSynTo","To":[127,63,99]},{"Rel":"GroupedWith","To":[20,30,40]}]}],"3,1,3":[{"Pos":[127,63,99],"Kind":"PreSyn","Tags":["Synapse2"],"Prop":{"I'm not a PSD":"not really","Im a T-Bar":"no","i'm not really special":"at all"},"Rels":[{"Rel":"PreSynTo","To":[88,47,80]},{"Rel":"PreSynTo","To":[120,65,100]},{"Rel":"PreSynTo","To":[126,67,98]}]}],"3,2,3":[{"Pos":[120,65,100],"Kind":"PostSyn","Tags":["Synapse2"],"Prop":null,"Rels":[{"Rel":"PostSynTo","To":[127,63,99]}]},{"Pos":[126,67,98],"Kind":"PostSyn","Tags":["Synapse2"],"Prop":null,"Rels":[{"Rel":"PostSynTo","To":[127,63,99]}]}]}`
+var synapsesByBlocks = `{"1,0,0":[{"Pos":[33,30,31],"Kind":"PostSyn","Tags":["Synapse1","Zlt90"],"Prop":{},"Rels":[{"Rel":"PostSynTo","To":[15,27,35]}]}],"0,0,1":[{"Pos":[15,27,35],"Kind":"PreSyn","Tags":["Synapse1","Zlt90"],"Prop":{"I'm not a PSD":"sure","Im a T-Bar":"yes","i'm really special":""},"Rels":[{"Rel":"PreSynTo","To":[20,30,40]},{"Rel":"PreSynTo","To":[14,25,37]},{"Rel":"PreSynTo","To":[33,30,31]}]},{"Pos":[20,30,40],"Kind":"PostSyn","Tags":["Synapse1"],"Prop":{},"Rels":[{"Rel":"PostSynTo","To":[15,27,35]}]},{"Pos":[14,25,37],"Kind":"PostSyn","Tags":["Synapse1","Zlt90"],"Prop":{},"Rels":[{"Rel":"PostSynTo","To":[15,27,35]}]}],"2,1,2":[{"Pos":[88,47,80],"Kind":"PostSyn","Tags":["Synapse2"],"Prop":{},"Rels":[{"Rel":"GroupedWith","To":[14,25,37]},{"Rel":"PostSynTo","To":[127,63,99]},{"Rel":"GroupedWith","To":[20,30,40]}]}],"3,1,3":[{"Pos":[127,63,99],"Kind":"PreSyn","Tags":["Synapse2"],"Prop":{"I'm not a PSD":"not really","Im a T-Bar":"no","i'm not really special":"at all"},"Rels":[{"Rel":"PreSynTo","To":[88,47,80]},{"Rel":"PreSynTo","To":[120,65,100]},{"Rel":"PreSynTo","To":[126,67,98]}]}],"3,2,3":[{"Pos":[120,65,100],"Kind":"PostSyn","Tags":["Synapse2"],"Prop":{},"Rels":[{"Rel":"PostSynTo","To":[127,63,99]}]},{"Pos":[126,67,98],"Kind":"PostSyn","Tags":["Synapse2"],"Prop":{},"Rels":[{"Rel":"PostSynTo","To":[127,63,99]}]}]}`
 
 func testResponse(t *testing.T, expected Elements, template string, args ...interface{}) {
 	url := fmt.Sprintf(template, args...)
@@ -744,7 +744,7 @@ func TestRequests(t *testing.T) {
 	blocksURL := fmt.Sprintf("%snode/%s/%s/blocks/96_63_97/31_15_0", server.WebAPIPath, uuid, data.DataName())
 	ret := server.TestHTTP(t, "GET", blocksURL, nil)
 	if string(ret) != synapsesByBlocks {
-		t.Fatalf("Did not get all synapse elements returned from GET /blocks:\n%s\n", ret)
+		t.Fatalf("Did not get all synapse elements returned from GET /blocks:\nGot: %s\nExpected: %s\n", string(ret), synapsesByBlocks)
 	}
 
 	// Test subset GET
@@ -1234,6 +1234,19 @@ func getBytesRLE(t *testing.T, rles dvid.RLEs) *bytes.Buffer {
 }
 
 func testLabels(t *testing.T, uuid dvid.UUID, labelblkName, labelvolName dvid.InstanceName) {
+	// Make sure request of annotations for a label return [] and not nil before any
+	// annotations are ingested.
+	url := fmt.Sprintf("%snode/%s/mysynapses/label/1?relationships=true", server.WebAPIPath, uuid)
+	returnValue := server.TestHTTP(t, "GET", url, nil)
+	if string(returnValue) != "[]" {
+		t.Errorf("Expected [] return on querying empty label annotations, got %q\n", string(returnValue))
+	}
+	url = fmt.Sprintf("%snode/%s/mysynapses/label/1", server.WebAPIPath, uuid)
+	returnValue = server.TestHTTP(t, "GET", url, nil)
+	if string(returnValue) != "[]" {
+		t.Errorf("Expected [] return on querying empty label annotations, got %q\n", string(returnValue))
+	}
+
 	// PUT first batch of synapses
 	testJSON, err := json.Marshal(testData)
 	if err != nil {
@@ -1359,6 +1372,19 @@ func testLabels(t *testing.T, uuid dvid.UUID, labelblkName, labelvolName dvid.In
 }
 
 func testMappedLabels(t *testing.T, uuid dvid.UUID, labelblkName, labelvolName dvid.InstanceName) {
+	// Make sure request of annotations for a label return [] and not nil before any
+	// annotations are ingested.
+	url := fmt.Sprintf("%snode/%s/mysynapses/label/1?relationships=true", server.WebAPIPath, uuid)
+	returnValue := server.TestHTTP(t, "GET", url, nil)
+	if string(returnValue) != "[]" {
+		t.Errorf("Expected [] return on querying empty label annotations, got %q\n", string(returnValue))
+	}
+	url = fmt.Sprintf("%snode/%s/mysynapses/label/1", server.WebAPIPath, uuid)
+	returnValue = server.TestHTTP(t, "GET", url, nil)
+	if string(returnValue) != "[]" {
+		t.Errorf("Expected [] return on querying empty label annotations, got %q\n", string(returnValue))
+	}
+
 	// PUT first batch of synapses
 	testJSON, err := json.Marshal(testData)
 	if err != nil {
