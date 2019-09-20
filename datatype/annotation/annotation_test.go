@@ -1511,12 +1511,6 @@ func testMappedLabels(t *testing.T, uuid dvid.UUID, labelblkName, labelvolName d
 	dvid.Infof("after cleave/2, cleaved off label = %d\n", cleaveVal.CleavedLabel)
 
 	// Verify that the annotations are correct.
-	for label := uint64(1); label < 14; label++ {
-		reqStr = fmt.Sprintf("%snode/%s/renamedData/label/%d", server.WebAPIPath, uuid, label)
-		r = server.TestHTTP(t, "GET", reqStr, nil)
-		dvid.Infof("Label %d elements: %s\n", label, string(r))
-	}
-
 	if err := datastore.BlockOnUpdating(uuid, "renamedData"); err != nil {
 		t.Fatalf("Error blocking on sync of split->annotations: %v\n", err)
 	}

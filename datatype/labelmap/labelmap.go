@@ -4950,120 +4950,115 @@ func (d *Data) GetLabelPoints(v dvid.VersionID, pts []dvid.Point3d, scale uint8,
 	return
 }
 
-// GetLabelPointsInSupervoxels returns labels for 3d points that fall within given supervoxels or 0 otherwise.
-/*
-func (d *Data) GetLabelPointsInSupervoxels(v dvid.VersionID, pts []dvid.Point3d, supervoxels labels.Set) (mapped []uint64, err error) {
-	if len(pts) == 0 {
+// GetPointsInSupervoxels returns the 3d points that fall within given supervoxels that are
+// assumed to be mapped to one label.  If supervoxels are assigned to more than one label,
+// or a mapping is not available, an error is returned.
+func (d *Data) GetPointsInSupervoxels(v dvid.VersionID, pts []dvid.Point3d, supervoxels []uint64) (inSupervoxels []bool, err error) {
+	inSupervoxels = make([]bool, len(pts))
+	if len(pts) == 0 || len(supervoxels) == 0 {
 		return
 	}
 	timedLog := dvid.NewTimeLog()
-	blockPts := d.partitionPoints(pts)
-	mapped = make([]uint64, len(pts))
 
-	// Get labels covered and selected supervoxels in each to check.
-	labelSupervoxels := make(map[uint64]labels.Set)
+	supervoxelSet := make(labels.Set)
+	for _, supervoxel := range supervoxels {
+		supervoxelSet[supervoxel] = struct{}{}
+	}
+
+	// Make sure all supervoxels are within single label that we will load index for.
+	var label uint64
 	var mapping *SVMap
 	var ancestry []uint8
 	if mapping, err = getMapping(d, v); err != nil {
 		return nil, err
 	}
-	if mapping != nil && mapping.exists(v) {
+	if mapping == nil || !mapping.exists(v) {
+		if len(supervoxels) > 1 {
+			err = fmt.Errorf("no mapping is available so supervoxels span more than one label")
+			return
+		}
+		label = supervoxels[0]
+	} else {
 		ancestry, err = mapping.getAncestry(v)
 		if err != nil {
 			err = fmt.Errorf("unable to get ancestry for version %d: %v", v, err)
 			return
 		}
 		mapping.RLock()
-		defer mapping.RUnlock()
-
-		for supervoxel := range supervoxels {
-			label, wasMapped := mapping.mapLabel(supervoxel, ancestry)
-			if wasMapped {
-				svs, found := labelSupervoxels[label]
-				if found {
-					svs[supervoxel] = struct{}{}
-				} else {
-					svs = labels.Set{supervoxel: struct{}{}}
-				}
-				labelSupervoxels[label] = svs
+		for _, supervoxel := range supervoxels {
+			target, _ := mapping.mapLabel(supervoxel, ancestry)
+			if label == 0 {
+				label = target
+			} else if target != label {
+				err = fmt.Errorf("supervoxels span more than one label (%d, %d, ...)", label, target)
+				return
 			}
 		}
-	} else {
-		for supervoxel := range supervoxels {
-			labelSupervoxels[supervoxel] = labels.Set{supervoxel: struct{}{}}
+		mapping.RUnlock()
+	}
+
+	// Load the label's index and get block map
+	var idx *labels.Index
+	shard := label % numIndexShards
+	indexMu[shard].RLock()
+	idx, err = getCachedLabelIndex(d, v, label)
+	indexMu[shard].RUnlock()
+	if err != nil {
+		return
+	}
+	svBlocks := idx.GetSupervoxelsBlocks(supervoxelSet)
+
+	// Limit block processing to intersection of blocks for given points and supervoxels.
+	blockPts := d.partitionPoints(pts)
+	for blockCoord := range svBlocks {
+		if _, found := blockPts[blockCoord]; !found {
+			delete(svBlocks, blockCoord)
 		}
 	}
 
 	// Launch the block processing goroutines
 	var wg sync.WaitGroup
-	var labelsMu sync.Mutex
-	concurrency := len(blockPts) / 10
+	concurrency := len(svBlocks) / 10
 	if concurrency < 1 {
 		concurrency = 1
 	}
-	ch := make(chan blockPtsI, len(blockPts))
+	ch := make(chan blockPtsI, len(svBlocks))
 	for c := 0; c < concurrency; c++ {
 		wg.Add(1)
 		go func() {
 			for bptsI := range ch {
-				if len(ancestry) > 0 {
-					mapping.applyMappingToBlock(ancestry, bptsI.Block)
-				}
 				blockLabels := bptsI.Block.GetPointLabels(bptsI.pts)
-				labelsMu.Lock()
 				for i, index := range bptsI.indices {
-					mapped[index] = blockLabels[i]
+					supervoxel := blockLabels[i]
+					if _, found := supervoxelSet[supervoxel]; found {
+						inSupervoxels[index] = true
+					}
 				}
-				labelsMu.Unlock()
 			}
 			wg.Done()
 		}()
 	}
 
-	// Get the involved label indices and find the blocks
-	var numPtsInSupervoxels, numBlocks int
-	for label, svs := range labelSupervoxels {
-		shard := label % numIndexShards
-		indexMu[shard].RLock()
-		idx, err := getCachedLabelIndex(d, v, label)
-		indexMu[shard].RUnlock()
-		if err != nil {
+	// Send the blocks spanning the given supervoxels.
+	var block *labels.Block
+	for bcoord := range svBlocks {
+		bptsI := blockPts[bcoord] // must be found due to previous intersection check.
+		var chunkPt3d dvid.ChunkPoint3d
+		if chunkPt3d, err = bcoord.ToChunkPoint3d(); err != nil {
+			close(ch)
+			return
+		}
+		if block, err = d.GetLabelBlock(v, chunkPt3d, 0); err != nil {
+			close(ch)
 			return nil, err
 		}
-
-		blockMap := idx.GetSupervoxelsBlocks(svs)
-		if err != nil {
-			return nil, err
-		}
-		var numPtsInLabel int
-		for bcoord, ptsi := range blockPts {
-			if _, found := blockMap[bcoord]; !found {
-				continue
-			}
-
-			// this block contains desired supervoxel and also at least one of our points, so do computation.
-			chunkPt3d, err := bcoord.ToChunkPoint3d()
-			if err != nil {
-				close(ch)
-				return nil, err
-			}
-			block, err := d.GetLabelBlock(v, chunkPt3d, 0)
-			if err != nil {
-				close(ch)
-				return nil, err
-			}
-			numBlocks++
-			numPtsInLabel += len(ptsi.pts)
-			numPtsInSupervoxels += numPtsInLabel
-			ch <- blockPtsI{block, ptsi}
-		}
-		dvid.Infof("label %d, supervoxels %s had %d blocks -> %d points in %s\n", label, svs, len(blockMap), numPtsInLabel, d.DataName())
+		ch <- blockPtsI{block, bptsI}
 	}
+	dvid.Infof("label %d (%d selected supervoxels) for data %q: sent %d blocks for point checks\n", label, len(supervoxels), d.DataName(), len(svBlocks))
 
 	close(ch)
 	wg.Wait()
 
-	timedLog.Infof("Annotation %q query restricted to %d supervoxels for up to %d points -> %d points in %d blocks (%d goroutines)", d.DataName(), len(supervoxels), len(pts), numPtsInSupervoxels, numBlocks, concurrency)
+	timedLog.Infof("Annotation %q point check for %d supervoxels, %d points -> %d blocks (%d goroutines)", d.DataName(), len(supervoxels), len(pts), len(svBlocks), concurrency)
 	return
 }
-*/

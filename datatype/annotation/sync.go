@@ -629,6 +629,11 @@ func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, o
 	// d.Lock()
 	// defer d.Unlock()
 
+	labelData := d.getSyncedLabels()
+	if labelData == nil {
+		return fmt.Errorf("no synced labels for annotation %q, skipping label-aware denormalization", d.DataName())
+	}
+
 	d.StartUpdate()
 	defer d.StopUpdate()
 
@@ -641,20 +646,43 @@ func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, o
 	if len(targetElems) == 0 {
 		return nil
 	}
+
+	supervoxelData, pointSupervoxelOK := labelData.(supervoxelType)
 	var delta DeltaModifyElements
-	supervoxels := make(labels.Set, len(op.CleavedSupervoxels))
-	for _, supervoxel := range op.CleavedSupervoxels {
-		supervoxels[supervoxel] = struct{}{}
-	}
-	labelElems, err := d.getLabelElementsNR(v, targetElems, supervoxels)
-	if err != nil {
-		return err
-	}
-	for label, elems := range labelElems {
-		if label != op.Target {
-			for _, elem := range elems {
+	labelElems := LabelElements{}
+	if pointSupervoxelOK {
+		pts := make([]dvid.Point3d, len(targetElems))
+		for i, elem := range targetElems {
+			pts[i] = elem.Pos
+		}
+		inCleaved, err := supervoxelData.GetPointsInSupervoxels(v, pts, op.CleavedSupervoxels)
+		if err != nil {
+			return err
+		}
+		for i, cleaved := range inCleaved {
+			elem := targetElems[i]
+			if cleaved {
+				labelElems.add(op.CleavedLabel, elem)
 				delta.Del = append(delta.Del, ElementPos{Label: op.Target, Kind: elem.Kind, Pos: elem.Pos})
-				delta.Add = append(delta.Add, ElementPos{Label: label, Kind: elem.Kind, Pos: elem.Pos})
+				delta.Add = append(delta.Add, ElementPos{Label: op.CleavedLabel, Kind: elem.Kind, Pos: elem.Pos})
+			} else {
+				labelElems.add(op.Target, elem)
+			}
+		}
+	} else {
+		labelElems, err = d.getLabelElementsNR(labelData, v, targetElems)
+		if err != nil {
+			return err
+		}
+		for label, elems := range labelElems {
+			if label != op.Target {
+				for _, elem := range elems {
+					delta.Del = append(delta.Del, ElementPos{Label: op.Target, Kind: elem.Kind, Pos: elem.Pos})
+					delta.Add = append(delta.Add, ElementPos{Label: label, Kind: elem.Kind, Pos: elem.Pos})
+				}
+				if label != op.CleavedLabel {
+					dvid.Errorf("in annotation %q sync after cleave, %d points are now label %d and not cleaved label %d\n", d.DataName(), len(elems), label, op.CleavedLabel)
+				}
 			}
 		}
 	}

@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/labelarray"
 	"github.com/janelia-flyem/dvid/datatype/labelblk"
 	"github.com/janelia-flyem/dvid/datatype/labelmap"
@@ -1142,11 +1141,8 @@ type labelPointType interface {
 	GetLabelPoints(v dvid.VersionID, pts []dvid.Point3d, scale uint8, useSupervoxels bool) ([]uint64, error)
 }
 
-type labelSupervoxelPointType interface {
-	GetLabelPointsInSupervoxels(v dvid.VersionID, pts []dvid.Point3d, supervoxels labels.Set) ([]uint64, error)
-}
-
 type supervoxelType interface {
+	GetPointsInSupervoxels(v dvid.VersionID, pts []dvid.Point3d, supervoxels []uint64) ([]bool, error)
 	GetSupervoxelAtPoint(dvid.VersionID, dvid.Point) (uint64, error)
 	BlockSize() dvid.Point
 	DataName() dvid.InstanceName
@@ -1588,33 +1584,12 @@ func (d *Data) getLabelElements(v dvid.VersionID, elems Elements) (labelElems La
 	return
 }
 
-// returns label elements without relationships for block elements, using specialized point
-// requests if available (e.g., labelmap sync) and restricted to given supervoxels.
-func (d *Data) getLabelElementsNR(v dvid.VersionID, elems ElementsNR, supervoxels labels.Set) (labelElems LabelElements, err error) {
-	labelData := d.getSyncedLabels()
-	if labelData == nil {
-		dvid.Errorf("No synced labels for annotation %q, skipping label-aware denormalization\n", d.DataName())
-		return
-	}
+// returns label elements without relationships, using specialized point
+// requests if available or falling back to reading label blocks.
+func (d *Data) getLabelElementsNR(labelData labelType, v dvid.VersionID, elems ElementsNR) (labelElems LabelElements, err error) {
 	labelPointData, pointOK := labelData.(labelPointType)
-	labelSupervoxelPointData, pointSupervoxelOK := labelData.(labelSupervoxelPointType)
 	labelElems = LabelElements{}
-	if pointSupervoxelOK {
-		pts := make([]dvid.Point3d, len(elems))
-		for i, elem := range elems {
-			pts[i] = elem.Pos
-		}
-		var labels []uint64
-		labels, err = labelSupervoxelPointData.GetLabelPointsInSupervoxels(v, pts, supervoxels)
-		if err != nil {
-			return
-		}
-		for i, elem := range elems {
-			if labels[i] != 0 {
-				labelElems.add(labels[i], elem)
-			}
-		}
-	} else if pointOK {
+	if pointOK {
 		pts := make([]dvid.Point3d, len(elems))
 		for i, elem := range elems {
 			pts[i] = elem.Pos
@@ -1629,46 +1604,47 @@ func (d *Data) getLabelElementsNR(v dvid.VersionID, elems ElementsNR, supervoxel
 				labelElems.add(labels[i], elem)
 			}
 		}
-	} else {
-		blockSize := d.blockSize()
-		bX := blockSize[0] * 8
-		bY := blockSize[1] * bX
-		blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * 8)
+		return
+	}
 
-		blockElems := make(map[dvid.IZYXString]ElementsNR)
-		for _, elem := range elems {
-			izyxStr := elem.Pos.ToBlockIZYXString(blockSize)
-			be := blockElems[izyxStr]
-			be = append(be, elem)
-			blockElems[izyxStr] = be
+	blockSize := d.blockSize()
+	bX := blockSize[0] * 8
+	bY := blockSize[1] * bX
+	blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * 8)
+
+	blockElems := make(map[dvid.IZYXString]ElementsNR)
+	for _, elem := range elems {
+		izyxStr := elem.Pos.ToBlockIZYXString(blockSize)
+		be := blockElems[izyxStr]
+		be = append(be, elem)
+		blockElems[izyxStr] = be
+	}
+	for izyxStr, elems := range blockElems {
+		var bcoord dvid.ChunkPoint3d
+		bcoord, err = izyxStr.ToChunkPoint3d()
+		if err != nil {
+			return
 		}
-		for izyxStr, elems := range blockElems {
-			var bcoord dvid.ChunkPoint3d
-			bcoord, err = izyxStr.ToChunkPoint3d()
-			if err != nil {
-				return
-			}
-			var labels []byte
-			labels, err = labelData.GetLabelBytes(v, bcoord)
-			if err != nil {
-				return
-			}
-			if len(labels) == 0 {
-				continue
-			}
-			if len(labels) != blockBytes {
-				err = fmt.Errorf("expected %d bytes in %q label block, got %d instead.  aborting", blockBytes, d.DataName(), len(labels))
-				return
-			}
+		var labels []byte
+		labels, err = labelData.GetLabelBytes(v, bcoord)
+		if err != nil {
+			return
+		}
+		if len(labels) == 0 {
+			continue
+		}
+		if len(labels) != blockBytes {
+			err = fmt.Errorf("expected %d bytes in %q label block, got %d instead.  aborting", blockBytes, d.DataName(), len(labels))
+			return
+		}
 
-			// Group annotations by label
-			for _, elem := range elems {
-				pt := elem.Pos.Point3dInChunk(blockSize)
-				i := pt[2]*bY + pt[1]*bX + pt[0]*8
-				label := binary.LittleEndian.Uint64(labels[i : i+8])
-				if label != 0 {
-					labelElems.add(label, elem)
-				}
+		// Group annotations by label
+		for _, elem := range elems {
+			pt := elem.Pos.Point3dInChunk(blockSize)
+			i := pt[2]*bY + pt[1]*bX + pt[0]*8
+			label := binary.LittleEndian.Uint64(labels[i : i+8])
+			if label != 0 {
+				labelElems.add(label, elem)
 			}
 		}
 	}

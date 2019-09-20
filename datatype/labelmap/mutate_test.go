@@ -1964,6 +1964,11 @@ func TestCompleteSplitSupervoxel(t *testing.T) {
 	}
 }
 
+type labelType interface {
+	GetLabelPoints(dvid.VersionID, []dvid.Point3d, uint8, bool) ([]uint64, error)
+	GetPointsInSupervoxels(dvid.VersionID, []dvid.Point3d, []uint64) ([]bool, error)
+}
+
 func TestMergeCleave(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
@@ -1987,6 +1992,49 @@ func TestMergeCleave(t *testing.T) {
 	sv4encoding := server.TestHTTP(t, "GET", reqStr, nil)
 	body4.checkSparseVol(t, sv4encoding, dvid.OptionalBounds{})
 
+	// Check direct label queries for points
+	pts := []dvid.Point3d{
+		{25, 40, 15}, // body 1
+		{15, 57, 34},
+		{30, 27, 57}, // body 2
+		{63, 39, 45},
+		{59, 56, 39}, // body 3
+		{75, 40, 73}, // body 4
+	}
+	d, err := datastore.GetDataByUUIDName(uuid, "labels")
+	if err != nil {
+		t.Fatalf("Can't get labels instance from test db: %v\n", err)
+	}
+	labeldata, ok := d.(labelType)
+	if !ok {
+		t.Fatalf("Didn't get labels data that conforms to expected functions.\n")
+	}
+	v, err := datastore.VersionFromUUID(uuid)
+	if err != nil {
+		t.Fatalf("couldn't get version from UUID\n")
+	}
+	mapped, err := labeldata.GetLabelPoints(v, pts, 0, false)
+	if err != nil {
+		t.Errorf("bad response to GetLabelsPoints: %v\n", err)
+	}
+	if len(mapped) != 6 || !reflect.DeepEqual(mapped, []uint64{1, 1, 2, 2, 3, 4}) {
+		t.Fatalf("bad return from GetLabelPoints: %v\n", mapped)
+	}
+	inSupervoxels, err := labeldata.GetPointsInSupervoxels(v, pts, []uint64{1})
+	if err != nil {
+		t.Errorf("bad response to GetPointsInSupervoxels: %v\n", err)
+	}
+	if len(inSupervoxels) != 6 || !reflect.DeepEqual(inSupervoxels, []bool{true, true, false, false, false, false}) {
+		t.Fatalf("bad return from GetPointsInSupervoxels: %v\n", inSupervoxels)
+	}
+	inSupervoxels, err = labeldata.GetPointsInSupervoxels(v, pts, []uint64{3})
+	if err != nil {
+		t.Errorf("bad response to GetPointsInSupervoxels: %v\n", err)
+	}
+	if len(inSupervoxels) != 6 || !reflect.DeepEqual(inSupervoxels, []bool{false, false, false, false, true, false}) {
+		t.Fatalf("bad return from GetPointsInSupervoxels: %v\n", inSupervoxels)
+	}
+
 	// Merge of 3 into 4
 	testMerge := mergeJSON(`[4, 3]`)
 	testMerge.send(t, uuid, "labels")
@@ -2009,6 +2057,36 @@ func TestMergeCleave(t *testing.T) {
 	}
 	if infoVal.MutID != datastore.InitialMutationID+1 {
 		t.Errorf("expected mutation id %d, got %d\n", datastore.InitialMutationID+1, infoVal.MutID)
+	}
+
+	// Check direct label queries for points after merge
+	mapped, err = labeldata.GetLabelPoints(v, pts, 0, false)
+	if err != nil {
+		t.Errorf("bad response to GetLabelsPoints: %v\n", err)
+	}
+	if len(mapped) != 6 || !reflect.DeepEqual(mapped, []uint64{1, 1, 2, 2, 4, 4}) {
+		t.Fatalf("bad return from GetLabelPoints: %v\n", mapped)
+	}
+	inSupervoxels, err = labeldata.GetPointsInSupervoxels(v, pts, []uint64{3})
+	if err != nil {
+		t.Errorf("bad response to GetPointsInSupervoxels: %v\n", err)
+	}
+	if len(inSupervoxels) != 6 || !reflect.DeepEqual(inSupervoxels, []bool{false, false, false, false, true, false}) {
+		t.Fatalf("bad return from GetPointsInSupervoxels: %v\n", inSupervoxels)
+	}
+	inSupervoxels, err = labeldata.GetPointsInSupervoxels(v, pts, []uint64{4})
+	if err != nil {
+		t.Errorf("bad response to GetPointsInSupervoxels: %v\n", err)
+	}
+	if len(inSupervoxels) != 6 || !reflect.DeepEqual(inSupervoxels, []bool{false, false, false, false, false, true}) {
+		t.Fatalf("bad return from GetPointsInSupervoxels: %v\n", inSupervoxels)
+	}
+	inSupervoxels, err = labeldata.GetPointsInSupervoxels(v, pts, []uint64{3, 4})
+	if err != nil {
+		t.Errorf("bad response to GetPointsInSupervoxels: %v\n", err)
+	}
+	if len(inSupervoxels) != 6 || !reflect.DeepEqual(inSupervoxels, []bool{false, false, false, false, true, true}) {
+		t.Fatalf("bad return from GetPointsInSupervoxels: %v\n", inSupervoxels)
 	}
 
 	// Check sizes
@@ -2126,6 +2204,43 @@ func TestMergeCleave(t *testing.T) {
 	// make sure you can't cleave all supervoxels from a label
 	reqStr = fmt.Sprintf("%snode/%s/labels/cleave/4", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "POST", reqStr, bytes.NewBufferString("[4]"))
+
+	// Check direct label queries for points after cleave
+	mapped, err = labeldata.GetLabelPoints(v, pts, 0, false)
+	if err != nil {
+		t.Errorf("bad response to GetLabelsPoints: %v\n", err)
+	}
+	if len(mapped) != 6 || !reflect.DeepEqual(mapped, []uint64{1, 1, 2, 2, 5, 4}) {
+		t.Fatalf("bad return from GetLabelPoints: %v\n", mapped)
+	}
+	inSupervoxels, err = labeldata.GetPointsInSupervoxels(v, pts, []uint64{3})
+	if err != nil {
+		t.Errorf("bad response to GetPointsInSupervoxels: %v\n", err)
+	}
+	if len(inSupervoxels) != 6 || !reflect.DeepEqual(inSupervoxels, []bool{false, false, false, false, true, false}) {
+		t.Fatalf("bad return from GetPointsInSupervoxels: %v\n", inSupervoxels)
+	}
+	inSupervoxels, err = labeldata.GetPointsInSupervoxels(v, pts, []uint64{4})
+	if err != nil {
+		t.Errorf("bad response to GetPointsInSupervoxels: %v\n", err)
+	}
+	if len(inSupervoxels) != 6 || !reflect.DeepEqual(inSupervoxels, []bool{false, false, false, false, false, true}) {
+		t.Fatalf("bad return from GetPointsInSupervoxels: %v\n", inSupervoxels)
+	}
+	inSupervoxels, err = labeldata.GetPointsInSupervoxels(v, pts, []uint64{4})
+	if err != nil {
+		t.Fatalf("bad response to GetPointsInSupervoxels: %v\n", err)
+	}
+	if len(inSupervoxels) != 6 || !reflect.DeepEqual(inSupervoxels, []bool{false, false, false, false, false, true}) {
+		t.Fatalf("bad return from GetPointsInSupervoxels: %v\n", inSupervoxels)
+	}
+	inSupervoxels, err = labeldata.GetPointsInSupervoxels(v, pts, []uint64{3})
+	if err != nil {
+		t.Errorf("bad response to GetPointsInSupervoxels: %v\n", err)
+	}
+	if len(inSupervoxels) != 6 || !reflect.DeepEqual(inSupervoxels, []bool{false, false, false, false, true, false}) {
+		t.Fatalf("bad return from GetPointsInSupervoxels: %v\n", inSupervoxels)
+	}
 
 	// Check storage stats
 	stats, err := datastore.GetStorageDetails()
