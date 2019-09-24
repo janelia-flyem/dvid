@@ -153,7 +153,7 @@ func Initialize(initMetadata bool, iconfig Config) error {
 		}
 		d, ok := data.(Initializer)
 		if ok {
-			go d.Initialize()
+			d.Initialize() // Should be done sequentially in case its necessary to start receiving requests.
 		}
 	}
 
