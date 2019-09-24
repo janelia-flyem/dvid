@@ -168,7 +168,8 @@ func getCachedLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.I
 		timedLog = dvid.NewTimeLog()
 		idxBytes, err = indexCache.Get(k.Bytes())
 		if err != nil && err != freecache.ErrNotFound {
-			return nil, err
+			dvid.Errorf("cache get of index for label %d failed due to error: %v\n", label, err)
+			idxBytes = nil
 		}
 	}
 	var idx *labels.Index
