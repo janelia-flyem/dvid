@@ -157,6 +157,7 @@ func deleteLabelIndex(ctx *datastore.VersionedCtx, label uint64) error {
 	return nil
 }
 
+// only returns error if we can't get index from storage, not if we can't get it from cache
 func getCachedLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.Index, error) {
 	atomic.AddUint64(&metaAttempts, 1)
 	k := indexKey{data: d, version: v, label: label}
@@ -211,6 +212,7 @@ func getCachedLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.I
 	return idx, nil
 }
 
+// only returns error if we can't persist index, not if we can't cache
 func putCachedLabelIndex(d dvid.Data, v dvid.VersionID, idx *labels.Index) error {
 	ctx := datastore.NewVersionedCtx(d, v)
 	if err := putLabelIndex(ctx, idx); err != nil {
@@ -219,11 +221,12 @@ func putCachedLabelIndex(d dvid.Data, v dvid.VersionID, idx *labels.Index) error
 	if indexCache != nil {
 		idxBytes, err := idx.Marshal()
 		if err != nil {
-			return err
+			dvid.Errorf("unable to marshal index for label %d before caching: %v\n", idx.Label, err)
+			return nil
 		}
 		k := indexKey{data: d, version: v, label: idx.Label}.Bytes()
 		if err = indexCache.Set(k, idxBytes, 0); err != nil {
-			return err
+			dvid.Errorf("unable to cache index for label %d: %v\n", idx.Label, err)
 		}
 	}
 	return nil
