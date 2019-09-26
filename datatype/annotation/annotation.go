@@ -1143,7 +1143,6 @@ type labelPointType interface {
 
 type supervoxelType interface {
 	GetPointsInSupervoxels(v dvid.VersionID, pts []dvid.Point3d, supervoxels []uint64) ([]bool, error)
-	GetSupervoxelAtPoint(dvid.VersionID, dvid.Point) (uint64, error)
 	BlockSize() dvid.Point
 	DataName() dvid.InstanceName
 }
@@ -1174,17 +1173,6 @@ func (d *Data) getSyncedSupervoxels() supervoxelType {
 		}
 	}
 	return nil
-}
-
-// get supervoxel associated with a 3d point via synced label data.  This is not most efficient if
-// there are multiple elements per block, but is ok for infrequent use.
-func (d *Data) getSupervoxelAtPoint(v dvid.VersionID, pt dvid.Point3d) (label uint64, err error) {
-	labelData := d.getSyncedSupervoxels()
-	if labelData == nil {
-		err = fmt.Errorf("no synced supervoxels for annotation %q", d.DataName())
-		return
-	}
-	return labelData.GetSupervoxelAtPoint(v, pt)
 }
 
 // returns Elements with Relationships added by querying the block-indexed elements.

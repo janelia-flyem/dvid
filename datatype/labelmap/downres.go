@@ -70,7 +70,7 @@ func (d *Data) downresOctant(v dvid.VersionID, hiresScale uint8, mu *sync.Mutex,
 				errCh <- err
 				return
 			}
-			loresBlock, err = d.GetLabelBlock(v, chunkPt, hiresScale+1)
+			loresBlock, err = d.GetSupervoxelBlock(v, chunkPt, hiresScale+1)
 			if err != nil {
 				errCh <- err
 				return

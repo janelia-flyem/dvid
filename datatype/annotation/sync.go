@@ -628,6 +628,8 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op labels.CleaveOp) error {
 	// d.Lock()
 	// defer d.Unlock()
+	dvid.Infof("Starting cleave sync to annotation %q: %v\n", d.DataName(), op)
+	timedLog := dvid.NewTimeLog()
 
 	labelData := d.getSyncedLabels()
 	if labelData == nil {
@@ -647,43 +649,29 @@ func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, o
 		return nil
 	}
 
-	supervoxelData, pointSupervoxelOK := labelData.(supervoxelType)
+	supervoxelData, ok := labelData.(supervoxelType)
+	if !ok {
+		return fmt.Errorf("annotation instance %q is synced with label data %q that doesn't support supervoxels yet had cleave", d.DataName(), labelData.DataName())
+	}
+
 	var delta DeltaModifyElements
 	labelElems := LabelElements{}
-	if pointSupervoxelOK {
-		pts := make([]dvid.Point3d, len(targetElems))
-		for i, elem := range targetElems {
-			pts[i] = elem.Pos
-		}
-		inCleaved, err := supervoxelData.GetPointsInSupervoxels(v, pts, op.CleavedSupervoxels)
-		if err != nil {
-			return err
-		}
-		for i, cleaved := range inCleaved {
-			elem := targetElems[i]
-			if cleaved {
-				labelElems.add(op.CleavedLabel, elem)
-				delta.Del = append(delta.Del, ElementPos{Label: op.Target, Kind: elem.Kind, Pos: elem.Pos})
-				delta.Add = append(delta.Add, ElementPos{Label: op.CleavedLabel, Kind: elem.Kind, Pos: elem.Pos})
-			} else {
-				labelElems.add(op.Target, elem)
-			}
-		}
-	} else {
-		labelElems, err = d.getLabelElementsNR(labelData, v, targetElems)
-		if err != nil {
-			return err
-		}
-		for label, elems := range labelElems {
-			if label != op.Target {
-				for _, elem := range elems {
-					delta.Del = append(delta.Del, ElementPos{Label: op.Target, Kind: elem.Kind, Pos: elem.Pos})
-					delta.Add = append(delta.Add, ElementPos{Label: label, Kind: elem.Kind, Pos: elem.Pos})
-				}
-				if label != op.CleavedLabel {
-					dvid.Errorf("in annotation %q sync after cleave, %d points are now label %d and not cleaved label %d\n", d.DataName(), len(elems), label, op.CleavedLabel)
-				}
-			}
+	pts := make([]dvid.Point3d, len(targetElems))
+	for i, elem := range targetElems {
+		pts[i] = elem.Pos
+	}
+	inCleaved, err := supervoxelData.GetPointsInSupervoxels(v, pts, op.CleavedSupervoxels)
+	if err != nil {
+		return err
+	}
+	for i, cleaved := range inCleaved {
+		elem := targetElems[i]
+		if cleaved {
+			labelElems.add(op.CleavedLabel, elem)
+			delta.Del = append(delta.Del, ElementPos{Label: op.Target, Kind: elem.Kind, Pos: elem.Pos})
+			delta.Add = append(delta.Add, ElementPos{Label: op.CleavedLabel, Kind: elem.Kind, Pos: elem.Pos})
+		} else {
+			labelElems.add(op.Target, elem)
 		}
 	}
 
@@ -738,6 +726,7 @@ func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, o
 			dvid.Errorf("unable to write cleave to kafka for data %q: %v\n", d.DataName(), err)
 		}
 	}
+	timedLog.Infof("Finished cleave sync to annotation %q: mutation id %d", d.DataName(), op.MutID)
 	return nil
 }
 
