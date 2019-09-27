@@ -20,6 +20,7 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/downres"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
+	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	lz4 "github.com/janelia-flyem/go/golz4-updated"
@@ -1472,6 +1473,33 @@ func TestPostBlocks(t *testing.T) {
 	}
 	if gotBlocks != 2 {
 		t.Fatalf("expected to receive 2 blocks, got %d instead\n", gotBlocks)
+	}
+
+	// test GET /indices
+	apiStr = fmt.Sprintf("%snode/%s/labels/indices", server.WebAPIPath, uuid)
+	returnData := server.TestHTTP(t, "GET", apiStr, strings.NewReader(`[0, 1, 52011980226]`))
+	var indices proto.LabelIndices
+	if err := indices.Unmarshal(returnData); err != nil {
+		t.Fatalf("error unmarshaling label indices: %v\n", err)
+	}
+	if len(indices.Indices) != 3 {
+		t.Fatalf("expected 3 indices returned, got %d\n", len(indices.Indices))
+	}
+	if indices.Indices[0].Label != 0 || len(indices.Indices[0].Blocks) != 0 {
+		t.Fatalf("got bad label 0 index return: %v\n", indices.Indices[0])
+	}
+	if indices.Indices[1].Label != 1 || len(indices.Indices[1].Blocks) != 0 {
+		t.Fatalf("got bad label 1 index return: %v\n", indices.Indices[1])
+	}
+	if indices.Indices[2].Label != 52011980226 || len(indices.Indices[2].Blocks) != 1 && indices.Indices[2].Blocks[13194143727618].Counts[52011980226] != 7963 {
+		t.Fatalf("got bad label 52011980226 index return: %v\n", indices.Indices[2])
+	}
+	server.TestBadHTTP(t, "GET", apiStr, nil)
+	server.TestBadHTTP(t, "GET", apiStr, strings.NewReader(``))
+	server.TestBadHTTP(t, "GET", apiStr, strings.NewReader(`{}`))
+	returnData = server.TestHTTP(t, "GET", apiStr, strings.NewReader(`[]`))
+	if returnData != nil {
+		t.Fatalf("got non-nil response from bad request: %v\n", returnData)
 	}
 }
 

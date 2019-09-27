@@ -3711,8 +3711,14 @@ func (d *Data) handleIndices(ctx *datastore.VersionedCtx, w http.ResponseWriter,
 				server.BadRequest(w, r, "could not get label %d index in position %d: %v", label, i, err)
 				return
 			}
+			fmt.Printf("indices.Indices[%d]: %v\n", i, idx)
 			if idx != nil {
 				indices.Indices[i] = &(idx.LabelIndex)
+			} else {
+				index := proto.LabelIndex{
+					Label: label,
+				}
+				indices.Indices[i] = &index
 			}
 		}
 		dataOut, err := indices.Marshal()
