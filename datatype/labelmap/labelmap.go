@@ -2115,6 +2115,7 @@ func writeBlock(w http.ResponseWriter, bcoord dvid.ChunkPoint3d, out []byte) err
 
 // sendBlocksSpecific writes data to the blocks specified -- best for non-ordered backend
 func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWriter, supervoxels bool, compression, blockstring string, scale uint8) (numBlocks int, err error) {
+	timedLog := dvid.NewTimeLog()
 	switch compression {
 	case "":
 		compression = "blocks"
@@ -2147,18 +2148,25 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 
 	ch := make(chan blockSend, numBlocks)
 	var sendErr error
+	var startBlock dvid.ChunkPoint3d
+	var readT, transcodeT, writeT time.Duration
 	go func() {
 		for data := range ch {
 			if data.err != nil && sendErr == nil {
 				sendErr = data.err
 			} else if len(data.value) > 0 {
+				t0 := time.Now()
 				err := writeBlock(w, data.bcoord, data.value)
 				if err != nil && sendErr == nil {
 					sendErr = err
 				}
+				t1 := time.Now()
+				writeT += t1.Sub(t0)
 			}
 			wg.Done()
 		}
+		timedLog.Infof("labelmap %q specificblocks - finished sending %d blocks starting with %s", d.DataName(), numBlocks, startBlock)
+		dvid.Infof("labelmap %q specificblocks - %d blocks starting with %s: read %s, transcode %s, write %s\n", d.DataName(), numBlocks, startBlock, readT, transcodeT, writeT)
 	}()
 
 	// iterate through each block, get data from store, and transcode based on request parameters
@@ -2177,13 +2185,18 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 			return
 		}
 		bcoord := dvid.ChunkPoint3d{int32(xloc), int32(yloc), int32(zloc)}
-
+		if i == 0 {
+			startBlock = bcoord
+		}
 		wg.Add(1)
 		go func(bcoord dvid.ChunkPoint3d) {
+			t0 := time.Now()
 			indexBeg := dvid.IndexZYX(bcoord)
 			keyBeg := NewBlockTKey(scale, &indexBeg)
 
 			value, err := store.Get(ctx, keyBeg)
+			t1 := time.Now()
+			readT += t1.Sub(t0)
 			if err != nil {
 				ch <- blockSend{err: err}
 				return
@@ -2196,14 +2209,17 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 					compression: compression,
 					supervoxels: supervoxels,
 				}
+				t0 := time.Now()
 				out, err := d.transcodeBlock(b)
+				t1 := time.Now()
+				transcodeT += t1.Sub(t0)
 				ch <- blockSend{bcoord: bcoord, value: out, err: err}
 				return
 			}
 			ch <- blockSend{value: nil}
 		}(bcoord)
 	}
-
+	timedLog.Infof("labelmap %q specificblocks - read %d blocks starting with %s", d.DataName(), numBlocks, startBlock)
 	wg.Wait()
 	close(ch)
 	return numBlocks, sendErr
