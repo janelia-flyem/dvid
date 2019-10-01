@@ -2150,6 +2150,7 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 	var sendErr error
 	var startBlock dvid.ChunkPoint3d
 	var readT, transcodeT, writeT time.Duration
+	var readNum, transcodeNum int64
 	go func() {
 		for data := range ch {
 			if data.err != nil && sendErr == nil {
@@ -2160,15 +2161,22 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 				if err != nil && sendErr == nil {
 					sendErr = err
 				}
-				t1 := time.Now()
-				writeT += t1.Sub(t0)
+				writeT += time.Now().Sub(t0)
 			}
 			wg.Done()
 		}
 		timedLog.Infof("labelmap %q specificblocks - finished sending %d blocks starting with %s", d.DataName(), numBlocks, startBlock)
-		dvid.Infof("labelmap %q specificblocks - %d blocks starting with %s: read %s, transcode %s, write %s\n", d.DataName(), numBlocks, startBlock, readT, transcodeT, writeT)
+		if transcodeNum == 0 {
+			transcodeNum = 1
+		}
+		if readNum == 0 {
+			readNum = 1
+		}
+		dvid.Infof("labelmap %q specificblocks - %d blocks starting with %s: read %s (%s), transcode %s (%s), write %s (%s)\n", d.DataName(), numBlocks, startBlock,
+			readT, readT/time.Duration(readNum), transcodeT, transcodeT/time.Duration(transcodeNum), writeT, writeT/time.Duration(readNum))
 	}()
 
+	var timeMutex sync.Mutex
 	// iterate through each block, get data from store, and transcode based on request parameters
 	for i := 0; i < len(coordarray); i += 3 {
 		var xloc, yloc, zloc int
@@ -2195,8 +2203,10 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 			keyBeg := NewBlockTKey(scale, &indexBeg)
 
 			value, err := store.Get(ctx, keyBeg)
-			t1 := time.Now()
-			readT += t1.Sub(t0)
+			timeMutex.Lock()
+			readNum++
+			readT += time.Now().Sub(t0)
+			timeMutex.Unlock()
 			if err != nil {
 				ch <- blockSend{err: err}
 				return
@@ -2211,8 +2221,10 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 				}
 				t0 := time.Now()
 				out, err := d.transcodeBlock(b)
-				t1 := time.Now()
-				transcodeT += t1.Sub(t0)
+				timeMutex.Lock()
+				transcodeNum++
+				transcodeT += time.Now().Sub(t0)
+				timeMutex.Unlock()
 				ch <- blockSend{bcoord: bcoord, value: out, err: err}
 				return
 			}
@@ -2322,20 +2334,25 @@ func (d *Data) transcodeBlock(b blockData) (out []byte, err error) {
 		return
 	}
 
+	var mappingT, uncompressT time.Duration
+
 	var doMapping bool
 	var mapping *SVMap
 	if !b.supervoxels {
+		t0 := time.Now()
 		if mapping, err = getMapping(d, b.v); err != nil {
 			return
 		}
 		if mapping != nil && mapping.exists(b.v) {
 			doMapping = true
 		}
+		mappingT += time.Now().Sub(t0)
 	}
 
 	// Need to do uncompression/recompression if we are changing compression or mapping
 	var uncompressed, recompressed []byte
 	if formatIn != formatOut || b.compression == "gzip" || doMapping {
+		t0 := time.Now()
 		switch formatIn {
 		case dvid.LZ4:
 			uncompressed = make([]byte, outsize)
@@ -2357,6 +2374,7 @@ func (d *Data) transcodeBlock(b blockData) (out []byte, err error) {
 			}
 			zr.Close()
 		}
+		uncompressT += time.Now().Sub(t0)
 
 		var block labels.Block
 		if err = block.UnmarshalBinary(uncompressed); err != nil {
@@ -2365,9 +2383,12 @@ func (d *Data) transcodeBlock(b blockData) (out []byte, err error) {
 		}
 
 		if doMapping {
+			t0 = time.Now()
 			modifyBlockMapping(b.v, &block, mapping)
+			mappingT += time.Now().Sub(t0)
 		}
 
+		t0 = time.Now()
 		if b.compression == "blocks" { // send native DVID block compression with gzip
 			out, err = block.CompressGZIP()
 			if err != nil {
@@ -2404,6 +2425,8 @@ func (d *Data) transcodeBlock(b blockData) (out []byte, err error) {
 				out = gzipOut.Bytes()
 			}
 		}
+		compressT := time.Now().Sub(t0)
+		dvid.Infof("transcodeBlock %s: uncompress %s, mapping %s, compress %s\n", b.bcoord, uncompressT, mappingT, compressT)
 	}
 	return
 }
