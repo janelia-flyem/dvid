@@ -1293,6 +1293,7 @@ func (d *Data) deleteElementInLabel(ctx *datastore.VersionedCtx, batch storage.B
 		}
 	}
 	if len(toDel) == 0 {
+		dvid.Errorf("Deleted point %s had label %d (from synced instance %q) but was not found in annotation %q for that label\n", pt, label, labelData.DataName(), d.DataName())
 		return nil
 	}
 

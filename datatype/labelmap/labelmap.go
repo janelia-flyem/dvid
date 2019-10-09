@@ -2231,7 +2231,7 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 			ch <- blockSend{value: nil}
 		}(bcoord)
 	}
-	timedLog.Infof("labelmap %q specificblocks - read %d blocks starting with %s", d.DataName(), numBlocks, startBlock)
+	timedLog.Infof("labelmap %q specificblocks - launched concurrent reads of %d blocks starting with %s", d.DataName(), numBlocks, startBlock)
 	wg.Wait()
 	close(ch)
 	return numBlocks, sendErr
@@ -2334,25 +2334,20 @@ func (d *Data) transcodeBlock(b blockData) (out []byte, err error) {
 		return
 	}
 
-	var mappingT, uncompressT time.Duration
-
 	var doMapping bool
 	var mapping *SVMap
 	if !b.supervoxels {
-		t0 := time.Now()
 		if mapping, err = getMapping(d, b.v); err != nil {
 			return
 		}
 		if mapping != nil && mapping.exists(b.v) {
 			doMapping = true
 		}
-		mappingT += time.Now().Sub(t0)
 	}
 
 	// Need to do uncompression/recompression if we are changing compression or mapping
 	var uncompressed, recompressed []byte
 	if formatIn != formatOut || b.compression == "gzip" || doMapping {
-		t0 := time.Now()
 		switch formatIn {
 		case dvid.LZ4:
 			uncompressed = make([]byte, outsize)
@@ -2374,7 +2369,6 @@ func (d *Data) transcodeBlock(b blockData) (out []byte, err error) {
 			}
 			zr.Close()
 		}
-		uncompressT += time.Now().Sub(t0)
 
 		var block labels.Block
 		if err = block.UnmarshalBinary(uncompressed); err != nil {
@@ -2383,12 +2377,9 @@ func (d *Data) transcodeBlock(b blockData) (out []byte, err error) {
 		}
 
 		if doMapping {
-			t0 = time.Now()
 			modifyBlockMapping(b.v, &block, mapping)
-			mappingT += time.Now().Sub(t0)
 		}
 
-		t0 = time.Now()
 		if b.compression == "blocks" { // send native DVID block compression with gzip
 			out, err = block.CompressGZIP()
 			if err != nil {
@@ -2425,8 +2416,6 @@ func (d *Data) transcodeBlock(b blockData) (out []byte, err error) {
 				out = gzipOut.Bytes()
 			}
 		}
-		compressT := time.Now().Sub(t0)
-		dvid.Infof("transcodeBlock %s: uncompress %s, mapping %s, compress %s\n", b.bcoord, uncompressT, mappingT, compressT)
 	}
 	return
 }
