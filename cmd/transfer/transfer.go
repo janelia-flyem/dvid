@@ -128,7 +128,7 @@ func sendLabels(src, dst *LabelMetadata, name, srcURL string) {
 	if minIndex[0] == 0 && maxIndex[0] == 0 {
 		fmt.Printf("min/max indices seem broken.  computing using min/max point...\n")
 		if src.Extended.MaxPoint[0] == 0 && src.Extended.MaxPoint[1] == 0 && src.Extended.MaxPoint[2] == 0 {
-			fmt.Printf("min point, max point %s unable to be converted to min/max indices\n", src.Extended.MaxPoint)
+			fmt.Printf("min point, max point %v unable to be converted to min/max indices\n", src.Extended.MaxPoint)
 			os.Exit(1)
 		}
 		minIndex[0] = src.Extended.MinPoint[0] / srcBlock[0]

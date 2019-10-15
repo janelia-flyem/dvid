@@ -67,7 +67,7 @@ func main() {
 	if *blockcoords != "" {
 		coordarray := strings.Split(*blockcoords, ",")
 		if len(coordarray)%3 != 0 {
-			fmt.Printf("block coordinates should be three coordinates per block, got %q\n", blockcoords)
+			fmt.Printf("block coordinates should be three coordinates per block, got %v\n", blockcoords)
 			os.Exit(1)
 		}
 		numBlocks := len(coordarray) / 3
