@@ -987,7 +987,7 @@ func (m *repoManager) deleteRepo(uuid dvid.UUID, passcode string) error {
 	}
 
 	// Start deletion of all data instances.
-	r.Lock()
+	r.RLock()
 	for _, data := range r.data {
 		go func(data dvid.Data) {
 			if err := storage.DeleteDataInstance(data); err != nil {
@@ -995,7 +995,7 @@ func (m *repoManager) deleteRepo(uuid dvid.UUID, passcode string) error {
 			}
 		}(data)
 	}
-	r.Unlock()
+	r.RUnlock()
 
 	// Delete the repo off the datastore.
 	if err := r.delete(); err != nil {
