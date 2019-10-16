@@ -977,16 +977,17 @@ func (m *repoManager) deleteRepo(uuid dvid.UUID, passcode string) error {
 	}
 
 	r.RLock()
-	if r.uuid != uuid {
-		r.RUnlock()
+	uuidMismatch := r.uuid != uuid
+	passcodeMismatch := r.passcode != "" && r.passcode != passcode
+	r.RUnlock()
+	if uuidMismatch {
 		return fmt.Errorf("UUID for repo deletion must match UUID of repo's root")
-	}
-	if r.passcode != "" && r.passcode != passcode {
-		r.RUnlock()
+	} else if passcodeMismatch {
 		return fmt.Errorf("Passcode does not match repo %s passcode", uuid)
 	}
 
 	// Start deletion of all data instances.
+	r.Lock()
 	for _, data := range r.data {
 		go func(data dvid.Data) {
 			if err := storage.DeleteDataInstance(data); err != nil {

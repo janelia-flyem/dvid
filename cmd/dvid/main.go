@@ -149,7 +149,7 @@ func main() {
 
 	if help && flag.NArg() == 2 && strings.ToLower(flag.Args()[0]) == "server" {
 		if err := DoCommand(dvid.Command([]string{"help"})); err != nil {
-			fmt.Printf("Unable to get 'help' from DVID server at %q.\n%v\n", rpcAddress, err)
+			fmt.Printf("Unable to get 'help' from DVID server at %s.\n%v\n", *rpcAddress, err)
 		}
 		os.Exit(0)
 	}
