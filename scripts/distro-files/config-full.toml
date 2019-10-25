@@ -138,6 +138,9 @@ topicActivity = "allMyActivity"
 topicPrefix = "postsFromServer1"
 # optional: forces topic suffix for instance mutations; each entry is data UUID : suffix.
 topicSuffixes = ["bc95398cb3ae40fcab2529c7bca1ad0d:myGreatDataInstance"]
+# optional: allows setting of max # messages on producer queue (queue.buffering.max.messages)
+# default is 100,000 and may be exceeded for activity logs on very busy servers
+bufferSize = 1000000
 
 servers = ["foo.bar.com:1234", "foo2.bar.com:1234"]
 

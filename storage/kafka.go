@@ -39,6 +39,7 @@ type KafkaConfig struct {
 	TopicPrefix   string   // if supplied, will be prefixed to any mutation logging
 	TopicSuffixes []string // optional topic suffixes per data UUID
 	Servers       []string
+	BufferSize    int // queue.buffering.max.messages
 }
 
 // KafkaTopicSuffix returns any configured suffix for the given data UUID or the empty string.
@@ -83,11 +84,14 @@ func (kc KafkaConfig) Initialize(hostID string) error {
 	}
 	kafkaActivityTopic = reg.ReplaceAllString(kafkaActivityTopic, "-")
 
-	configMap := &kafka.ConfigMap{
+	configMap := kafka.ConfigMap{
 		"client.id":         "dvid-kafkaclient",
 		"bootstrap.servers": strings.Join(kc.Servers, ","),
 	}
-	if kafkaProducer, err = kafka.NewProducer(configMap); err != nil {
+	if kc.BufferSize != 0 {
+		configMap["queue.buffering.max.messages"] = kc.BufferSize
+	}
+	if kafkaProducer, err = kafka.NewProducer(&configMap); err != nil {
 		return err
 	}
 
