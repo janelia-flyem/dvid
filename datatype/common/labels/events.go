@@ -149,6 +149,7 @@ type DeltaMergeEnd struct {
 // DeltaSplit describes the voxels modified during a split operation.
 // The Split field may be null if this is a coarse split only defined by block indices.
 type DeltaSplit struct {
+	MutID        uint64
 	OldLabel     uint64
 	NewLabel     uint64
 	Split        dvid.BlockRLEs

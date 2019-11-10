@@ -276,7 +276,7 @@ func (d *Data) handleSyncMessage(ctx *datastore.VersionedCtx, msg datastore.Sync
 
 	case imageblk.MutatedBlock:
 		chunkPt := dvid.ChunkPoint3d(*delta.Index)
-		d.mutateBlock(ctx, chunkPt, delta.Prev, delta.Data, batcher)
+		d.mutateBlock(ctx, delta.MutID, chunkPt, delta.Prev, delta.Data, batcher)
 		mutID = delta.MutID
 
 	case labelarray.IngestedBlock:
@@ -295,14 +295,14 @@ func (d *Data) handleSyncMessage(ctx *datastore.VersionedCtx, msg datastore.Sync
 		chunkPt, _ := delta.BCoord.ToChunkPoint3d()
 		prev, _ := delta.Prev.MakeLabelVolume()
 		data, _ := delta.Data.MakeLabelVolume()
-		d.mutateBlock(ctx, chunkPt, prev, data, batcher)
+		d.mutateBlock(ctx, delta.MutID, chunkPt, prev, data, batcher)
 		mutID = delta.MutID
 
 	case labelmap.MutatedBlock:
 		chunkPt, _ := delta.BCoord.ToChunkPoint3d()
 		prev, _ := delta.Prev.MakeLabelVolume()
 		data, _ := delta.Data.MakeLabelVolume()
-		d.mutateBlock(ctx, chunkPt, prev, data, batcher)
+		d.mutateBlock(ctx, delta.MutID, chunkPt, prev, data, batcher)
 		mutID = delta.MutID
 
 	case labels.DeltaMergeStart:
@@ -451,7 +451,7 @@ func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, chunkPt dvid.ChunkPoint3
 }
 
 // If a block of labels is mutated, adjust any label that was either removed or added.
-func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, chunkPt dvid.ChunkPoint3d, prev, data []byte, batcher storage.KeyValueBatcher) {
+func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, mutID uint64, chunkPt dvid.ChunkPoint3d, prev, data []byte, batcher storage.KeyValueBatcher) {
 	// Get the synaptic elements for this block
 	tk := NewBlockTKey(chunkPt)
 	elems, err := getElements(ctx, tk)
@@ -534,11 +534,11 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, chunkPt dvid.ChunkPoint3
 	// send kafka merge event to instance-uuid topic
 	versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
 	msginfo := map[string]interface{}{
-		"Action": "mutate-block",
-		// "MutationID": op.MutID,
-		"UUID":      string(versionuuid),
-		"Timestamp": time.Now().String(),
-		"Delta":     delta,
+		"Action":     "mutate-block",
+		"MutationID": mutID,
+		"UUID":       string(versionuuid),
+		"Timestamp":  time.Now().String(),
+		"Delta":      delta,
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
@@ -821,11 +821,11 @@ func (d *Data) splitLabelsCoarse(batcher storage.KeyValueBatcher, v dvid.Version
 	// send kafka coarse split event to instance-uuid topic
 	versionuuid, _ := datastore.UUIDFromVersion(v)
 	msginfo := map[string]interface{}{
-		"Action": "split-coarse",
-		// "MutationID": op.MutID,
-		"UUID":      string(versionuuid),
-		"Timestamp": time.Now().String(),
-		"Delta":     delta,
+		"Action":     "split-coarse",
+		"MutationID": op.MutID,
+		"UUID":       string(versionuuid),
+		"Timestamp":  time.Now().String(),
+		"Delta":      delta,
 	}
 	jsonBytes, _ := json.Marshal(msginfo)
 	if len(jsonBytes) > storage.KafkaMaxMessageSize {
@@ -944,11 +944,11 @@ func (d *Data) splitLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 	// send kafka merge event to instance-uuid topic
 	versionuuid, _ := datastore.UUIDFromVersion(v)
 	msginfo := map[string]interface{}{
-		"Action": "split",
-		// "MutationID": op.MutID,
-		"UUID":      string(versionuuid),
-		"Timestamp": time.Now().String(),
-		"Delta":     delta,
+		"Action":     "split",
+		"MutationID": op.MutID,
+		"UUID":       string(versionuuid),
+		"Timestamp":  time.Now().String(),
+		"Delta":      delta,
 	}
 	jsonBytes, _ := json.Marshal(msginfo)
 	if len(jsonBytes) > storage.KafkaMaxMessageSize {

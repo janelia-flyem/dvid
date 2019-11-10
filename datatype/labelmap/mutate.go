@@ -667,6 +667,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 	timedLog.Debugf("completed labelmap split (%d affected, %d split blocks) of %d -> %d", len(affectedBlocks), len(splitmap), fromLabel, toLabel)
 
 	deltaSplit := labels.DeltaSplit{
+		MutID:        mutID,
 		OldLabel:     fromLabel,
 		NewLabel:     toLabel,
 		Split:        splitmap,

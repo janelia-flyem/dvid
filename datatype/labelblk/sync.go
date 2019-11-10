@@ -487,7 +487,7 @@ func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) {
 	timedLog := dvid.NewTimeLog()
 	d.StartUpdate()
 
-	mutID := d.NewMutationID()
+	mutID := delta.MutID
 	if delta.Split == nil {
 		// Coarse Split
 		for _, izyxStr := range delta.SortedBlocks {

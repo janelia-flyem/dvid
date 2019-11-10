@@ -294,6 +294,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 
 	// Do the split
 	deltaSplit := labels.DeltaSplit{
+		MutID:        mutID,
 		OldLabel:     fromLabel,
 		NewLabel:     toLabel,
 		Split:        splitmap,
@@ -373,12 +374,13 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 	mutID := d.NewMutationID()
 	versionuuid, _ := datastore.UUIDFromVersion(v)
 	msginfo := map[string]interface{}{
-		"Action":    "splitcoarse",
-		"Target":    fromLabel,
-		"NewLabel":  toLabel,
-		"Split":     splitRef,
-		"UUID":      string(versionuuid),
-		"Timestamp": time.Now().String(),
+		"Action":     "splitcoarse",
+		"Target":     fromLabel,
+		"NewLabel":   toLabel,
+		"Split":      splitRef,
+		"MutationID": mutID,
+		"UUID":       string(versionuuid),
+		"Timestamp":  time.Now().String(),
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
@@ -418,6 +420,7 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 
 	// Publish split event
 	deltaSplit := labels.DeltaSplit{
+		MutID:        mutID,
 		OldLabel:     fromLabel,
 		NewLabel:     toLabel,
 		Split:        nil,

@@ -297,6 +297,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 
 	// Publish split event
 	deltaSplit := labels.DeltaSplit{
+		MutID:        mutID,
 		OldLabel:     fromLabel,
 		NewLabel:     toLabel,
 		Split:        splitmap,
@@ -517,6 +518,7 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 
 	// Publish split event
 	deltaSplit := labels.DeltaSplit{
+		MutID:        mutID,
 		OldLabel:     fromLabel,
 		NewLabel:     toLabel,
 		SortedBlocks: splitblks,
