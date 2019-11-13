@@ -426,7 +426,35 @@ func (d *Data) SetDeleted(deleted bool) {
 	d.deleted = deleted
 }
 
+// SetTagsByJSON takes a JSON object of tags and either appends or replaces the current
+// data's tags depending on the replace parameter.
+func SetTagsByJSON(d dvid.Data, uuid dvid.UUID, replace bool, in io.ReadCloser) error {
+	setTags := make(map[string]string)
+	decoder := json.NewDecoder(in)
+	if err := decoder.Decode(&setTags); err != nil && err != io.EOF {
+		return fmt.Errorf("Malformed JSON request in tags setter: %v", err)
+	}
+	if replace {
+		d.SetTags(setTags)
+		return nil
+	}
+	curTags := d.Tags()
+	for k, v := range setTags {
+		curTags[k] = v
+	}
+	d.SetTags(curTags)
+	return nil
+}
+
 // ---------------------------------------
+
+func (d *Data) MarshalJSONTags() ([]byte, error) {
+	return json.Marshal(struct {
+		Tags map[string]string
+	}{
+		d.Tags(),
+	})
+}
 
 func (d *Data) MarshalJSON() ([]byte, error) {
 	// convert sync UUIDs to names so its more understandable.
@@ -655,6 +683,10 @@ func (d *Data) SetName(name dvid.InstanceName) {
 func (d *Data) SetSync(syncs dvid.UUIDSet) {
 	d.syncData = syncs
 	d.syncNames = nil
+}
+
+func (d *Data) SetTags(tags map[string]string) {
+	d.tags = tags
 }
 
 func (d *Data) SetKVStore(kvStore dvid.Store) {

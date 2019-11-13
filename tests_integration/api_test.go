@@ -354,6 +354,34 @@ func TestInstanceTags(t *testing.T) {
 		t.Errorf("Got bad response: %s\n", string(got))
 		t.Errorf("Parsed jsonResp: %v\n", jsonResp.Base)
 	}
+
+	payload = bytes.NewBufferString(`{"foo": "something about foo", "bar": "something about bar"}`)
+	tagURL := fmt.Sprintf("%snode/%s/testkv/tags", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", tagURL, payload)
+
+	got = server.TestHTTP(t, "GET", tagURL, nil)
+	var jsonResp2 struct {
+		Tags map[string]string
+	}
+	if err := json.Unmarshal(got, &jsonResp2); err != nil {
+		t.Fatalf("couldn't unmarshal response: %s\n", string(got))
+	}
+	if len(jsonResp2.Tags) != 4 || jsonResp2.Tags["foo"] != "something about foo" || jsonResp2.Tags["bar"] != "something about bar" {
+		t.Fatalf("Got bad response: %s\n", string(got))
+	}
+
+	tagURL += "?replace=true"
+	payload = bytes.NewBufferString(`{}`)
+	server.TestHTTP(t, "POST", tagURL, payload)
+
+	jsonResp2.Tags = nil
+	got = server.TestHTTP(t, "GET", tagURL, nil)
+	if err := json.Unmarshal(got, &jsonResp2); err != nil {
+		t.Fatalf("couldn't unmarshal response: %s\n", string(got))
+	}
+	if len(jsonResp2.Tags) != 0 {
+		t.Fatalf("Got bad response: %v\n", jsonResp2)
+	}
 }
 
 func TestSyncs(t *testing.T) {

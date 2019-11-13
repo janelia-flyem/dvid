@@ -303,6 +303,8 @@ type DataSetter interface {
 	// SetSync defines a set of data UUIDs for syncing with this data instance.
 	// This could be used by higher software layers to implement pub/sub-style syncing.
 	SetSync(UUIDSet)
+
+	SetTags(map[string]string)
 }
 
 // Axis enumerates different types of axis (x, y, z, time, etc)

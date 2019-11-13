@@ -129,6 +129,23 @@ POST <api URL>/node/<UUID>/<data name>/sync?<options>
 			   Default operation is false.
 
 
+GET <api URL>/node/<UUID>/<data name>/tags
+POST <api URL>/node/<UUID>/<data name>/tags?<options>
+
+	GET retrieves JSON of tags for this instance.
+	POST appends or replaces tags provided in POST body.  Expects JSON to be POSTed
+	with the following format:
+
+	{ "tag1": "anything you want", "tag2": "something else" }
+
+	To delete tags, pass an empty object with query string "replace=true".
+
+	POST Query-string Options:
+
+	replace   Set to "true" if you want passed tags to replace and not be appended to current tags.
+			  Default operation is false (append).
+		   
+		   
 Note: For the following URL endpoints that return and accept POSTed JSON values, see the JSON format
 at end of this documentation.
 
@@ -2648,7 +2665,7 @@ func (d *Data) Help() string {
 
 func (d *Data) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Base     *datastore.Data
+		Tags     *datastore.Data
 		Extended Properties
 	}{
 		d.Data,
@@ -2793,6 +2810,23 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		d.cachedBlockSize = nil
+
+	case "tags":
+		if action == "post" {
+			replace := r.URL.Query().Get("replace") == "true"
+			if err := datastore.SetTagsByJSON(d, uuid, replace, r.Body); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+		} else {
+			jsonBytes, err := d.MarshalJSONTags()
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, string(jsonBytes))
+		}
 
 	case "label":
 		if action != "get" {

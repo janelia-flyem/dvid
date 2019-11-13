@@ -222,12 +222,27 @@ POST <api URL>/node/<UUID>/<data name>/sync?<options>
     The labelmap data type accepts syncs to labelvol data instances.  It also accepts syncs to
 	labelmap instances for multiscale.
 
-    GET Query-string Options:
+    Query-string Options:
 
     replace    Set to "true" if you want passed syncs to replace and not be appended to current syncs.
 			   Default operation is false.
 
+GET <api URL>/node/<UUID>/<data name>/tags
+POST <api URL>/node/<UUID>/<data name>/tags?<options>
 
+	GET retrieves JSON of tags for this instance.
+	POST appends or replaces tags provided in POST body.  Expects JSON to be POSTed
+	with the following format:
+
+	{ "tag1": "anything you want", "tag2": "something else" }
+
+	To delete tags, pass an empty object with query string "replace=true".
+
+	POST Query-string Options:
+
+	replace   Set to "true" if you want passed tags to replace and not be appended to current tags.
+				Default operation is false (append).
+			   
 GET  <api URL>/node/<UUID>/<data name>/metadata
 
 	Retrieves a JSON schema (application/vnd.dvid-nd-data+json) that describes the layout
@@ -3199,6 +3214,23 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, string(jsonBytes))
+
+	case "tags":
+		if action == "post" {
+			replace := r.URL.Query().Get("replace") == "true"
+			if err := datastore.SetTagsByJSON(d, uuid, replace, r.Body); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+		} else {
+			jsonBytes, err := d.MarshalJSONTags()
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, string(jsonBytes))
+		}
 
 	case "specificblocks":
 		// GET <api URL>/node/<UUID>/<data name>/specificblocks?blocks=x,y,z,x,y,z...

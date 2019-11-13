@@ -77,6 +77,10 @@ func (d *testData) SetSync(syncs dvid.UUIDSet) {
 	d.syncData = syncs
 }
 
+func (d *testData) SetTags(tags map[string]string) {
+	d.tags = tags
+}
+
 func (d *testData) Versioned() bool {
 	return true
 }
