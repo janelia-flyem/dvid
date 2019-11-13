@@ -5,6 +5,20 @@
 # https://docs.conda.io/projects/conda-build/en/latest/resources/variants.html
 #
 
+
+# Pinnings here are chosen for compatibility with conda-forge.
+# See https://github.com/conda-forge/conda-forge-pinning-feedstock/blob/master/recipe/conda_build_config.yaml
+librdkafka:
+  - 0.11.5
+lz4_c:
+  - 1.8.3
+
+pin_run_as_build:
+  librdkafka:
+    max_pin: x.x.x
+  lz4-c:
+    max_pin: x.x.x
+
 CONDA_BUILD_SYSROOT:
   # Most conda-forge packages are compatible with MacOSX 10.9,
   # but golang requires at least MacOSX 10.10
@@ -20,3 +34,6 @@ CONDA_BUILD_SYSROOT:
   #   sudo ./XcodeLegacy.sh -osx1010 install
   #
   - /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.10.sdk
+
+MACOSX_DEPLOYMENT_TARGET:
+  - 10.10

@@ -174,8 +174,20 @@ For each platform (Mac and Linux):
    ```
    curl https://raw.githubusercontent.com/devernay/xcodelegacy/master/XcodeLegacy.sh > XcodeLegacy.sh
    chmod +x XcodeLegacy.sh
+   
+   ./XcodeLegacy.sh -osx1010 buildpackages
    sudo ./XcodeLegacy.sh -osx1010 install
    ```
+
+   **Note:*** The XcodeLegacy script will probably tell you that the
+   10.10 SDK can only be built/installed by an old version of Xcode,
+   and ask you to download the old version (but not install it).
+   
+   Follow the download instructions it gives you, and then re-run
+   `XcodeLegacy.sh` from the directory where you downloaded the Xcode
+   `.dmg` file.
+   
+   (Also note that downloading Xcode requires an Apple Developer login.)
 
    </details>
 

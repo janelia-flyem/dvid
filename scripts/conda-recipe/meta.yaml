@@ -20,6 +20,15 @@ about:
 build:
   number: 0
 
+  # The lz4-c package declares 'run_exports' requirements,
+  # effectively adding lz4-c to dvid's 'run' requirements
+  # (even though it isn't listed in the 'run' section below).
+  # But dvid *statically* links lz4-c, so we don't need the
+  # lz4-c dylib at runtime.
+  # This 'ignore' setting overrides lz4-c's 'run_exports' setting.
+  ignore_run_exports:
+    - lz4-c
+
 requirements:
   # The 'build' environment is for the tools that
   # are used to build dvid, but are not linked against
@@ -45,14 +54,14 @@ requirements:
   host:
     - snappy
     - basholeveldb
-    - lz4-c
-    - librdkafka >=0.11.4
+    - lz4-c {{ lz4_c }}*
+    - librdkafka {{ librdkafka }}*
 
   # The 'run' requirements specify which libraries
   # are required by dvid at run-time.
   run:
     - basholeveldb
-    - librdkafka >=0.11.4
+    - librdkafka {{ librdkafka }}*
     - dvid-web-console
 
 source:
