@@ -51,6 +51,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 
 	timedLog := dvid.NewTimeLog()
 	mutID = d.NewMutationID()
+	op.MutID = mutID
 
 	// send kafka merge event to instance-uuid topic
 	// msg: {"action": "merge", "target": targetlabel, "labels": [merge labels]}
