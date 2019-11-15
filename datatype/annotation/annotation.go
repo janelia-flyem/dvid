@@ -2665,7 +2665,7 @@ func (d *Data) Help() string {
 
 func (d *Data) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Tags     *datastore.Data
+		Base     *datastore.Data
 		Extended Properties
 	}{
 		d.Data,
