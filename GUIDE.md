@@ -138,7 +138,7 @@ For each platform (Mac and Linux):
 
     ```
     $ conda activate base
-    $ conda build scripts/conda-recipe
+    $ GOMAXPROCS=4 conda build scripts/conda-recipe
     $ anaconda upload -u flyem-forge $(conda info --base)/conda-bld/osx-64/dvid-0.8.20-0.tar.bz2 # Mac
     $ anaconda upload -u flyem-forge $(conda info --base)/conda-bld/linux-64/dvid-0.8.20-0.tar.bz2 # Linux
     ```
@@ -157,8 +157,9 @@ For each platform (Mac and Linux):
 
 
    # Within the container
+   # Note: It's recommended to use GOMAXPROCS to limit the cpus used in the build/tests
    cd /flyem-workspace/gopath/src/github.com/janelia-flyem/dvid
-   conda build scripts/conda-recipe
+   GOMAXPROCS=4 conda build scripts/conda-recipe
    anaconda upload /opt/conda/conda-bld/linux-64/dvid-0.8.20-0.tar.bz2
    ```
    
@@ -179,7 +180,7 @@ For each platform (Mac and Linux):
    sudo ./XcodeLegacy.sh -osx1010 install
    ```
 
-   **Note:*** The XcodeLegacy script will probably tell you that the
+   **Note:** The XcodeLegacy script will probably tell you that the
    10.10 SDK can only be built/installed by an old version of Xcode,
    and ask you to download the old version (but not install it).
    
