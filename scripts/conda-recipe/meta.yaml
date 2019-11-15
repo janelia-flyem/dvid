@@ -29,6 +29,12 @@ build:
   ignore_run_exports:
     - lz4-c
 
+  # Permit these variables in the user's environment to be inherited by build.sh
+  script_env:
+    - GOMAXPROCS
+    - GOTRACEBACK
+    - GODEBUG
+
 requirements:
   # The 'build' environment is for the tools that
   # are used to build dvid, but are not linked against
