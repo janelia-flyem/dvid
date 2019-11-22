@@ -545,6 +545,8 @@ func addSplitToMapping(d dvid.Data, v dvid.VersionID, op labels.SplitOp) error {
 			Splitlabel:  svsplit.Split,
 		}
 		splits = append(splits, rec)
+
+		// TODO -- for each split, we log each supervoxel split.
 	}
 	m.splits[vid] = splits
 	m.Unlock()

@@ -18,9 +18,9 @@ var authorizedUsers map[string]string
 
 // authConfig holds information on what server to contact for login and the
 type authConfig struct {
-	ProxyAddress string
-	AuthFile     string
-	SecretKey    string
+	ProxyAddress string `toml:"proxy_address"`
+	AuthFile     string `toml:"auth_file"`
+	SecretKey    string `toml:"secret_key"`
 }
 
 // generateJWT returns a JWT given a user and secret key string

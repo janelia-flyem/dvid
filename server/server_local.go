@@ -409,6 +409,7 @@ func LoadConfig(filename string) error {
 		return fmt.Errorf("could not decode TOML config: %v", err)
 	}
 	dvid.Infof("tomlConfig: %v\n", tc)
+	fmt.Printf("tomlConfig Auth: %v\n", tc.Auth)
 	var err error
 	err = tc.convertPathsToAbsolute(filename)
 	if err != nil {

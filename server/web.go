@@ -7,7 +7,6 @@ package server
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1388,18 +1387,12 @@ func serverNoteHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func serverTokenHandler(w http.ResponseWriter, r *http.Request) {
-	// contact login URL and parse returned JSON for user
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true,
-		},
-	}
 	client := &http.Client{
-		Timeout:   time.Second * 30,
-		Transport: transport,
+		Timeout: time.Second * 30,
 	}
-	profileURL := strings.TrimSuffix(tc.Auth.ProxyAddress, "/") + "/profile"
-	req, err := http.NewRequest("GET", profileURL, nil)
+	profileURL := "https://" + strings.TrimSuffix(tc.Auth.ProxyAddress, "/") + "/profile"
+	dvid.Infof("calling %q\n", profileURL)
+	req, err := http.NewRequest(http.MethodGet, profileURL, nil)
 	if err != nil {
 		BadRequest(w, r, err)
 		return
@@ -1407,8 +1400,11 @@ func serverTokenHandler(w http.ResponseWriter, r *http.Request) {
 	for _, cookie := range r.Cookies() {
 		req.AddCookie(cookie)
 	}
+	req.Header.Set("Content-Type", "application/json")
+
 	resp, err := client.Do(req)
 	if err != nil {
+		dvid.Infof("error just trying get /profile!\n")
 		BadRequest(w, r, err)
 		return
 	}
