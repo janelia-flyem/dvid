@@ -221,12 +221,7 @@ type BadgerDB struct {
 }
 
 func getOptions(path string, config dvid.Config) (*badger.Options, error) {
-	opts := badger.DefaultOptions
-	opts.Dir = path
-	opts.ValueDir = path // TODO: allow different paths so perhaps main Dir is Optane or ultrafast.
-
-	opts.NumVersionsToKeep = DefaultVersionsToKeep
-	opts.SyncWrites = DefaultSyncWrites
+	opts := badger.DefaultOptions(path)
 
 	readOnly, found, err := config.GetBool("ReadOnly")
 	if err != nil {
@@ -241,9 +236,9 @@ func getOptions(path string, config dvid.Config) (*badger.Options, error) {
 		return nil, err
 	}
 	if found {
-		opts.ValueThreshold = valueSizeThresh
+		opts = opts.WithValueThreshold(valueSizeThresh)
 	} else {
-		opts.ValueThreshold = DefaultValueThreshold
+		opts = opts.WithValueThreshold(DefaultValueThreshold)
 	}
 
 	vlogSize, found, err := config.GetInt("ValueLogFileSize")
@@ -251,7 +246,7 @@ func getOptions(path string, config dvid.Config) (*badger.Options, error) {
 		return nil, err
 	}
 	if found {
-		opts.ValueLogFileSize = int64(vlogSize)
+		opts = opts.WithValueLogFileSize(int64(vlogSize))
 	}
 
 	return &opts, nil

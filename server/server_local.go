@@ -117,6 +117,10 @@ func Initialize() error {
 		return err
 	}
 
+	if err := loadAuthFile(); err != nil {
+		return err
+	}
+
 	sc := tc.Server
 	if sc.StartWebhook == "" && sc.StartJaneliaConfig == "" {
 		return nil
@@ -166,6 +170,7 @@ func Initialize() error {
 
 type tomlConfig struct {
 	Server     localConfig
+	Auth       authConfig
 	Email      dvid.EmailConfig
 	Logging    dvid.LogConfig
 	Mutations  MutationsConfig
@@ -404,6 +409,7 @@ func LoadConfig(filename string) error {
 		return fmt.Errorf("could not decode TOML config: %v", err)
 	}
 	dvid.Infof("tomlConfig: %v\n", tc)
+	fmt.Printf("tomlConfig Auth: %v\n", tc.Auth)
 	var err error
 	err = tc.convertPathsToAbsolute(filename)
 	if err != nil {

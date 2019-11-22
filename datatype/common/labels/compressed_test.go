@@ -261,6 +261,7 @@ func TestBlockCompression(t *testing.T) {
 	}
 	runtime.KeepAlive(&solid2)
 
+	blockTest(t, solidTestData(0))
 	blockTest(t, solidTestData(2))
 	for _, filename := range testFiles {
 		blockTest(t, loadTestData(t, filename))

@@ -683,6 +683,8 @@ func initRoutes() {
 	serverMux.Post("/api/server/reload-metadata", serverReload)
 	serverMux.Post("/api/server/reload-metadata/", serverReload)
 	serverMux.Get("/api/server/blobstore/:ref", blobstoreHandler)
+	serverMux.Get("/api/server/token", serverTokenHandler)
+	serverMux.Get("/api/server/token/", serverTokenHandler)
 
 	if !readonly {
 		mainMux.Post("/api/repos", reposPostHandler)
@@ -698,6 +700,9 @@ func initRoutes() {
 	repoMux := web.New()
 	mainMux.Handle("/api/repo/:uuid/:action", repoMux)
 	mainMux.Handle("/api/repo/:uuid/:action/:name", repoMux)
+	if len(tc.Auth.ProxyAddress) != 0 {
+		repoMux.Use(isAuthorized)
+	}
 	repoMux.Use(repoRawSelector)
 	repoMux.Use(mutationsHandler)
 	repoMux.Use(activityLogHandler)
@@ -713,6 +718,9 @@ func initRoutes() {
 	nodeMux := web.New()
 	mainMux.Handle("/api/node/:uuid", nodeMux)
 	mainMux.Handle("/api/node/:uuid/:action", nodeMux)
+	if len(tc.Auth.ProxyAddress) != 0 {
+		repoMux.Use(isAuthorized)
+	}
 	nodeMux.Use(repoRawSelector)
 	nodeMux.Use(mutationsHandler)
 	nodeMux.Use(activityLogHandler)
@@ -730,6 +738,9 @@ func initRoutes() {
 	instanceMux := web.New()
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword", instanceMux)
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword/*", instanceMux)
+	if len(tc.Auth.ProxyAddress) != 0 {
+		repoMux.Use(isAuthorized)
+	}
 	instanceMux.Use(repoRawSelector)
 	instanceMux.Use(mutationsHandler)
 	instanceMux.Use(instanceSelector)
@@ -1373,6 +1384,56 @@ func serverInfoHandler(w http.ResponseWriter, r *http.Request) {
 func serverNoteHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	fmt.Fprintf(w, tc.Server.Note)
+}
+
+func serverTokenHandler(w http.ResponseWriter, r *http.Request) {
+	client := &http.Client{
+		Timeout: time.Second * 30,
+	}
+	profileURL := "https://" + strings.TrimSuffix(tc.Auth.ProxyAddress, "/") + "/profile"
+	dvid.Infof("calling %q\n", profileURL)
+	req, err := http.NewRequest(http.MethodGet, profileURL, nil)
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	for _, cookie := range r.Cookies() {
+		req.AddCookie(cookie)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		dvid.Infof("error just trying get /profile!\n")
+		BadRequest(w, r, err)
+		return
+	}
+	defer resp.Body.Close()
+	data, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	var profileData map[string]string
+	if err := json.Unmarshal(data, &profileData); err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	user := profileData["Email"]
+	if len(user) == 0 {
+		BadRequest(w, r, fmt.Errorf("could not get user (email) from proxy %q", profileURL))
+		return
+	}
+
+	// generate JWT
+	tokenString, err := generateJWT(user)
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	dvid.Infof("Returning JWT for user %s.\n", user)
+	w.Header().Set("Content-Type", "text/plain")
+	fmt.Fprintf(w, tokenString)
 }
 
 func serverTypesHandler(w http.ResponseWriter, r *http.Request) {

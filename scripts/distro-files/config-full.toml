@@ -37,6 +37,13 @@ instance_id_start = 100  # new ids start at least from this.
 
 min_mutation_id_start = 1000100000  # mutation id will start from this or higher
 
+# if the "auth" section is included, requests must be signed with a JWT obtained via
+# the /api/server/token endpoint, which assumes that there's a flyem-services cookie.
+[auth]
+proxy_address = "http://some-flyem-services"  # URL to running github.com/janelia-flyem/flyem-services
+auth_file = "/demo/auth.txt" # File containing authorized emails
+secret_key = "mysecretpasshrase" # This could be done with environ variable
+
 # Email server to use for notifications and server issuing email-based authorization tokens.
 [email]
 notify = ["foo@someplace.edu"] # Who to send email in case of panic
