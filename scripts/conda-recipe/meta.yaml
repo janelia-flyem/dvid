@@ -95,6 +95,11 @@ source:
     git_tag: master
     folder:  src/github.com/zenazn/goji
 
+  # go-jwt
+    git_url: https://github.com/dgrijalva/jwt-go
+    git_tag: master
+    folder: src/github.com/dgrijalva/jwt-go
+
   # msgp
   #  - git_url: https://github.com/tinylib/msgp
   #    git_tag: master
@@ -198,6 +203,6 @@ source:
 
   # badger
   - git_url: https://github.com/dgraph-io/badger
-    git_tag: v2.0.0-rc.2 # Don't change this without also changing it in get-go-dependencies.sh!!!
+    git_tag: v2.0.0 # Don't change this without also changing it in get-go-dependencies.sh!!!
     folder:  src/github.com/dgraph-io/badger
     
