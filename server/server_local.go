@@ -117,6 +117,10 @@ func Initialize() error {
 		return err
 	}
 
+	if err := loadAuthFile(); err != nil {
+		return err
+	}
+
 	sc := tc.Server
 	if sc.StartWebhook == "" && sc.StartJaneliaConfig == "" {
 		return nil
@@ -166,6 +170,7 @@ func Initialize() error {
 
 type tomlConfig struct {
 	Server     localConfig
+	Auth       authConfig
 	Email      dvid.EmailConfig
 	Logging    dvid.LogConfig
 	Mutations  MutationsConfig
