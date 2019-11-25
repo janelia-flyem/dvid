@@ -7,6 +7,7 @@ package server
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -719,7 +720,7 @@ func initRoutes() {
 	mainMux.Handle("/api/node/:uuid", nodeMux)
 	mainMux.Handle("/api/node/:uuid/:action", nodeMux)
 	if len(tc.Auth.ProxyAddress) != 0 {
-		repoMux.Use(isAuthorized)
+		nodeMux.Use(isAuthorized)
 	}
 	nodeMux.Use(repoRawSelector)
 	nodeMux.Use(mutationsHandler)
@@ -739,7 +740,7 @@ func initRoutes() {
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword", instanceMux)
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword/*", instanceMux)
 	if len(tc.Auth.ProxyAddress) != 0 {
-		repoMux.Use(isAuthorized)
+		instanceMux.Use(isAuthorized)
 	}
 	instanceMux.Use(repoRawSelector)
 	instanceMux.Use(mutationsHandler)
@@ -1387,8 +1388,12 @@ func serverNoteHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func serverTokenHandler(w http.ResponseWriter, r *http.Request) {
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
 	client := &http.Client{
-		Timeout: time.Second * 30,
+		Timeout:   time.Second * 30,
+		Transport: tr,
 	}
 	profileURL := "https://" + strings.TrimSuffix(tc.Auth.ProxyAddress, "/") + "/profile"
 	dvid.Infof("calling %q\n", profileURL)
