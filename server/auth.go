@@ -43,7 +43,7 @@ func generateJWT(user string) (string, error) {
 func isAuthorized(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		reqToken := r.Header.Get("Authorization")
-		if len(reqToken) != 0 {
+		if len(reqToken) == 0 {
 			BadRequest(w, r, "JWT required via Authorization in request header")
 			return
 		}
