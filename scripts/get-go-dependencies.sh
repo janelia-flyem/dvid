@@ -58,6 +58,9 @@ go get github.com/zenazn/goji
 # JWT support
 go get github.com/dgrijalva/jwt-go
 
+# CORS support
+go get github.com/rs/cors
+
 # msgp
 #go get github.com/tinylib/msgp
 

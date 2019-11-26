@@ -42,6 +42,8 @@ var (
 	DefaultHost = "localhost"
 
 	tc tomlConfig
+
+	corsDomains map[string]struct{}
 )
 
 func init() {
@@ -124,6 +126,11 @@ func Initialize() error {
 	sc := tc.Server
 	if sc.StartWebhook == "" && sc.StartJaneliaConfig == "" {
 		return nil
+	}
+
+	corsDomains = make(map[string]struct{})
+	for _, domain := range tc.Server.CorsDomains {
+		corsDomains[domain] = struct{}{}
 	}
 
 	data := map[string]string{
@@ -361,7 +368,7 @@ type localConfig struct {
 	WebRedirectPath string
 	WebDefaultFile  string
 	Note            string
-	CorsOrigin      string
+	CorsDomains     []string
 
 	AllowTiming        bool   // If true, returns * for Timing-Allow-Origin in response headers.
 	StartWebhook       string // http address that should be called when server is started up.

@@ -21,7 +21,7 @@ interactiveOpsBeforeBlock = 10 # Blocks processing routines, e.g., image tile cr
 
 shutdownDelay = 0 # Delay after shutdown request to let HTTP requests drain.  Default is 5 seconds.
 
-corsOrigin = "*.mydomain.org" # If credentials used, you can specify Origin to prevent browser error.
+corsDomains = ["mydomain.org"] # Allow CORS origin in these domains (not subdomains)
 
 # if a start-up webhook is provided, DVID will do a POST on the webhook address and send JSON
 # with the server attributes including the values for "host", "note", and other server properties.
