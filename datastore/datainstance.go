@@ -439,6 +439,9 @@ func SetTagsByJSON(d dvid.Data, uuid dvid.UUID, replace bool, in io.ReadCloser) 
 		return nil
 	}
 	curTags := d.Tags()
+	if curTags == nil {
+		curTags = make(map[string]string)
+	}
 	for k, v := range setTags {
 		curTags[k] = v
 	}
