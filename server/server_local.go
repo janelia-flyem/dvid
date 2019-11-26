@@ -115,6 +115,11 @@ func CloseTest() {
 func Initialize() error {
 	tc.Logging.SetLogger()
 
+	corsDomains = make(map[string]struct{})
+	for _, domain := range tc.Server.CorsDomains {
+		corsDomains[domain] = struct{}{}
+	}
+
 	if err := tc.Kafka.Initialize(WebServer()); err != nil {
 		return err
 	}
@@ -126,11 +131,6 @@ func Initialize() error {
 	sc := tc.Server
 	if sc.StartWebhook == "" && sc.StartJaneliaConfig == "" {
 		return nil
-	}
-
-	corsDomains = make(map[string]struct{})
-	for _, domain := range tc.Server.CorsDomains {
-		corsDomains[domain] = struct{}{}
 	}
 
 	data := map[string]string{

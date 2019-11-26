@@ -1422,6 +1422,10 @@ func serverNoteHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func serverTokenHandler(w http.ResponseWriter, r *http.Request) {
+	if len(tc.Auth.ProxyAddress) == 0 {
+		BadRequest(w, r, "must have proxy_address configured in Auth section of TOML config")
+		return
+	}
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
@@ -1430,7 +1434,6 @@ func serverTokenHandler(w http.ResponseWriter, r *http.Request) {
 		Transport: tr,
 	}
 	profileURL := "https://" + strings.TrimSuffix(tc.Auth.ProxyAddress, "/") + "/profile"
-	dvid.Infof("calling %q\n", profileURL)
 	req, err := http.NewRequest(http.MethodGet, profileURL, nil)
 	if err != nil {
 		BadRequest(w, r, err)
