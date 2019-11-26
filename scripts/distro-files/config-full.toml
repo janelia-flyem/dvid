@@ -41,7 +41,7 @@ min_mutation_id_start = 1000100000  # mutation id will start from this or higher
 # the /api/server/token endpoint, which assumes that there's a flyem-services cookie.
 [auth]
 proxy_address = "http://some-flyem-services"  # URL to running github.com/janelia-flyem/flyem-services
-auth_file = "/demo/auth.txt" # File containing authorized emails
+# auth_file = "/demo/auth.txt" # File containing authorized emails
 secret_key = "mysecretpasshrase" # This could be done with environ variable
 
 # Email server to use for notifications and server issuing email-based authorization tokens.
