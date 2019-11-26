@@ -982,7 +982,11 @@ func DecodeJSON(r *http.Request) (dvid.Config, error) {
 func corsHandler(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		// Allow cross-origin resource sharing.
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		if len(tc.Server.CorsOrigin) != 0 {
+			w.Header().Set("Access-Control-Allow-Origin", tc.Server.CorsOrigin)
+		} else {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
 
 		h.ServeHTTP(w, r)
 	}
