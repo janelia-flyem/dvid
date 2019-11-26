@@ -305,6 +305,9 @@ type DataSetter interface {
 	SetSync(UUIDSet)
 
 	SetTags(map[string]string)
+
+	// PersistMetadata writes changes for this data instance out to the metadata store.
+	PersistMetadata() error
 }
 
 // Axis enumerates different types of axis (x, y, z, time, etc)
