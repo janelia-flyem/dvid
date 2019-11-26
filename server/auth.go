@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"strings"
 
 	jwt "github.com/dgrijalva/jwt-go"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -41,9 +42,15 @@ func generateJWT(user string) (string, error) {
 // to the authenticated user.
 func isAuthorized(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
-		if r.Header["Token"] != nil {
-			tokenString := r.Header["Token"][0]
-			token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		reqToken := r.Header.Get("Authorization")
+		splitToken := strings.Split(reqToken, "Bearer")
+		if len(splitToken) != 2 {
+			BadRequest(w, r, "bearer not in proper format")
+			return
+		}
+		reqToken = strings.TrimSpace(splitToken[1])
+		if len(reqToken) != 0 {
+			token, err := jwt.Parse(reqToken, func(token *jwt.Token) (interface{}, error) {
 				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 					return nil, fmt.Errorf("error signing method: %v", token.Header["alg"])
 				}
