@@ -644,6 +644,7 @@ func initRoutes() {
 	c := cors.New(cors.Options{
 		AllowOriginFunc:  corsValidator,
 		AllowedHeaders:   []string{"Authorization", "authorization"},
+		AllowedMethods:   []string{"GET", "POST", "DELETE", "HEAD"},
 		AllowCredentials: true,
 		Debug:            true,
 	})
