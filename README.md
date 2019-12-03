@@ -8,6 +8,7 @@ DVID       [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github
 [![Travis CI Status](https://travis-ci.org/janelia-flyem/dvid.svg?branch=master)](https://travis-ci.org/janelia-flyem/dvid)
 
 Both high-level and detailed descriptions of DVID and its ecosystem can found here:
+
 * A high-level description of [Data Management in Connectomics](https://www.janelia.org/project-team/flyem/blog/data-management-in-connectomics) that includes DVID's use in the [Janelia FlyEM Team](https://www.janelia.org/project-team/flyem).
 * [Paper on DVID](https://www.frontiersin.org/article/10.3389/fncir.2019.00005)
 describing its motivation and architecture, including how versioning works at the key-value
