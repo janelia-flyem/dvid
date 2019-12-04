@@ -646,7 +646,6 @@ func initRoutes() {
 		AllowedHeaders:   []string{"Authorization", "authorization"},
 		AllowedMethods:   []string{"GET", "POST", "DELETE", "HEAD"},
 		AllowCredentials: true,
-		Debug:            true,
 	})
 
 	webMuxMu.Lock()
