@@ -32,6 +32,11 @@ ifndef DVID_BACKENDS
     $(info Backend not specified. Using default value: DVID_BACKENDS="${DVID_BACKENDS}")
 endif
 
+DVID_TAGS = ${DVID_BACKENDS}
+ifdef DVID_LOW_MEMORY
+	DVID_TAGS += lowmem
+endif
+
 export CGO_CFLAGS = -I${CONDA_PREFIX}/include
 export CGO_LDFLAGS = -L${CONDA_PREFIX}/lib -Wl,-rpath,${CONDA_PREFIX}/lib
 
@@ -53,7 +58,7 @@ install: dvid dvid-backup dvid-transfer
 
 # Compile a helper program that generates version.go
 bin/dvid-gen-version: cmd/gen-version/main.go
-	go build -o bin/dvid-gen-version -v -tags "${DVID_BACKENDS}" cmd/gen-version/main.go
+	go build -o bin/dvid-gen-version -v -tags "${DVID_TAGS}" cmd/gen-version/main.go
 
 # This actually runs the above program; generates version.go
 # The python script here doesn't print anything, but it (potentially) overwrites
@@ -67,13 +72,13 @@ server/version.go: bin/dvid-gen-version \
 DVID_SOURCES = $(shell find . -name "*.go")
 
 bin/dvid: cmd/dvid/main.go server/version.go .last-build-git-description ${DVID_SOURCES}
-	go build -o bin/dvid -v -tags "${DVID_BACKENDS}" cmd/dvid/main.go
+	go build -o bin/dvid -v -tags "${DVID_TAGS}" cmd/dvid/main.go
 
 bin/dvid-backup: cmd/backup/main.go
-	go build -o bin/dvid-backup -v -tags "${DVID_BACKENDS}" cmd/backup/main.go
+	go build -o bin/dvid-backup -v -tags "${DVID_TAGS}" cmd/backup/main.go
 
 bin/dvid-transfer: $(shell find cmd/transfer -name "*.go")
-	go build -o bin/dvid-transfer -v -tags "${DVID_BACKENDS}" cmd/transfer/*.go
+	go build -o bin/dvid-transfer -v -tags "${DVID_TAGS}" cmd/transfer/*.go
 
 ##
 ## TEST
@@ -90,18 +95,18 @@ ifdef TEST
 endif
 
 test: dvid 
-	go test ${SPECIFIC_TEST} -tags "${DVID_BACKENDS}" ${DVID_PACKAGES}
+	go test ${SPECIFIC_TEST} -tags "${DVID_TAGS}" ${DVID_PACKAGES}
 
 test-verbose: dvid
-	go test -v ${SPECIFIC_TEST} -tags "${DVID_BACKENDS}" ${DVID_PACKAGES}
+	go test -v ${SPECIFIC_TEST} -tags "${DVID_TAGS}" ${DVID_PACKAGES}
 
 # Coverage (does this repeat the test step above?)
 coverage: dvid
-	go test -tags "${DVID_BACKENDS}" -cover ${DVID_PACKAGES}
+	go test -tags "${DVID_TAGS}" -cover ${DVID_PACKAGES}
 
 # Bench
 bench:
-	go test -v -tags "${DVID_BACKENDS}" -bench . ${DVID_PACKAGES}
+	go test -v -tags "${DVID_TAGS}" -bench . ${DVID_PACKAGES}
 	# go test -p ${GOMAXPROCS} -bench -i -tags "${DVID_BACKEND}" test dvid datastore
 
 .PHONY: clean
