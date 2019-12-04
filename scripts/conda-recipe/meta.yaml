@@ -31,6 +31,7 @@ build:
 
   # Permit these variables in the user's environment to be inherited by build.sh
   script_env:
+    - DVID_BACKENDS
     - GOMAXPROCS
     - GOTRACEBACK
     - GODEBUG
