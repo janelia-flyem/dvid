@@ -24,10 +24,6 @@ cd ${DVID_REPO}
 # Setting this variable explicitly overrides some linker warnings.
 export MACOSX_DEPLOYMENT_TARGET=10.10
 
-if [[ -z "${GOMAXPROCS}" ]]; then
-    GOMAXPROCS=${CPU_COUNT}
-fi
-
 # In theory, most dependencies were already cloned thanks to the lists in meta.yaml.
 # But the developer is free to add things to get-go-dependencies, too.
 ${DVID_REPO}/scripts/get-go-dependencies.sh
