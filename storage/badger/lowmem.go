@@ -38,7 +38,11 @@ func getOptions(path string, config dvid.Config) (*badger.Options, error) {
 	}
 
 	// Low-memory options
+	dvid.Infof("Using Badger with low memory options.\n")
 	opts = opts.WithValueLogLoadingMode(options.FileIO)
-
+	opts = opts.WithTableLoadingMode(options.FileIO)
+	opts = opts.WithValueLogFileSize(1<<20 - 1) // 1 MB value log file
+	opts = opts.WithMaxCacheSize(1 << 20)
+	opts = opts.WithMaxTableSize(1 << 20)
 	return &opts, nil
 }
