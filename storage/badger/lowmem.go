@@ -44,5 +44,6 @@ func getOptions(path string, config dvid.Config) (*badger.Options, error) {
 	opts = opts.WithValueLogFileSize(16 << 20) // 16 MB value log file
 	opts = opts.WithMaxCacheSize(8 << 20)
 	opts = opts.WithMaxTableSize(8 << 20)
+	opts = opts.WithKeepL0InMemory(false)
 	return &opts, nil
 }
