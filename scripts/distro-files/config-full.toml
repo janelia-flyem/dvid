@@ -12,6 +12,9 @@ webClient = "/path/to/webclient"
 webDefaultFile = "index.html" # contents of this file will be returned for any bad file path; required by dvid-console 3.0+
 webRedirectPath = "/index.html" # if supplied, bad file paths will cause redirection to this path
 
+# if specified, dvid will write its process ID to the file on server start, and remove it on closing.
+# pidFile = "/path/to/dvid-pidfile"
+
 note = """
 You can put anything you want in here and have it available via /api/server/note.
 Multiple lines!

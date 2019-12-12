@@ -113,6 +113,10 @@ func CloseTest() {
 // presumes that LoadConfig() or another method was already used to configure
 // the server.
 func Initialize() error {
+	if err := writePidFile(); err != nil {
+		return err
+	}
+
 	tc.Logging.SetLogger()
 
 	corsDomains = make(map[string]struct{})
@@ -196,6 +200,14 @@ func (c *tomlConfig) convertPathsToAbsolute(configPath string) error {
 	var err error
 
 	configDir := filepath.Dir(configPath)
+
+	// [server].pidFile
+	if c.Server.PidFile != "" {
+		c.Server.PidFile, err = dvid.ConvertToAbsolute(c.Server.PidFile, configDir)
+		if err != nil {
+			return fmt.Errorf("Error converting pidFile to absolute path")
+		}
+	}
 
 	// [server].webClient
 	c.Server.WebClient, err = dvid.ConvertToAbsolute(c.Server.WebClient, configDir)
@@ -367,6 +379,7 @@ type localConfig struct {
 	WebClient       string
 	WebRedirectPath string
 	WebDefaultFile  string
+	PidFile         string
 	Note            string
 	CorsDomains     []string
 
