@@ -12,6 +12,9 @@ webClient = "/path/to/webclient"
 webDefaultFile = "index.html" # contents of this file will be returned for any bad file path; required by dvid-console 3.0+
 webRedirectPath = "/index.html" # if supplied, bad file paths will cause redirection to this path
 
+# if specified, dvid will write its process ID to the file on server start, and remove it on closing.
+# pidFile = "/path/to/dvid-pidfile"
+
 note = """
 You can put anything you want in here and have it available via /api/server/note.
 Multiple lines!
@@ -20,6 +23,8 @@ Multiple lines!
 interactiveOpsBeforeBlock = 10 # Blocks processing routines, e.g., image tile creations, if interactive ops over last 2 min exceeds this amount.  If omitted or 0 will do no blocking.
 
 shutdownDelay = 0 # Delay after shutdown request to let HTTP requests drain.  Default is 5 seconds.
+
+corsDomains = ["mydomain.org"] # Allow CORS origin in these domains (not subdomains)
 
 # if a start-up webhook is provided, DVID will do a POST on the webhook address and send JSON
 # with the server attributes including the values for "host", "note", and other server properties.
@@ -36,6 +41,13 @@ instance_id_gen = "sequential"
 instance_id_start = 100  # new ids start at least from this.
 
 min_mutation_id_start = 1000100000  # mutation id will start from this or higher
+
+# if the "auth" section is included, requests must be signed with a JWT obtained via
+# the /api/server/token endpoint, which assumes that there's a flyem-services cookie.
+[auth]
+proxy_address = "http://some-flyem-services"  # URL to running github.com/janelia-flyem/flyem-services
+# auth_file = "/demo/auth.txt" # File containing authorized emails
+secret_key = "mysecretpasshrase" # This could be done with environ variable
 
 # Email server to use for notifications and server issuing email-based authorization tokens.
 [email]

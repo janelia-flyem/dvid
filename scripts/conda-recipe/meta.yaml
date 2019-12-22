@@ -31,6 +31,8 @@ build:
 
   # Permit these variables in the user's environment to be inherited by build.sh
   script_env:
+    - DVID_BACKENDS
+    - DVID_LOW_MEMORY
     - GOMAXPROCS
     - GOTRACEBACK
     - GODEBUG
@@ -94,6 +96,11 @@ source:
   - git_url: https://github.com/zenazn/goji
     git_tag: master
     folder:  src/github.com/zenazn/goji
+
+  # go-jwt
+    git_url: https://github.com/dgrijalva/jwt-go
+    git_tag: master
+    folder: src/github.com/dgrijalva/jwt-go
 
   # msgp
   #  - git_url: https://github.com/tinylib/msgp
@@ -198,6 +205,6 @@ source:
 
   # badger
   - git_url: https://github.com/dgraph-io/badger
-    git_tag: v2.0.0-rc.2 # Don't change this without also changing it in get-go-dependencies.sh!!!
+    git_tag: v2.0.0 # Don't change this without also changing it in get-go-dependencies.sh!!!
     folder:  src/github.com/dgraph-io/badger
     

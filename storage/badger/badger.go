@@ -220,43 +220,6 @@ type BadgerDB struct {
 	bdp     *badger.DB
 }
 
-func getOptions(path string, config dvid.Config) (*badger.Options, error) {
-	opts := badger.DefaultOptions
-	opts.Dir = path
-	opts.ValueDir = path // TODO: allow different paths so perhaps main Dir is Optane or ultrafast.
-
-	opts.NumVersionsToKeep = DefaultVersionsToKeep
-	opts.SyncWrites = DefaultSyncWrites
-
-	readOnly, found, err := config.GetBool("ReadOnly")
-	if err != nil {
-		return nil, err
-	}
-	if found {
-		opts.ReadOnly = readOnly
-	}
-
-	valueSizeThresh, found, err := config.GetInt("ValueThreshold")
-	if err != nil {
-		return nil, err
-	}
-	if found {
-		opts.ValueThreshold = valueSizeThresh
-	} else {
-		opts.ValueThreshold = DefaultValueThreshold
-	}
-
-	vlogSize, found, err := config.GetInt("ValueLogFileSize")
-	if err != nil {
-		return nil, err
-	}
-	if found {
-		opts.ValueLogFileSize = int64(vlogSize)
-	}
-
-	return &opts, nil
-}
-
 // Close closes the BadgerDB
 func (db *BadgerDB) Close() {
 	if db != nil {

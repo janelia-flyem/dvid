@@ -2402,11 +2402,20 @@ func (d *Data) resyncInMemory(ctx *datastore.VersionedCtx, check bool) {
 			return nil
 		}
 
+		blockSize := d.blockSize()
 		for _, elem := range elems {
 			// Check element is in correct block
-			elemChunkPt := elem.Pos.Chunk(d.blockSize()).(dvid.ChunkPoint3d)
+			elemChunkPt := elem.Pos.Chunk(blockSize).(dvid.ChunkPoint3d)
 			if !chunkPt.Equals(elemChunkPt) {
-				dvid.Errorf("Element at %s found in incorrect block %s: %v\n", elem.Pos, elemChunkPt, elem)
+				var keyBlockSize [3]int32
+				for i := uint8(0); i < 3; i++ {
+					keyIndex := chunkPt.Value(i)
+					if keyIndex != 0 {
+						keyBlockSize[i] = elem.Pos.Value(i) / keyIndex
+					}
+
+				}
+				dvid.Errorf("Element at %s found in incorrect block %s (using block size %s) instead of block key of %s (requires block size %d x %d x %d): %v\n", elem.Pos, elemChunkPt, blockSize, chunkPt, keyBlockSize[0], keyBlockSize[1], keyBlockSize[2], elem)
 				totElemErrs++
 			}
 			// Add to Tag elements

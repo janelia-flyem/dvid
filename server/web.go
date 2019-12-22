@@ -7,12 +7,14 @@ package server
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -27,6 +29,7 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 	"github.com/janelia-flyem/go/nrsc"
+	"github.com/rs/cors"
 	"github.com/zenazn/goji/web"
 	"github.com/zenazn/goji/web/middleware"
 )
@@ -638,12 +641,19 @@ func initRoutes() {
 		return
 	}
 
+	c := cors.New(cors.Options{
+		AllowOriginFunc:  corsValidator,
+		AllowedHeaders:   []string{"Authorization", "authorization"},
+		AllowedMethods:   []string{"GET", "POST", "DELETE", "HEAD"},
+		AllowCredentials: true,
+	})
+
 	webMuxMu.Lock()
 	silentMux := web.New()
 	webMux.Handle("/api/load", silentMux)
 	webMux.Handle("/api/heartbeat", silentMux)
 	webMux.Handle("/api/user-latencies", silentMux)
-	silentMux.Use(corsHandler)
+	silentMux.Use(c.Handler)
 	silentMux.Use(latencyHandler)
 	silentMux.Get("/api/load", loadHandler)
 	silentMux.Get("/api/heartbeat", heartbeatHandler)
@@ -655,7 +665,7 @@ func initRoutes() {
 	mainMux.Use(middleware.AutomaticOptions)
 	mainMux.Use(httpAvailHandler)
 	mainMux.Use(recoverHandler)
-	mainMux.Use(corsHandler)
+	mainMux.Use(c.Handler)
 
 	mainMux.Get("/interface", interfaceHandler)
 	mainMux.Get("/interface/version", versionHandler)
@@ -683,6 +693,8 @@ func initRoutes() {
 	serverMux.Post("/api/server/reload-metadata", serverReload)
 	serverMux.Post("/api/server/reload-metadata/", serverReload)
 	serverMux.Get("/api/server/blobstore/:ref", blobstoreHandler)
+	serverMux.Get("/api/server/token", serverTokenHandler)
+	serverMux.Get("/api/server/token/", serverTokenHandler)
 
 	if !readonly {
 		mainMux.Post("/api/repos", reposPostHandler)
@@ -698,6 +710,9 @@ func initRoutes() {
 	repoMux := web.New()
 	mainMux.Handle("/api/repo/:uuid/:action", repoMux)
 	mainMux.Handle("/api/repo/:uuid/:action/:name", repoMux)
+	if len(tc.Auth.ProxyAddress) != 0 {
+		repoMux.Use(isAuthorized)
+	}
 	repoMux.Use(repoRawSelector)
 	repoMux.Use(mutationsHandler)
 	repoMux.Use(activityLogHandler)
@@ -713,6 +728,9 @@ func initRoutes() {
 	nodeMux := web.New()
 	mainMux.Handle("/api/node/:uuid", nodeMux)
 	mainMux.Handle("/api/node/:uuid/:action", nodeMux)
+	if len(tc.Auth.ProxyAddress) != 0 {
+		nodeMux.Use(isAuthorized)
+	}
 	nodeMux.Use(repoRawSelector)
 	nodeMux.Use(mutationsHandler)
 	nodeMux.Use(activityLogHandler)
@@ -730,6 +748,9 @@ func initRoutes() {
 	instanceMux := web.New()
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword", instanceMux)
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword/*", instanceMux)
+	if len(tc.Auth.ProxyAddress) != 0 {
+		instanceMux.Use(isAuthorized)
+	}
 	instanceMux.Use(repoRawSelector)
 	instanceMux.Use(mutationsHandler)
 	instanceMux.Use(instanceSelector)
@@ -966,15 +987,40 @@ func DecodeJSON(r *http.Request) (dvid.Config, error) {
 
 // ---- Middleware -------------
 
-// corsHandler adds CORS support via header
-func corsHandler(c *web.C, h http.Handler) http.Handler {
-	fn := func(w http.ResponseWriter, r *http.Request) {
-		// Allow cross-origin resource sharing.
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+// // corsHandler adds CORS support via header
+// func corsHandler(c *web.C, h http.Handler) http.Handler {
+// 	fn := func(w http.ResponseWriter, r *http.Request) {
+// 		// Allow cross-origin resource sharing.
+// 		if len(tc.Server.CorsOrigin) != 0 {
+// 			w.Header().Set("Access-Control-Allow-Origin", tc.Server.CorsOrigin)
+// 		} else {
+// 			w.Header().Set("Access-Control-Allow-Origin", "*")
+// 		}
 
-		h.ServeHTTP(w, r)
+// 		h.ServeHTTP(w, r)
+// 	}
+// 	return http.HandlerFunc(fn)
+// }
+
+// used by cors handler to say whether an origin is allowed.
+func corsValidator(origin string) bool {
+	if len(corsDomains) == 0 {
+		return false
 	}
-	return http.HandlerFunc(fn)
+	u, err := url.Parse(origin)
+	if err != nil {
+		dvid.Errorf("got bad origin %q for request: %v\n", origin, err)
+		return false
+	}
+	hostnameParts := strings.Split(u.Hostname(), ".")
+	numParts := len(hostnameParts)
+	if numParts < 2 {
+		dvid.Errorf("bad domain for origin %q: %s\n", origin, u.Hostname())
+		return false
+	}
+	domain := hostnameParts[numParts-2] + "." + hostnameParts[numParts-1]
+	_, found := corsDomains[domain]
+	return found
 }
 
 // repoRawSelector retrieves the particular repo from a potentially partial string that uniquely
@@ -1373,6 +1419,63 @@ func serverInfoHandler(w http.ResponseWriter, r *http.Request) {
 func serverNoteHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	fmt.Fprintf(w, tc.Server.Note)
+}
+
+func serverTokenHandler(w http.ResponseWriter, r *http.Request) {
+	if len(tc.Auth.ProxyAddress) == 0 {
+		BadRequest(w, r, "must have proxy_address configured in Auth section of TOML config")
+		return
+	}
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{
+		Timeout:   time.Second * 30,
+		Transport: tr,
+	}
+	profileURL := "https://" + strings.TrimSuffix(tc.Auth.ProxyAddress, "/") + "/profile"
+	req, err := http.NewRequest(http.MethodGet, profileURL, nil)
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	for _, cookie := range r.Cookies() {
+		req.AddCookie(cookie)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		dvid.Infof("error just trying get /profile!\n")
+		BadRequest(w, r, err)
+		return
+	}
+	defer resp.Body.Close()
+	data, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	var profileData map[string]string
+	if err := json.Unmarshal(data, &profileData); err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	user := profileData["Email"]
+	if len(user) == 0 {
+		BadRequest(w, r, fmt.Errorf("could not get user (email) from proxy %q", profileURL))
+		return
+	}
+
+	// generate JWT
+	tokenString, err := generateJWT(user)
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	dvid.Infof("Returning JWT for user %s.\n", user)
+	w.Header().Set("Content-Type", "text/plain")
+	fmt.Fprintf(w, tokenString)
 }
 
 func serverTypesHandler(w http.ResponseWriter, r *http.Request) {

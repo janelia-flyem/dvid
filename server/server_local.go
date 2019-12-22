@@ -42,6 +42,8 @@ var (
 	DefaultHost = "localhost"
 
 	tc tomlConfig
+
+	corsDomains map[string]struct{}
 )
 
 func init() {
@@ -111,9 +113,22 @@ func CloseTest() {
 // presumes that LoadConfig() or another method was already used to configure
 // the server.
 func Initialize() error {
+	if err := writePidFile(); err != nil {
+		return err
+	}
+
 	tc.Logging.SetLogger()
 
+	corsDomains = make(map[string]struct{})
+	for _, domain := range tc.Server.CorsDomains {
+		corsDomains[domain] = struct{}{}
+	}
+
 	if err := tc.Kafka.Initialize(WebServer()); err != nil {
+		return err
+	}
+
+	if err := loadAuthFile(); err != nil {
 		return err
 	}
 
@@ -166,6 +181,7 @@ func Initialize() error {
 
 type tomlConfig struct {
 	Server     localConfig
+	Auth       authConfig
 	Email      dvid.EmailConfig
 	Logging    dvid.LogConfig
 	Mutations  MutationsConfig
@@ -184,6 +200,14 @@ func (c *tomlConfig) convertPathsToAbsolute(configPath string) error {
 	var err error
 
 	configDir := filepath.Dir(configPath)
+
+	// [server].pidFile
+	if c.Server.PidFile != "" {
+		c.Server.PidFile, err = dvid.ConvertToAbsolute(c.Server.PidFile, configDir)
+		if err != nil {
+			return fmt.Errorf("Error converting pidFile to absolute path")
+		}
+	}
 
 	// [server].webClient
 	c.Server.WebClient, err = dvid.ConvertToAbsolute(c.Server.WebClient, configDir)
@@ -355,7 +379,9 @@ type localConfig struct {
 	WebClient       string
 	WebRedirectPath string
 	WebDefaultFile  string
+	PidFile         string
 	Note            string
+	CorsDomains     []string
 
 	AllowTiming        bool   // If true, returns * for Timing-Allow-Origin in response headers.
 	StartWebhook       string // http address that should be called when server is started up.
@@ -404,6 +430,7 @@ func LoadConfig(filename string) error {
 		return fmt.Errorf("could not decode TOML config: %v", err)
 	}
 	dvid.Infof("tomlConfig: %v\n", tc)
+	fmt.Printf("tomlConfig Auth: %v\n", tc.Auth)
 	var err error
 	err = tc.convertPathsToAbsolute(filename)
 	if err != nil {

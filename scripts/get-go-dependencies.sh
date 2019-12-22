@@ -55,6 +55,12 @@ go get github.com/janelia-flyem/gojsonschema
 # goji
 go get github.com/zenazn/goji
 
+# JWT support
+go get github.com/dgrijalva/jwt-go
+
+# CORS support
+go get github.com/rs/cors
+
 # msgp
 #go get github.com/tinylib/msgp
 
@@ -105,7 +111,7 @@ go get github.com/gogo/protobuf/protoc-gen-gogoslick
 #   https://golang.org/cmd/go/#hdr-Modules__module_versions__and_more
 #   ...in which case we'll be able to refer to a specific tag of the main badger repo.
 BADGER_DIR=${GOPATH}/src/github.com/dgraph-io/badger
-BADGER_VERSION=v2.0.0-rc.2 # Don't change this without also changing it in meta.yaml!!
+BADGER_VERSION=v2.0.0 # Don't change this without also changing it in meta.yaml!!
 if [[ -d ${BADGER_DIR} ]]; then
     cd ${BADGER_DIR} && git fetch && cd -
 else
@@ -116,6 +122,9 @@ cd ${BADGER_DIR} && git checkout ${BADGER_VERSION} && cd -
 #go install -i github.com/dgraph-io/badger
 
 # badger dependencies
+go get github.com/DataDog/zstd
+go get github.com/dgraph-io/ristretto
+
 go get github.com/AndreasBriese/bbloom
 go get github.com/dgryski/go-farm
 go get github.com/pkg/errors

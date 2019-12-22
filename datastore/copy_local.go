@@ -29,6 +29,7 @@ type txStats struct {
 	numV0, numV1, numV10, numV100, numV1k, numV10k, numV100k, numV1m, numV10m uint64
 
 	// some stats for timing
+	firstTime  time.Time
 	lastTime   time.Time
 	lastBytes  uint64 // bytes received since lastTime
 	totalBytes uint64
@@ -36,6 +37,9 @@ type txStats struct {
 
 // record stats on size of values
 func (t *txStats) addKV(k, v []byte) {
+	if t.numKV == 0 {
+		t.firstTime = time.Now()
+	}
 	t.numKV++
 
 	vBytes := len(v)
@@ -78,11 +82,12 @@ func (t *txStats) addKV(k, v []byte) {
 }
 
 func (t *txStats) printStats() {
+	dvid.Infof("Total time: %s\n", time.Since(t.firstTime))
 	dvid.Infof("Total size: %s\n", humanize.Bytes(t.totalBytes))
 	dvid.Infof("# kv pairs: %d\n", t.numKV)
 	dvid.Infof("Size of values transferred (bytes):\n")
-	dvid.Infof(" key only:   %d", t.numV0)
-	dvid.Infof(" [1,9):      %d", t.numV1)
+	dvid.Infof(" key only:   %d\n", t.numV0)
+	dvid.Infof(" [1,9):      %d\n", t.numV1)
 	dvid.Infof(" [10,99):    %d\n", t.numV10)
 	dvid.Infof(" [100,999):  %d\n", t.numV100)
 	dvid.Infof(" [1k,10k):   %d\n", t.numV1k)
@@ -94,7 +99,7 @@ func (t *txStats) printStats() {
 
 // MigrateInstance migrates a data instance locally from an old storage
 // engine to the current configured storage.  After completion of the copy,
-// the data instance in the old storage is deleted.
+// the data instance in the old storage is optionally deleted.
 func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, srcStore, dstStore dvid.Store, c dvid.Config) error {
 	if manager == nil {
 		return ErrManagerNotInitialized
@@ -156,7 +161,7 @@ func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, srcStore, dstStor
 		}
 	}()
 
-	dvid.Infof("Migrating data %q from store %q to store %q ...\n", d.DataName(), srcKV, dstKV)
+	dvid.Infof("Migrating data %q from store %q to store %q (flatten %t, delete src %t)...\n", d.DataName(), srcKV, dstKV, flatten, deleteSrc)
 	return nil
 }
 

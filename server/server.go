@@ -25,8 +25,12 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"os"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -158,6 +162,44 @@ func init() {
 			}
 		}
 	}()
+}
+
+// if a pidfile is specified in the [server] config TOML, make sure it doesn't
+// contain a working process, then write the current pid.
+func writePidFile() error {
+	if tc.Server.PidFile == "" {
+		return nil
+	}
+	pidbytes, err := ioutil.ReadFile(tc.Server.PidFile)
+	if os.IsExist(err) {
+		pid, err := strconv.Atoi(string(pidbytes))
+		if err != nil {
+			return err
+		}
+		if _, err := os.FindProcess(pid); err == nil {
+			return fmt.Errorf("pid %d found in Pid-File %q is still running; aborting", pid, tc.Server.PidFile)
+		}
+	}
+	dirPath := filepath.Dir(tc.Server.PidFile)
+	if dirPath != "" {
+		_, err := os.Stat(dirPath)
+		if os.IsNotExist(err) {
+			err := os.MkdirAll(dirPath, 0755)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	pid := os.Getpid()
+	pidbytes = []byte(strconv.Itoa(pid))
+	return ioutil.WriteFile(tc.Server.PidFile, pidbytes, 0664)
+}
+
+func deletePidFile() error {
+	if tc.Server.PidFile == "" {
+		return nil
+	}
+	return os.Remove(tc.Server.PidFile)
 }
 
 func setMaxThrottleOps(maxOps int) {
@@ -298,4 +340,5 @@ func Shutdown() {
 	rpc.Shutdown()
 	dvid.Shutdown()
 	shutdownCh <- struct{}{}
+	deletePidFile()
 }

@@ -128,6 +128,10 @@ func (d *testData) SetDeleted(deleted bool) {
 	d.deleted = deleted
 }
 
+func (d *testData) PersistMetadata() error {
+	return nil
+}
+
 func GetTestDataContext(uuid dvid.UUID, name string, instanceID dvid.InstanceID) *DataContext {
 	versionID, found := testUUIDToVersion[uuid]
 	if !found {

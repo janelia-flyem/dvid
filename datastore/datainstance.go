@@ -436,14 +436,17 @@ func SetTagsByJSON(d dvid.Data, uuid dvid.UUID, replace bool, in io.ReadCloser) 
 	}
 	if replace {
 		d.SetTags(setTags)
-		return nil
+		return d.PersistMetadata()
 	}
 	curTags := d.Tags()
+	if curTags == nil {
+		curTags = make(map[string]string)
+	}
 	for k, v := range setTags {
 		curTags[k] = v
 	}
 	d.SetTags(curTags)
-	return nil
+	return d.PersistMetadata()
 }
 
 // ---------------------------------------
@@ -695,6 +698,17 @@ func (d *Data) SetKVStore(kvStore dvid.Store) {
 
 func (d *Data) SetLogStore(logStore dvid.Store) {
 	d.logStore = logStore
+}
+
+func (d *Data) PersistMetadata() error {
+	if manager == nil {
+		return fmt.Errorf("cannot persist metadata change in data %q if maanger not initialized", d.DataName())
+	}
+	repo, err := manager.repoFromUUID(d.RootUUID())
+	if err != nil {
+		return fmt.Errorf("cannot persist metadata change in data %q with no repo associated with root %s", d.DataName(), d.RootUUID())
+	}
+	return repo.saveToStore(manager.store)
 }
 
 // ---------------
