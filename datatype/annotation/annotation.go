@@ -370,7 +370,7 @@ POST <api URL>/node/<UUID>/<data name>/reload[?<options>]
 var (
 	dtype *Type
 
-	DefaultBlockSize int32   = labelblk.DefaultBlockSize
+	DefaultBlockSize int32   = 64 // labelblk.DefaultBlockSize
 	DefaultRes       float32 = labelblk.DefaultRes
 	DefaultUnits             = labelblk.DefaultUnits
 )
