@@ -184,11 +184,32 @@ var expectedROI = Elements{
 	},
 	{
 		ElementNR{
+			Pos:  dvid.Point3d{33, 30, 31},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1", "Zlt90"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+	},
+	{
+		ElementNR{
 			Pos:  dvid.Point3d{88, 47, 80}, // Label 4
 			Kind: PostSyn,
 			Tags: []Tag{"Synapse2"},
 		},
 		[]Relationship{{Rel: GroupedWith, To: dvid.Point3d{14, 25, 37}}, {Rel: PostSynTo, To: dvid.Point3d{127, 63, 99}}, {Rel: GroupedWith, To: dvid.Point3d{20, 30, 40}}},
+	},
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{127, 63, 99}, // Label 3
+			Kind: PreSyn,
+			Tags: []Tag{"Synapse2"},
+			Prop: map[string]string{
+				"Im a T-Bar":             "no",
+				"I'm not a PSD":          "not really",
+				"i'm not really special": "at all",
+			},
+		},
+		[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{126, 67, 98}}},
 	},
 }
 
@@ -611,7 +632,7 @@ func getTag(tag Tag, elems Elements) Elements {
 	return result
 }
 
-var synapsesByBlocks = `{"1,0,0":[{"Pos":[33,30,31],"Kind":"PostSyn","Tags":["Synapse1","Zlt90"],"Prop":{},"Rels":[{"Rel":"PostSynTo","To":[15,27,35]}]}],"0,0,1":[{"Pos":[15,27,35],"Kind":"PreSyn","Tags":["Synapse1","Zlt90"],"Prop":{"I'm not a PSD":"sure","Im a T-Bar":"yes","i'm really special":""},"Rels":[{"Rel":"PreSynTo","To":[20,30,40]},{"Rel":"PreSynTo","To":[14,25,37]},{"Rel":"PreSynTo","To":[33,30,31]}]},{"Pos":[20,30,40],"Kind":"PostSyn","Tags":["Synapse1"],"Prop":{},"Rels":[{"Rel":"PostSynTo","To":[15,27,35]}]},{"Pos":[14,25,37],"Kind":"PostSyn","Tags":["Synapse1","Zlt90"],"Prop":{},"Rels":[{"Rel":"PostSynTo","To":[15,27,35]}]}],"2,1,2":[{"Pos":[88,47,80],"Kind":"PostSyn","Tags":["Synapse2"],"Prop":{},"Rels":[{"Rel":"GroupedWith","To":[14,25,37]},{"Rel":"PostSynTo","To":[127,63,99]},{"Rel":"GroupedWith","To":[20,30,40]}]}],"3,1,3":[{"Pos":[127,63,99],"Kind":"PreSyn","Tags":["Synapse2"],"Prop":{"I'm not a PSD":"not really","Im a T-Bar":"no","i'm not really special":"at all"},"Rels":[{"Rel":"PreSynTo","To":[88,47,80]},{"Rel":"PreSynTo","To":[120,65,100]},{"Rel":"PreSynTo","To":[126,67,98]}]}],"3,2,3":[{"Pos":[120,65,100],"Kind":"PostSyn","Tags":["Synapse2"],"Prop":{},"Rels":[{"Rel":"PostSynTo","To":[127,63,99]}]},{"Pos":[126,67,98],"Kind":"PostSyn","Tags":["Synapse2"],"Prop":{},"Rels":[{"Rel":"PostSynTo","To":[127,63,99]}]}]}`
+var synapsesByBlocks = `{"0,0,0":[{"Pos":[15,27,35],"Kind":"PreSyn","Tags":["Synapse1","Zlt90"],"Prop":{"I'm not a PSD":"sure","Im a T-Bar":"yes","i'm really special":""},"Rels":[{"Rel":"PreSynTo","To":[20,30,40]},{"Rel":"PreSynTo","To":[14,25,37]},{"Rel":"PreSynTo","To":[33,30,31]}]},{"Pos":[20,30,40],"Kind":"PostSyn","Tags":["Synapse1"],"Prop":{},"Rels":[{"Rel":"PostSynTo","To":[15,27,35]}]},{"Pos":[14,25,37],"Kind":"PostSyn","Tags":["Synapse1","Zlt90"],"Prop":{},"Rels":[{"Rel":"PostSynTo","To":[15,27,35]}]},{"Pos":[33,30,31],"Kind":"PostSyn","Tags":["Synapse1","Zlt90"],"Prop":{},"Rels":[{"Rel":"PostSynTo","To":[15,27,35]}]}],"1,0,1":[{"Pos":[127,63,99],"Kind":"PreSyn","Tags":["Synapse2"],"Prop":{"I'm not a PSD":"not really","Im a T-Bar":"no","i'm not really special":"at all"},"Rels":[{"Rel":"PreSynTo","To":[88,47,80]},{"Rel":"PreSynTo","To":[120,65,100]},{"Rel":"PreSynTo","To":[126,67,98]}]},{"Pos":[88,47,80],"Kind":"PostSyn","Tags":["Synapse2"],"Prop":{},"Rels":[{"Rel":"GroupedWith","To":[14,25,37]},{"Rel":"PostSynTo","To":[127,63,99]},{"Rel":"GroupedWith","To":[20,30,40]}]}],"1,1,1":[{"Pos":[120,65,100],"Kind":"PostSyn","Tags":["Synapse2"],"Prop":{},"Rels":[{"Rel":"PostSynTo","To":[127,63,99]}]},{"Pos":[126,67,98],"Kind":"PostSyn","Tags":["Synapse2"],"Prop":{},"Rels":[{"Rel":"PostSynTo","To":[127,63,99]}]}]}`
 
 func testResponse(t *testing.T, expected Elements, template string, args ...interface{}) {
 	url := fmt.Sprintf(template, args...)
@@ -690,7 +711,7 @@ func testResponseLabel(t *testing.T, expected interface{}, template string, args
 type tuple [4]int32
 
 var labelsROI = []tuple{
-	tuple{1, 0, 0, 1}, tuple{2, 1, 2, 4},
+	tuple{0, 0, 0, 1}, tuple{1, 0, 1, 2},
 }
 
 func labelsJSON() string {
@@ -710,6 +731,7 @@ func TestRequests(t *testing.T) {
 	uuid, _ := initTestRepo()
 
 	config := dvid.NewConfig()
+	config.Set("BlockSize", "64,64,64")
 	dataservice, err := datastore.NewData(uuid, syntype, "mysynapses", config)
 	if err != nil {
 		t.Fatalf("Error creating new data instance: %v\n", err)
@@ -729,7 +751,7 @@ func TestRequests(t *testing.T) {
 
 	// Check ROI endpoint
 	roiName := "myroi"
-	server.CreateTestInstance(t, uuid, "roi", roiName, dvid.Config{})
+	server.CreateTestInstance(t, uuid, "roi", roiName, config)
 	apiStr := fmt.Sprintf("%snode/%s/%s/roi", server.WebAPIPath, uuid, roiName)
 	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(labelsJSON()))
 
@@ -777,6 +799,119 @@ func TestRequests(t *testing.T) {
 	// --- check tag
 	synapse2 = getTag(tag, afterDelete)
 	testResponse(t, synapse2, "%snode/%s/%s/tag/%s?relationships=true", server.WebAPIPath, uuid, data.DataName(), tag)
+}
+
+var testBlocks = blockList{
+	"1,1,1": Elements{
+		{
+			ElementNR{
+				Pos:  dvid.Point3d{65, 70, 75},
+				Kind: PostSyn,
+				Tags: []Tag{"Synapse1"},
+			},
+			[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{129, 130, 131}}},
+		},
+	},
+	"2,2,2": Elements{
+		{
+			ElementNR{
+				Pos:  dvid.Point3d{129, 130, 131},
+				Kind: PreSyn,
+				Tags: []Tag{"Synapse1"},
+				Prop: map[string]string{
+					"Im a T-Bar":             "no",
+					"I'm not a PSD":          "not really",
+					"i'm not really special": "at all",
+				},
+			},
+			[]Relationship{
+				{Rel: PreSynTo, To: dvid.Point3d{129, 130, 131}},
+				{Rel: PreSynTo, To: dvid.Point3d{65, 70, 75}},
+			},
+		},
+		{
+			ElementNR{
+				Pos:  dvid.Point3d{130, 131, 132},
+				Kind: PostSyn,
+				Tags: []Tag{"Synapse1"},
+			},
+			[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{129, 130, 131}}},
+		},
+	},
+}
+
+var testBlocksElements = Elements{
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{65, 70, 75},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{129, 130, 131}}},
+	},
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{129, 130, 131},
+			Kind: PreSyn,
+			Tags: []Tag{"Synapse1"},
+			Prop: map[string]string{
+				"Im a T-Bar":             "no",
+				"I'm not a PSD":          "not really",
+				"i'm not really special": "at all",
+			},
+		},
+		[]Relationship{
+			{Rel: PreSynTo, To: dvid.Point3d{129, 130, 131}},
+			{Rel: PreSynTo, To: dvid.Point3d{65, 70, 75}},
+		},
+	},
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{130, 131, 132},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{129, 130, 131}}},
+	},
+}
+
+var testBlocksReturn = `{"1,1,1":[{"Pos":[65,70,75],"Kind":"PostSyn","Tags":["Synapse1"],"Prop":null,"Rels":[{"Rel":"PostSynTo","To":[129,130,131]}]}],"2,2,2":[{"Pos":[129,130,131],"Kind":"PreSyn","Tags":["Synapse1"],"Prop":{"I'm not a PSD":"not really","Im a T-Bar":"no","i'm not really special":"at all"},"Rels":[{"Rel":"PreSynTo","To":[129,130,131]},{"Rel":"PreSynTo","To":[65,70,75]}]},{"Pos":[130,131,132],"Kind":"PostSyn","Tags":["Synapse1"],"Prop":null,"Rels":[{"Rel":"PostSynTo","To":[129,130,131]}]}]}`
+
+func TestPostBlocks(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+
+	config := dvid.NewConfig()
+	dataservice, err := datastore.NewData(uuid, syntype, "mysynapses", config)
+	if err != nil {
+		t.Fatalf("Error creating new data instance: %v\n", err)
+	}
+	data, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("Returned new data instance is not synapse.Data\n")
+	}
+
+	// PUT first batch of synapses
+	testJSON, err := json.Marshal(testBlocks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	url1 := fmt.Sprintf("%snode/%s/%s/blocks", server.WebAPIPath, uuid, data.DataName())
+	server.TestHTTP(t, "POST", url1, strings.NewReader(string(testJSON)))
+
+	// GET synapses back within superset bounding box and make sure all data is there.
+	testResponse(t, testBlocksElements, "%snode/%s/%s/elements/1000_1000_1000/0_0_0", server.WebAPIPath, uuid, data.DataName())
+
+	// fast GET /blocks for all synapses
+	blocksURL := fmt.Sprintf("%snode/%s/%s/blocks/128_128_128/64_64_64", server.WebAPIPath, uuid, data.DataName())
+	ret := server.TestHTTP(t, "GET", blocksURL, nil)
+	if string(ret) != testBlocksReturn {
+		t.Fatalf("Did not get all synapse elements returned from GET /blocks:\nGot: %s\nExpected: %s\n", string(ret), testBlocksReturn)
+	}
 }
 
 func TestPropChange(t *testing.T) {
@@ -1760,6 +1895,7 @@ func TestLabelblkReload(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, v := initTestRepo()
 	var config dvid.Config
+	config.Set("BlockSize", "64,64,64")
 	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
 	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
 
@@ -1808,7 +1944,8 @@ func testLabelReload(t *testing.T, typename string, inMemory bool) {
 	// Create testbed volume and data instances
 	uuid, v := initTestRepo()
 	var config dvid.Config
-	config.Set("BlockSize", "32,32,32")
+	// config.Set("BlockSize", "32,32,32")
+	config.Set("BlockSize", "64,64,64")
 	server.CreateTestInstance(t, uuid, typename, "labels", config)
 
 	_ = createLabelTestVolume(t, uuid, "labels")
