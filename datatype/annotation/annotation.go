@@ -256,6 +256,31 @@ GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>
 		...
 	}
 
+POST <api URL>/node/<UUID>/<data name>/blocks[?<options>]
+
+	Unlike the POST /elements endpoint, the /blocks endpoint is the fastest way to store
+	all point annotations and assumes the caller has (1) properly partitioned the elements
+	int the appropriate block for the block size (default 64) and (2) will do a POST /reload
+	to create the denormalized Label and Tag versions of the annotations after all
+	ingestion is completed.
+
+	This low-level ingestion also does not transmit subscriber events to associated
+	synced data (e.g., labelsz).
+
+	The POSTed JSON should be similar to the GET version with the block coordinate as 
+	the key:
+
+	{
+		"10,381,28": [ array of point annotation elements ],
+		"11,381,28": [ array of point annotation elements ],
+		...
+	}
+
+	POST Query-string Options:
+
+	kafkalog    Set to "off" if you don't want this mutation logged to kafka.
+
+
 POST <api URL>/node/<UUID>/<data name>/move/<from_coord>/<to_coord>[?<options>]
 
 	Moves the point annotation from <from_coord> to <to_coord> where
@@ -2015,6 +2040,75 @@ func (d *Data) GetROISynapses(ctx *datastore.VersionedCtx, roiSpec storage.Filte
 	return elements, nil
 }
 
+type blockList map[string]Elements
+
+// StoreBlocks performs a synchronous store of synapses in JSON format, not
+// returning until the data blocks are complete.
+func (d *Data) StoreBlocks(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff bool) (numBlocks int, err error) {
+	jsonBytes, err := ioutil.ReadAll(r)
+	if err != nil {
+		return 0, err
+	}
+	var blocks blockList
+	if err := json.Unmarshal(jsonBytes, &blocks); err != nil {
+		return 0, err
+	}
+
+	// d.Lock()
+	// defer d.Unlock()
+
+	// Do modifications under a batch.
+	store, err := d.KVStore()
+	if err != nil {
+		return 0, err
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		return 0, fmt.Errorf("data type annotation requires batch-enabled store, which %q is not", store)
+	}
+	batch := batcher.NewBatch(ctx)
+
+	var blockX, blockY, blockZ int32
+	for key, elems := range blocks {
+		_, err := fmt.Sscanf(key, "%d,%d,%d", &blockX, &blockY, &blockZ)
+		if err != nil {
+			return 0, err
+		}
+		blockCoord := dvid.ChunkPoint3d{blockX, blockY, blockZ}
+		tk := NewBlockTKey(blockCoord)
+		if err := putBatchElements(batch, tk, elems); err != nil {
+			return 0, err
+		}
+	}
+
+	if !kafkaOff {
+		// store synapse info into blob store for kakfa reference
+		var postRef string
+		if postRef, err = d.PutBlob(jsonBytes); err != nil {
+			dvid.Errorf("storing block posted synapse data %q to kafka: %v", d.DataName(), err)
+		}
+
+		versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
+		msginfo := map[string]interface{}{
+			"Action":    "blocks-post",
+			"DataRef":   postRef,
+			"UUID":      string(versionuuid),
+			"Timestamp": time.Now().String(),
+		}
+		if ctx.User != "" {
+			msginfo["User"] = ctx.User
+		}
+		jsonmsg, err := json.Marshal(msginfo)
+		if err != nil {
+			dvid.Errorf("error marshaling JSON for annotations %q blocks post: %v\n", d.DataName(), err)
+		} else if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+			dvid.Errorf("error on sending block post op to kafka: %v\n", err)
+		}
+	}
+
+	return len(blocks), batch.Commit()
+}
+
 // StoreElements performs a synchronous store of synapses in JSON format, not
 // returning until the data and its denormalizations are complete.
 func (d *Data) StoreElements(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff bool) error {
@@ -2954,8 +3048,18 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			}
 			timedLog.Infof("HTTP %s: synapse elements in blocks intersecting subvolume (size %s, offset %s) (%s)", r.Method, sizeStr, offsetStr, r.URL)
 
+		case "post":
+			// POST <api URL>/node/<UUID>/<data name>/blocks
+			kafkaOff := r.URL.Query().Get("kafkalog") == "off"
+			numBlocks, err := d.StoreBlocks(ctx, r.Body, kafkaOff)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			timedLog.Infof("HTTP %s: posted %d synapse blocks (%s)", r.Method, numBlocks, r.URL)
+
 		default:
-			server.BadRequest(w, r, "Only GET action is available on 'blocks' endpoint.")
+			server.BadRequest(w, r, "Only GET/POST action is available on 'blocks' endpoint.")
 			return
 		}
 
