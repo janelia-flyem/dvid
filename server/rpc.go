@@ -72,6 +72,29 @@ EXPERIMENTAL COMMANDS
 		Makes a log of all mutations from ancestors up to given UUID for
 		the given data UUID.
 
+	repo <UUID> flatten-metadata <dst store> <flatten config file>
+    
+		Creates a single node metadata from a source metadata store (specified by
+		the nickname in TOML file) to a new store.  The single version corresponds
+		to the UUID given in the flatten-metadata command. Before running this command,
+		you must modify the config TOML file so the destination store is available.
+		To start using the destination store for the metadata, you must restart
+		the server and specify that store as the metadata source via a TOML 
+		configuration change.
+
+		The flatten config file contains JSON with optional fields of the following 
+		format:
+
+			{
+				"Versions": ["28841c8277e044a7b187dda03e18da13", ...]
+				"Instances": ["data1", "data2"],
+				"Alias": "my new alias",
+				"Description": "my new description",
+				"RepoLog": ["some new", "log statements", "for the repo itself"],
+				"NodeNote": "a new commit message for single node",
+				"NodeLog": ["some new", "log statements", "for the repo node"]
+			}
+
 	repo <UUID> migrate <instance name> <src store> <dst store> <settings...>
     
 		Migrates all of this instance's data from a source store (specified by 
@@ -482,6 +505,19 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			if err != nil {
 				return
 			}
+
+		case "flatten-metadata":
+			var dstStoreName, configFName string
+			cmd.CommandArgs(2, &dstStoreName, &configFName)
+			var dstStore dvid.Store
+			dstStore, err = storage.GetStoreByAlias(storage.Alias(dstStoreName))
+			if err != nil {
+				return
+			}
+			if err = datastore.FlattenMetadata(uuid, dstStore, configFName); err != nil {
+				return
+			}
+			reply.Text = fmt.Sprintf("Created metadata for uuid %s in store %q\n", uuid, dstStoreName)
 
 		case "migrate":
 			var source, srcStoreName, dstStoreName string
