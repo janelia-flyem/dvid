@@ -488,7 +488,7 @@ func (m *repoManager) loadVersion0() error {
 		repoID := dvid.RepoIDFromBytes(ibytes)
 
 		// Load each repo
-		_, found := m.repoToUUID[repoID]
+		rootUUID, found := m.repoToUUID[repoID]
 		if !found {
 			return fmt.Errorf("Retrieved repo with id %d that is not in map.  Corrupt DB?", repoID)
 		}
@@ -518,6 +518,14 @@ func (m *repoManager) loadVersion0() error {
 
 		// Populate the instance id -> dataservice map and convert/upgrade any deprecated data instance.
 		for dataname, dataservice := range r.data {
+
+			// hack to allow flattened metadata save to function without full dataservice copies
+			// as per repo.duplicate() function.
+			if _, found := m.uuidToVersion[dataservice.RootUUID()]; !found {
+				dvid.TimeInfof("Data instance %q has root UUID %q not present, so setting it to current root UUID %q\n")
+				dataservice.SetRootUUID(rootUUID)
+				saveRepo = true
+			}
 
 			dataUUID := dataservice.DataUUID()
 			if dataUUID == "" {
@@ -2780,7 +2788,8 @@ func (d *dagT) getAncestryByBranch(branch string) (ancestry []dvid.UUID, err err
 	return
 }
 
-// returns duplicate of DAG limited by any set of version IDs.  If the root UUID is not in the
+// returns duplicate of DAG limited by any set of version IDs or if versions is nil,
+// duplicates the entire DAG.  If the root UUID is not in the
 // list of allowed versions, there must be only one version allowed (flattened)
 func (d *dagT) duplicate(versions map[dvid.VersionID]struct{}) *dagT {
 	dup := new(dagT)
@@ -2802,14 +2811,20 @@ func (d *dagT) duplicate(versions map[dvid.VersionID]struct{}) *dagT {
 		dup.root = d.nodes[v].uuid
 		dvid.Debugf("duplicated restricted DAG without root %s; using root %s\n", d.root, dup.root)
 	}
-
-	dup.nodes = make(map[dvid.VersionID]*nodeT, len(versions))
-	for v := range versions {
-		node, found := d.nodes[v]
-		if !found {
-			continue
+	if len(versions) == 0 {
+		dup.nodes = make(map[dvid.VersionID]*nodeT, len(d.nodes))
+		for v, node := range d.nodes {
+			dup.nodes[v] = node.duplicate(nil)
 		}
-		dup.nodes[v] = node.duplicate(versions)
+	} else {
+		dup.nodes = make(map[dvid.VersionID]*nodeT, len(versions))
+		for v := range versions {
+			node, found := d.nodes[v]
+			if !found {
+				continue
+			}
+			dup.nodes[v] = node.duplicate(versions)
+		}
 	}
 	d.RUnlock()
 	return dup
@@ -2931,9 +2946,10 @@ type nodeT struct {
 }
 
 // duplicate creates a duplicate node, limiting the data instances
-// to passed versions if provided.  If a parent or child is
-// not included in the versions, it is not copied.  Therefore if versions
-// are supplied, they must be contiguous and not random nodes in DAG.
+// to passed versions if provided.  If versions is nil, all versions are used.
+// If a parent or child is not included in the versions, it is not copied.
+// Therefore if versions are supplied, they must be contiguous and not random
+// nodes in DAG.
 func (node *nodeT) duplicate(versions map[dvid.VersionID]struct{}) *nodeT {
 	node.RLock()
 

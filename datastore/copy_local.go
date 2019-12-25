@@ -97,6 +97,101 @@ func (t *txStats) printStats() {
 	dvid.Infof("  >= 10m:    %d\n", t.numV10m)
 }
 
+type flattenConfig struct {
+	Versions    []dvid.UUID
+	Instances   dvid.InstanceNames
+	Alias       string
+	Description string
+	RepoLog     []string
+	NodeNote    string
+	NodeLog     []string
+}
+
+func getFlattenConfig(configFName string) (fc flattenConfig, err error) {
+	var f *os.File
+	if f, err = os.Open(configFName); err != nil {
+		return
+	}
+	var data []byte
+	if data, err = ioutil.ReadAll(f); err != nil {
+		return
+	}
+	if err = json.Unmarshal(data, &fc); err != nil {
+		return
+	}
+	return
+}
+
+// FlattenMetadata stores the metadata of a single node (the given UUID) into the destination
+// store, optionally adjusting the settings based on the JSON in the configuration file.
+func FlattenMetadata(uuid dvid.UUID, dstStore dvid.Store, configFName string) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
+	}
+
+	// Get flatened metadata configuration from optional JSON file
+	fc, err := getFlattenConfig(configFName)
+	if err != nil {
+		return err
+	}
+
+	// Create duplicate repo with changes
+	origRepo, err := manager.repoFromUUID(uuid)
+	if err != nil {
+		return err
+	}
+	var versions map[dvid.VersionID]struct{}
+	if len(fc.Versions) != 0 { // if none specified, use all versions
+		for _, uuid := range fc.Versions {
+			v, err := manager.versionFromUUID(uuid)
+			if err != nil {
+				return err
+			}
+			versions[v] = struct{}{}
+		}
+	}
+	flattenRepo, err := origRepo.duplicate(versions, fc.Instances)
+	if err != nil {
+		return err
+	}
+	if fc.Alias != "" {
+		flattenRepo.alias = fc.Alias
+	}
+	if fc.Description != "" {
+		flattenRepo.description = fc.Description
+	}
+	if len(fc.RepoLog) != 0 {
+		flattenRepo.log = fc.RepoLog
+	}
+	if fc.NodeNote != "" {
+		node, found := flattenRepo.dag.nodes[flattenRepo.version]
+		if found {
+			node.note = fc.NodeNote
+		} else {
+			dvid.Errorf("unable to get node for version ID %d in flattened repo\n", flattenRepo.version)
+		}
+	}
+	if len(fc.NodeLog) != 0 {
+		node, found := flattenRepo.dag.nodes[flattenRepo.version]
+		if found {
+			node.log = fc.NodeLog
+		} else {
+			dvid.Errorf("unable to get node for version ID %d in flattened repo\n", flattenRepo.version)
+		}
+	}
+	jsonBytes, err := flattenRepo.MarshalJSON()
+	if err == nil {
+		dvid.Infof("Flattened Repo Metadata:\n%s\n", string(jsonBytes))
+	}
+
+	// Store into destination store.
+	dstKV, ok := dstStore.(storage.OrderedKeyValueDB)
+	if !ok {
+		return fmt.Errorf("unable to get destination store %q that is an ordered kv db", dstStore)
+	}
+	return flattenRepo.saveToStore(dstKV)
+}
+
 // MigrateInstance migrates a data instance locally from an old storage
 // engine to the current configured storage.  After completion of the copy,
 // the data instance in the old storage is optionally deleted.
@@ -130,7 +225,7 @@ func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, srcStore, dstStor
 
 	// Get the destination store.
 	dstKV, ok := dstStore.(storage.OrderedKeyValueDB)
-	if err != nil {
+	if !ok {
 		return fmt.Errorf("unable to get destination store %q: %v", dstStore, err)
 	}
 
@@ -165,12 +260,12 @@ func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, srcStore, dstStor
 	return nil
 }
 
-type TransferConfig struct {
+type transferConfig struct {
 	Versions []dvid.UUID
 	Metadata bool
 }
 
-func getTransferConfig(configFName string) (tc TransferConfig, okVersions map[dvid.VersionID]bool, err error) {
+func getTransferConfig(configFName string) (tc transferConfig, okVersions map[dvid.VersionID]bool, err error) {
 	var f *os.File
 	if f, err = os.Open(configFName); err != nil {
 		return
@@ -207,7 +302,7 @@ func LimitVersions(uui dvid.UUID, configFName string) error {
 	if err != nil {
 		return err
 	}
-	var tc TransferConfig
+	var tc transferConfig
 	if err := json.Unmarshal(data, &tc); err != nil {
 		return err
 	}
