@@ -142,13 +142,23 @@ func FlattenMetadata(uuid dvid.UUID, dstStore dvid.Store, configFName string) er
 		return err
 	}
 	var versions map[dvid.VersionID]struct{}
+	repoToUUID := make(map[dvid.RepoID]dvid.UUID)
+	versionToUUID := make(map[dvid.VersionID]dvid.UUID)
 	if len(fc.Versions) != 0 { // if none specified, use all versions
+		repoToUUID[origRepo.id] = fc.Versions[0]
+		versions = make(map[dvid.VersionID]struct{}, len(fc.Versions))
 		for _, uuid := range fc.Versions {
 			v, err := manager.versionFromUUID(uuid)
 			if err != nil {
 				return err
 			}
 			versions[v] = struct{}{}
+			versionToUUID[v] = uuid
+		}
+	} else {
+		repoToUUID[origRepo.id] = origRepo.uuid
+		for v, node := range origRepo.dag.nodes {
+			versionToUUID[v] = node.uuid
 		}
 	}
 	flattenRepo, err := origRepo.duplicate(versions, fc.Instances)
@@ -189,6 +199,18 @@ func FlattenMetadata(uuid dvid.UUID, dstStore dvid.Store, configFName string) er
 	dstKV, ok := dstStore.(storage.OrderedKeyValueDB)
 	if !ok {
 		return fmt.Errorf("unable to get destination store %q that is an ordered kv db", dstStore)
+	}
+	if err := manager.putData(repoToUUIDKey, repoToUUID); err != nil {
+		return err
+	}
+	if err := manager.putData(versionToUUIDKey, versionToUUID); err != nil {
+		return err
+	}
+	var ctx storage.MetadataContext
+	value := append(manager.repoID.Bytes(), manager.versionID.Bytes()...)
+	value = append(value, manager.instanceID.Bytes()...)
+	if err := manager.store.Put(ctx, storage.NewTKey(newIDsKey, nil), value); err != nil {
+		return err
 	}
 	return flattenRepo.saveToStore(dstKV)
 }
