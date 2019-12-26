@@ -416,7 +416,7 @@ func (m *repoManager) loadNewIDs() error {
 		return err
 	}
 	if len(value) != dvid.RepoIDSize+dvid.VersionIDSize+dvid.InstanceIDSize {
-		return fmt.Errorf("Bad value returned for new ids.  Length %d bytes!", len(value))
+		return fmt.Errorf("bad value returned for new ids.  Length %d bytes", len(value))
 	}
 	pos := 0
 	m.repoID = dvid.RepoIDFromBytes(value[pos : pos+dvid.RepoIDSize])

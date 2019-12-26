@@ -9,6 +9,8 @@
 package datastore
 
 import (
+	"bytes"
+	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -200,19 +202,29 @@ func FlattenMetadata(uuid dvid.UUID, dstStore dvid.Store, configFName string) er
 	if !ok {
 		return fmt.Errorf("unable to get destination store %q that is an ordered kv db", dstStore)
 	}
-	if err := manager.putData(repoToUUIDKey, repoToUUID); err != nil {
-		return err
-	}
-	if err := manager.putData(versionToUUIDKey, versionToUUID); err != nil {
-		return err
-	}
 	var ctx storage.MetadataContext
+	if err := putData(dstKV, repoToUUIDKey, repoToUUID); err != nil {
+		return err
+	}
+	if err := putData(dstKV, versionToUUIDKey, versionToUUID); err != nil {
+		return err
+	}
 	value := append(manager.repoID.Bytes(), manager.versionID.Bytes()...)
 	value = append(value, manager.instanceID.Bytes()...)
-	if err := manager.store.Put(ctx, storage.NewTKey(newIDsKey, nil), value); err != nil {
+	if err := dstKV.Put(ctx, storage.NewTKey(newIDsKey, nil), value); err != nil {
 		return err
 	}
 	return flattenRepo.saveToStore(dstKV)
+}
+
+func putData(kv storage.OrderedKeyValueDB, t storage.TKeyClass, data interface{}) error {
+	var ctx storage.MetadataContext
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(data); err != nil {
+		return err
+	}
+	return kv.Put(ctx, storage.NewTKey(t, nil), buf.Bytes())
 }
 
 // MigrateInstance migrates a data instance locally from an old storage
