@@ -508,7 +508,7 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 
 		case "flatten-metadata":
 			var dstStoreName, configFName string
-			cmd.CommandArgs(2, &dstStoreName, &configFName)
+			cmd.CommandArgs(3, &dstStoreName, &configFName)
 			var dstStore dvid.Store
 			dstStore, err = storage.GetStoreByAlias(storage.Alias(dstStoreName))
 			if err != nil {
