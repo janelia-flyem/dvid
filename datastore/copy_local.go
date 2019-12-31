@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -204,7 +205,27 @@ func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, srcStore, dstStor
 	if err != nil {
 		return err
 	}
+	var versions []dvid.UUID
 	var flatten bool
+	switch transmitStr {
+	case "flatten":
+		flatten = true
+	case "all":
+		flatten = false
+	default: // parse a list of versions
+		uuidStrs := strings.Split(transmitStr, ",")
+		if len(uuidStrs) == 0 {
+			return fmt.Errorf("transmit setting needs to be 'all', 'flatten', or a list of UUIDs separated by a comma")
+		}
+		versions = make([]dvid.UUID, len(uuidStrs))
+		for i, uuidStr := range uuidStrs {
+			validUUID, _, err := MatchingUUID(uuidStr)
+			if err != nil {
+				return fmt.Errorf("bad UUID %q in transmit list: %v", uuidStr, err)
+			}
+			versions[i] = validUUID
+		}
+	}
 	if transmitStr == "flatten" {
 		flatten = true
 	}
@@ -242,9 +263,26 @@ func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, srcStore, dstStor
 
 	// Migrate data asynchronously.
 	go func() {
-		if err := copyData(srcKV, dstKV, d, nil, uuid, nil, flatten); err != nil {
-			dvid.Errorf("error in migration of data %q: %v\n", source, err)
-			return
+		if len(versions) == 0 {
+			err := copyData(srcKV, dstKV, d, nil, uuid, nil, flatten)
+			if err != nil {
+				dvid.Errorf("error in migration of data %q: %v\n", source, err)
+				return
+			}
+		} else {
+			// root gets flattened, everything else gets non-flattened copy
+			err := copyData(srcKV, dstKV, d, nil, versions[0], nil, true)
+			if err != nil {
+				dvid.Errorf("error in migration of data %q: %v\n", source, err)
+				return
+			}
+			for _, version := range versions[1:] {
+				err := copyData(srcKV, dstKV, d, nil, version, nil, false)
+				if err != nil {
+					dvid.Errorf("error in migration of data %q: %v\n", source, err)
+					return
+				}
+			}
 		}
 		if deleteSrc {
 			dvid.Infof("Starting delete of instance %q from store %q\n", d.DataName(), srcKV)
