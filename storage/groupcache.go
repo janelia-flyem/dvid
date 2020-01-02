@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"net/http"
@@ -62,16 +63,17 @@ type GroupcacheConfig struct {
 	Instances []string // Data instances that use groupcache in form "<name>:<uuid>""
 }
 
-// GroupcacheCtx packages both a storage.Context and a KeyValueDB for GETs.
-type GroupcacheCtx struct {
-	Context
-	KeyValueDB
-}
-
 type groupcacheT struct {
 	cache     *groupcache.Group
 	supported map[dvid.DataSpecifier]struct{} // set if the given data instance has groupcache support.
 }
+
+type ctxKey int
+
+const (
+	contextKey ctxKey = 0
+	kvdbKey    ctxKey = 1
+)
 
 func setupGroupcache(config GroupcacheConfig) error {
 	if config.GB == 0 {
@@ -84,16 +86,19 @@ func setupGroupcache(config GroupcacheConfig) error {
 	if pool != nil {
 		dvid.Infof("Initializing groupcache with %d GB at %s...\n", config.GB, config.Host)
 		manager.gcache.cache = groupcache.NewGroup("immutable", cacheBytes, groupcache.GetterFunc(
-			func(c groupcache.Context, key string, dest groupcache.Sink) error {
-				// Use KeyValueDB defined as context.
-				gctx, ok := c.(GroupcacheCtx)
+			func(c context.Context, key string, dest groupcache.Sink) error {
+				ctx, ok := c.Value(contextKey).(Context)
 				if !ok {
-					return fmt.Errorf("bad groupcache context: expected GroupcacheCtx, got %v", c)
+					return fmt.Errorf("bad groupcache context with no context: %v", c)
+				}
+				kvdb, ok := c.Value(kvdbKey).(KeyValueDB)
+				if !ok {
+					return fmt.Errorf("bad groupcache context with no kv db: %v", c)
 				}
 
 				// First four bytes of key is instance ID to isolate groupcache collisions.
 				tk := TKey(key[4:])
-				data, err := gctx.KeyValueDB.Get(gctx.Context, tk)
+				data, err := kvdb.Get(ctx, tk)
 				if err != nil {
 					return err
 				}
@@ -167,11 +172,10 @@ func (g groupcacheOrderedStore) Get(ctx Context, k TKey) ([]byte, error) {
 
 	// Try to get data from groupcache, which if fails, will call the original KeyValueDB in passed Context.
 	var data []byte
-	gctx := GroupcacheCtx{
-		Context:    ctx,
-		KeyValueDB: g.OrderedKeyValueDB,
-	}
-	err := g.cache.Get(groupcache.Context(gctx), gkey, groupcache.AllocatingByteSliceSink(&data))
+	gctx := context.Background()
+	gctx = context.WithValue(gctx, contextKey, ctx)
+	gctx = context.WithValue(gctx, kvdbKey, g.OrderedKeyValueDB)
+	err := g.cache.Get(gctx, gkey, groupcache.AllocatingByteSliceSink(&data))
 	return data, err
 }
 
@@ -191,10 +195,9 @@ func (g groupcacheStore) Get(ctx Context, k TKey) ([]byte, error) {
 
 	// Try to get data from groupcache, which if fails, will call the original KeyValueDB in passed Context.
 	var data []byte
-	gctx := GroupcacheCtx{
-		Context:    ctx,
-		KeyValueDB: g.KeyValueDB,
-	}
-	err := g.cache.Get(groupcache.Context(gctx), gkey, groupcache.AllocatingByteSliceSink(&data))
+	gctx := context.Background()
+	gctx = context.WithValue(gctx, contextKey, ctx)
+	gctx = context.WithValue(gctx, kvdbKey, g.KeyValueDB)
+	err := g.cache.Get(gctx, gkey, groupcache.AllocatingByteSliceSink(&data))
 	return data, err
 }
