@@ -640,13 +640,18 @@ func initRoutes() {
 	if webMux.routesSetup {
 		return
 	}
-
-	c := cors.New(cors.Options{
-		AllowOriginFunc:  corsValidator,
-		AllowedHeaders:   []string{"Authorization", "authorization"},
-		AllowedMethods:   []string{"GET", "POST", "DELETE", "HEAD"},
-		AllowCredentials: true,
-	})
+	copts := cors.Options{
+		AllowedMethods: []string{"GET", "POST", "DELETE", "HEAD"},
+	}
+	authorizationOn := (len(tc.Auth.ProxyAddress) != 0)
+	if authorizationOn {
+		copts.AllowOriginFunc = corsValidator
+		copts.AllowedHeaders = []string{"Authorization", "authorization"}
+		copts.AllowCredentials = true
+	} else if len(corsDomains) == 0 {
+		copts.AllowedOrigins = []string{"*"}
+	}
+	c := cors.New(copts)
 
 	webMuxMu.Lock()
 	silentMux := web.New()
@@ -710,7 +715,7 @@ func initRoutes() {
 	repoMux := web.New()
 	mainMux.Handle("/api/repo/:uuid/:action", repoMux)
 	mainMux.Handle("/api/repo/:uuid/:action/:name", repoMux)
-	if len(tc.Auth.ProxyAddress) != 0 {
+	if authorizationOn {
 		repoMux.Use(isAuthorized)
 	}
 	repoMux.Use(repoRawSelector)
@@ -728,7 +733,7 @@ func initRoutes() {
 	nodeMux := web.New()
 	mainMux.Handle("/api/node/:uuid", nodeMux)
 	mainMux.Handle("/api/node/:uuid/:action", nodeMux)
-	if len(tc.Auth.ProxyAddress) != 0 {
+	if authorizationOn {
 		nodeMux.Use(isAuthorized)
 	}
 	nodeMux.Use(repoRawSelector)
@@ -748,7 +753,7 @@ func initRoutes() {
 	instanceMux := web.New()
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword", instanceMux)
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword/*", instanceMux)
-	if len(tc.Auth.ProxyAddress) != 0 {
+	if authorizationOn {
 		instanceMux.Use(isAuthorized)
 	}
 	instanceMux.Use(repoRawSelector)
@@ -986,21 +991,6 @@ func DecodeJSON(r *http.Request) (dvid.Config, error) {
 }
 
 // ---- Middleware -------------
-
-// // corsHandler adds CORS support via header
-// func corsHandler(c *web.C, h http.Handler) http.Handler {
-// 	fn := func(w http.ResponseWriter, r *http.Request) {
-// 		// Allow cross-origin resource sharing.
-// 		if len(tc.Server.CorsOrigin) != 0 {
-// 			w.Header().Set("Access-Control-Allow-Origin", tc.Server.CorsOrigin)
-// 		} else {
-// 			w.Header().Set("Access-Control-Allow-Origin", "*")
-// 		}
-
-// 		h.ServeHTTP(w, r)
-// 	}
-// 	return http.HandlerFunc(fn)
-// }
 
 // used by cors handler to say whether an origin is allowed.
 func corsValidator(origin string) bool {
