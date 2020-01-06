@@ -120,10 +120,10 @@ EXPERIMENTAL COMMANDS
 			If the value of transmit is a string with UUIDs separated by commas,
 			e.g., "transmit=881e9,52a13,57e8d"
 			where the first UUID must be oldest and will become the flattened root,
-			and all other versions after that first UUID must be consecutive 
-			children of that path to the leaf 57e8d.  So all previous versions to
-			881e9 for the given instance will be flattened and then each delta
-			of the subsequent versions will be migrated.
+			and all other versions after that will accumulate deltas from versions
+			that are not on the list.  In the example above, all previous versions to
+			881e9 for the given instance will be flattened and then any key-values
+			after 881e9 up to 52a13 will be flattened into the 52a13 version.
 
 	repo <UUID> transfer-data <old store> <new store> <transfer config file>
 

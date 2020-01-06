@@ -183,6 +183,15 @@ GET /api/server/blobstore/{reference}
 	populated as part of mutation logging and is read-only.  The reference is a URL-friendly 
 	content hash (FNV-128) of the blob data.
 
+POST /api/server/record-requests?log=/path/to/record-log
+
+	Turns on recording of all HTTP requests to the given log.  Only one record log is available
+	and this will fail if recording is already on.
+
+POST /api/server/record-stop
+
+	Turns off recording of HTTP requests.
+
 -------------------------
 Memory Profiler endpoints
 -------------------------

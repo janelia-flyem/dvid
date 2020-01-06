@@ -131,6 +131,13 @@ func DataKeyRange() (minKey, maxKey Key) {
 	return minKey, maxKey
 }
 
+// DataInstanceKeyRange returns the min and max Key across all keys for a data instance.
+func DataInstanceKeyRange(d dvid.InstanceID) (minKey, maxKey Key) {
+	minKey = append([]byte{dataKeyPrefix}, d.Bytes()...)
+	maxKey = append([]byte{dataKeyPrefix}, (d + 1).Bytes()...) // still less than first key of next instance
+	return minKey, maxKey
+}
+
 const (
 	// MarkData is a byte indicating real data stored and should be the last byte of any
 	// versioned key.
@@ -227,16 +234,6 @@ func (ctx MetadataContext) SplitKey(tk TKey) (Key, []byte, error) {
 	return Key(unvKey), verKey, nil
 }
 
-//Split the key in two parts: the first one call unversioned key,
-//and the second one called versioned key
-func (ctx *DataContext) SplitKey(tk TKey) (Key, []byte, error) {
-	unvKey := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
-	unvKey = append(unvKey, tk...)
-	verKey := append(ctx.version.Bytes(), ctx.client.Bytes()...)
-	verKey = append(verKey, MarkData)
-	return Key(unvKey), verKey, nil
-}
-
 var contextMutexes map[mutexID]*sync.Mutex
 
 func init() {
@@ -323,6 +320,7 @@ func DataKeyToLocalIDs(k Key) (dvid.InstanceID, dvid.VersionID, dvid.ClientID, e
 	return instanceID, versionID, clientID, nil
 }
 
+// UpdateDataKey modifies the passed Key to use the passed identifiers.
 func UpdateDataKey(k Key, instance dvid.InstanceID, version dvid.VersionID, client dvid.ClientID) error {
 	if k[0] != dataKeyPrefix {
 		return fmt.Errorf("Cannot update non-DataContext key: %v", k)
@@ -332,6 +330,15 @@ func UpdateDataKey(k Key, instance dvid.InstanceID, version dvid.VersionID, clie
 	copy(k[start:start+dvid.VersionIDSize], version.Bytes())
 	start += dvid.VersionIDSize
 	copy(k[start:start+dvid.ClientIDSize], client.Bytes())
+	return nil
+}
+
+// ChangeDataKeyInstance modifies the passed Key to use the given data instance ID.
+func ChangeDataKeyInstance(k Key, instance dvid.InstanceID) error {
+	if k[0] != dataKeyPrefix {
+		return fmt.Errorf("Cannot update non-DataContext key: %v", k)
+	}
+	copy(k[1:1+dvid.InstanceIDSize], instance.Bytes())
 	return nil
 }
 
@@ -500,6 +507,16 @@ func (ctx *DataContext) VersionFromKey(key Key) (dvid.VersionID, error) {
 	return dvid.VersionIDFromBytes(key[start : start+dvid.VersionIDSize]), nil
 }
 
+//Split the key in two parts: the first one call unversioned key,
+//and the second one called versioned key
+func (ctx *DataContext) SplitKey(tk TKey) (Key, []byte, error) {
+	unvKey := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
+	unvKey = append(unvKey, tk...)
+	verKey := append(ctx.version.Bytes(), ctx.client.Bytes()...)
+	verKey = append(verKey, MarkData)
+	return Key(unvKey), verKey, nil
+}
+
 // VersionFromDataKey returns a version ID from a data key.
 func VersionFromDataKey(key Key) (dvid.VersionID, error) {
 	if key == nil {
@@ -615,6 +632,15 @@ func (ctx *DataContext) MinVersionKey(tk TKey) (Key, error) {
 // Returns upper bound key for versions of given byte slice key representation.
 func (ctx *DataContext) MaxVersionKey(tk TKey) (Key, error) {
 	key := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
+	key = append(key, tk...)
+	key = append(key, dvid.VersionID(dvid.MaxVersionID).Bytes()...)
+	key = append(key, dvid.ClientID(dvid.MaxClientID).Bytes()...)
+	return append(key, 0xFF), nil
+}
+
+// MaxVersionDataKey returns upper bound key for given data instance.
+func MaxVersionDataKey(d dvid.InstanceID, tk TKey) (Key, error) {
+	key := append([]byte{dataKeyPrefix}, d.Bytes()...)
 	key = append(key, tk...)
 	key = append(key, dvid.VersionID(dvid.MaxVersionID).Bytes()...)
 	key = append(key, dvid.ClientID(dvid.MaxClientID).Bytes()...)
