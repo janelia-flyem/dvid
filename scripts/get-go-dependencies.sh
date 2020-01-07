@@ -95,6 +95,9 @@ go get github.com/gogo/protobuf/proto
 go get github.com/gogo/protobuf/gogoproto
 go get github.com/gogo/protobuf/protoc-gen-gogoslick
 
+# protolog -- for simple binary logging
+go get github.com/janelia-flyem/protolog
+
 # gofuse
 # go get bazil.org/fuse
 
