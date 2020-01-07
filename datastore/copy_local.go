@@ -760,7 +760,7 @@ func makeVersionMap(uuids []dvid.UUID) (versions map[dvid.VersionID]bool, err er
 			return
 		}
 		storeVersions[v] = struct{}{}
-		if i == len(uuid)-1 {
+		if i == len(uuids)-1 {
 			lastV = v
 		}
 	}
