@@ -549,6 +549,7 @@ var (
 	}
 	webMuxMu      sync.Mutex // Can Lock() to prevent any kind of web requests from initiating actions.
 	userLatencies userLatencyMap
+	adminToken    string // if set in environment variable DVID_ADMIN_TOKEN, requests have admin rights.
 )
 
 type userLatencyMap struct {
@@ -568,6 +569,8 @@ func init() {
 	webMux.Mux = web.New()
 	webMux.Use(middleware.RequestID)
 	userLatencies.data = make(map[string]userLatency)
+
+	adminToken = os.Getenv("DVID_ADMIN_TOKEN")
 }
 
 // ThrottledHTTP checks if a request can continue under throttling.  If so, it returns
@@ -679,6 +682,7 @@ func initRoutes() {
 	mainMux.Use(middleware.AutomaticOptions)
 	mainMux.Use(httpAvailHandler)
 	mainMux.Use(recoverHandler)
+	mainMux.Use(adminPrivHandler)
 	mainMux.Use(c.Handler)
 
 	mainMux.Get("/interface", interfaceHandler)
@@ -999,8 +1003,6 @@ func DecodeJSON(r *http.Request) (dvid.Config, error) {
 	return c, nil
 }
 
-// ---- Middleware -------------
-
 // used by cors handler to say whether an origin is allowed.
 func corsValidator(origin string) bool {
 	if len(corsDomains) == 0 {
@@ -1020,6 +1022,22 @@ func corsValidator(origin string) bool {
 	domain := hostnameParts[numParts-2] + "." + hostnameParts[numParts-1]
 	_, found := corsDomains[domain]
 	return found
+}
+
+// ---- Middleware -------------
+
+// checks if environment variable
+func adminPrivHandler(c *web.C, h http.Handler) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) {
+		var adminPriv bool
+		if len(adminToken) != 0 {
+			queryAdminToken := r.URL.Query().Get("admintoken")
+			adminPriv = (queryAdminToken == adminToken)
+		}
+		c.Env["adminPriv"] = adminPriv
+		h.ServeHTTP(w, r)
+	}
+	return http.HandlerFunc(fn)
 }
 
 // repoRawSelector retrieves the particular repo from a potentially partial string that uniquely
@@ -1063,7 +1081,8 @@ func nodeSelector(c *web.C, h http.Handler) http.Handler {
 		}
 		method := strings.ToLower(r.Method)
 		branchRequest := (c.URLParams["action"] == "branch") || (c.URLParams["action"] == "newversion")
-		if !fullwrite && locked && !branchRequest && method != "get" && method != "head" {
+		adminPriv := c.Env["adminPriv"].(bool)
+		if !adminPriv && !fullwrite && locked && !branchRequest && method != "get" && method != "head" {
 			BadRequest(w, r, "Cannot do %s on locked node %s", method, uuid)
 			return
 		}
@@ -1171,7 +1190,8 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 				BadRequest(w, r, err)
 				return
 			}
-			if !fullwrite && locked && data.IsMutationRequest(r.Method, c.URLParams["keyword"]) {
+			adminPriv := c.Env["adminPriv"].(bool)
+			if !adminPriv && !fullwrite && locked && data.IsMutationRequest(r.Method, c.URLParams["keyword"]) {
 				BadRequest(w, r, "Cannot do %s on endpoint %q of locked node %s", r.Method, c.URLParams["keyword"], uuid)
 				return
 			}
@@ -1724,7 +1744,8 @@ func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, err)
 		return
 	}
-	if !fullwrite && locked {
+	adminPriv := c.Env["adminPriv"].(bool)
+	if !adminPriv && !fullwrite && locked {
 		BadRequest(w, r, "New data instance cannot be created on locked node %s", uuid)
 		return
 	}

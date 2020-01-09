@@ -194,6 +194,7 @@ func TestLog(t *testing.T) {
 }
 
 func TestCommitBranchMergeDelete(t *testing.T) {
+	adminToken = "my-secret-token"
 	if err := OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
 	}
@@ -229,6 +230,10 @@ func TestCommitBranchMergeDelete(t *testing.T) {
 	payload = bytes.NewBufferString(`{"log": ["line1", "line2", "some more stuff in a line"]}`)
 	apiStr = fmt.Sprintf("%snode/%s/log", WebAPIPath, uuid)
 	TestBadHTTP(t, "POST", apiStr, payload)
+
+	// Unless we have admin token.
+	apiStr += "?admintoken=" + adminToken
+	TestHTTP(t, "POST", apiStr, payload)
 
 	// Should be able to create branch now that we've committed parent.
 	respData := TestHTTP(t, "POST", versionReq, nil)
