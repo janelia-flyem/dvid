@@ -195,6 +195,11 @@ func TestCommitAndBranch(t *testing.T) {
 	keyReq := fmt.Sprintf("%snode/%s/mykv/key/foo", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "POST", keyReq, bytes.NewBufferString("some data"))
 
+	// unless we have an admin token
+	server.SetAdminToken("my-secret-token")
+	keyReq += "?admintoken=my-secret-token"
+	server.TestHTTP(t, "POST", keyReq, bytes.NewBufferString("some data"))
+
 	// Should be able to still POST to ROI since this particular type of POST is non-mutating.
 	apiStr = fmt.Sprintf("%snode/%s/myroi/ptquery", server.WebAPIPath, uuid)
 	queryJSON := "[[10, 10, 10], [20, 20, 20], [30, 30, 30], [40, 40, 40], [50, 50, 50]]"

@@ -254,6 +254,12 @@ func SetFullWrite(on bool) {
 	readonly = !on
 }
 
+// SetAdminToken sets what can be passed in query string under "admintoken" to
+// get admin (fullwrite) privileges.
+func SetAdminToken(token string) {
+	adminToken = token
+}
+
 // AboutJSON returns a JSON string describing the properties of this server.
 func AboutJSON() (jsonStr string, err error) {
 	data := map[string]string{
