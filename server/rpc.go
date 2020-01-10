@@ -105,11 +105,6 @@ EXPERIMENTAL COMMANDS
 
 		Settings:
 
-		delete=[false | true]
-
-			The default is false where the instance will not be deleted from the
-			source store.
-
 		transmit=[all | flatten | list of versions]
 
 			The default transmit "all" copies all versions of the source.
@@ -541,7 +536,7 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			}
 			config := cmd.Settings()
 			go func() {
-				if err = datastore.MigrateInstance(uuid, dvid.InstanceName(source), srcStore, dstStore, config); err != nil {
+				if err = datastore.MigrateInstance(uuid, dvid.InstanceName(source), srcStore, dstStore, config, nil); err != nil {
 					dvid.Errorf("migrate error: %v\n", err)
 				}
 			}()

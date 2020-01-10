@@ -24,6 +24,7 @@ import (
 )
 
 type txStats struct {
+	name string
 	// num key-value pairs
 	numKV uint64
 
@@ -76,7 +77,7 @@ func (t *txStats) addKV(k, v []byte) {
 		mb := float64(t.lastBytes) / 1000000
 		sec := elapsed.Seconds()
 		throughput := mb / sec
-		dvid.Debugf("Transfer throughput: %5.2f MB/s (%s in %4.1f seconds).  Total %s\n", throughput, humanize.Bytes(t.lastBytes), sec, humanize.Bytes(t.totalBytes))
+		dvid.Debugf("Transfer throughput (%s): %5.2f MB/s (%s in %4.1f seconds).  Total %s\n", t.name, throughput, humanize.Bytes(t.lastBytes), sec, humanize.Bytes(t.totalBytes))
 
 		t.lastTime = time.Now()
 		t.lastBytes = 0
@@ -195,9 +196,8 @@ func FlattenMetadata(uuid dvid.UUID, dstStore dvid.Store, configFName string) er
 }
 
 // MigrateInstance migrates a data instance locally from an old storage
-// engine to the current configured storage.  After completion of the copy,
-// the data instance in the old storage is optionally deleted.
-func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, srcStore, dstStore dvid.Store, c dvid.Config) error {
+// engine to the current configured storage.
+func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, srcStore, dstStore dvid.Store, c dvid.Config, done chan bool) error {
 	if manager == nil {
 		return ErrManagerNotInitialized
 	}
@@ -230,14 +230,6 @@ func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, srcStore, dstStor
 	if transmitStr == "flatten" {
 		flatten = true
 	}
-	deleteStr, _, err := c.GetString("delete")
-	if err != nil {
-		return err
-	}
-	var deleteSrc bool
-	if deleteStr == "true" {
-		deleteSrc = true
-	}
 
 	// Get the source data instance.
 	d, err := manager.getDataByUUIDName(uuid, source)
@@ -245,49 +237,46 @@ func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, srcStore, dstStor
 		return err
 	}
 
-	// Get the destination store.
-	dstKV, ok := dstStore.(storage.OrderedKeyValueDB)
-	if !ok {
-		return fmt.Errorf("unable to get destination store %q: %v", dstStore, err)
-	}
-
-	// Get the src store.
-	srcKV, ok := srcStore.(storage.OrderedKeyValueDB)
-	if !ok {
-		return fmt.Errorf("unable to migrate data %q from store %s which isn't ordered kv store", source, srcStore)
-	}
-
 	// Abort if the two stores are the same.
-	if dstKV == srcKV {
-		return fmt.Errorf("old store for data %q seems same as current store", source)
+	if dstStore == srcStore {
+		return fmt.Errorf("old store for data %q cannot be same as current store", source)
 	}
 
 	// Migrate data asynchronously.
 	go func() {
 		if len(uuids) == 0 {
+			// Get the destination store.
+			dstKV, ok := dstStore.(storage.OrderedKeyValueDB)
+			if !ok {
+				dvid.Errorf("unable to get destination store %q: %v", dstStore, err)
+				return
+			}
+
+			// Get the src store.
+			srcKV, ok := srcStore.(storage.OrderedKeyValueDB)
+			if !ok {
+				dvid.Errorf("unable to migrate data %q from store %s which isn't ordered kv store", source, srcStore)
+				return
+			}
+
 			err := copyData(srcKV, dstKV, d, nil, uuid, nil, flatten)
 			if err != nil {
 				dvid.Errorf("error in migration of data %q: %v\n", source, err)
 				return
 			}
 		} else {
-			err := copyVersions(srcKV, dstKV, d, nil, uuids)
+			err := copyVersions(srcStore, dstStore, d, nil, uuids)
 			if err != nil {
 				dvid.Errorf("error in migration of data %q using uuids %v: %v\n", source, uuids, err)
 				return
 			}
 		}
-		if deleteSrc {
-			dvid.Infof("Starting delete of instance %q from store %q\n", d.DataName(), srcKV)
-			ctx := storage.NewDataContext(d, 0)
-			if err := srcKV.DeleteAll(ctx); err != nil {
-				dvid.Errorf("deleting instance %q from %q after copy to %q: %v\n", d.DataName(), srcKV, dstKV, err)
-				return
-			}
+		if done != nil {
+			done <- true
 		}
 	}()
 
-	dvid.Infof("Migrating data %q from store %q to store %q (flatten %t, delete src %t)...\n", d.DataName(), srcKV, dstKV, flatten, deleteSrc)
+	dvid.Infof("Migrating data %q from store %q to store %q (flatten %t)...\n", d.DataName(), srcStore, dstStore, flatten)
 	return nil
 }
 
@@ -439,7 +428,6 @@ func TransferData(uuid dvid.UUID, srcStore, dstStore dvid.Store, configFName str
 
 	stats := new(txStats)
 	stats.lastTime = time.Now()
-
 	var kvTotal, kvSent int
 	var bytesTotal, bytesSent uint64
 
@@ -605,6 +593,7 @@ func copyData(oldKV, newKV storage.OrderedKeyValueDB, d1, d2 dvid.Data, uuid dvi
 
 	stats := new(txStats)
 	stats.lastTime = time.Now()
+	stats.name = fmt.Sprintf("copy of %s", d1.DataName())
 
 	var kvTotal, kvSent int
 	var bytesTotal, bytesSent uint64
@@ -712,48 +701,73 @@ func copyData(oldKV, newKV storage.OrderedKeyValueDB, d1, d2 dvid.Data, uuid dvi
 	return nil
 }
 
-// for a list of UUIDs on a DAG path, get map of all versions on the path and set
-// the supplied UUIDs as the ones to be stored.
-func makeVersionMap(uuids []dvid.UUID) (versions map[dvid.VersionID]bool, err error) {
+// for a list of UUIDs on a DAG path, get map of all versions on the path from root to ancestor
+// and a list of the versions to be stored.
+func calcVersionPath(uuids []dvid.UUID) (versionsOnPath map[dvid.VersionID]struct{}, versionsToStore []dvid.VersionID, err error) {
 	if len(uuids) == 0 {
-		return nil, fmt.Errorf("can't make version map with empty uuid list")
+		err = fmt.Errorf("can't make version map with empty uuid list")
+		return
 	}
-	storeVersions := make(map[dvid.VersionID]struct{}, len(uuids))
-	var lastV dvid.VersionID
+	versionsToStore = make([]dvid.VersionID, len(uuids))
 	for i, uuid := range uuids {
 		var v dvid.VersionID
 		v, err = VersionFromUUID(uuid)
 		if err != nil {
 			return
 		}
-		storeVersions[v] = struct{}{}
-		if i == len(uuids)-1 {
-			lastV = v
-		}
+		versionsToStore[i] = v
 	}
+	lastStoredV := versionsToStore[len(versionsToStore)-1]
 	var ancestorVersions []dvid.VersionID
-	if ancestorVersions, err = GetAncestry(lastV); err != nil {
+	if ancestorVersions, err = GetAncestry(lastStoredV); err != nil {
 		return
 	}
-	versions = make(map[dvid.VersionID]bool, len(ancestorVersions))
-	lastV++
+	numV := len(ancestorVersions)
+	versionsOnPath = make(map[dvid.VersionID]struct{}, numV)
+
+	lastStoredV++
 	for _, v := range ancestorVersions {
-		if lastV <= v {
+		if lastStoredV <= v {
 			err = fmt.Errorf("Ancestor path had non-decreasing version IDs: %v", ancestorVersions)
 			return
 		}
-		_, shouldStore := storeVersions[v]
-		versions[v] = shouldStore
+		versionsOnPath[v] = struct{}{}
 	}
 	return
 }
 
+type rawQueryDB interface {
+	// RawRangeQuery sends a range of full keys.  This is to be used for low-level data
+	// retrieval like DVID-to-DVID communication and should not be used by data type
+	// implementations if possible because each version's key-value pairs are sent
+	// without filtering by the current version and its ancestor graph.  A nil is sent
+	// down the channel when the range is complete.  The query can be cancelled by sending
+	// a value down the cancel channel.
+	RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out chan *storage.KeyValue, cancel <-chan struct{}) error
+}
+
+type rawPutDB interface {
+	// RawPut is a low-level function that puts a key-value pair using full keys.
+	// This can be used in conjunction with RawRangeQuery.  It does not automatically
+	// delete any associated tombstone, unlike the Delete() function, so tombstone
+	// deletion must be handled via RawDelete().
+	RawPut(storage.Key, []byte) error
+}
+
 // copyVersions copies the minimal kv pairs necessary to fulfill passed versions.  If d2 is nil,
 // the destination data instance is d1, useful for migration of data to a new store.
-func copyVersions(oldKV, newKV storage.OrderedKeyValueDB, d1, d2 dvid.Data, uuids []dvid.UUID) error {
+func copyVersions(srcStore, dstStore dvid.Store, d1, d2 dvid.Data, uuids []dvid.UUID) error {
 	if len(uuids) == 0 {
 		dvid.Infof("no versions given for copy... aborting\n")
 		return nil
+	}
+	srcDB, ok := srcStore.(rawQueryDB)
+	if !ok {
+		return fmt.Errorf("source store %q doesn't have required raw range query", srcStore)
+	}
+	dstDB, ok := dstStore.(rawPutDB)
+	if !ok {
+		return fmt.Errorf("destination store %q doesn't have raw Put query", dstStore)
 	}
 	var dataInstanceChanged bool
 	if d2 == nil {
@@ -761,18 +775,19 @@ func copyVersions(oldKV, newKV storage.OrderedKeyValueDB, d1, d2 dvid.Data, uuid
 	} else {
 		dataInstanceChanged = true
 	}
-	versions, err := makeVersionMap(uuids)
+	versionsOnPath, versionsToStore, err := calcVersionPath(uuids)
 	if err != nil {
 		return err
 	}
-
 	var wg sync.WaitGroup
 	wg.Add(1)
 
 	statsTotal := new(txStats)
 	statsTotal.lastTime = time.Now()
+	statsTotal.name = fmt.Sprintf("%q total", d1.DataName())
 	statsStored := new(txStats)
 	statsStored.lastTime = time.Now()
+	statsStored.name = fmt.Sprintf("stored into %q", d2.DataName())
 	var kvTotal, kvSent int
 	var bytesTotal, bytesSent uint64
 
@@ -780,24 +795,54 @@ func copyVersions(oldKV, newKV storage.OrderedKeyValueDB, d1, d2 dvid.Data, uuid
 	rawCh := make(chan *storage.KeyValue, 5000)
 	go func() {
 		var maxVersionKey storage.Key
-		var lastKV *storage.KeyValue
+		var numStoredKV int
+		kvsToStore := make(map[dvid.VersionID]*storage.KeyValue, len(versionsToStore))
+		for _, v := range versionsToStore {
+			kvsToStore[v] = nil
+		}
 		for {
 			kv := <-rawCh
-			if kv == nil {
-				wg.Done()
-				dvid.Infof("Sent %d %q key-value pairs (%s, out of %d kv pairs, %s)\n",
-					kvSent, d1.DataName(), humanize.Bytes(bytesSent), kvTotal, humanize.Bytes(bytesTotal))
-				dvid.Infof("Total KV Stats for %q:\n", d1.DataName())
-				statsTotal.printStats()
-				dvid.Infof("Total KV Stats for newly stored %q:\n", d2.DataName())
-				statsStored.printStats()
-				return
-			}
-			if !storage.Key(kv.K).IsDataKey() {
+			if kv != nil && !storage.Key(kv.K).IsDataKey() {
 				dvid.Infof("Skipping non-data key-value %x ...\n", []byte(kv.K))
 				continue
 			}
-			if maxVersionKey == nil || bytes.Compare(kv.K, maxVersionKey) > 0 {
+			if kv == nil || maxVersionKey == nil || bytes.Compare(kv.K, maxVersionKey) > 0 {
+				if numStoredKV > 0 {
+					var lastKV *storage.KeyValue
+					for _, v := range versionsToStore {
+						curKV := kvsToStore[v]
+						if lastKV == nil || (curKV != nil && bytes.Compare(lastKV.V, curKV.V) != 0) {
+							if curKV != nil {
+								keybuf := make(storage.Key, len(curKV.K))
+								copy(keybuf, curKV.K)
+								if dataInstanceChanged {
+									err = storage.ChangeDataKeyInstance(keybuf, d2.InstanceID())
+									if err != nil {
+										dvid.Errorf("could not change instance ID of key to %d: %v\n", d2.InstanceID(), err)
+										continue
+									}
+								}
+								storage.ChangeDataKeyVersion(keybuf, v)
+								kvSent++
+								bytesSent += uint64(len(curKV.V) + len(keybuf))
+								if err := dstDB.RawPut(keybuf, curKV.V); err != nil {
+									dvid.Errorf("can't put k/v pair to destination instance %q: %v\n", d2.DataName(), err)
+								}
+								statsStored.addKV(keybuf, curKV.V)
+							}
+						}
+					}
+				}
+				if kv == nil {
+					wg.Done()
+					dvid.Infof("Sent %d %q key-value pairs (%s, out of %d kv pairs, %s)\n",
+						kvSent, d1.DataName(), humanize.Bytes(bytesSent), kvTotal, humanize.Bytes(bytesTotal))
+					dvid.Infof("Total KV Stats for %q:\n", d1.DataName())
+					statsTotal.printStats()
+					dvid.Infof("Total KV Stats for newly stored %q:\n", d2.DataName())
+					statsStored.printStats()
+					return
+				}
 				tk, err := storage.TKeyFromKey(kv.K)
 				if err != nil {
 					dvid.Errorf("couldn't get %q TKey from Key %v: %v\n", d1.DataName(), kv.K, err)
@@ -808,33 +853,25 @@ func copyVersions(oldKV, newKV storage.OrderedKeyValueDB, d1, d2 dvid.Data, uuid
 					dvid.Errorf("couldn't get max version key from Key %v: %v\n", kv.K, err)
 					continue
 				}
-				lastKV = nil
+				for _, v := range versionsToStore {
+					kvsToStore[v] = nil
+				}
+				numStoredKV = 0
 			}
-			v, err := storage.VersionFromDataKey(kv.K)
+			curV, err := storage.VersionFromDataKey(kv.K)
 			if err != nil {
 				dvid.Errorf("unable to get version from key-value: %v\n", err)
 				continue
 			}
 			curBytes := uint64(len(kv.V) + len(kv.K))
-			shouldStore, onPath := versions[v]
-			if onPath {
-				// keys could differ by tombstones and we don't want to replicate sequential tombstones
-				if lastKV == nil || bytes.Compare(lastKV.K, kv.K) != 0 || bytes.Compare(lastKV.V, kv.V) != 0 {
-					lastKV = kv
-					if shouldStore {
-						if dataInstanceChanged {
-							err = storage.ChangeDataKeyInstance(kv.K, d2.InstanceID())
-							if err != nil {
-								dvid.Errorf("could not change instance ID of key to %d: %v\n", d2.InstanceID(), err)
-								continue
-							}
-						}
-						kvSent++
-						bytesSent += curBytes
-						if err := newKV.RawPut(kv.K, kv.V); err != nil {
-							dvid.Errorf("can't put k/v pair to destination instance %q: %v\n", d2.DataName(), err)
-						}
-						statsStored.addKV(kv.K, kv.V)
+			if _, onPath := versionsOnPath[curV]; onPath {
+				tk, _ := storage.TKeyFromKey(kv.K)
+				for _, v := range versionsToStore {
+					if curV <= v {
+						kvsToStore[v] = kv
+						dvid.Infof("adding key %q, value %q, version %d to version %d store\n", string(tk), string(kv.V), curV, v)
+						numStoredKV++
+						break
 					}
 				}
 			}
@@ -848,7 +885,7 @@ func copyVersions(oldKV, newKV storage.OrderedKeyValueDB, d1, d2 dvid.Data, uuid
 	// Send all kv pairs for the source data instance down the channel.
 	begKey, endKey := storage.DataInstanceKeyRange(d1.InstanceID())
 	keysOnly := false
-	if err := oldKV.RawRangeQuery(begKey, endKey, keysOnly, rawCh, nil); err != nil {
+	if err := srcDB.RawRangeQuery(begKey, endKey, keysOnly, rawCh, nil); err != nil {
 		return fmt.Errorf("push voxels %q range query: %v", d1.DataName(), err)
 	}
 	wg.Wait()

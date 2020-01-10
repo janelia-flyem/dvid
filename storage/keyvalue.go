@@ -129,6 +129,15 @@ type KeyValue struct {
 	V []byte
 }
 
+// KeyValues is a slice of key-value pairs that can be sorted.
+type KeyValues []KeyValue
+
+func (kv KeyValues) Len() int      { return len(kv) }
+func (kv KeyValues) Swap(i, j int) { kv[i], kv[j] = kv[j], kv[i] }
+func (kv KeyValues) Less(i, j int) bool {
+	return bytes.Compare(kv[i].K, kv[j].K) <= 0
+}
+
 // TKeyValue stores a type-specific key-value pair.
 type TKeyValue struct {
 	K TKey

@@ -342,6 +342,16 @@ func ChangeDataKeyInstance(k Key, instance dvid.InstanceID) error {
 	return nil
 }
 
+// ChangeDataKeyVersion modifies the passed Key to use the given version.
+func ChangeDataKeyVersion(k Key, v dvid.VersionID) error {
+	if k[0] != dataKeyPrefix {
+		return fmt.Errorf("Cannot update non-DataContext key: %v", k)
+	}
+	start := len(k) - dvid.VersionIDSize - dvid.ClientIDSize - 1
+	copy(k[start:start+dvid.VersionIDSize], v.Bytes())
+	return nil
+}
+
 // DataContext supports both unversioned and versioned data persistence.
 type DataContext struct {
 	data    dvid.Data
