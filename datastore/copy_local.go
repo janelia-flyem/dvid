@@ -829,6 +829,7 @@ func copyVersions(srcStore, dstStore dvid.Store, d1, d2 dvid.Data, uuids []dvid.
 									dvid.Errorf("can't put k/v pair to destination instance %q: %v\n", d2.DataName(), err)
 								}
 								statsStored.addKV(keybuf, curKV.V)
+								lastKV = curKV
 							}
 						}
 					}
