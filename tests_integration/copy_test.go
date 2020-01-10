@@ -133,6 +133,11 @@ func checkVersionedKV(db *mockDB, expected []versionedKV) (err error) {
 				wg.Done()
 				break
 			}
+			if i >= len(expected) {
+				err = fmt.Errorf("got %d kvs when only %d expected", i+1, len(expected))
+				wg.Done()
+				break
+			}
 			var curV dvid.VersionID
 			if curV, err = storage.VersionFromDataKey(kv.K); err != nil {
 				wg.Done()
@@ -196,6 +201,11 @@ var kvTestData2 = []versionedKV{
 		V: []byte("val3-1"),
 	},
 	{
+		v: 1,
+		K: storage.TKey("key6"),
+		V: []byte("val6-1"),
+	},
+	{
 		v: 2,
 		K: storage.TKey("key1"),
 		V: []byte("val1-2"),
@@ -219,6 +229,11 @@ var kvTestData2 = []versionedKV{
 		v: 4,
 		K: storage.TKey("key3"),
 		V: []byte("val3-4"),
+	},
+	{
+		v: 4,
+		K: storage.TKey("key6"),
+		V: []byte("val6-1"), // this is a repeat value that should be removed in migration
 	},
 	{
 		v: 5,
@@ -324,6 +339,11 @@ var expectedKV2 = []versionedKV{
 		K: storage.TKey("key4"),
 		V: []byte("val4-2"),
 	},
+	{
+		v: 1,
+		K: storage.TKey("key6"),
+		V: []byte("val6-1"), // no version 4 because it's duplicate
+	},
 }
 
 // expected for migration of versions 2, 7
@@ -367,6 +387,11 @@ var expectedKV3 = []versionedKV{
 		v: 7,
 		K: storage.TKey("key4"),
 		V: []byte("val4-7"),
+	},
+	{
+		v: 2,
+		K: storage.TKey("key6"),
+		V: []byte("val6-1"), // no version 4 because it's duplicate
 	},
 }
 
