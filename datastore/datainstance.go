@@ -346,7 +346,7 @@ type dataUpdater interface {
 // MutationDumper is a dataservice that suppports the flatten-mutations command via
 // a DumpMutations() function.
 type MutationDumper interface {
-	DumpMutations(versionUUID dvid.UUID, filename string) (comment string, err error)
+	DumpMutations(startUUID, endUUID dvid.UUID, filename string) (comment string, err error)
 }
 
 // BlockOnUpdating blocks until the given data is not updating from syncs or has events

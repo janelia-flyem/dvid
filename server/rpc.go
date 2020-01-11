@@ -493,18 +493,25 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			reply.Text = "Started storage details dump in log..."
 
 		case "flatten-mutations":
-			var dataStr, filename string
-			cmd.CommandArgs(3, &dataStr, &filename)
+			var dataStr, startStrUUID, endStrUUID, filename string
+			cmd.CommandArgs(3, &dataStr, &startStrUUID, &endStrUUID, &filename)
 			var d datastore.DataService
 			d, err = datastore.GetDataByDataUUID(dvid.UUID(dataStr))
 			if err != nil {
+				return
+			}
+			var startUUID, endUUID dvid.UUID
+			if startUUID, _, err = datastore.MatchingUUID(startStrUUID); err != nil {
+				return
+			}
+			if endUUID, _, err = datastore.MatchingUUID(endStrUUID); err != nil {
 				return
 			}
 			dumper, ok := d.(datastore.MutationDumper)
 			if !ok {
 				reply.Text = fmt.Sprintf("The data UUID %s (name %q) does not support mutation dumping\n", dataStr, d.DataName())
 			}
-			reply.Text, err = dumper.DumpMutations(uuid, filename)
+			reply.Text, err = dumper.DumpMutations(startUUID, endUUID, filename)
 			if err != nil {
 				return
 			}
