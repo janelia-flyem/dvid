@@ -16,29 +16,39 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-// DumpMutations makes a log of all mutations from ancestors up to given UUID for
-// the given data UUID.
-func (d *Data) DumpMutations(leafUUID dvid.UUID, filename string) (comment string, err error) {
+// DumpMutations makes a log of all mutations from the start UUID to the end UUID.
+func (d *Data) DumpMutations(startUUID, endUUID dvid.UUID, filename string) (comment string, err error) {
 	rl := d.GetReadLog()
 	if rl == nil {
 		err = fmt.Errorf("no mutation log was available for data %q", d.DataName())
 		return
 	}
-	var leaf dvid.VersionID
-	leaf, err = datastore.VersionFromUUID(leafUUID)
+	var startV, endV dvid.VersionID
+	startV, err = datastore.VersionFromUUID(startUUID)
 	if err != nil {
 		return
 	}
-	var ancestors []dvid.VersionID
-	ancestors, err = datastore.GetAncestry(leaf)
+	endV, err = datastore.VersionFromUUID(endUUID)
 	if err != nil {
 		return
 	}
-	// reverse it so we go from root to current leaf
-	for i := len(ancestors)/2 - 1; i >= 0; i-- {
-		opp := len(ancestors) - 1 - i
-		ancestors[i], ancestors[opp] = ancestors[opp], ancestors[i]
+	var rootToLeaf, leafToRoot []dvid.VersionID
+	leafToRoot, err = datastore.GetAncestry(endV)
+	if err != nil {
+		return
 	}
+	rootToLeaf = make([]dvid.VersionID, len(leafToRoot))
+
+	// reverse it and screen on UUID start/stop
+	startPos := len(leafToRoot) - 1
+	for _, v := range leafToRoot {
+		rootToLeaf[startPos] = v
+		if v == startV {
+			break
+		}
+		startPos--
+	}
+
 	// open up target log
 	var f *os.File
 	f, err = os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0755)
@@ -47,8 +57,9 @@ func (d *Data) DumpMutations(leafUUID dvid.UUID, filename string) (comment strin
 	}
 
 	// go through the ancestors from root to leaf, appending data to target log
+	numLogs := 0
 	var uuid dvid.UUID
-	for i, ancestor := range ancestors {
+	for i, ancestor := range rootToLeaf[startPos:] {
 		if uuid, err = datastore.UUIDFromVersion(ancestor); err != nil {
 			return
 		}
@@ -65,9 +76,10 @@ func (d *Data) DumpMutations(leafUUID dvid.UUID, filename string) (comment strin
 			return
 		}
 		timedLog.Infof("Loaded mappings #%d for data %q, version ID %s", i+1, d.DataName(), uuid)
+		numLogs++
 	}
 	err = f.Close()
-	comment = fmt.Sprintf("Completed flattening of %d mutation logs to %s\n", len(ancestors), filename)
+	comment = fmt.Sprintf("Completed flattening of %d mutation logs to %s\n", numLogs, filename)
 	return
 }
 
