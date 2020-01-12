@@ -260,13 +260,13 @@ func getDataTypeInstances(repo *repoT, typeName dvid.TypeString) (names dvid.Ins
 // 		"Migrations": [
 // 			{
 // 				"Name": "instance-name",
-// 				"Source": "source store",
-// 				"Destination": "destination store"
+// 				"SrcStore": "source store",
+// 				"DstStore": "destination store"
 // 			},
 // 			{
 // 				"Name": "#datatype",
-// 				"Source": "source store",
-// 				"Destination": "destination store"
+// 				"SrcStore": "source store",
+// 				"DstStore": "destination store"
 // 			},
 // 		],
 //		"Exclusions": ["name1", "name2"]
@@ -1010,11 +1010,9 @@ func copyVersions(srcStore, dstStore dvid.Store, d1, d2 dvid.Data, uuids []dvid.
 			}
 			curBytes := uint64(len(kv.V) + len(kv.K))
 			if _, onPath := versionsOnPath[curV]; onPath {
-				tk, _ := storage.TKeyFromKey(kv.K)
 				for _, v := range versionsToStore {
 					if curV <= v {
 						kvsToStore[v] = kv
-						dvid.Infof("adding key %q, value %q, version %d to version %d store\n", string(tk), string(kv.V), curV, v)
 						numStoredKV++
 						break
 					}

@@ -133,18 +133,18 @@ EXPERIMENTAL COMMANDS
 				"Migrations": [
 					{
 						"Name": "instance-name",
-						"Source": "source store",
-						"Destination": "destination store"
+						"SrcStore": "source store",
+						"DstStore": "destination store"
 					},
 					{
 						"Name": "#datatype",
-						"Source": "source store",
-						"Destination": "destination store"
+						"SrcStore": "source store",
+						"DstStore": "destination store"
 					},
 				],
 				"Exclusions": ["name1", "name2"]
 			}
-
+			
 		Each migration is done sequentially, one not starting until the other
 		is fully completed.  This batch command is similar to many calls of the
 		"migrate" command with "transmit=<versions>" option.
