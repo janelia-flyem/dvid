@@ -120,6 +120,38 @@ EXPERIMENTAL COMMANDS
 			881e9 for the given instance will be flattened and then any key-values
 			after 881e9 up to 52a13 will be flattened into the 52a13 version.
 
+	repo <UUID> migrate-batch <migrate config file>
+
+		Migrates instances specified in the config file from a source to a 
+		destination store, similar to the above "migrate" command but in a batch.  
+		Before running this command, you must modify the config TOML file so the 
+		destination store is available.
+
+		The migrate config file contains JSON with the following format:
+			{
+				"Versions": ["2881e9","52a13","57e8d"],
+				"Migrations": [
+					{
+						"Name": "instance-name",
+						"Source": "source store",
+						"Destination": "destination store"
+					},
+					{
+						"Name": "#datatype",
+						"Source": "source store",
+						"Destination": "destination store"
+					},
+				],
+				"Exclusions": ["name1", "name2"]
+			}
+
+		Each migration is done sequentially, one not starting until the other
+		is fully completed.  This batch command is similar to many calls of the
+		"migrate" command with "transmit=<versions>" option.
+
+		Individual instance names must precede general data type migration 
+		specifications.
+	
 	repo <UUID> transfer-data <old store> <new store> <transfer config file>
 
 		Transfers data from an old store to a new store (specified by nicknames in 
@@ -190,7 +222,7 @@ EXPERIMENTAL COMMANDS
             for the types of filters they will use for pushes.  Examples
             include "roi:name,uuid" and "tile:xy,xz".
 		
-		transmit=[all | branch | flatten]
+		transmit=[all | branch | flatten | version]
 
 			The default transmit "all" sends all versions necessary to 
 			make the remote equivalent or a superset of the local repo.
@@ -200,6 +232,9 @@ EXPERIMENTAL COMMANDS
 			
 			A transmit "branch" will send just the ancestor path of the
 			version specified.
+
+			A transmit "version" sends just the deltas associated with
+			the single version specified.
 
 	repo <UUID> merge <UUID> [, <UUID>, ...]
 
@@ -548,6 +583,16 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 				}
 			}()
 			reply.Text = fmt.Sprintf("Started migration of uuid %s data instance %q from store %q to %q\n", uuid, source, srcStoreName, dstStoreName)
+
+		case "migrate-batch":
+			var configFName string
+			cmd.CommandArgs(3, &configFName)
+			go func() {
+				if err = datastore.MigrateBatch(uuid, configFName); err != nil {
+					dvid.Errorf("migrate error: %v\n", err)
+				}
+			}()
+			reply.Text = fmt.Sprintf("Started batch migration of uuid %s with configuration file %q\n", uuid, configFName)
 
 		case "copy":
 			var source, target string

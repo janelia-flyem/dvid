@@ -228,6 +228,117 @@ func putData(kv storage.OrderedKeyValueDB, t storage.TKeyClass, data interface{}
 	return kv.Put(ctx, storage.NewTKey(t, nil), buf.Bytes())
 }
 
+type migrateSpec struct {
+	Name     dvid.InstanceName
+	SrcStore string
+	DstStore string
+}
+
+type migrateConfig struct {
+	Versions   []string
+	Migrations []migrateSpec
+	Exclusions dvid.InstanceNames
+}
+
+func getDataTypeInstances(repo *repoT, typeName dvid.TypeString) (names dvid.InstanceNames, err error) {
+	for name, data := range repo.data {
+		if data.TypeName() == typeName {
+			names = append(names, name)
+		}
+	}
+	return
+}
+
+// MigrateBatch migrates instances specified in the config file from a source to a
+// destination store, similar to the above "migrate" command but in a batch.
+// Before running this command, you must modify the config TOML file so the
+// destination store is available.
+//
+// The migrate config file contains JSON with the following format:
+// 	{
+// 		"Versions": ["2881e9","52a13","57e8d"],
+// 		"Migrations": [
+// 			{
+// 				"Name": "instance-name",
+// 				"Source": "source store",
+// 				"Destination": "destination store"
+// 			},
+// 			{
+// 				"Name": "#datatype",
+// 				"Source": "source store",
+// 				"Destination": "destination store"
+// 			},
+// 		],
+//		"Exclusions": ["name1", "name2"]
+// 	}
+func MigrateBatch(uuid dvid.UUID, configFName string) (err error) {
+	var repo *repoT
+	repo, err = manager.repoFromUUID(uuid)
+	if err != nil {
+		return
+	}
+
+	// Read configuration
+	var f *os.File
+	if f, err = os.Open(configFName); err != nil {
+		return
+	}
+	var data []byte
+	if data, err = ioutil.ReadAll(f); err != nil {
+		return
+	}
+	var cfg migrateConfig
+	if err = json.Unmarshal(data, &cfg); err != nil {
+		return
+	}
+
+	versions := strings.Join(cfg.Versions, ",")
+	transmitCfg := dvid.NewConfig()
+	transmitCfg.Set("transmit", versions)
+
+	exclusions := make(map[dvid.InstanceName]struct{}, len(cfg.Exclusions))
+	for _, name := range cfg.Exclusions {
+		exclusions[name] = struct{}{}
+	}
+
+	// Migrate instances iteratively, waiting until previous migration fully halts.
+	for i, spec := range cfg.Migrations {
+		var srcStore, dstStore dvid.Store
+		srcStore, err = storage.GetStoreByAlias(storage.Alias(spec.SrcStore))
+		if err != nil {
+			return
+		}
+		dstStore, err = storage.GetStoreByAlias(storage.Alias(spec.DstStore))
+		if err != nil {
+			return
+		}
+		var names dvid.InstanceNames
+		if spec.Name[0] == '#' {
+			typeName := dvid.TypeString(spec.Name[1:])
+			if names, err = getDataTypeInstances(repo, typeName); err != nil {
+				return
+			}
+		} else {
+			names = dvid.InstanceNames{spec.Name}
+		}
+		for _, name := range names {
+			if _, isExcluded := exclusions[name]; isExcluded {
+				dvid.Infof("Skipping migration of %q...\n", name)
+				continue
+			}
+			timedLog := dvid.NewTimeLog()
+			done := make(chan bool)
+			if err = MigrateInstance(uuid, name, srcStore, dstStore, transmitCfg, done); err != nil {
+				return
+			}
+			<-done
+			timedLog.Infof("Finished %d of %d migrations: %s from %s -> %s", i+1, len(cfg.Migrations), name, spec.SrcStore, spec.DstStore)
+			exclusions[name] = struct{}{} // allows us to specify instances separately
+		}
+	}
+	return
+}
+
 // MigrateInstance migrates a data instance locally from an old storage
 // engine to the current configured storage.
 func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, srcStore, dstStore dvid.Store, c dvid.Config, done chan bool) error {
