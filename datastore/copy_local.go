@@ -10,6 +10,7 @@ package datastore
 
 import (
 	"bytes"
+	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -144,13 +145,23 @@ func FlattenMetadata(uuid dvid.UUID, dstStore dvid.Store, configFName string) er
 		return err
 	}
 	var versions map[dvid.VersionID]struct{}
+	repoToUUID := make(map[dvid.RepoID]dvid.UUID)
+	versionToUUID := make(map[dvid.VersionID]dvid.UUID)
 	if len(fc.Versions) != 0 { // if none specified, use all versions
+		repoToUUID[origRepo.id] = fc.Versions[0]
+		versions = make(map[dvid.VersionID]struct{}, len(fc.Versions))
 		for _, uuid := range fc.Versions {
 			v, err := manager.versionFromUUID(uuid)
 			if err != nil {
 				return err
 			}
 			versions[v] = struct{}{}
+			versionToUUID[v] = uuid
+		}
+	} else {
+		repoToUUID[origRepo.id] = origRepo.uuid
+		for v, node := range origRepo.dag.nodes {
+			versionToUUID[v] = node.uuid
 		}
 	}
 	flattenRepo, err := origRepo.duplicate(versions, fc.Instances)
@@ -192,7 +203,29 @@ func FlattenMetadata(uuid dvid.UUID, dstStore dvid.Store, configFName string) er
 	if !ok {
 		return fmt.Errorf("unable to get destination store %q that is an ordered kv db", dstStore)
 	}
+	var ctx storage.MetadataContext
+	if err := putData(dstKV, repoToUUIDKey, repoToUUID); err != nil {
+		return err
+	}
+	if err := putData(dstKV, versionToUUIDKey, versionToUUID); err != nil {
+		return err
+	}
+	value := append(manager.repoID.Bytes(), manager.versionID.Bytes()...)
+	value = append(value, manager.instanceID.Bytes()...)
+	if err := dstKV.Put(ctx, storage.NewTKey(newIDsKey, nil), value); err != nil {
+		return err
+	}
 	return flattenRepo.saveToStore(dstKV)
+}
+
+func putData(kv storage.OrderedKeyValueDB, t storage.TKeyClass, data interface{}) error {
+	var ctx storage.MetadataContext
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(data); err != nil {
+		return err
+	}
+	return kv.Put(ctx, storage.NewTKey(t, nil), buf.Bytes())
 }
 
 type migrateSpec struct {
