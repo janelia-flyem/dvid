@@ -129,6 +129,9 @@ EXPERIMENTAL COMMANDS
 		Creates reduced nodes metadata into a destination metadata store (specified by
 		the nickname in TOML file).
 
+		NOTE: If versions are skipped, the skipped portion cannot be branched or the
+		created metadata will not work.
+
 		The flatten config file contains JSON compatible with the "merge-batch" command
 		and adds optional fields to set version notes and logs:
 
