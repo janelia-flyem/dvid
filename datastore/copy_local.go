@@ -156,6 +156,7 @@ func FlattenMetadata(uuid dvid.UUID, dstStore dvid.Store, configFName string) er
 	repoToUUID := make(map[dvid.RepoID]dvid.UUID)
 	versionToUUID := make(map[dvid.VersionID]dvid.UUID)
 	if len(fc.Versions) != 0 {
+		okVersions = make(map[dvid.VersionID]struct{}, len(fc.Versions))
 		for i, uuidStr := range fc.Versions {
 			uuids[i], versions[i], err = MatchingUUID(uuidStr)
 			if err != nil {

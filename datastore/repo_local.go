@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -2800,8 +2801,10 @@ func (d *dagT) getAncestryByBranch(branch string) (ancestry []dvid.UUID, err err
 }
 
 // returns duplicate of DAG limited by any set of version IDs or if versions is nil,
-// duplicates the entire DAG.  If the root UUID is not in the
-// list of allowed versions, there must be only one version allowed (flattened)
+// duplicates the entire DAG.  If the root UUID is not in the list of allowed versions,
+// the earliest version is made the root.
+// NOTE: This will fail for non-linear skipping of versions.
+// TODO: Make resilient to all kinds of pruning.
 func (d *dagT) duplicate(versions map[dvid.VersionID]struct{}) *dagT {
 	dup := new(dagT)
 
@@ -2811,15 +2814,17 @@ func (d *dagT) duplicate(versions map[dvid.VersionID]struct{}) *dagT {
 		dup.root = d.root
 		dup.rootV = d.rootV
 	} else {
-		if len(versions) > 1 {
-			dvid.Criticalf("dag.duplicate() called with %d versions but none are root\n", len(versions))
+		// get the earliest version as the root, since in any path, the versions escalate.
+		first := true
+		var minV dvid.VersionID
+		for v := range versions {
+			if first || v < minV {
+				minV = v
+				first = false
+			}
 		}
-		var v dvid.VersionID
-		for v = range versions {
-			break
-		}
-		dup.rootV = v
-		dup.root = d.nodes[v].uuid
+		dup.rootV = minV
+		dup.root = d.nodes[minV].uuid
 		dvid.Debugf("duplicated restricted DAG without root %s; using root %s\n", d.root, dup.root)
 	}
 	if len(versions) == 0 {
@@ -2829,12 +2834,30 @@ func (d *dagT) duplicate(versions map[dvid.VersionID]struct{}) *dagT {
 		}
 	} else {
 		dup.nodes = make(map[dvid.VersionID]*nodeT, len(versions))
+		var sorted []int
 		for v := range versions {
+			sorted = append(sorted, int(v))
+		}
+		sort.Ints(sorted)
+		for i, intV := range sorted {
+			v := dvid.VersionID(intV)
 			node, found := d.nodes[v]
 			if !found {
+				dvid.Criticalf("in dag duplication, could not find version %d in DAG", v)
 				continue
 			}
-			dup.nodes[v] = node.duplicate(versions)
+			dupNode := node.duplicate(versions)
+			if i == 0 {
+				dupNode.parents = []dvid.VersionID{}
+			} else {
+				dupNode.parents = []dvid.VersionID{dvid.VersionID(sorted[i-1])}
+			}
+			if i == len(sorted)-1 {
+				dupNode.children = []dvid.VersionID{}
+			} else {
+				dupNode.children = []dvid.VersionID{dvid.VersionID(sorted[i+1])}
+			}
+			dup.nodes[v] = dupNode
 		}
 	}
 	d.RUnlock()
