@@ -101,17 +101,23 @@ func (t *txStats) printStats() {
 	dvid.Infof("  >= 10m:    %d\n", t.numV10m)
 }
 
-type flattenConfig struct {
-	Versions    []dvid.UUID
-	Instances   dvid.InstanceNames
-	Alias       string
-	Description string
-	RepoLog     []string
-	NodeNote    string
-	NodeLog     []string
+type nodeSpec struct {
+	Version  string
+	NodeNote string
+	NodeLog  []string
 }
 
-func getFlattenConfig(configFName string) (fc flattenConfig, err error) {
+type flattenMetaCfg struct {
+	Versions   []string
+	Exclusions dvid.InstanceNames
+
+	VersionsMeta []nodeSpec
+	Alias        string
+	Description  string
+	RepoLog      []string
+}
+
+func getFlattenMetaCfg(configFName string) (fc flattenMetaCfg, err error) {
 	var f *os.File
 	if f, err = os.Open(configFName); err != nil {
 		return
@@ -126,15 +132,14 @@ func getFlattenConfig(configFName string) (fc flattenConfig, err error) {
 	return
 }
 
-// FlattenMetadata stores the metadata of a single node (the given UUID) into the destination
-// store, optionally adjusting the settings based on the JSON in the configuration file.
+// FlattenMetadata stores the metadata of a reduced set of nodes into the destination store.
 func FlattenMetadata(uuid dvid.UUID, dstStore dvid.Store, configFName string) error {
 	if manager == nil {
 		return ErrManagerNotInitialized
 	}
 
 	// Get flatened metadata configuration from optional JSON file
-	fc, err := getFlattenConfig(configFName)
+	fc, err := getFlattenMetaCfg(configFName)
 	if err != nil {
 		return err
 	}
@@ -144,19 +149,20 @@ func FlattenMetadata(uuid dvid.UUID, dstStore dvid.Store, configFName string) er
 	if err != nil {
 		return err
 	}
-	var versions map[dvid.VersionID]struct{}
+
+	uuids := make([]dvid.UUID, len(fc.Versions))
+	versions := make([]dvid.VersionID, len(fc.Versions))
+	var okVersions map[dvid.VersionID]struct{}
 	repoToUUID := make(map[dvid.RepoID]dvid.UUID)
 	versionToUUID := make(map[dvid.VersionID]dvid.UUID)
-	if len(fc.Versions) != 0 { // if none specified, use all versions
-		repoToUUID[origRepo.id] = fc.Versions[0]
-		versions = make(map[dvid.VersionID]struct{}, len(fc.Versions))
-		for _, uuid := range fc.Versions {
-			v, err := manager.versionFromUUID(uuid)
+	if len(fc.Versions) != 0 {
+		for i, uuidStr := range fc.Versions {
+			uuids[i], versions[i], err = MatchingUUID(uuidStr)
 			if err != nil {
 				return err
 			}
-			versions[v] = struct{}{}
-			versionToUUID[v] = uuid
+			okVersions[versions[i]] = struct{}{}
+			versionToUUID[versions[i]] = uuids[i]
 		}
 	} else {
 		repoToUUID[origRepo.id] = origRepo.uuid
@@ -164,7 +170,8 @@ func FlattenMetadata(uuid dvid.UUID, dstStore dvid.Store, configFName string) er
 			versionToUUID[v] = node.uuid
 		}
 	}
-	flattenRepo, err := origRepo.duplicate(versions, fc.Instances)
+
+	flattenRepo, err := origRepo.duplicate(okVersions, nil, fc.Exclusions)
 	if err != nil {
 		return err
 	}
@@ -177,20 +184,20 @@ func FlattenMetadata(uuid dvid.UUID, dstStore dvid.Store, configFName string) er
 	if len(fc.RepoLog) != 0 {
 		flattenRepo.log = fc.RepoLog
 	}
-	if fc.NodeNote != "" {
-		node, found := flattenRepo.dag.nodes[flattenRepo.version]
-		if found {
-			node.note = fc.NodeNote
-		} else {
-			dvid.Errorf("unable to get node for version ID %d in flattened repo\n", flattenRepo.version)
-		}
-	}
-	if len(fc.NodeLog) != 0 {
-		node, found := flattenRepo.dag.nodes[flattenRepo.version]
-		if found {
-			node.log = fc.NodeLog
-		} else {
-			dvid.Errorf("unable to get node for version ID %d in flattened repo\n", flattenRepo.version)
+
+	if len(fc.VersionsMeta) > 0 {
+		for _, vmeta := range fc.VersionsMeta {
+			_, v, err := MatchingUUID(vmeta.Version)
+			if err != nil {
+				return err
+			}
+			node, found := flattenRepo.dag.nodes[v]
+			if found {
+				node.note = vmeta.NodeNote
+				node.log = vmeta.NodeLog
+			} else {
+				dvid.Errorf("unable to get node for VersionsMeta[%q] in flattened repo\n", vmeta.Version)
+			}
 		}
 	}
 	jsonBytes, err := flattenRepo.MarshalJSON()

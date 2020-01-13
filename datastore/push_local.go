@@ -662,6 +662,6 @@ func (r *repoT) customize(v dvid.VersionID, config dvid.Config) (*repoT, rpc.Tra
 	r.RLock()
 	defer r.RUnlock()
 
-	dup, err := r.duplicate(versions, datanames)
+	dup, err := r.duplicate(versions, datanames, nil)
 	return dup, transmit, err
 }

@@ -2243,10 +2243,10 @@ func (r *repoT) deleteData(name dvid.InstanceName) error {
 	return nil
 }
 
-// duplicate returns a duped repo optionally limited by the given
-// version ID set and a list of data instance names.  Note that the
-// underlying data instances aren't duplicated.
-func (r *repoT) duplicate(versions map[dvid.VersionID]struct{}, names dvid.InstanceNames) (*repoT, error) {
+// duplicate returns a duped repo optionally limited by the given version ID set and
+// a list of data instance names, or if excluded is passed, all instances but those
+// are returned.  Note that the underlying data instances aren't duplicated.
+func (r *repoT) duplicate(versions map[dvid.VersionID]struct{}, keep, exclude dvid.InstanceNames) (*repoT, error) {
 	dup := new(repoT)
 	dup.id = r.id
 
@@ -2258,16 +2258,17 @@ func (r *repoT) duplicate(versions map[dvid.VersionID]struct{}, names dvid.Insta
 		dup.uuid = r.uuid
 		dup.version = r.version
 	} else {
-		// Since this needs to be rerooted, data instances rerooted on remote reception.
-		if len(versions) > 1 {
-			dvid.Criticalf("r.duplicate() called with %d versions (> 1) but none are root\n", len(versions))
+		// get the earliest version as the root, since in any path, the versions escalate.
+		first := true
+		var minV dvid.VersionID
+		for v := range versions {
+			if first || v < minV {
+				minV = v
+				first = false
+			}
 		}
-		var v dvid.VersionID
-		for v = range versions {
-			break
-		}
-		dup.version = v
-		dup.uuid = r.dag.nodes[v].uuid
+		dup.version = minV
+		dup.uuid = r.dag.nodes[minV].uuid
 		dvid.Debugf("duplicated restricted repo without root %s; using root %s\n", r.uuid, dup.uuid)
 	}
 
@@ -2287,14 +2288,24 @@ func (r *repoT) duplicate(versions map[dvid.VersionID]struct{}, names dvid.Insta
 
 	dup.dag = r.dag.duplicate(versions)
 
-	if len(names) == 0 {
+	var isExcluded map[dvid.InstanceName]struct{}
+	if len(exclude) > 0 {
+		isExcluded = make(map[dvid.InstanceName]struct{}, len(exclude))
+		for _, name := range exclude {
+			isExcluded[name] = struct{}{}
+		}
+	}
+
+	if len(keep) == 0 {
 		dup.data = make(map[dvid.InstanceName]DataService, len(r.data))
 		for k, v := range r.data {
-			dup.data[k] = v
+			if _, excluded := isExcluded[k]; !excluded {
+				dup.data[k] = v
+			}
 		}
 	} else {
-		dup.data = make(map[dvid.InstanceName]DataService, len(names))
-		for _, name := range names {
+		dup.data = make(map[dvid.InstanceName]DataService, len(keep))
+		for _, name := range keep {
 			d, found := r.data[name]
 			if !found {
 				return nil, fmt.Errorf("cannot duplicate data instance %q which cannot be found", name)
