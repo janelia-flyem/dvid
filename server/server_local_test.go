@@ -129,7 +129,7 @@ func TestParseConfig(t *testing.T) {
 	if err != nil {
 		t.Errorf("couldn't get backend: %v\n", err)
 	}
-	if backend.DefaultKVDB != "raid6" || backend.DefaultLog != "mutationlog" || backend.KVStore["grayscale:99ef22cd85f143f58a623bd22aad0ef7"] != "kvautobus" {
+	if backend.DefaultKVDB != "raid6" || backend.DefaultLog != "mutationlog" || backend.KVStore["grayscale:99ef22cd85f143f58a623bd22aad0ef7"] != "badger" {
 		t.Errorf("Bad backend configuration retrieval: %v\n", backend)
 	}
 

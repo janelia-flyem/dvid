@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -2800,66 +2799,90 @@ func (d *dagT) getAncestryByBranch(branch string) (ancestry []dvid.UUID, err err
 	return
 }
 
+// Replaces entry of "replace" id with substitute slice and returns result in a new slice.
+func editVersionSlice(orig []dvid.VersionID, replace dvid.VersionID, subst []dvid.VersionID) (edited []dvid.VersionID) {
+	pos := -1
+	for i, v := range orig {
+		if v == replace {
+			pos = i
+			break
+		}
+	}
+	if pos < 0 {
+		edited = make([]dvid.VersionID, len(orig))
+		copy(edited, orig)
+		return
+	}
+	edited = make([]dvid.VersionID, len(orig)-1+len(subst))
+	dvid.Infof(" orig: %v\n", orig)
+	dvid.Infof("subst: %v\n", subst)
+	dvid.Infof("replace: %d\n", replace)
+	j := 0
+	for _, v := range orig {
+		if v != replace {
+			edited[j] = v
+			j++
+		}
+	}
+	for _, v := range subst {
+		edited[j] = v
+		j++
+	}
+	dvid.Infof("edited: %v\n", edited)
+	return
+}
+
 // returns duplicate of DAG limited by any set of version IDs or if versions is nil,
 // duplicates the entire DAG.  If the root UUID is not in the list of allowed versions,
 // the earliest version is made the root.
-// NOTE: This will fail for non-linear skipping of versions.
-// TODO: Make resilient to all kinds of pruning.
 func (d *dagT) duplicate(versions map[dvid.VersionID]struct{}) *dagT {
 	dup := new(dagT)
-
-	// if the root is no longer an allowed version, we know it's a flattened
 	d.RLock()
-	if _, found := versions[d.rootV]; found {
-		dup.root = d.root
-		dup.rootV = d.rootV
-	} else {
-		// get the earliest version as the root, since in any path, the versions escalate.
-		first := true
-		var minV dvid.VersionID
-		for v := range versions {
-			if first || v < minV {
-				minV = v
-				first = false
-			}
-		}
-		dup.rootV = minV
-		dup.root = d.nodes[minV].uuid
-		dvid.Debugf("duplicated restricted DAG without root %s; using root %s\n", d.root, dup.root)
+
+	dup.nodes = make(map[dvid.VersionID]*nodeT, len(d.nodes))
+	for v, node := range d.nodes {
+		dup.nodes[v] = node.duplicate(nil)
 	}
-	if len(versions) == 0 {
-		dup.nodes = make(map[dvid.VersionID]*nodeT, len(d.nodes))
+
+	if len(versions) != 0 {
+		// prune the DAG of any version not on our list, adjusting the
+		// parents/children pointers as we go.
 		for v, node := range d.nodes {
-			dup.nodes[v] = node.duplicate(nil)
-		}
-	} else {
-		dup.nodes = make(map[dvid.VersionID]*nodeT, len(versions))
-		var sorted []int
-		for v := range versions {
-			sorted = append(sorted, int(v))
-		}
-		sort.Ints(sorted)
-		for i, intV := range sorted {
-			v := dvid.VersionID(intV)
-			node, found := d.nodes[v]
-			if !found {
-				dvid.Criticalf("in dag duplication, could not find version %d in DAG", v)
-				continue
+			if _, keep := versions[v]; !keep {
+				for _, childV := range node.children {
+					if _, exists := dup.nodes[childV]; exists {
+						dup.nodes[childV].parents = editVersionSlice(dup.nodes[childV].parents, v, node.parents)
+					} else {
+						dvid.Criticalf("found node %d had child %d that didn't exist on pruning\n", v, childV)
+					}
+				}
+				for _, parentV := range node.parents {
+					if _, exists := dup.nodes[parentV]; exists {
+						dup.nodes[parentV].children = editVersionSlice(dup.nodes[parentV].children, v, node.children)
+					} else {
+						dvid.Criticalf("found node %d had parent %d that didn't exist on pruning\n", v, parentV)
+					}
+				}
+				delete(dup.nodes, v)
 			}
-			dupNode := node.duplicate(versions)
-			if i == 0 {
-				dupNode.parents = []dvid.VersionID{}
-			} else {
-				dupNode.parents = []dvid.VersionID{dvid.VersionID(sorted[i-1])}
-			}
-			if i == len(sorted)-1 {
-				dupNode.children = []dvid.VersionID{}
-			} else {
-				dupNode.children = []dvid.VersionID{dvid.VersionID(sorted[i+1])}
-			}
-			dup.nodes[v] = dupNode
 		}
 	}
+
+	// get the earliest version as the root, since in any path, the versions escalate.
+	first := true
+	var minV dvid.VersionID
+	for v := range versions {
+		if first || v < minV {
+			minV = v
+			first = false
+		}
+	}
+	dup.rootV = minV
+	dup.root = d.nodes[minV].uuid
+	if minV != d.rootV {
+		dvid.Debugf("duplicated restricted DAG moved root %s -> %s\n", d.root, dup.root)
+	}
+
 	d.RUnlock()
 	return dup
 }

@@ -238,3 +238,143 @@ func TestUUIDAssignment(t *testing.T) {
 		t.Errorf("Error getting back correct UUID %s from %s\n", myuuid, uuid)
 	}
 }
+
+func equalVersionSlices(a, b []dvid.VersionID) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	mapA := make(map[dvid.VersionID]struct{}, len(a))
+	for _, v := range a {
+		mapA[v] = struct{}{}
+	}
+	for _, v := range b {
+		if _, found := mapA[v]; !found {
+			return false
+		}
+	}
+	return true
+}
+
+func TestDAGDup(t *testing.T) {
+	nodes := []nodeT{
+		{
+			uuid:     dvid.UUID("uuid3"),
+			version:  3,
+			locked:   true,
+			children: []dvid.VersionID{5},
+		},
+		{
+			version:  5,
+			locked:   true,
+			parents:  []dvid.VersionID{3},
+			children: []dvid.VersionID{7, 8, 9, 10},
+		},
+		{
+			uuid:     dvid.UUID("uuid7"),
+			version:  7,
+			locked:   true,
+			parents:  []dvid.VersionID{5},
+			children: []dvid.VersionID{11, 13},
+		},
+		{
+			version: 8,
+			parents: []dvid.VersionID{5},
+			locked:  true,
+		},
+		{
+			version: 9,
+			parents: []dvid.VersionID{5},
+			locked:  false,
+		},
+		{
+			branch:   "branch10",
+			version:  10,
+			locked:   true,
+			parents:  []dvid.VersionID{5},
+			children: []dvid.VersionID{14},
+		},
+		{
+			version: 11,
+			parents: []dvid.VersionID{7},
+			locked:  true,
+		},
+		{
+			version: 13,
+			parents: []dvid.VersionID{7},
+			locked:  false,
+		},
+		{
+			version:  14,
+			locked:   false,
+			parents:  []dvid.VersionID{10},
+			children: []dvid.VersionID{15},
+		},
+		{
+			branch:  "branch15",
+			version: 15,
+			locked:  false,
+			parents: []dvid.VersionID{14},
+		},
+	}
+	dag := new(dagT)
+	dag.root = dvid.UUID("uuid3")
+	dag.rootV = 3
+	dag.nodes = make(map[dvid.VersionID]*nodeT, len(nodes))
+	for i, node := range nodes {
+		dag.nodes[node.version] = &(nodes[i])
+	}
+	okVersions := map[dvid.VersionID]struct{}{
+		5:  struct{}{},
+		7:  struct{}{},
+		10: struct{}{},
+		11: struct{}{},
+		15: struct{}{},
+	}
+	dup := dag.duplicate(okVersions)
+	expected := map[dvid.VersionID]nodeT{
+		5: {
+			version:  5,
+			locked:   true,
+			children: []dvid.VersionID{7, 10},
+		},
+		7: {
+			uuid:     dvid.UUID("uuid7"),
+			version:  7,
+			locked:   true,
+			parents:  []dvid.VersionID{5},
+			children: []dvid.VersionID{11},
+		},
+		10: {
+			branch:   "branch10",
+			version:  10,
+			locked:   true,
+			parents:  []dvid.VersionID{5},
+			children: []dvid.VersionID{15},
+		},
+		11: {
+			version: 11,
+			parents: []dvid.VersionID{7},
+			locked:  true,
+		},
+		15: {
+			branch:  "branch15",
+			version: 15,
+			locked:  false,
+			parents: []dvid.VersionID{10},
+		},
+	}
+	for v, node := range dup.nodes {
+		if _, found := expected[v]; !found {
+			t.Errorf("Expected to find version %d but not in dup nodes: %v\n", v, dup.nodes)
+		} else {
+			if !equalVersionSlices(node.children, expected[v].children) ||
+				!equalVersionSlices(node.parents, expected[v].parents) ||
+				node.branch != expected[v].branch ||
+				node.uuid != expected[v].uuid ||
+				node.version != expected[v].version ||
+				node.locked != expected[v].locked {
+				t.Errorf("Expected version %d to agree but didn't.\nDup: %v\nExp: %v", v, *node, expected[v])
+			}
+		}
+	}
+}
