@@ -107,9 +107,24 @@ type nodeSpec struct {
 	NodeLog  []string
 }
 
+type storeSpec struct {
+	Path   string
+	Engine string
+}
+
+func (s storeSpec) Config() dvid.StoreConfig {
+	cfg := dvid.NewConfig()
+	cfg.Set("path", s.Path)
+	return dvid.StoreConfig{
+		Config: cfg,
+		Engine: s.Engine,
+	}
+}
+
 type flattenMetaCfg struct {
 	Versions   []string
 	Exclusions dvid.InstanceNames
+	DstStore   storeSpec
 
 	VersionsMeta []nodeSpec
 	Alias        string
@@ -133,13 +148,19 @@ func getFlattenMetaCfg(configFName string) (fc flattenMetaCfg, err error) {
 }
 
 // FlattenMetadata stores the metadata of a reduced set of nodes into the destination store.
-func FlattenMetadata(uuid dvid.UUID, dstStore dvid.Store, configFName string) error {
+func FlattenMetadata(uuid dvid.UUID, configFName string) error {
 	if manager == nil {
 		return ErrManagerNotInitialized
 	}
 
 	// Get flatened metadata configuration from optional JSON file
 	fc, err := getFlattenMetaCfg(configFName)
+	if err != nil {
+		return err
+	}
+
+	// open destination store
+	dstStore, _, err := storage.NewStore(fc.DstStore.Config())
 	if err != nil {
 		return err
 	}
@@ -223,7 +244,11 @@ func FlattenMetadata(uuid dvid.UUID, dstStore dvid.Store, configFName string) er
 	if err := dstKV.Put(ctx, storage.NewTKey(newIDsKey, nil), value); err != nil {
 		return err
 	}
-	return flattenRepo.saveToStore(dstKV)
+	if err := flattenRepo.saveToStore(dstKV); err != nil {
+		return err
+	}
+	dstKV.Close()
+	return nil
 }
 
 func putData(kv storage.OrderedKeyValueDB, t storage.TKeyClass, data interface{}) error {
@@ -239,7 +264,7 @@ func putData(kv storage.OrderedKeyValueDB, t storage.TKeyClass, data interface{}
 type migrateSpec struct {
 	Name     dvid.InstanceName
 	SrcStore string
-	DstStore string
+	DstStore storeSpec
 }
 
 type migrateConfig struct {
@@ -263,22 +288,28 @@ func getDataTypeInstances(repo *repoT, typeName dvid.TypeString) (names dvid.Ins
 // destination store is available.
 //
 // The migrate config file contains JSON with the following format:
-// 	{
-// 		"Versions": ["2881e9","52a13","57e8d"],
-// 		"Migrations": [
-// 			{
-// 				"Name": "instance-name",
-// 				"Source": "source store",
-// 				"Destination": "destination store"
-// 			},
-// 			{
-// 				"Name": "#datatype",
-// 				"Source": "source store",
-// 				"Destination": "destination store"
-// 			},
-// 		],
-//		"Exclusions": ["name1", "name2"]
-// 	}
+// {
+// 	"Versions": ["2881e9","52a13","57e8d"],
+// 	"Migrations": [
+// 		{
+// 			"Name": "instance-name",
+// 			"SrcStore": "source store",
+// 			"DstStore": {
+// 				"Path": "/path/to/store",
+// 				"Engine": "basholeveldb"
+// 			}
+// 		},
+// 		{
+// 			"Name": "#datatype",
+// 			"SrcStore": "source store",
+// 			"DstStore": {
+// 				"Path": "/another/store",
+// 				"Engine": "badger"
+// 			}
+// 		},
+// 	],
+// 	"Exclusions": ["name1", "name2"]
+// }
 func MigrateBatch(uuid dvid.UUID, configFName string) (err error) {
 	var repo *repoT
 	repo, err = manager.repoFromUUID(uuid)
@@ -300,9 +331,13 @@ func MigrateBatch(uuid dvid.UUID, configFName string) (err error) {
 		return
 	}
 
-	versions := strings.Join(cfg.Versions, ",")
 	transmitCfg := dvid.NewConfig()
-	transmitCfg.Set("transmit", versions)
+	if len(cfg.Versions) == 0 {
+		transmitCfg.Set("transmit", "all")
+	} else {
+		versions := strings.Join(cfg.Versions, ",")
+		transmitCfg.Set("transmit", versions)
+	}
 
 	exclusions := make(map[dvid.InstanceName]struct{}, len(cfg.Exclusions))
 	for _, name := range cfg.Exclusions {
@@ -316,7 +351,7 @@ func MigrateBatch(uuid dvid.UUID, configFName string) (err error) {
 		if err != nil {
 			return
 		}
-		dstStore, err = storage.GetStoreByAlias(storage.Alias(spec.DstStore))
+		dstStore, _, err = storage.NewStore(spec.DstStore.Config())
 		if err != nil {
 			return
 		}
@@ -343,6 +378,7 @@ func MigrateBatch(uuid dvid.UUID, configFName string) (err error) {
 			timedLog.Infof("Finished %d of %d migrations: %s from %s -> %s", i+1, len(cfg.Migrations), name, spec.SrcStore, spec.DstStore)
 			exclusions[name] = struct{}{} // allows us to specify instances separately
 		}
+		dstStore.Close()
 	}
 	return
 }

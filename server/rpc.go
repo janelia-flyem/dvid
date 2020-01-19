@@ -105,13 +105,19 @@ EXPERIMENTAL COMMANDS
 				"Migrations": [
 					{
 						"Name": "instance-name",
-						"Source": "source store",
-						"Destination": "destination store"
+						"SrcStore": "source store",
+						"DstStore": {
+							"Path": "/path/to/store",
+							"Engine": "basholeveldb"
+						}
 					},
 					{
 						"Name": "#datatype",
-						"Source": "source store",
-						"Destination": "destination store"
+						"SrcStore": "source store",
+						"DstStore": {
+							"Path": "/another/store",
+							"Engine": "badger"
+						}
 					},
 				],
 				"Exclusions": ["name1", "name2"]
@@ -119,12 +125,13 @@ EXPERIMENTAL COMMANDS
 
 		Each migration is done sequentially, one not starting until the other
 		is fully completed.  This batch command is similar to many calls of the
-		"migrate" command with "transmit=<versions>" option.
+		"migrate" command with "transmit=<versions>" option or "transmit=all" if
+		no Versions are specified.
 
 		Individual instance names must precede general data type migration 
 		specifications.
 	
-	repo <UUID> flatten-metadata <dst store> <flatten config file>
+	repo <UUID> flatten-metadata <flatten config file>
     
 		Creates reduced nodes metadata into a destination metadata store (specified by
 		the nickname in TOML file).
@@ -138,7 +145,10 @@ EXPERIMENTAL COMMANDS
 			{
 				"Versions": ["2881e9","52a13","57e8d"],
 				"Exclusions": ["name1", "name2"],
-
+				"DstStore": {
+					"Engine": "basholeveldb",
+					"Path": "/path/to/new/metadata_db"
+				},
 				"Alias": "my new repo alias",
 				"Description": "my new description",
 				"RepoLog": ["some new", "log statements", "for the repo itself"],
@@ -562,13 +572,8 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 
 		case "flatten-metadata":
 			var dstStoreName, configFName string
-			cmd.CommandArgs(2, &dstStoreName, &configFName)
-			var dstStore dvid.Store
-			dstStore, err = storage.GetStoreByAlias(storage.Alias(dstStoreName))
-			if err != nil {
-				return
-			}
-			if err = datastore.FlattenMetadata(uuid, dstStore, configFName); err != nil {
+			cmd.CommandArgs(3, &configFName)
+			if err = datastore.FlattenMetadata(uuid, configFName); err != nil {
 				return
 			}
 			reply.Text = fmt.Sprintf("Created metadata for uuid %s in store %q\n", uuid, dstStoreName)
