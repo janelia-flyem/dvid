@@ -100,7 +100,7 @@ func getLabelIndex(ctx *datastore.VersionedCtx, label uint64) (*labels.Index, er
 		return nil, err
 	}
 	if len(compressed) == 0 {
-		timedLog.Infof("retrieved empty index for label %d", label)
+		// timedLog.Infof("retrieved empty index for label %d", label)
 		return nil, nil
 	}
 	val, _, err := dvid.DeserializeData(compressed, true)
@@ -115,7 +115,7 @@ func getLabelIndex(ctx *datastore.VersionedCtx, label uint64) (*labels.Index, er
 	if idx.Label == 0 {
 		idx.Label = label
 	}
-	timedLog.Infof("retrieved label %d index with %d blocks", label, len(idx.Blocks))
+	// timedLog.Infof("retrieved label %d index with %d blocks", label, len(idx.Blocks))
 	return idx, nil
 }
 
