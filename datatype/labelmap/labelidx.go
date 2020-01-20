@@ -90,7 +90,7 @@ func (k indexKey) VersionedCtx() *datastore.VersionedCtx {
 // returns nil if no Meta is found.
 // should only call getCachedLabelIndex external to this file.
 func getLabelIndex(ctx *datastore.VersionedCtx, label uint64) (*labels.Index, error) {
-	timedLog := dvid.NewTimeLog()
+	// timedLog := dvid.NewTimeLog()
 	store, err := datastore.GetKeyValueDB(ctx.Data())
 	if err != nil {
 		return nil, err
