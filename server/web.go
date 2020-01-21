@@ -646,13 +646,16 @@ func initRoutes() {
 	copts := cors.Options{
 		AllowedMethods: []string{"GET", "POST", "DELETE", "HEAD"},
 	}
+	if len(corsDomains) == 0 {
+		copts.AllowedOrigins = []string{"*"}
+	} else {
+		copts.AllowOriginFunc = corsValidator
+	}
 	authorizationOn := (len(tc.Auth.ProxyAddress) != 0)
 	if authorizationOn {
 		copts.AllowOriginFunc = corsValidator
 		copts.AllowedHeaders = []string{"Authorization", "authorization"}
 		copts.AllowCredentials = true
-	} else if len(corsDomains) == 0 {
-		copts.AllowedOrigins = []string{"*"}
 	}
 	c := cors.New(copts)
 
