@@ -107,6 +107,21 @@ go get github.com/janelia-flyem/protolog
 # gomdb
 #go get github.com/DocSavage/gomdb
 
+
+# ristretto (used by badger)
+#
+# We can't use 'go get github.com/dgraph-io/ristretto/...' because we don't want the latest tag.
+# (See badger notes below. Same reason.)
+RISTRETTO_DIR=${GOPATH}/src/github.com/dgraph-io/badger
+RISTRETTO_VERSION=v0.0.1 # Don't change this without also changing it in meta.yaml!!
+if [[ -d ${RISTRETTO_DIR} ]]; then
+    cd ${RISTRETTO_DIR} && git fetch && cd -
+else
+    git clone https://github.com/dgraph-io/ristretto ${RISTRETTO_DIR}
+fi
+cd ${RISTRETTO_DIR} && git checkout ${RISTRETTO_VERSION} && cd -
+#go install -i github.com/dgraph-io/ristretto
+
 # badger
 #
 # We can't use 'go get github.com/dgraph-io/badger/...' because we don't want the latest tag.
@@ -120,7 +135,6 @@ if [[ -d ${BADGER_DIR} ]]; then
 else
     git clone https://github.com/dgraph-io/badger ${BADGER_DIR}
 fi
-
 cd ${BADGER_DIR} && git checkout ${BADGER_VERSION} && cd -
 #go install -i github.com/dgraph-io/badger
 
