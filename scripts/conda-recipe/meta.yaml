@@ -207,4 +207,8 @@ source:
   - git_url: https://github.com/dgraph-io/badger
     git_tag: v2.0.0 # Don't change this without also changing it in get-go-dependencies.sh!!!
     folder:  src/github.com/dgraph-io/badger
-    
+
+  # ristretto
+  - git_url: https://github.com/dgraph-io/ristretto
+    git_tag: v0.0.1 # Don't change this without also changing it in get-go-dependencies.sh!!!
+    folder:  src/github.com/dgraph-io/ristretto
