@@ -293,27 +293,8 @@ func DoServe(cmd dvid.Command) error {
 		return fmt.Errorf("unable to initialize storage: %v", err)
 	}
 
-	// lock metadata
-	store, _ := storage.MetaDataKVStore()
-	transdb, hastrans := store.(storage.TransactionDB)
-	if hastrans {
-		var ctx storage.MetadataContext
-		key := ctx.ConstructKey(storage.NewTKey(datastore.ServerLockKey, nil))
-		transdb.LockKey(key)
-	}
-
 	if err := datastore.Initialize(initMetadata, server.DatastoreConfig()); err != nil {
-		if hastrans {
-			var ctx storage.MetadataContext
-			key := ctx.ConstructKey(storage.NewTKey(datastore.ServerLockKey, nil))
-			transdb.UnlockKey(key)
-		}
 		return fmt.Errorf("unable to initialize datastore: %v", err)
-	}
-	if hastrans {
-		var ctx storage.MetadataContext
-		key := ctx.ConstructKey(storage.NewTKey(datastore.ServerLockKey, nil))
-		transdb.UnlockKey(key)
 	}
 
 	// add handlers to help us track memory usage - they don't track memory until they're told to

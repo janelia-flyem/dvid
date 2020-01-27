@@ -246,9 +246,7 @@ func TestReloadMetadata(t *testing.T) {
 	server.CreateTestInstance(t, uuid, "labelmap", "segmentation", config)
 	server.CreateTestInstance(t, uuid, "roi", "someroi", config)
 
-	// Reload the metadata
-	apiStr := fmt.Sprintf("%sserver/reload-metadata", server.WebAPIPath)
-	server.TestHTTP(t, "POST", apiStr, nil)
+	datastore.CloseReopenTest()
 
 	// Make sure repo UUID still there
 	jsonStr, err := datastore.MarshalJSON()
@@ -268,26 +266,6 @@ func TestReloadMetadata(t *testing.T) {
 			t.Fatalf("Expected uuid %s, got %s.  Full JSON:\n%v\n", uuid, k, jsonResp)
 		}
 	}
-
-	// Make sure the data instances are still there.
-	_, err = datastore.GetDataByUUIDName(uuid, "foo")
-	if err != nil {
-		t.Errorf("Couldn't get keyvalue data instance after reload\n")
-	}
-	_, err = datastore.GetDataByUUIDName(uuid, "labeldata")
-	if err != nil {
-		t.Errorf("Couldn't get labelblk data instance after reload\n")
-	}
-	_, err = datastore.GetDataByUUIDName(uuid, "segmentation")
-	if err != nil {
-		t.Errorf("Couldn't get labelmap data instance after reload\n")
-	}
-	_, err = datastore.GetDataByUUIDName(uuid, "someroi")
-	if err != nil {
-		t.Errorf("Couldn't get roi data instance after reload\n")
-	}
-
-	datastore.CloseReopenTest()
 
 	// Make sure the data instances are still there.
 	_, err = datastore.GetDataByUUIDName(uuid, "foo")

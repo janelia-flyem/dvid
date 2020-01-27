@@ -144,14 +144,11 @@ func (d *Data) PutVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dv
 		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
 	}
 
-	// extract patchdb interface
-	_, haspatch := store.(storage.TransactionDB)
-
 	// extract buffer interface
 	_, hasbuffer := store.(storage.KeyValueRequester)
 
-	// Make sure vox is block-aligned if no patch interface
-	if !haspatch && !dvid.BlockAligned(vox, d.BlockSize()) {
+	// Make sure vox is block-aligned
+	if !dvid.BlockAligned(vox, d.BlockSize()) {
 		return fmt.Errorf("cannot store voxels in non-block aligned geometry %s -> %s", vox.StartPoint(), vox.EndPoint())
 	}
 
@@ -175,9 +172,6 @@ func (d *Data) PutVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dv
 		finishedRequests <- err
 	}()
 
-	voxstartpt := vox.Geometry.StartPoint()
-	voxendpt := vox.Geometry.EndPoint()
-
 	// Iterate through index space for this data.
 	for it, err := vox.NewIndexIterator(d.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
 		i0, i1, err := it.IndexSpan()
@@ -195,73 +189,20 @@ func (d *Data) PutVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dv
 			c[0] = x
 			curIndex := dvid.IndexZYX(c)
 
-			// check if pt or pt+1 is within roi
-			startpoint := dvid.Point3d{begX * d.BlockSize().Value(0),
-				ptBeg.Value(1) * d.BlockSize().Value(1),
-				ptBeg.Value(2) * d.BlockSize().Value(2)}
-			endpoint := dvid.Point3d{startpoint.Value(0) + d.BlockSize().Value(0) - 1,
-				startpoint.Value(1) + d.BlockSize().Value(1) - 1,
-				startpoint.Value(2) + d.BlockSize().Value(2) - 1}
-
-			dim1startpt := int32(0)
-			ispatch := false
-			if startpoint.Value(0) < voxstartpt.Value(0) {
-				ispatch = true
-				dim1startpt = voxstartpt.Value(0) - startpoint.Value(0)
-			}
-			dim2startpt := int32(0)
-			if startpoint.Value(1) < voxstartpt.Value(1) {
-				ispatch = true
-				dim2startpt = voxstartpt.Value(1) - startpoint.Value(1)
-			}
-			dim3startpt := int32(0)
-			if startpoint.Value(2) < voxstartpt.Value(2) {
-				ispatch = true
-				dim3startpt = voxstartpt.Value(2) - startpoint.Value(2)
-			}
-			patchstart := dvid.Point3d{dim1startpt, dim2startpt, dim3startpt}
-
-			dim1endpt := d.BlockSize().Value(0) - 1
-			if endpoint.Value(0) > voxendpt.Value(0) {
-				ispatch = true
-				dim1endpt -= (endpoint.Value(0) - voxendpt.Value(0))
-			}
-			dim2endpt := d.BlockSize().Value(1) - 1
-			if endpoint.Value(1) > voxendpt.Value(1) {
-				ispatch = true
-				dim2endpt -= (endpoint.Value(1) - voxendpt.Value(1))
-			}
-			dim3endpt := d.BlockSize().Value(2) - 1
-			if endpoint.Value(2) > voxendpt.Value(2) {
-				ispatch = true
-				dim3endpt -= (endpoint.Value(2) - voxendpt.Value(2))
-			}
-			patchend := dvid.Point3d{dim1endpt, dim2endpt, dim3endpt}
-
-			// supply 'patchGeo' which will give geometry of the patch
-			var patchgeo *patchGeo
-			if ispatch {
-				patchgeo = &patchGeo{patchstart, patchend}
-			}
-
 			// Don't PUT if this index is outside a specified ROI
 			if r != nil && r.Iter != nil && !r.Iter.InsideFast(curIndex) {
 				continue
-			}
-
-			if !haspatch && patchgeo != nil {
-				return fmt.Errorf("Non-block aligned request for DB that requires block alignment")
 			}
 
 			kv := &storage.TKeyValue{K: NewTKey(&curIndex)}
 			putOp := &putOperation{vox, curIndex, v, mutate, mutID}
 			op := &storage.ChunkOp{putOp, nil}
 			putrequests++
-			d.PutChunk(&storage.Chunk{op, kv}, hasbuffer, patchgeo, finishedRequests)
+			d.PutChunk(&storage.Chunk{op, kv}, hasbuffer, finishedRequests)
 		}
 	}
 	// wait for everything to finish
-	for i := 0; i < putrequests; i += 1 {
+	for i := 0; i < putrequests; i++ {
 		errjob := <-finishedRequests
 		if errjob != nil {
 			err = errjob
@@ -363,17 +304,17 @@ func (d *Data) PutBlocks(v dvid.VersionID, mutID uint64, start dvid.ChunkPoint3d
 // PutChunk puts a chunk of data as part of a mapped operation.
 // Only some multiple of the # of CPU cores can be used for chunk handling before
 // it waits for chunk processing to abate via the buffered server.HandlerToken channel.
-func (d *Data) PutChunk(chunk *storage.Chunk, hasbuffer bool, patchgeo *patchGeo, finishedRequests chan error) error {
+func (d *Data) PutChunk(chunk *storage.Chunk, hasbuffer bool, finishedRequests chan error) error {
 	if !hasbuffer {
 		// if storage engine handles buffering, limited advantage to throttling here
 		<-server.HandlerToken
 	}
 
-	go d.putChunk(chunk, hasbuffer, patchgeo, finishedRequests)
+	go d.putChunk(chunk, hasbuffer, finishedRequests)
 	return nil
 }
 
-func (d *Data) putChunk(chunk *storage.Chunk, hasbuffer bool, patchgeo *patchGeo, finishedRequests chan error) {
+func (d *Data) putChunk(chunk *storage.Chunk, hasbuffer bool, finishedRequests chan error) {
 	var err error
 	defer func() {
 		// After processing a chunk, return the token.
@@ -431,21 +372,16 @@ func (d *Data) putChunk(chunk *storage.Chunk, hasbuffer bool, patchgeo *patchGeo
 
 	// Perform the operation.
 	block := &storage.TKeyValue{K: chunk.K, V: blockData}
-	// only pre-write block if not in patch mode
-	var serialization []byte
-
-	if patchgeo == nil {
-		if err = op.voxels.WriteBlock(block, d.BlockSize()); err != nil {
-			dvid.Errorf("Unable to WriteBlock() in %q: %v\n", d.DataName(), err)
-			return
-		}
-		serialization, err = dvid.SerializeData(blockData, d.Compression(), d.Checksum())
-		if err != nil {
-			dvid.Errorf("Unable to serialize block in %q: %v\n", d.DataName(), err)
-			return
-		}
+	if err = op.voxels.WriteBlock(block, d.BlockSize()); err != nil {
+		dvid.Errorf("Unable to WriteBlock() in %q: %v\n", d.DataName(), err)
+		return
 	}
-
+	var serialization []byte
+	serialization, err = dvid.SerializeData(blockData, d.Compression(), d.Checksum())
+	if err != nil {
+		dvid.Errorf("Unable to serialize block in %q: %v\n", d.DataName(), err)
+		return
+	}
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		dvid.Errorf("Data type imageblk had error initializing store: %v\n", err)
@@ -458,7 +394,7 @@ func (d *Data) putChunk(chunk *storage.Chunk, hasbuffer bool, patchgeo *patchGeo
 		resperr := <-ready
 		if resperr != nil {
 			dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, resperr)
-			err = fmt.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, resperr)
+			err = fmt.Errorf("Unable to PUT voxel data for key %v: %v", chunk.K, resperr)
 			return
 		}
 		var event string
@@ -479,45 +415,9 @@ func (d *Data) putChunk(chunk *storage.Chunk, hasbuffer bool, patchgeo *patchGeo
 
 	// put data -- use buffer if available
 	ctx := datastore.NewVersionedCtx(d, op.version)
-
-	if patchgeo == nil {
-		if err = store.Put(ctx, chunk.K, serialization); err != nil {
-			dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, err)
-			return
-		}
-	} else {
-		patchfunc := func(origdata []byte) ([]byte, error) {
-			if origdata == nil {
-				// use blank default block
-				origdata = blockData
-			} else {
-				origdata, _, err = dvid.DeserializeData(origdata, true)
-				if err != nil {
-					return nil, err
-				}
-			}
-
-			// plug in data
-			block.V = origdata
-			if err = op.voxels.WriteBlock(block, d.BlockSize()); err != nil {
-				return nil, fmt.Errorf("Unable to WriteBlock() in %q\n", d.DataName())
-			}
-
-			// data returned through data
-			var retdata []byte
-			retdata, err = dvid.SerializeData(origdata, d.Compression(), d.Checksum())
-			if err != nil {
-				return nil, fmt.Errorf("Unable to serialize block in %q\n", d.DataName())
-			}
-
-			return retdata, err
-		}
-
-		patchdb, _ := store.(storage.TransactionDB)
-		if err = patchdb.Patch(ctx, chunk.K, patchfunc); err != nil {
-			dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, err)
-			return
-		}
+	if err = store.Put(ctx, chunk.K, serialization); err != nil {
+		dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, err)
+		return
 	}
 	ready <- nil
 	callback()
