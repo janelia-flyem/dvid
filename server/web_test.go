@@ -42,9 +42,7 @@ func TestReload(t *testing.T) {
 	apiStr := fmt.Sprintf("%snode/%s/note", WebAPIPath, uuid)
 	TestHTTP(t, "POST", apiStr, payload)
 
-	// Reload all metadata
-	reloadStr := fmt.Sprintf("%sserver/reload-metadata", WebAPIPath)
-	TestHTTP(t, "POST", reloadStr, nil)
+	datastore.CloseReopenTest()
 
 	// Verify it was saved.
 	r := TestHTTP(t, "GET", apiStr, nil)

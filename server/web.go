@@ -169,14 +169,6 @@ POST  /api/server/settings
 				Default = 1.
 
 
-POST  /api/server/reload-metadata
-
-	Reloads the metadata from storage.  This is useful when using multiple DVID frontends with 
-	a shared storage backend.  Typically, one DVID is designated "master" and handles any
-	modifications of the repositories and data instances.  Other DVIDs simply reload the metadata 
-	when prompted by an external coordinator, allowing the "slave" DVIDs to see changes made by
-	the master DVID.
-
 GET /api/server/blobstore/{reference}
    
 	GETs data with the given reference string from this server's blobstore. The blobstore is
@@ -702,8 +694,6 @@ func initRoutes() {
 	serverMux.Get("/api/server/groupcache", serverGroupcacheHandler)
 	serverMux.Get("/api/server/groupcache/", serverGroupcacheHandler)
 	serverMux.Post("/api/server/settings", serverSettingsHandler)
-	serverMux.Post("/api/server/reload-metadata", serverReload)
-	serverMux.Post("/api/server/reload-metadata/", serverReload)
 	serverMux.Get("/api/server/blobstore/:ref", blobstoreHandler)
 	serverMux.Get("/api/server/token", serverTokenHandler)
 	serverMux.Get("/api/server/token/", serverTokenHandler)
@@ -1575,15 +1565,6 @@ func serverSettingsHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func serverReload(c web.C, w http.ResponseWriter, r *http.Request) {
-	// Apply a global lock (if relevant) which already reloads meta
-	if err := datastore.MetadataUniversalLock(); err != nil {
-		BadRequest(w, r, err)
-		return
-	}
-	datastore.MetadataUniversalUnlock()
-}
-
 func blobstoreHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	method := strings.ToLower(r.Method)
 	if method != "get" {
@@ -1635,13 +1616,6 @@ func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
 // TODO -- Maybe allow assignment of child UUID via JSON in POST.  Right now, we only
 // allow this potentially dangerous function via command-line.
 func reposPostHandler(w http.ResponseWriter, r *http.Request) {
-	// Apply a global lock (if relevant) and reloads meta
-	if err := datastore.MetadataUniversalLock(); err != nil {
-		BadRequest(w, r, err)
-		return
-	}
-	defer datastore.MetadataUniversalUnlock()
-
 	config := dvid.NewConfig()
 	if r.Body != nil {
 		if err := config.SetByJSON(r.Body); err != nil {
@@ -1724,13 +1698,6 @@ func repoBranchVersionsHandler(c web.C, w http.ResponseWriter, r *http.Request) 
 }
 
 func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	// Apply a global lock (if relevant) and reloads meta
-	if err := datastore.MetadataUniversalLock(); err != nil {
-		BadRequest(w, r, err)
-		return
-	}
-	defer datastore.MetadataUniversalUnlock()
-
 	uuid := c.Env["uuid"].(dvid.UUID)
 
 	locked, err := datastore.LockedUUID(uuid)
@@ -1925,13 +1892,6 @@ func postNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func repoCommitStateHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	// Apply a global lock (if relevant) and reloads meta
-	if err := datastore.MetadataUniversalLock(); err != nil {
-		BadRequest(w, r, err)
-		return
-	}
-	defer datastore.MetadataUniversalUnlock()
-
 	uuid := c.Env["uuid"].(dvid.UUID)
 
 	locked, err := datastore.LockedUUID(uuid)
@@ -1944,13 +1904,6 @@ func repoCommitStateHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func repoCommitHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	// Apply a global lock (if relevant) and reloads meta
-	if err := datastore.MetadataUniversalLock(); err != nil {
-		BadRequest(w, r, err)
-		return
-	}
-	defer datastore.MetadataUniversalUnlock()
-
 	uuid := c.Env["uuid"].(dvid.UUID)
 	locked, err := datastore.LockedUUID(uuid)
 	if err != nil {
@@ -2001,13 +1954,6 @@ func repoCommitHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 
 // repoNewVersionHandler creates a new version node with the same branch as the parent
 func repoNewVersionHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	// Apply a global lock (if relevant) and reloads meta
-	if err := datastore.MetadataUniversalLock(); err != nil {
-		BadRequest(w, r, err)
-		return
-	}
-	defer datastore.MetadataUniversalUnlock()
-
 	uuid := c.Env["uuid"].(dvid.UUID)
 	jsonData := struct {
 		Note string `json:"note"`
@@ -2065,13 +2011,6 @@ func repoNewVersionHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 // TODO -- Might allow specification of UUID for child via HTTP, or only
 // allow this potentially dangerous op via command line.
 func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	// Apply a global lock (if relevant) and reloads meta
-	if err := datastore.MetadataUniversalLock(); err != nil {
-		BadRequest(w, r, err)
-		return
-	}
-	defer datastore.MetadataUniversalUnlock()
-
 	uuid := c.Env["uuid"].(dvid.UUID)
 	jsonData := struct {
 		Branch string `json:"branch"`

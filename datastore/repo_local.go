@@ -96,17 +96,6 @@ func Initialize(initMetadata bool, iconfig Config) error {
 	if err != nil {
 		return err
 	}
-	_, hastrans := m.store.(storage.TransactionDB)
-
-	if hastrans {
-		// check if metadata exists (globally locked so no other requests possible)
-		// cannot trust initial value because of race conditions
-		if found, _ := m.loadData(repoToUUIDKey, &(m.repoToUUID)); !found {
-			initMetadata = true
-		} else {
-			initMetadata = false
-		}
-	}
 
 	// TODO: parallelize metadata init fetches for high-latency backends
 	if initMetadata {
@@ -158,39 +147,6 @@ func Initialize(initMetadata bool, iconfig Config) error {
 	}
 
 	return nil
-}
-
-// MetadataUniversalLock locks shared databases (currently those implementing transactions)
-func MetadataUniversalLock() error {
-	// if db supports transaction, apply a system-wide lock and reload meta
-	store, _ := storage.MetaDataKVStore()
-	transdb, hastrans := store.(storage.TransactionDB)
-	if hastrans {
-		var ctx storage.MetadataContext
-		key := ctx.ConstructKey(storage.NewTKey(ServerLockKey, nil))
-		// TODO: automatically remove stale locks
-		// to prevent accidentally getting locked out
-		transdb.LockKey(key)
-
-		if err := ReloadMetadata(); err != nil {
-			transdb.UnlockKey(key)
-			dvid.Criticalf("Can't reload metadata: %v\n", err)
-			return fmt.Errorf("Can't reload metadata: %v\n", err)
-		}
-	}
-
-	return nil
-}
-
-// MetadataUniversalUnlock releases the shared lock
-func MetadataUniversalUnlock() {
-	store, _ := storage.MetaDataKVStore()
-	transdb, hastrans := store.(storage.TransactionDB)
-	if hastrans {
-		var ctx storage.MetadataContext
-		key := ctx.ConstructKey(storage.NewTKey(ServerLockKey, nil))
-		transdb.UnlockKey(key)
-	}
 }
 
 // ReloadMetadata reloads the repositories manager from an existing metadata store.

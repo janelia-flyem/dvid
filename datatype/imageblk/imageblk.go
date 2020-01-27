@@ -1328,87 +1328,47 @@ func (d *Data) PostExtents(ctx *datastore.VersionedCtx, start dvid.Point, end dv
 	if err != nil {
 		return err
 	}
-	patchdb, haspatch := store.(storage.TransactionDB)
+	// lock datatype to protect GET/PUT
+	d.Lock()
+	defer d.Unlock()
 
-	if haspatch {
-		// use patch function (do not post if no change)
-		patchfunc := func(data []byte) ([]byte, error) {
-			// will return empty extents if data is empty
-			extentsjson, err := d.deserializeExtents(data)
-			if err != nil {
-				return nil, err
-			}
-
-			var extents dvid.Extents
-			extents.MinPoint = extentsjson.MinPoint
-			extents.MaxPoint = extentsjson.MaxPoint
-
-			// update extents if necessary
-			if mod := extents.AdjustPoints(start, end); mod {
-
-				// serialize extents
-				extentsjson.MinPoint = extents.MinPoint
-				extentsjson.MaxPoint = extents.MaxPoint
-				ser_extents, err := d.serializeExtents(extentsjson)
-				if err != nil {
-					return nil, err
-				}
-				return ser_extents, nil
-			} else {
-				// return an 'error' if no change
-				return nil, ExtentsUnchanged
-			}
-		}
-
-		err = patchdb.Patch(ctx, MetaTKey(), patchfunc)
-		if err != ExtentsUnchanged {
-			return err
-		}
-	} else {
-		// lock datatype to protect GET/PUT
-		d.Lock()
-		defer d.Unlock()
-
-		// retrieve extents
-		data, err := store.Get(ctx, MetaTKey())
-		if err != nil {
-			return err
-		}
-
-		extentsjson, err := d.deserializeExtents(data)
-		if err != nil {
-			return err
-		}
-
-		// update extents if necessary
-		var extents dvid.Extents
-		extents.MinPoint = extentsjson.MinPoint
-		extents.MaxPoint = extentsjson.MaxPoint
-
-		if mod := extents.AdjustPoints(start, end); mod {
-			// serialize extents
-			extentsjson.MinPoint = extents.MinPoint
-			extentsjson.MaxPoint = extents.MaxPoint
-			ser_extents, err := d.serializeExtents(extentsjson)
-			if err != nil {
-				return err
-			}
-
-			// !! update extents only if a non-distributed dvid
-			// TODO: remove this
-			d.Extents = extents
-			err = datastore.SaveDataByVersion(ctx.VersionID(), d)
-			if err != nil {
-				dvid.Infof("Error in trying to save repo on change: %v\n", err)
-			}
-
-			// post actual extents
-			return store.Put(ctx, MetaTKey(), ser_extents)
-		}
+	// retrieve extents
+	data, err := store.Get(ctx, MetaTKey())
+	if err != nil {
+		return err
 	}
 
-	return nil
+	extentsjson, err := d.deserializeExtents(data)
+	if err != nil {
+		return err
+	}
 
+	// update extents if necessary
+	var extents dvid.Extents
+	extents.MinPoint = extentsjson.MinPoint
+	extents.MaxPoint = extentsjson.MaxPoint
+
+	if mod := extents.AdjustPoints(start, end); mod {
+		// serialize extents
+		extentsjson.MinPoint = extents.MinPoint
+		extentsjson.MaxPoint = extents.MaxPoint
+		ser_extents, err := d.serializeExtents(extentsjson)
+		if err != nil {
+			return err
+		}
+
+		// !! update extents only if a non-distributed dvid
+		// TODO: remove this
+		d.Extents = extents
+		err = datastore.SaveDataByVersion(ctx.VersionID(), d)
+		if err != nil {
+			dvid.Infof("Error in trying to save repo on change: %v\n", err)
+		}
+
+		// post actual extents
+		return store.Put(ctx, MetaTKey(), ser_extents)
+	}
+	return nil
 }
 
 func (d *Data) Resolution() dvid.Resolution {
