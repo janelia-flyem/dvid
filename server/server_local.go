@@ -403,6 +403,7 @@ func DatastoreConfig() datastore.Config {
 		InstanceGen:   tc.Server.IIDGen,
 		InstanceStart: dvid.InstanceID(tc.Server.IIDStart),
 		MutationStart: tc.Server.MutIDStart,
+		ReadOnly:      readonly,
 	}
 }
 

@@ -61,6 +61,7 @@ type Config struct {
 	InstanceGen   string
 	InstanceStart dvid.InstanceID
 	MutationStart uint64
+	ReadOnly      bool
 }
 
 // Initialize creates a repositories manager that is handled through package functions.
@@ -78,6 +79,7 @@ func Initialize(initMetadata bool, iconfig Config) error {
 		instanceIDGen:   iconfig.InstanceGen,
 		instanceIDStart: iconfig.InstanceStart,
 		mutationIDStart: InitialMutationID,
+		readOnly:        iconfig.ReadOnly,
 	}
 	if iconfig.InstanceGen == "" {
 		m.instanceIDGen = "sequential"
@@ -100,7 +102,7 @@ func Initialize(initMetadata bool, iconfig Config) error {
 	// TODO: parallelize metadata init fetches for high-latency backends
 	if initMetadata {
 		// Initialize repo management data in storage
-		dvid.TimeInfof("Initializing repo management data in storage...\n")
+		dvid.TimeInfof("Initializing repo management data in storage")
 		if err := m.putNewIDs(); err != nil {
 			return err
 		}
@@ -113,10 +115,11 @@ func Initialize(initMetadata bool, iconfig Config) error {
 		}
 	} else {
 		// Load the repo metadata
-		dvid.TimeInfof("Loading metadata from storage...\n")
+		dvid.TimeInfof("Loading metadata from storage (read-only %t)", m.readOnly)
 		if err = m.loadMetadata(); err != nil {
 			return fmt.Errorf("Error loading metadata: %v", err)
 		}
+		dvid.TimeInfof("Finished loading metadata from storage (read-only %t)", m.readOnly)
 	}
 	// Set the package variable.  We are good to go...
 	manager = m
@@ -126,6 +129,7 @@ func Initialize(initMetadata bool, iconfig Config) error {
 		if data.IsDeleted() {
 			continue
 		}
+		dvid.TimeInfof("Initializing data instance %q, type %q", data.DataName(), data.TypeName())
 		logwriter, ok := data.(storage.LogWritable)
 		if ok && logwriter.WriteLogRequired() {
 			writeLog := logwriter.GetWriteLog()
@@ -144,6 +148,7 @@ func Initialize(initMetadata bool, iconfig Config) error {
 		if ok {
 			d.Initialize() // Should be done sequentially in case its necessary to start receiving requests.
 		}
+		dvid.TimeInfof("Finished initializing data instance %q", data.DataName())
 	}
 
 	return nil
@@ -197,6 +202,8 @@ func ReloadMetadata() error {
 
 // repoManager manages all the repos in the datastore.
 type repoManager struct {
+	readOnly bool
+
 	// Mapping of all UUIDs to the repositories where that node sits.
 	repos     map[dvid.UUID]*repoT
 	repoMutex sync.RWMutex
@@ -355,6 +362,10 @@ func (m *repoManager) loadData(t storage.TKeyClass, data interface{}) (found boo
 }
 
 func (m *repoManager) putData(t storage.TKeyClass, data interface{}) error {
+	if m.readOnly {
+		dvid.Infof("Server in read-only mode: will not write metadata data.\n")
+		return nil
+	}
 	var ctx storage.MetadataContext
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -372,7 +383,7 @@ func (m *repoManager) loadNewIDs() error {
 		return err
 	}
 	if len(value) != dvid.RepoIDSize+dvid.VersionIDSize+dvid.InstanceIDSize {
-		return fmt.Errorf("Bad value returned for new ids.  Length %d bytes!", len(value))
+		return fmt.Errorf("Bad value returned for new ids.  Length %d bytes", len(value))
 	}
 	pos := 0
 	m.repoID = dvid.RepoIDFromBytes(value[pos : pos+dvid.RepoIDSize])
@@ -384,6 +395,10 @@ func (m *repoManager) loadNewIDs() error {
 }
 
 func (m *repoManager) putNewIDs() error {
+	if m.readOnly {
+		dvid.Infof("Server in read-only mode: will not write metadata new version and instance IDs.\n")
+		return nil
+	}
 	var ctx storage.MetadataContext
 	value := append(m.repoID.Bytes(), m.versionID.Bytes()...)
 	value = append(value, m.instanceID.Bytes()...)
@@ -391,6 +406,10 @@ func (m *repoManager) putNewIDs() error {
 }
 
 func (m *repoManager) putCaches() error {
+	if m.readOnly {
+		dvid.Infof("Server in read-only mode: will not write metadata caches.\n")
+		return nil
+	}
 	m.idMutex.RLock()
 	if err := m.putData(repoToUUIDKey, m.repoToUUID); err != nil {
 		m.idMutex.RUnlock()
@@ -648,15 +667,17 @@ func (m *repoManager) loadVersion0() error {
 	dvid.TimeInfof("Loaded %d repositories from metadata store.\n", len(m.repos))
 
 	// make sure any in-process deletions restart
-	for repoID, root := range m.repoToUUID {
-		r, found := m.repos[root]
-		if !found {
-			return fmt.Errorf("could not find repo %s (repo ID %d)", root, repoID)
-		}
-		for name, data := range r.data {
-			if data.IsDeleted() {
-				if err := r.deleteData(name); err != nil {
-					dvid.TimeCriticalf("tried to restart deletion of data %q but failed: %v\n", name, err)
+	if !m.readOnly {
+		for repoID, root := range m.repoToUUID {
+			r, found := m.repos[root]
+			if !found {
+				return fmt.Errorf("could not find repo %s (repo ID %d)", root, repoID)
+			}
+			for name, data := range r.data {
+				if data.IsDeleted() {
+					if err := r.deleteData(name); err != nil {
+						dvid.TimeCriticalf("tried to restart deletion of data %q but failed: %v\n", name, err)
+					}
 				}
 			}
 		}
@@ -691,7 +712,7 @@ func (m *repoManager) loadMetadata() error {
 		if !found {
 			return fmt.Errorf("could not find repo %s (repo ID %d)", root, repoID)
 		}
-		if err := r.initMutationID(m.store, m.mutationIDStart); err != nil {
+		if err := r.initMutationID(m.store, m.mutationIDStart, m.readOnly); err != nil {
 			return err
 		}
 		branchHeads := r.branchHeads()
@@ -1067,7 +1088,7 @@ func (m *repoManager) newRepo(alias, description string, assign *dvid.UUID, pass
 	if err := r.save(); err != nil {
 		return r, err
 	}
-	if err := r.initMutationID(m.store, m.mutationIDStart); err != nil {
+	if err := r.initMutationID(m.store, m.mutationIDStart, m.readOnly); err != nil {
 		return r, err
 	}
 	dvid.Infof("Created and saved new repo %q, id %d\n", uuid, id)
@@ -2461,7 +2482,7 @@ func (r *repoT) delete() error {
 	return manager.store.Delete(ctx, tk)
 }
 
-func (r *repoT) initMutationID(store storage.KeyValueDB, mutationIDStart uint64) error {
+func (r *repoT) initMutationID(store storage.KeyValueDB, mutationIDStart uint64, readOnly bool) error {
 	var ctx storage.MetadataContext
 	tk := storage.NewTKey(mutidKey, r.id.Bytes())
 	mutdata, err := store.Get(ctx, tk)
@@ -2476,11 +2497,13 @@ func (r *repoT) initMutationID(store storage.KeyValueDB, mutationIDStart uint64)
 		r.mutCurID = mutationIDStart
 		dvid.Infof("Set mutation ID for repo %s to minimum set: %d\n", r.uuid, r.mutCurID)
 	}
-	r.mutSavedID = r.mutCurID + StrideMutationID
-	mutdata = make([]byte, 8)
-	binary.LittleEndian.PutUint64(mutdata, r.mutSavedID)
-	if err := store.Put(ctx, tk, mutdata); err != nil {
-		return err
+	if !readOnly {
+		r.mutSavedID = r.mutCurID + StrideMutationID
+		mutdata = make([]byte, 8)
+		binary.LittleEndian.PutUint64(mutdata, r.mutSavedID)
+		if err := store.Put(ctx, tk, mutdata); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -2495,6 +2518,10 @@ func (r *repoT) getMutationID() (mutID uint64) {
 func (r *repoT) newMutationID() (mutID uint64) {
 	if manager == nil || manager.store == nil {
 		dvid.Criticalf("Bad new mutation ID request.  Manager or store nil.\n")
+		return
+	}
+	if manager.readOnly {
+		dvid.Criticalf("Cannot give new mutation ID in read-only mode.\n")
 		return
 	}
 	var ctx storage.MetadataContext
