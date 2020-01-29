@@ -139,9 +139,10 @@ For each platform (Mac and Linux):
     ```
     $ conda activate base
     $ GOMAXPROCS=4 DVID_LOW_MEMORY=1 conda build scripts/conda-recipe
-    $ anaconda upload -u flyem-forge $(conda info --base)/conda-bld/osx-64/dvid-0.8.20-0.tar.bz2 # Mac
-    $ anaconda upload -u flyem-forge $(conda info --base)/conda-bld/linux-64/dvid-0.8.20-0.tar.bz2 # Linux
+    $ anaconda upload -u flyem-forge $(conda info --base)/conda-bld/osx-64/dvid-someVersionPlusHash-0.tar.bz2 # Mac
+    $ anaconda upload -u flyem-forge $(conda info --base)/conda-bld/linux-64/dvid-someVersionPlusHash-0.tar.bz2 # Linux
     ```
+   (The exact name of the tarball to upload to Anaconda will be described by the script output.)
 
    **Note:** For maximum Linux compatibility, build within the [`flyem-build`][flyem-build] Docker container:
    
@@ -165,10 +166,16 @@ For each platform (Mac and Linux):
    # Within the container
    # Note: It's recommended to use GOMAXPROCS to limit the cpus used in the build/tests
    cd /flyem-workspace/gopath/src/github.com/janelia-flyem/dvid
+   git pull
+   git checkout <tag>
    GOMAXPROCS=4 DVID_LOW_MEMORY=1 conda build scripts/conda-recipe
-   anaconda upload /opt/conda/conda-bld/linux-64/dvid-0.8.20-0.tar.bz2
+   anaconda upload -u flyem-forge /opt/conda/conda-bld/linux-64/dvid-someVersionPlusHash-0.tar.bz2
    ```
    
+   You can move the generated tarball to the host from your container with the following:
+   ```
+   % docker cp flyem-build:/flyem-workspace/gopath/src/github.com/janelia-flyem/dvid/dvid-0.9.6-dist-linux.tar.bz2 .
+   ```
    </details>
 
    **Note:** For maximum macOS compatibility, make sure you have the SDK for MacOSX 10.10,
