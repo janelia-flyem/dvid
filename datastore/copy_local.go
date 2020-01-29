@@ -221,10 +221,6 @@ func FlattenMetadata(uuid dvid.UUID, configFName string) error {
 			}
 		}
 	}
-	jsonBytes, err := flattenRepo.MarshalJSON()
-	if err == nil {
-		dvid.Infof("Flattened Repo Metadata:\n%s\n", string(jsonBytes))
-	}
 
 	// Store into destination store.
 	dstKV, ok := dstStore.(storage.OrderedKeyValueDB)
