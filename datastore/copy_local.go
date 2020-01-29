@@ -187,7 +187,6 @@ func FlattenMetadata(uuid dvid.UUID, configFName string) error {
 			versionToUUID[versions[i]] = uuids[i]
 		}
 	} else {
-		repoToUUID[origRepo.id] = origRepo.uuid
 		for v, node := range origRepo.dag.nodes {
 			versionToUUID[v] = node.uuid
 		}
@@ -197,6 +196,7 @@ func FlattenMetadata(uuid dvid.UUID, configFName string) error {
 	if err != nil {
 		return err
 	}
+	repoToUUID[flattenRepo.id] = flattenRepo.uuid
 	if fc.Alias != "" {
 		flattenRepo.alias = fc.Alias
 	}
@@ -206,7 +206,6 @@ func FlattenMetadata(uuid dvid.UUID, configFName string) error {
 	if len(fc.RepoLog) != 0 {
 		flattenRepo.log = fc.RepoLog
 	}
-
 	if len(fc.VersionsMeta) > 0 {
 		for _, vmeta := range fc.VersionsMeta {
 			_, v, err := MatchingUUID(vmeta.Version)
