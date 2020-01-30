@@ -2830,20 +2830,20 @@ func (d *dagT) duplicate(versions map[dvid.VersionID]struct{}) *dagT {
 	if len(versions) != 0 {
 		// prune the DAG of any version not on our list, adjusting the
 		// parents/children pointers as we go.
-		for v, node := range d.nodes {
+		for v, node := range dup.nodes {
 			if _, keep := versions[v]; !keep {
 				for _, childV := range node.children {
-					if _, exists := dup.nodes[childV]; exists {
-						dup.nodes[childV].parents = editVersionSlice(dup.nodes[childV].parents, v, node.parents)
+					if dupNode, exists := dup.nodes[childV]; exists {
+						dupNode.parents = editVersionSlice(dupNode.parents, v, node.parents)
 					} else {
-						dvid.Criticalf("found node %d had child %d that didn't exist on pruning\n", v, childV)
+						dvid.Criticalf("found node %d had child %d that didn't exist on pruning: %v\n", v, childV, node.children)
 					}
 				}
 				for _, parentV := range node.parents {
-					if _, exists := dup.nodes[parentV]; exists {
-						dup.nodes[parentV].children = editVersionSlice(dup.nodes[parentV].children, v, node.children)
+					if dupNode, exists := dup.nodes[parentV]; exists {
+						dupNode.children = editVersionSlice(dupNode.children, v, node.children)
 					} else {
-						dvid.Criticalf("found node %d had parent %d that didn't exist on pruning\n", v, parentV)
+						dvid.Criticalf("found node %d had parent %d that didn't exist on pruning: %v\n", v, parentV, node.parents)
 					}
 				}
 				delete(dup.nodes, v)
@@ -2983,6 +2983,15 @@ type nodeT struct {
 
 	created time.Time
 	updated time.Time
+}
+
+func (node *nodeT) String() string {
+	s := fmt.Sprintf("UUID: %s\n", node.uuid)
+	s += fmt.Sprintf("Version: %d\n", node.version)
+	s += fmt.Sprintf("Locked: %t\n", node.locked)
+	s += fmt.Sprintf("Parents: %v\n", node.parents)
+	s += fmt.Sprintf("Children: %v\n", node.children)
+	return s
 }
 
 // duplicate creates a duplicate node, limiting the data instances
