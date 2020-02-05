@@ -891,14 +891,15 @@ func calcVersionPath(uuids []dvid.UUID) (versionsOnPath map[dvid.VersionID]struc
 		err = fmt.Errorf("can't make version map with empty uuid list")
 		return
 	}
-	versionsToStore = make([]dvid.VersionID, len(uuids))
+	versionsToStore = make([]dvid.VersionID, len(uuids)+1)
+	versionsToStore[0] = 0
 	for i, uuid := range uuids {
 		var v dvid.VersionID
 		v, err = VersionFromUUID(uuid)
 		if err != nil {
 			return
 		}
-		versionsToStore[i] = v
+		versionsToStore[i+1] = v
 	}
 	lastStoredV := versionsToStore[len(versionsToStore)-1]
 	var ancestorVersions []dvid.VersionID
@@ -906,7 +907,8 @@ func calcVersionPath(uuids []dvid.UUID) (versionsOnPath map[dvid.VersionID]struc
 		return
 	}
 	numV := len(ancestorVersions)
-	versionsOnPath = make(map[dvid.VersionID]struct{}, numV)
+	versionsOnPath = make(map[dvid.VersionID]struct{}, numV+1)
+	versionsOnPath[0] = struct{}{}
 
 	lastStoredV++
 	for _, v := range ancestorVersions {
@@ -1049,11 +1051,11 @@ func copyVersions(srcStore, dstStore dvid.Store, d1, d2 dvid.Data, uuids []dvid.
 			}
 			curBytes := uint64(len(kv.V) + len(kv.K))
 			if _, onPath := versionsOnPath[curV]; onPath {
-				tk, _ := storage.TKeyFromKey(kv.K)
+				// tk, _ := storage.TKeyFromKey(kv.K)
 				for _, v := range versionsToStore {
 					if curV <= v {
 						kvsToStore[v] = kv
-						dvid.Infof("adding key %q, value %q, version %d to version %d store\n", string(tk), string(kv.V), curV, v)
+						// dvid.Infof("adding key %q, value %q, version %d to version %d store\n", string(tk), string(kv.V), curV, v)
 						numStoredKV++
 						break
 					}
