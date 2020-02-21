@@ -13,7 +13,7 @@ Both high-level and detailed descriptions of DVID and its ecosystem can found he
 * [Paper on DVID](https://www.frontiersin.org/article/10.3389/fncir.2019.00005)
 describing its motivation and architecture, including how versioning works at the key-value
 level.  
-* The [DVID Wiki](https://github.com/janelia-flyem/dvid/wiki) acts as a user guide, including installation and examples of use.
+* The main place for DVID documentation and information is [dvid.io](http://dvid.io).  The [DVID Wiki](https://github.com/janelia-flyem/dvid/wiki) in this github repository will be updated and moved to the website.
 
 ![High-level architecture of DVID](/images/dvid-highlevel.png)
 
