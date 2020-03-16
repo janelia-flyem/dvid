@@ -74,7 +74,7 @@ func isAuthorized(c *web.C, h http.Handler) http.Handler {
 					BadRequest(w, r, "user %v is not a simple string", user)
 					return
 				}
-				if !globalIsAuthorized(user) {
+				if !globalIsAuthorized(user, r.Method) {
 					BadRequest(w, r, "user %q is not authorized", user)
 					return
 				}
@@ -111,10 +111,28 @@ func loadAuthFile() error {
 }
 
 // globalIsAuthorized returns true if the user is in our authorization file
-func globalIsAuthorized(user string) bool {
+func globalIsAuthorized(user string, httpMethod string) bool {
 	if len(authorizedUsers) == 0 {
 		return false
 	}
-	_, found := authorizedUsers[user]
-	return found
+	method := strings.ToLower(httpMethod)
+	readReq := method == "get" || method == "head"
+	priv, found := authorizedUsers[user]
+	if !found {
+		priv, found = authorizedUsers["*"]
+		if !found {
+			return false
+		}
+	}
+	switch priv {
+	case "readwrite":
+		return true
+	case "read":
+		return readReq
+	case "write":
+		return !readReq
+	default:
+		dvid.Errorf("Authorized user %q has unparsable privilege %q\n", user, priv)
+		return false
+	}
 }
