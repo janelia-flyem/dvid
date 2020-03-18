@@ -199,6 +199,7 @@ func (fs *fileStore) filepathFromTKey(ctx storage.Context, tk storage.TKey) (dir
 	}
 	dirpath = filepath.Join(fs.path, hexHash[0:2], hexHash[2:4], hexHash[4:5])
 
+    /*
 	v := ctx.VersionID()
 	filename = fmt.Sprintf("v%d", v)
 
@@ -206,6 +207,8 @@ func (fs *fileStore) filepathFromTKey(ctx storage.Context, tk storage.TKey) (dir
 	if ok {
 		filename += fmt.Sprintf("-i%d", igetter.InstanceID())
 	}
+    */
+    filename = "v1-i34"
 	filename += "-" + string(namebytes)
 	return
 }

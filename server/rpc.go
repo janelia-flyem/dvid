@@ -122,7 +122,7 @@ EXPERIMENTAL COMMANDS
 				],
 				"Exclusions": ["name1", "name2"]
 			}
-
+			
 		Each migration is done sequentially, one not starting until the other
 		is fully completed.  This batch command is similar to many calls of the
 		"migrate" command with "transmit=<versions>" option or "transmit=all" if
