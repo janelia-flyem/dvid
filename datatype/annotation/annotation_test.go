@@ -877,7 +877,7 @@ var testBlocksElements = Elements{
 
 var testBlocksReturn = `{"1,1,1":[{"Pos":[65,70,75],"Kind":"PostSyn","Tags":["Synapse1"],"Prop":null,"Rels":[{"Rel":"PostSynTo","To":[129,130,131]}]}],"2,2,2":[{"Pos":[129,130,131],"Kind":"PreSyn","Tags":["Synapse1"],"Prop":{"I'm not a PSD":"not really","Im a T-Bar":"no","i'm not really special":"at all"},"Rels":[{"Rel":"PreSynTo","To":[129,130,131]},{"Rel":"PreSynTo","To":[65,70,75]}]},{"Pos":[130,131,132],"Kind":"PostSyn","Tags":["Synapse1"],"Prop":null,"Rels":[{"Rel":"PostSynTo","To":[129,130,131]}]}]}`
 
-func TestPostBlocks(t *testing.T) {
+func TestPostBlocksAndAll(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
 	}
@@ -906,11 +906,18 @@ func TestPostBlocks(t *testing.T) {
 	// GET synapses back within superset bounding box and make sure all data is there.
 	testResponse(t, testBlocksElements, "%snode/%s/%s/elements/1000_1000_1000/0_0_0", server.WebAPIPath, uuid, data.DataName())
 
-	// fast GET /blocks for all synapses
-	blocksURL := fmt.Sprintf("%snode/%s/%s/blocks/128_128_128/64_64_64", server.WebAPIPath, uuid, data.DataName())
+	// fast GET /all-elements for all synapses
+	blocksURL := fmt.Sprintf("%snode/%s/%s/all-elements", server.WebAPIPath, uuid, data.DataName())
 	ret := server.TestHTTP(t, "GET", blocksURL, nil)
 	if string(ret) != testBlocksReturn {
-		t.Fatalf("Did not get all synapse elements returned from GET /blocks:\nGot: %s\nExpected: %s\n", string(ret), testBlocksReturn)
+		t.Fatalf("Did not get all elements returned from GET /all-elements:\nGot: %s\nExpected: %s\n", string(ret), testBlocksReturn)
+	}
+
+	// fast GET /blocks for all synapses
+	blocksURL = fmt.Sprintf("%snode/%s/%s/blocks/128_128_128/64_64_64", server.WebAPIPath, uuid, data.DataName())
+	ret = server.TestHTTP(t, "GET", blocksURL, nil)
+	if string(ret) != testBlocksReturn {
+		t.Fatalf("Did not get all elements returned from GET /blocks:\nGot: %s\nExpected: %s\n", string(ret), testBlocksReturn)
 	}
 }
 

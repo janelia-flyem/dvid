@@ -256,6 +256,15 @@ GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>
 		...
 	}
 
+GET <api URL>/node/<UUID>/<data name>/all-elements
+
+	Returns all point annotations in the entire data instance, which could exceed data
+	response sizes (set by server) if too many elements are present.  This should be
+	equivalent to the /blocks endpoint but without the need to determine extents.
+
+	The returned stream of data is the same as /blocks endpoint.
+
+
 POST <api URL>/node/<UUID>/<data name>/blocks[?<options>]
 
 	Unlike the POST /elements endpoint, the /blocks endpoint is the fastest way to store
@@ -1892,6 +1901,52 @@ func (d *Data) GetTagJSON(ctx *datastore.VersionedCtx, tag Tag, addRels bool) (j
 	return
 }
 
+// StreamAll returns all elements for this data instance.
+func (d *Data) StreamAll(ctx *datastore.VersionedCtx, w http.ResponseWriter) error {
+	store, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return err
+	}
+	minTKey, maxTKey := BlockTKeyRange()
+
+	// d.RLock()
+	// defer d.RUnlock()
+
+	if _, err := w.Write([]byte("{")); err != nil {
+		return err
+	}
+	numBlocks := 0
+	err = store.ProcessRange(ctx, minTKey, maxTKey, nil, func(chunk *storage.Chunk) error {
+		bcoord, err := DecodeBlockTKey(chunk.K)
+		if err != nil {
+			return err
+		}
+		if len(chunk.V) == 0 {
+			return nil
+		}
+		s := fmt.Sprintf(`"%d,%d,%d":`, bcoord[0], bcoord[1], bcoord[2])
+		if numBlocks > 0 {
+			s = "," + s
+		}
+		if _, err := w.Write([]byte(s)); err != nil {
+			return err
+		}
+		if _, err := w.Write(chunk.V); err != nil {
+			return err
+		}
+		numBlocks++
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write([]byte("}")); err != nil {
+		return err
+	}
+	dvid.Infof("Returned %d blocks worth of elements in a /all-elements request\n", numBlocks)
+	return nil
+}
+
 // StreamBlocks returns synapse elements for a given subvolume of image space.
 func (d *Data) StreamBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, ext *dvid.Extents3d) error {
 	store, err := datastore.GetOrderedKeyValueDB(d)
@@ -3024,6 +3079,26 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 		default:
 			server.BadRequest(w, r, "Only GET action is available on 'roi' endpoint.")
+			return
+		}
+
+	case "all-elements":
+		switch action {
+		case "get":
+			// GET <api URL>/node/<UUID>/<data name>/all-elements
+			if len(parts) >= 6 {
+				server.BadRequest(w, r, "Do not expect additional parameters after 'all-elements' in GET request")
+				return
+			}
+			w.Header().Set("Content-type", "application/json")
+			if err := d.StreamAll(ctx, w); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			timedLog.Infof("HTTP %s: all elements (%s)", r.Method, r.URL)
+
+		default:
+			server.BadRequest(w, r, "Only GET is available on 'all-elements' endpoint.")
 			return
 		}
 
