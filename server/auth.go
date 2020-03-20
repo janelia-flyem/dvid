@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	jwt "github.com/dgrijalva/jwt-go"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -15,13 +16,19 @@ import (
 
 // global authorization list.
 // TODO: more elaborate version- and instance-based ACL.
-var authorizedUsers map[string]string
+type authData struct {
+	sync.RWMutex
+	list map[string]string
+}
 
-// authConfig holds information on what server to contact for login and the
+var authorizedUsers authData
+
+// authConfig holds information on what server to contact for login and other auth settings
 type authConfig struct {
 	ProxyAddress string `toml:"proxy_address"`
 	AuthFile     string `toml:"auth_file"`
 	SecretKey    string `toml:"secret_key"`
+	NoEnforce    bool   `toml:"no_enforce"` // if true, accept all requestw
 }
 
 // generateJWT returns a JWT given a user and secret key string
@@ -43,6 +50,10 @@ func generateJWT(user string) (string, error) {
 func isAuthorized(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		reqToken := r.Header.Get("Authorization")
+		if tc.Auth.NoEnforce {
+			h.ServeHTTP(w, r)
+			return
+		}
 		if len(reqToken) == 0 {
 			BadRequest(w, r, "JWT required via Authorization in request header")
 			return
@@ -104,22 +115,27 @@ func loadAuthFile() error {
 	if err != nil {
 		return err
 	}
-	if err := json.Unmarshal(data, &authorizedUsers); err != nil {
-		return err
-	}
-	return nil
+	authorizedUsers.Lock()
+	authorizedUsers.list = make(map[string]string)
+	err = json.Unmarshal(data, &authorizedUsers)
+	authorizedUsers.Unlock()
+	return err
 }
 
 // globalIsAuthorized returns true if the user is in our authorization file
 func globalIsAuthorized(user string, httpMethod string) bool {
-	if len(authorizedUsers) == 0 {
+	if len(authorizedUsers.list) == 0 {
 		return false
 	}
 	method := strings.ToLower(httpMethod)
 	readReq := method == "get" || method == "head"
-	priv, found := authorizedUsers[user]
+	authorizedUsers.RLock()
+	priv, found := authorizedUsers.list[user]
+	authorizedUsers.RUnlock()
 	if !found {
-		priv, found = authorizedUsers["*"]
+		authorizedUsers.RLock()
+		priv, found = authorizedUsers.list["*"]
+		authorizedUsers.RUnlock()
 		if !found {
 			return false
 		}

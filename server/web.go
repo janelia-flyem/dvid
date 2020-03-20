@@ -175,6 +175,10 @@ GET /api/server/blobstore/{reference}
 	populated as part of mutation logging and is read-only.  The reference is a URL-friendly 
 	content hash (FNV-128) of the blob data.
 
+POST /api/server/reload-auth
+
+	Reloads any authorization file as configured in the TOML file.
+
 -------------------------
 Memory Profiler endpoints
 -------------------------
@@ -697,10 +701,13 @@ func initRoutes() {
 	serverMux.Get("/api/server/blobstore/:ref", blobstoreHandler)
 	serverMux.Get("/api/server/token", serverTokenHandler)
 	serverMux.Get("/api/server/token/", serverTokenHandler)
+	serverMux.Post("/api/server/reload-auth", serverReloadAuthHandler)
+	serverMux.Post("/api/server/reload-auth/", serverReloadAuthHandler)
 
 	if !readonly {
 		mainMux.Post("/api/repos", reposPostHandler)
 	}
+
 	mainMux.Get("/api/repos/info", reposInfoHandler)
 
 	repoRawMux := web.New()
@@ -1563,6 +1570,15 @@ func serverSettingsHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		setMaxThrottleOps(maxOps)
 		fmt.Fprintf(w, "Maximum throttled ops set to %d from %d\n", maxOps, old)
 	}
+}
+
+func serverReloadAuthHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	if err := loadAuthFile(); err != nil {
+		BadRequest(w, r, "unable to reload auth file: %v", err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	fmt.Fprintf(w, "Reloaded authorizations from file %q.\n", tc.Auth.AuthFile)
 }
 
 func blobstoreHandler(c web.C, w http.ResponseWriter, r *http.Request) {
