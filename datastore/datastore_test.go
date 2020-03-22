@@ -76,6 +76,11 @@ func TestBranching(t *testing.T) {
 		t.Fatalf("couldn't commit node\n")
 	}
 
+	_, err = NewVersion(master3, "random note", "random", nil)
+	if err != nil {
+		t.Fatalf("couldn't create new version: %v\n", err)
+	}
+
 	other2, err := NewVersion(other1, "other note 2", "other", nil)
 	if err != nil {
 		t.Fatalf("couldn't create new version: %v\n", err)

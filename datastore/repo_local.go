@@ -2744,20 +2744,42 @@ func (d *dagT) getAncestryByBranch(branch string) (ancestry []dvid.UUID, err err
 	defer d.RUnlock()
 
 	// find leaf for this branch.
-	var leaf *nodeT
+	var branchName string
+	var branchNode *nodeT
 	for _, node := range d.nodes {
 		if node.branch == branch || (branch == "master" && node.branch == "") {
-			if len(node.children) == 0 {
-				if leaf != nil {
-					return nil, fmt.Errorf("multiple paths for branch %q were detected", branch)
-				}
-				leaf = node
+			branchNode = node
+			branchName = node.branch
+		}
+	}
+	if branchNode == nil {
+		ancestry = []dvid.UUID{}
+		return
+	}
+	for {
+		leaf := true
+		for _, childV := range branchNode.children {
+			child, found := d.nodes[childV]
+			if !found {
+				err = fmt.Errorf("branch %q node %s has child version %d that doesn't exist", branchName, branchNode.uuid, childV)
+				return
 			}
+			if child.branch == branchName {
+				if !leaf {
+					err = fmt.Errorf("branch %q has more than 1 child: %s and %s", branchName, child.uuid, branchNode.uuid)
+					return
+				}
+				branchNode = child
+				leaf = false
+			}
+		}
+		if leaf {
+			break
 		}
 	}
 
 	// start from leaf and work way up to root
-	cur := leaf
+	cur := branchNode
 	for {
 		if cur == nil {
 			break
