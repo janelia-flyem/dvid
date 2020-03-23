@@ -67,9 +67,11 @@ max_log_age = 30   # days
 
 [mutations]
 # use kafka server with "my-mutations" topic.
-# logstore = "kafka:my-mutations"
+# httpstore = "kafka:my-mutations"
 # use local log store with automatic UUID topic
-logstore = "logstore:mutationlog"
+httpstore = "logstore:mutationlog"
+# store JSON mutation records for selected instances in Data+Version UUID log files
+jsonstore = "/path/to/json-mutlog"
 # store any large POST body into blobstore with unique ref stored in kafka
 blobstore = "raid6"
 

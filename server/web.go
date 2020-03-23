@@ -845,7 +845,7 @@ func recoverHandler(c *web.C, h http.Handler) http.Handler {
 func mutationsHandler(c *web.C, h http.Handler) http.Handler {
 	mutConfig := MutationLogSpec()
 	fn := func(w http.ResponseWriter, r *http.Request) {
-		if mutConfig.Logstore != "" {
+		if mutConfig.Httpstore != "" {
 			buf, err := ioutil.ReadAll(r.Body)
 			if err != nil {
 				BadRequest(w, r, "unable to read POST for mirroring: %v", err)
@@ -875,7 +875,7 @@ func mutationsHandler(c *web.C, h http.Handler) http.Handler {
 				}
 				dataID = data.DataUUID()
 			}
-			if err := LogMutation(uuid, dataID, r, buf); err != nil {
+			if err := LogHTTPMutation(uuid, dataID, r, buf); err != nil {
 				BadRequest(w, r, err)
 				return
 			}

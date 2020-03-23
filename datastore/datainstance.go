@@ -116,6 +116,12 @@ func (vctx *VersionedCtx) GetBestKeyVersion(keys []storage.Key) (storage.Key, er
 	return kv.K, err
 }
 
+// VersionUUID returns the UUID associated with this versioned context.
+func (vctx *VersionedCtx) VersionUUID() dvid.UUID {
+	uuid, _ := UUIDFromVersion(vctx.VersionID())
+	return uuid
+}
+
 // Head checks whether this the open head of the master branch
 func (vctx *VersionedCtx) Head() bool {
 	rootversion, _ := UUIDFromVersion(vctx.VersionID())

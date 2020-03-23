@@ -20,6 +20,7 @@ import (
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 )
 
@@ -147,6 +148,11 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 	}
 
 	timedLog.Infof("Merged %s -> %d, data %q, resulting in %d blocks", delta.Merged, delta.Target, d.DataName(), len(delta.Blocks))
+
+	// send merge information to separate mutation log file
+	if err := server.LogJSONMutation(d.DataUUID(), versionuuid, jsonmsg); err != nil {
+		dvid.Criticalf("can't log mutation to data %q, version %s: %s\n", d.DataName(), versionuuid, jsonmsg)
+	}
 
 	// send kafka merge complete event to instance-uuid topic
 	msginfo = map[string]interface{}{

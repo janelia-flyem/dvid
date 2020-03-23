@@ -212,3 +212,8 @@ source:
   - git_url: https://github.com/dgraph-io/ristretto
     git_tag: v0.0.1 # Don't change this without also changing it in get-go-dependencies.sh!!!
     folder:  src/github.com/dgraph-io/ristretto
+
+  # protolog
+  - git_url: https://github.com/janelia-flyem/protolog
+    git_tag: master
+    folder:  src/github.com/janelia-flyem/protolog

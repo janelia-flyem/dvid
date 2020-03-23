@@ -1275,6 +1275,30 @@ POST <api URL>/node/<UUID>/<data name>/indices
 	A label index can be deleted as per the POST /index documentation by having an empty
 	blocks map.
 
+GET <api URL>/node/<UUID>/<data name>/mutations[?queryopts]
+
+	Returns JSON of the successfully completed mutations for the given version 
+	for this data instance.  The format is equivalent to the JSON provided to 
+	the Kafka mutation log.  For example, a merge mutation would be:
+
+	{
+		"Action": "merge",
+		"Target": <label ID>,
+		"Labels": [<merged label 1>, <merged label 2>, ...],
+		"UUID": "28841c8277e044a7b187dda03e18da13",
+		"MutationID": <uint64>,
+		"Timestamp": <string>,
+		"User": <user id string if supplied during mutation>,
+		"App": <app id string if supplied during mutation>
+	}
+
+	Query-string options:
+
+		userid:  Limit returned mutations to the given User ID.  Note that
+				 this should be distinguished from the "u" query string which
+				 is the requester's User ID (not necessarily the same as the
+				 User ID whose mutations are being requested).
+
 GET <api URL>/node/<UUID>/<data name>/mappings[?queryopts]
 
 	Streams space-delimited mappings for the given UUID, one mapping per line:
@@ -3350,6 +3374,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "history":
 		d.handleHistory(ctx, w, r, parts)
 
+	case "mutations":
+		d.handleMutations(ctx, w, r)
+
 	default:
 		server.BadAPIRequest(w, r, d)
 	}
@@ -3832,6 +3859,30 @@ func (d *Data) handleMappings(ctx *datastore.VersionedCtx, w http.ResponseWriter
 			server.BadRequest(w, r, "unable to write mappings: %v", err)
 		}
 		timedLog.Infof("HTTP GET mappings (%s)", r.URL)
+
+	default:
+		server.BadRequest(w, r, "only POST action allowed for /mappings endpoint")
+	}
+}
+
+func (d *Data) handleMutations(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+	// GET <api URL>/node/<UUID>/<data name>/mutations
+	timedLog := dvid.NewTimeLog()
+
+	queryStrings := r.URL.Query()
+	if throttle := queryStrings.Get("throttle"); throttle == "on" || throttle == "true" {
+		if server.ThrottledHTTP(w) {
+			return
+		}
+		defer server.ThrottledOpDone()
+	}
+
+	switch strings.ToLower(r.Method) {
+	case "get":
+		if err := server.ReadJSONMutations(w, ctx.VersionUUID(), d.DataUUID()); err != nil {
+			server.BadRequest(w, r, "unable to write mutaions: %v", err)
+		}
+		timedLog.Infof("HTTP GET mutations (%s)", r.URL)
 
 	default:
 		server.BadRequest(w, r, "only POST action allowed for /mappings endpoint")

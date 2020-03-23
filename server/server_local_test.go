@@ -137,8 +137,11 @@ func TestParseConfig(t *testing.T) {
 	if mutCfg.Blobstore != "raid6" {
 		t.Errorf("got unexpected value for mutations.blobstore: %s\n", mutCfg.Blobstore)
 	}
-	if mutCfg.Logstore != "logstore:mutationlog" {
-		t.Errorf("got unexpected value for mutations.Logstore: %s\n", mutCfg.Logstore)
+	if mutCfg.Httpstore != "logstore:mutationlog" {
+		t.Errorf("got unexpected value for mutations.Httpstore: %s\n", mutCfg.Httpstore)
+	}
+	if mutCfg.Jsonstore != "/path/to/json-mutlog" {
+		t.Errorf("got unexpected value for mutations.Httpstore: %s\n", mutCfg.Httpstore)
 	}
 
 	kafkaCfg := tc.Kafka
