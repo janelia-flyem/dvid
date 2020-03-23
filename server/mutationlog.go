@@ -19,8 +19,6 @@ import (
 const jsonMsgTypeID uint16 = 1 // used for protolog
 
 var (
-	mutCfg MutationsConfig
-
 	mutOrderID  uint64
 	mutOrderMux sync.RWMutex
 
@@ -50,37 +48,41 @@ type MutationsConfig struct {
 
 func logMutationPayload(data []byte) (ref string, err error) {
 	var store dvid.Store
-	if store, err = storage.GetStoreByAlias(mutCfg.Blobstore); err != nil {
+	if store, err = storage.GetStoreByAlias(tc.Mutations.Blobstore); err != nil {
 		return
 	}
 	blobstore, ok := store.(storage.BlobStore)
 	if !ok {
-		err = fmt.Errorf("mutation blobstore %q is not a valid blob store", mutCfg.Blobstore)
+		err = fmt.Errorf("mutation blobstore %q is not a valid blob store", tc.Mutations.Blobstore)
 		return
 	}
 	return blobstore.PutBlob(data)
 }
 
 func getJSONLogFile(versionID, dataID dvid.UUID) (lf *logFile, err error) {
-	fname := path.Join(mutCfg.Jsonstore, string(dataID)+"-"+string(versionID)+".plog")
+	fname := path.Join(tc.Mutations.Jsonstore, string(dataID)+"-"+string(versionID)+".plog")
 	jsonLogFilesMux.Lock()
 	defer jsonLogFilesMux.Unlock()
 	var found bool
 	lf, found = jsonLogFiles[fname]
 	if !found {
 		var f *os.File
-		f, err = os.OpenFile(fname, os.O_APPEND|os.O_CREATE|os.O_RDWR|os.O_SYNC, 0x666)
+		f, err = os.OpenFile(fname, os.O_APPEND|os.O_CREATE|os.O_RDWR|os.O_SYNC, 0755)
 		if err != nil {
+			dvid.Errorf("Could not open new JSON mutation log: %v\n", err)
 			return nil, err
 		}
-		jsonLogFiles[fname] = &logFile{f: f}
+		dvid.Infof("Created mutation JSON log for data %s, version %s\n", dataID, versionID)
+		lf = &logFile{f: f}
+		jsonLogFiles[fname] = lf
 	}
 	return
 }
 
 // LogJSONMutation logs a JSON mutation record to the Jsonstore directory in the config.
 func LogJSONMutation(versionID, dataID dvid.UUID, jsondata []byte) error {
-	if mutCfg.Jsonstore == "" {
+	if tc.Mutations.Jsonstore == "" {
+		dvid.Errorf("Cannot write mutation with non-existant Jsonstore config: %s\n", string(jsondata))
 		return nil
 	}
 	lf, err := getJSONLogFile(versionID, dataID)
@@ -96,9 +98,15 @@ func LogJSONMutation(versionID, dataID dvid.UUID, jsondata []byte) error {
 
 // ReadJSONMutations streams a JSON of mutation records to the writer
 func ReadJSONMutations(w io.Writer, versionID, dataID dvid.UUID) error {
+	if tc.Mutations.Jsonstore == "" {
+		return fmt.Errorf("No jsonstore configured in [mutations] section of TOML config")
+	}
 	lf, err := getJSONLogFile(versionID, dataID)
 	if err != nil {
 		return err
+	}
+	if lf == nil {
+		return fmt.Errorf("Got nil mutation log for data %s, version %s", dataID, versionID)
 	}
 	lf.RLock()
 	defer func() {
@@ -132,14 +140,16 @@ func ReadJSONMutations(w io.Writer, versionID, dataID dvid.UUID) error {
 				return err
 			}
 		}
+		numMutations++
 	}
 	_, err = w.Write([]byte("]"))
+	dvid.Infof("Read %d JSON mutations for data %s, version %s\n", numMutations, dataID, versionID)
 	return err
 }
 
 // LogHTTPMutation logs a HTTP mutation request to the mutation log specific in the config.
 func LogHTTPMutation(versionID, dataID dvid.UUID, r *http.Request, data []byte) (err error) {
-	if mutCfg.Blobstore == "" || mutCfg.Httpstore == "" {
+	if tc.Mutations.Blobstore == "" || tc.Mutations.Httpstore == "" {
 		return nil
 	}
 	mutation := map[string]interface{}{
@@ -170,9 +180,9 @@ func LogHTTPMutation(versionID, dataID dvid.UUID, r *http.Request, data []byte) 
 		return fmt.Errorf("error marshaling JSON for mutation (%s): %v", r.RequestURI, err)
 	}
 
-	parts := strings.Split(mutCfg.Httpstore, ":")
+	parts := strings.Split(tc.Mutations.Httpstore, ":")
 	if len(parts) != 2 {
-		return fmt.Errorf("bad logstore specification %q", mutCfg.Httpstore)
+		return fmt.Errorf("bad logstore specification %q", tc.Mutations.Httpstore)
 	}
 	store := parts[0]
 	spec := parts[1]
@@ -197,7 +207,7 @@ func LogHTTPMutation(versionID, dataID dvid.UUID, r *http.Request, data []byte) 
 		}
 		return log.TopicAppend(string(versionID), storage.LogMessage{Data: jsonmsg})
 	default:
-		return fmt.Errorf("unknown store %q in logstore specification %q", store, mutCfg.Httpstore)
+		return fmt.Errorf("unknown store %q in logstore specification %q", store, tc.Mutations.Httpstore)
 	}
 	return nil
 }
