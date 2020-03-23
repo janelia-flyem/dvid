@@ -124,14 +124,14 @@ func ReadJSONMutations(w io.Writer, versionID, dataID dvid.UUID) error {
 	}
 	numMutations := 0
 	for {
+		typeID, jsondata, err := r.Next()
+		if err == io.EOF {
+			break
+		}
 		if numMutations != 0 {
 			if _, err := w.Write([]byte(",")); err != nil {
 				return err
 			}
-		}
-		typeID, jsondata, err := r.Next()
-		if err == io.EOF {
-			break
 		}
 		if typeID != jsonMsgTypeID {
 			dvid.Criticalf("Unknown message type in mutation log: %s\n", string(jsondata))
