@@ -65,7 +65,8 @@ func getJSONLogFile(versionID, dataID dvid.UUID) (lf *logFile, err error) {
 	fname := path.Join(mutCfg.Jsonstore, string(dataID)+"-"+string(versionID)+".plog")
 	jsonLogFilesMux.Lock()
 	defer jsonLogFilesMux.Unlock()
-	lf, found := jsonLogFiles[fname]
+	var found bool
+	lf, found = jsonLogFiles[fname]
 	if !found {
 		var f *os.File
 		f, err = os.OpenFile(fname, os.O_APPEND|os.O_CREATE|os.O_RDWR|os.O_SYNC, 0x666)
