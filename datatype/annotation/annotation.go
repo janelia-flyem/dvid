@@ -2179,7 +2179,7 @@ func (d *Data) StoreElements(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff 
 	// d.Lock()
 	// defer d.Unlock()
 
-	dvid.Infof("%d synaptic elements received via POST\n", len(elems))
+	dvid.Infof("%d annotation elements received via POST\n", len(elems))
 
 	blockSize := d.blockSize()
 	addToBlock := make(map[dvid.IZYXString]Elements)
