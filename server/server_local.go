@@ -210,15 +210,19 @@ func (c *tomlConfig) convertPathsToAbsolute(configPath string) error {
 	}
 
 	// [server].webClient
-	c.Server.WebClient, err = dvid.ConvertToAbsolute(c.Server.WebClient, configDir)
-	if err != nil {
-		return fmt.Errorf("Error converting webClient setting to absolute path")
+	if c.Server.WebClient != "" {
+		c.Server.WebClient, err = dvid.ConvertToAbsolute(c.Server.WebClient, configDir)
+		if err != nil {
+			return fmt.Errorf("Error converting webClient setting to absolute path")
+		}
 	}
 
 	// [logging].logfile
-	c.Logging.Logfile, err = dvid.ConvertToAbsolute(c.Logging.Logfile, configDir)
-	if err != nil {
-		return fmt.Errorf("Error converting logfile setting to absolute path")
+	if c.Logging.Logfile != "" {
+		c.Logging.Logfile, err = dvid.ConvertToAbsolute(c.Logging.Logfile, configDir)
+		if err != nil {
+			return fmt.Errorf("Error converting logfile setting to absolute path")
+		}
 	}
 
 	// [store.foobar].path
