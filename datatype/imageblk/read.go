@@ -329,9 +329,15 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 	timedLog := dvid.NewTimeLog()
 	defer timedLog.Infof("GetVoxels %s", vox)
 
-	store, err := datastore.GetOrderedKeyValueDB(d)
+	// get store for data
+	var gridStore storage.GridStoreGetter
+	var okvDB storage.OrderedKeyValueDB
+	gridStore, okvDB, _, err = d.gridStoreGetter()
 	if err != nil {
-		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
+		return fmt.Errorf("data type imageblk had error initializing store: %v", err)
+	}
+	if gridStore != nil {
+		return fmt.Errorf("GetVoxels not implemented yet for ngprecomputed backend")
 	}
 
 	// Only do one request at a time, although each request can start many goroutines.
@@ -342,7 +348,7 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 
 	wg := new(sync.WaitGroup)
 
-	okv := store.(storage.BufferableOps)
+	okv := okvDB.(storage.BufferableOps)
 	// extract buffer interface
 	req, hasbuffer := okv.(storage.KeyValueRequester)
 	if hasbuffer {
@@ -433,19 +439,14 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int32) 
 	timedLog := dvid.NewTimeLog()
 	defer timedLog.Infof("GetBlocks start at %s, span %d", start, span)
 
-	store, err := datastore.GetOrderedKeyValueDB(d)
+	// get store for data
+	var gridStore storage.GridStoreGetter
+	var okvDB storage.OrderedKeyValueDB
+	var err error
+	gridStore, okvDB, _, err = d.gridStoreGetter()
 	if err != nil {
 		return nil, fmt.Errorf("data type imageblk had error initializing store: %v", err)
 	}
-
-	indexBeg := dvid.IndexZYX(start)
-	sx, sy, sz := indexBeg.Unpack()
-
-	end := start
-	end[0] += int32(span - 1)
-	indexEnd := dvid.IndexZYX(end)
-	keyBeg := NewTKey(&indexBeg)
-	keyEnd := NewTKey(&indexEnd)
 
 	// Allocate one uncompressed-sized slice with background values.
 	blockBytes := int32(d.BlockSize().Prod()) * d.Values.BytesPerElement()
@@ -458,12 +459,49 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int32) 
 		}
 	}
 
+	if gridStore != nil {
+		blockCoord := start
+		for i := int32(0); i < span; i++ {
+			value, err := gridStore.GridGet(d.ScaleLevel, blockCoord)
+			if err != nil {
+				return nil, datastore.ErrBranchUnlockedNode
+			}
+			// TODO -- This append of serialization data wouldn't be necessary if
+			// compression was broken out.
+			data, err := dvid.SerializePrecompressedData(value, d.Compression(), dvid.NoChecksum)
+			if err != nil {
+				return nil, fmt.Errorf("can't serialize precompressed data: %v", err)
+			}
+			uncompress := true
+			block, _, err := dvid.DeserializeData(data, uncompress)
+			if err != nil {
+				return nil, fmt.Errorf("Unable to deserialize block %s: %v", blockCoord, err)
+			}
+			if int32(len(block)) != blockBytes {
+				return nil, fmt.Errorf("Deserialized block size (%d) != expected (%d)", len(block), blockBytes)
+			}
+			pos := i * blockBytes
+			copy(buf[pos:pos+blockBytes], block)
+			blockCoord[0]++
+		}
+		return buf, nil
+	}
+
+	indexBeg := dvid.IndexZYX(start)
+	sx, sy, sz := indexBeg.Unpack()
+
+	end := start
+	end[0] += int32(span - 1)
+	indexEnd := dvid.IndexZYX(end)
+	keyBeg := NewTKey(&indexBeg)
+	keyEnd := NewTKey(&indexEnd)
+
 	// Write the blocks that we can get concurrently on this byte slice.
 	ctx := datastore.NewVersionedCtx(d, v)
 
 	var numBlocks int
 	var wg sync.WaitGroup
-	err = store.ProcessRange(ctx, keyBeg, keyEnd, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+	err = okvDB.ProcessRange(ctx, keyBeg, keyEnd, &storage.ChunkOp{}, func(c *storage.Chunk) error {
 		if c == nil || c.TKeyValue == nil {
 			return nil
 		}

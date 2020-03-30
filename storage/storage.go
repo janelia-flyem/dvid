@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
 
@@ -234,4 +235,28 @@ func GetDataSizes(store dvid.Store, instances []dvid.InstanceID) (map[dvid.Insta
 		return nil, nil
 	}
 	return getInstanceSizes(sv, ids)
+}
+
+// BlockOp is a type-specific operation with an optional WaitGroup to
+// sync mapping before reduce.
+type BlockOp struct {
+	Op interface{}
+	Wg *sync.WaitGroup
+}
+
+// Block is the unit passed down channels to chunk handlers.  Chunks can be passed
+// from lower-level database access functions to type-specific chunk processing.
+type Block struct {
+	*BlockOp
+	Coord dvid.ChunkPoint3d
+	Value []byte
+}
+
+// BlockFunc is a function that accepts a Block.
+type BlockFunc func(*Block) error
+
+// GridStoreGetter describes nD block getter functions
+type GridStoreGetter interface {
+	GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) ([]byte, error)
+	GridGetVolume(scaleLevel int, minBlock, maxBlock dvid.ChunkPoint3d, ordered bool, op *BlockOp, f BlockFunc) error
 }

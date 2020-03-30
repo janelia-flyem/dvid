@@ -103,6 +103,9 @@ blobstore = "raid6"
     [backend."grayscale:99ef22cd85f143f58a623bd22aad0ef7"]
     store = "badger"
 
+    [backend."grayscale2:83698c997b214365abd479cfc7744049"]
+    store = "ng"
+
     [backend."type:meshes"]
     store = "raid6"
 
@@ -133,6 +136,10 @@ blobstore = "raid6"
     [store.labelmutationlog]
     engine = "filelog"
     path = "/data/labelmutlog"  # directory that holds mutation log per instance-UUID.
+
+    [store.ng]
+    engine = "ngprecomputed"
+    ref = "the-GCS-bucket-name" # note this is ref and not path
 
 # Kafka support can be specified.  This allows mutations to be logged and facilitates
 # syncing, etc.  If a "filelog" store is available as default, then any failed kafka

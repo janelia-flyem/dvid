@@ -517,11 +517,11 @@ func (s *Subvolume) NewIndexZYXIterator(chunkSize Point) (IndexIterator, error) 
 	// Setup traversal
 	begVoxel, ok := s.StartPoint().(Chunkable)
 	if !ok {
-		return nil, fmt.Errorf("Subvolume %s StartPoint() cannot handle Chunkable points.", s)
+		return nil, fmt.Errorf("Subvolume %s StartPoint() cannot handle Chunkable points", s)
 	}
 	endVoxel, ok := s.EndPoint().(Chunkable)
 	if !ok {
-		return nil, fmt.Errorf("Subvolume %s EndPoint() cannot handle Chunkable points.", s)
+		return nil, fmt.Errorf("Subvolume %s EndPoint() cannot handle Chunkable points", s)
 	}
 	begBlock, ok := begVoxel.Chunk(chunkSize).(ChunkPoint3d)
 	if !ok {
@@ -533,6 +533,31 @@ func (s *Subvolume) NewIndexZYXIterator(chunkSize Point) (IndexIterator, error) 
 	}
 
 	return NewIndexZYXIterator(begBlock, endBlock), nil
+}
+
+// BoundingChunks returns the min and max chunk coordinates that bound the subvolume
+func (s *Subvolume) BoundingChunks(chunkSize Point) (minChunk, maxChunk ChunkPoint3d, err error) {
+	begVoxel, ok := s.StartPoint().(Chunkable)
+	if !ok {
+		err = fmt.Errorf("Subvolume %s StartPoint() cannot handle Chunkable points", s)
+		return
+	}
+	endVoxel, ok := s.EndPoint().(Chunkable)
+	if !ok {
+		err = fmt.Errorf("Subvolume %s EndPoint() cannot handle Chunkable points", s)
+		return
+	}
+	minChunk, ok = begVoxel.Chunk(chunkSize).(ChunkPoint3d)
+	if !ok {
+		err = fmt.Errorf("Subvolume %s StartPoint() is not a 3d chunk", s)
+		return
+	}
+	maxChunk, ok = endVoxel.Chunk(chunkSize).(ChunkPoint3d)
+	if !ok {
+		err = fmt.Errorf("Subvolume %s EndPoint() is not a 3d chunk", s)
+		return
+	}
+	return
 }
 
 // OrthogSlice is a 2d rectangle orthogonal to two axis of the space that is slices.

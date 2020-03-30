@@ -217,3 +217,8 @@ source:
   - git_url: https://github.com/janelia-flyem/protolog
     git_tag: master
     folder:  src/github.com/janelia-flyem/protolog
+
+  # go cloud dev kit
+  - git_url: https://gocloud.dev
+    git_tag: master
+    folder:  src/gocloud.dev

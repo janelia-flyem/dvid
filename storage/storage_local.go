@@ -11,8 +11,6 @@ import (
 
 var manager managerT
 
-// managerT should be implemented for each type of storage implementation (local, clustered, gcloud)
-// and it should fulfill a storage.Manager interface.
 type managerT struct {
 	setup bool
 
@@ -36,6 +34,157 @@ type managerT struct {
 
 	// groupcache support
 	gcache groupcacheT
+}
+
+// Initialize the storage systems.  Returns a bool + error where the bool is
+// true if the metadata store is newly created and needs initialization.
+// The map of store configurations should be keyed by either a datatype name,
+// "default", or "metadata".
+func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, err error) {
+	// Open all the backend stores
+	manager.stores = make(map[Alias]dvid.Store, len(backend.Stores))
+	var gotDefault, gotMetadata, createdDefault, lastCreated bool
+	var lastStore dvid.Store
+	for alias, dbconfig := range backend.Stores {
+		var store dvid.Store
+		for dbalias, db := range manager.stores {
+			if db.Equal(dbconfig) {
+				return false, fmt.Errorf("Store %q configuration is duplicate of store %q", alias, dbalias)
+			}
+		}
+		store, created, err := NewStore(dbconfig)
+		if err != nil {
+			dvid.TimeErrorf("dbconfig: %v\n", dbconfig)
+			return false, fmt.Errorf("bad store %q: %v", alias, err)
+		}
+		if alias == backend.Metadata {
+			gotMetadata = true
+			createdMetadata = created
+			manager.metadataStore = store
+		}
+		if alias == backend.DefaultKVDB {
+			gotDefault = true
+			createdDefault = created
+			manager.defaultKV = store
+		}
+		if alias == backend.DefaultLog {
+			manager.defaultLog = store
+		}
+		manager.stores[alias] = store
+		lastStore = store
+		lastCreated = created
+	}
+
+	// Return if we don't have default or metadata stores.  Should really be caught
+	// at configuration loading, but here as well as double check.
+	if !gotDefault {
+		if len(backend.Stores) == 1 {
+			manager.defaultKV = lastStore
+			createdDefault = lastCreated
+		} else {
+			return false, fmt.Errorf("either backend.default or a single store must be set in configuration TOML file")
+		}
+	}
+	if !gotMetadata {
+		manager.metadataStore = manager.defaultKV
+		createdMetadata = createdDefault
+	}
+	dvid.TimeInfof("Default kv store: %s\n", manager.defaultKV)
+	dvid.TimeInfof("Default log store: %s\n", manager.defaultLog)
+	dvid.TimeInfof("Metadata store: %s\n", manager.metadataStore)
+
+	// Setup the groupcache if specified.
+	err = setupGroupcache(backend.Groupcache)
+	if err != nil {
+		return
+	}
+
+	// Make all data instance, tag-specific, or datatype-specific store assignments.
+	manager.instanceStore = make(map[dvid.DataSpecifier]dvid.Store)
+	manager.datatypeStore = make(map[dvid.TypeString]dvid.Store)
+	for dataspec, alias := range backend.KVStore {
+		if dataspec == "default" || dataspec == "metadata" {
+			continue
+		}
+		store, found := manager.stores[alias]
+		if !found {
+			err = fmt.Errorf("bad backend store alias: %q -> %q", dataspec, alias)
+			return
+		}
+		// Cache the store for mapped tag, datatype or data instance.
+		s := strings.Trim(string(dataspec), "\"")
+		instanceParts := strings.Split(s, ":")
+		tagParts := strings.Split(s, "=")
+		switch {
+		case len(instanceParts) == 1 && len(tagParts) == 1:
+			manager.datatypeStore[dvid.TypeString(s)] = store
+		case len(instanceParts) == 2:
+			dataid := dvid.GetDataSpecifier(dvid.InstanceName(instanceParts[0]), dvid.UUID(instanceParts[1]))
+			manager.instanceStore[dataid] = store
+		case len(tagParts) == 2:
+			dataid := dvid.GetDataSpecifierByTag(tagParts[0], tagParts[1])
+			manager.instanceStore[dataid] = store
+		default:
+			err = fmt.Errorf("bad backend data specification: %s", dataspec)
+			return
+		}
+	}
+	manager.instanceLog = make(map[dvid.DataSpecifier]dvid.Store)
+	manager.datatypeLog = make(map[dvid.TypeString]dvid.Store)
+	for dataspec, alias := range backend.LogStore {
+		if dataspec == "default" {
+			continue
+		}
+		store, found := manager.stores[alias]
+		if !found {
+			err = fmt.Errorf("bad backend store alias: %q -> %q", dataspec, alias)
+			return
+		}
+
+		// Cache the store for mapped datatype or data instance.
+		name := strings.Trim(string(dataspec), "\"")
+		parts := strings.Split(name, ":")
+		switch len(parts) {
+		case 1:
+			manager.datatypeLog[dvid.TypeString(name)] = store
+		case 2:
+			dataid := dvid.GetDataSpecifier(dvid.InstanceName(parts[0]), dvid.UUID(parts[1]))
+			manager.instanceLog[dataid] = store
+		default:
+			err = fmt.Errorf("bad backend data specification: %s", dataspec)
+			return
+		}
+	}
+	manager.setup = true
+
+	// Setup the graph store
+	var store dvid.Store
+	store, err = assignedStoreByType("labelgraph")
+	if err != nil {
+		return
+	}
+	var ok bool
+	kvdb, ok := store.(OrderedKeyValueDB)
+	if !ok {
+		dvid.Errorf("assigned labelgraph store %q isn't ordered kv db, labelgraph not available\n", store)
+		return
+	}
+	manager.graphDB, err = NewGraphStore(kvdb)
+	if err != nil {
+		dvid.Errorf("cannot get new graph store (%v), labelgraph not available\n", err)
+		return
+	}
+	manager.graphSetter, ok = manager.graphDB.(GraphSetter)
+	if !ok {
+		dvid.Errorf("Database %q cannot support a graph setter, so labelgraph not available\n", kvdb)
+		return
+	}
+	manager.graphGetter, ok = manager.graphDB.(GraphGetter)
+	if !ok {
+		dvid.Errorf("Database %q cannot support a graph getter, so labelgraph not available\n", kvdb)
+		return
+	}
+	return
 }
 
 func AllStores() (map[Alias]dvid.Store, error) {
@@ -230,157 +379,6 @@ func Shutdown() {
 	}
 	KafkaShutdown()
 	manager = managerT{}
-}
-
-// Initialize the storage systems.  Returns a bool + error where the bool is
-// true if the metadata store is newly created and needs initialization.
-// The map of store configurations should be keyed by either a datatype name,
-// "default", or "metadata".
-func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, err error) {
-	// Open all the backend stores
-	manager.stores = make(map[Alias]dvid.Store, len(backend.Stores))
-	var gotDefault, gotMetadata, createdDefault, lastCreated bool
-	var lastStore dvid.Store
-	for alias, dbconfig := range backend.Stores {
-		var store dvid.Store
-		for dbalias, db := range manager.stores {
-			if db.Equal(dbconfig) {
-				return false, fmt.Errorf("Store %q configuration is duplicate of store %q", alias, dbalias)
-			}
-		}
-		store, created, err := NewStore(dbconfig)
-		if err != nil {
-			dvid.TimeErrorf("dbconfig: %v\n", dbconfig)
-			return false, fmt.Errorf("bad store %q: %v", alias, err)
-		}
-		if alias == backend.Metadata {
-			gotMetadata = true
-			createdMetadata = created
-			manager.metadataStore = store
-		}
-		if alias == backend.DefaultKVDB {
-			gotDefault = true
-			createdDefault = created
-			manager.defaultKV = store
-		}
-		if alias == backend.DefaultLog {
-			manager.defaultLog = store
-		}
-		manager.stores[alias] = store
-		lastStore = store
-		lastCreated = created
-	}
-
-	// Return if we don't have default or metadata stores.  Should really be caught
-	// at configuration loading, but here as well as double check.
-	if !gotDefault {
-		if len(backend.Stores) == 1 {
-			manager.defaultKV = lastStore
-			createdDefault = lastCreated
-		} else {
-			return false, fmt.Errorf("either backend.default or a single store must be set in configuration TOML file")
-		}
-	}
-	if !gotMetadata {
-		manager.metadataStore = manager.defaultKV
-		createdMetadata = createdDefault
-	}
-	dvid.TimeInfof("Default kv store: %s\n", manager.defaultKV)
-	dvid.TimeInfof("Default log store: %s\n", manager.defaultLog)
-	dvid.TimeInfof("Metadata store: %s\n", manager.metadataStore)
-
-	// Setup the groupcache if specified.
-	err = setupGroupcache(backend.Groupcache)
-	if err != nil {
-		return
-	}
-
-	// Make all data instance, tag-specific, or datatype-specific store assignments.
-	manager.instanceStore = make(map[dvid.DataSpecifier]dvid.Store)
-	manager.datatypeStore = make(map[dvid.TypeString]dvid.Store)
-	for dataspec, alias := range backend.KVStore {
-		if dataspec == "default" || dataspec == "metadata" {
-			continue
-		}
-		store, found := manager.stores[alias]
-		if !found {
-			err = fmt.Errorf("bad backend store alias: %q -> %q", dataspec, alias)
-			return
-		}
-		// Cache the store for mapped tag, datatype or data instance.
-		s := strings.Trim(string(dataspec), "\"")
-		instanceParts := strings.Split(s, ":")
-		tagParts := strings.Split(s, "=")
-		switch {
-		case len(instanceParts) == 1 && len(tagParts) == 1:
-			manager.datatypeStore[dvid.TypeString(s)] = store
-		case len(instanceParts) == 2:
-			dataid := dvid.GetDataSpecifier(dvid.InstanceName(instanceParts[0]), dvid.UUID(instanceParts[1]))
-			manager.instanceStore[dataid] = store
-		case len(tagParts) == 2:
-			dataid := dvid.GetDataSpecifierByTag(tagParts[0], tagParts[1])
-			manager.instanceStore[dataid] = store
-		default:
-			err = fmt.Errorf("bad backend data specification: %s", dataspec)
-			return
-		}
-	}
-	manager.instanceLog = make(map[dvid.DataSpecifier]dvid.Store)
-	manager.datatypeLog = make(map[dvid.TypeString]dvid.Store)
-	for dataspec, alias := range backend.LogStore {
-		if dataspec == "default" {
-			continue
-		}
-		store, found := manager.stores[alias]
-		if !found {
-			err = fmt.Errorf("bad backend store alias: %q -> %q", dataspec, alias)
-			return
-		}
-
-		// Cache the store for mapped datatype or data instance.
-		name := strings.Trim(string(dataspec), "\"")
-		parts := strings.Split(name, ":")
-		switch len(parts) {
-		case 1:
-			manager.datatypeLog[dvid.TypeString(name)] = store
-		case 2:
-			dataid := dvid.GetDataSpecifier(dvid.InstanceName(parts[0]), dvid.UUID(parts[1]))
-			manager.instanceLog[dataid] = store
-		default:
-			err = fmt.Errorf("bad backend data specification: %s", dataspec)
-			return
-		}
-	}
-	manager.setup = true
-
-	// Setup the graph store
-	var store dvid.Store
-	store, err = assignedStoreByType("labelgraph")
-	if err != nil {
-		return
-	}
-	var ok bool
-	kvdb, ok := store.(OrderedKeyValueDB)
-	if !ok {
-		dvid.Errorf("assigned labelgraph store %q isn't ordered kv db, labelgraph not available\n", store)
-		return
-	}
-	manager.graphDB, err = NewGraphStore(kvdb)
-	if err != nil {
-		dvid.Errorf("cannot get new graph store (%v), labelgraph not available\n", err)
-		return
-	}
-	manager.graphSetter, ok = manager.graphDB.(GraphSetter)
-	if !ok {
-		dvid.Errorf("Database %q cannot support a graph setter, so labelgraph not available\n", kvdb)
-		return
-	}
-	manager.graphGetter, ok = manager.graphDB.(GraphGetter)
-	if !ok {
-		dvid.Errorf("Database %q cannot support a graph getter, so labelgraph not available\n", kvdb)
-		return
-	}
-	return
 }
 
 // DeleteDataInstance removes a data instance.

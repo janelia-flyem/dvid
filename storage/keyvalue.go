@@ -194,6 +194,26 @@ type KeyChan chan Key
 
 // ---- Storage interfaces ------
 
+// DAGStoreGetter provides ways to read key-value pairs individually and in
+// groups, where the latter can also be ordered by key or more quickly streamed
+// in unordered fashion.
+type DAGStoreGetter interface {
+	// Get returns a value given a key.
+	Get(ctx Context, k TKey) ([]byte, error)
+
+	// GetRange returns a range of values spanning (kStart, kEnd) keys.
+	GetRange(ctx Context, kStart, kEnd TKey) ([]*TKeyValue, error)
+
+	// GetRangeStream sends range of values spanning (kStart, kEnd) key-values.
+	GetRangeStream(ctx Context, kStart, kEnd TKey, ordered, keysOnly bool, out chan *KeyValue) error
+
+	// ProcessRange sends a range of type key-value pairs to type-specific chunk handlers,
+	// allowing chunk processing to be concurrent with key-value reads.
+	// If the ChunkFunc returns an error, it is expected that the ProcessRange should
+	// immediately terminate and propagate the error.
+	ProcessRange(ctx Context, kStart, kEnd TKey, ordered bool, op *ChunkOp, f ChunkFunc) error
+}
+
 // BlobStore allows writing and retrieving unversioned data.  It differs from KeyValueDB in that
 // it auto-generates and returns a key on writing, typically the content hash.
 type BlobStore interface {

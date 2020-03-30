@@ -1,6 +1,8 @@
 package dvid
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // StoreCloser stores can be closed.
 type StoreCloser interface {

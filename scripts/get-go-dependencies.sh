@@ -154,6 +154,11 @@ go get github.com/coocood/freecache
 # Openstack Swift
 go get github.com/ncw/swift
 
+# Go Cloud Development Kit
+go get gocloud.dev
+go get github.com/google/wire
+go get golang.org/x/xerrors
+
 # kafka
 CONFLUENTINC_DIR=${GOPATH}/src/github.com/confluentinc
 KAFKA_GO_DIR=${CONFLUENTINC_DIR}/confluent-kafka-go

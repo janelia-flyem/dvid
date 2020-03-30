@@ -769,6 +769,35 @@ type Properties struct {
 
 	// Background value for data
 	Background uint8
+
+	// GridStore designates store to be used for immutable data access
+	GridStore storage.Alias
+
+	// ScaleLevel designates resolution from 0 (high-res) to an int N with 2^N down-res
+	ScaleLevel int
+}
+
+func (d *Data) gridStoreGetter() (gridStore storage.GridStoreGetter, okvDB storage.OrderedKeyValueDB, kvDB storage.KeyValueDB, err error) {
+	if d.GridStore != "" {
+		var store dvid.Store
+		store, err = storage.GetStoreByAlias(d.GridStore)
+		if err == nil {
+			var ok bool
+			gridStore, ok = store.(storage.GridStoreGetter)
+			if ok {
+				return
+			}
+		}
+	}
+	okvDB, err = datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return
+	}
+	kvDB, err = datastore.GetKeyValueDB(d)
+	if err != nil {
+		return
+	}
+	return
 }
 
 func (d *Data) PropertiesWithExtents(ctx *datastore.VersionedCtx) (props Properties, err error) {
@@ -787,6 +816,8 @@ func (d *Data) PropertiesWithExtents(ctx *datastore.VersionedCtx) (props Propert
 	props.Extents.MinIndex = verExtents.MinIndex
 	props.Extents.MaxIndex = verExtents.MaxIndex
 	props.Background = d.Properties.Background
+	props.GridStore = d.Properties.GridStore
+	props.ScaleLevel = d.Properties.ScaleLevel
 	return
 }
 
@@ -817,6 +848,8 @@ func (p *Properties) copyImmutable(p2 *Properties) {
 	copy(p.Resolution.VoxelUnits, p2.Resolution.VoxelUnits)
 
 	p.Background = p2.Background
+	p.GridStore = p2.GridStore
+	p.ScaleLevel = p2.ScaleLevel
 }
 
 // setDefault sets Voxels properties to default values.
@@ -881,6 +914,26 @@ func (p *Properties) setByConfig(config dvid.Config) error {
 			return err
 		}
 	}
+	s, found, err = config.GetString("MinPoint")
+	if err != nil {
+		return err
+	}
+	if found {
+		p.MinPoint, err = dvid.StringToPoint(s, ",")
+		if err != nil {
+			return err
+		}
+	}
+	s, found, err = config.GetString("MaxPoint")
+	if err != nil {
+		return err
+	}
+	if found {
+		p.MaxPoint, err = dvid.StringToPoint(s, ",")
+		if err != nil {
+			return err
+		}
+	}
 	s, found, err = config.GetString("Background")
 	if err != nil {
 		return err
@@ -891,6 +944,28 @@ func (p *Properties) setByConfig(config dvid.Config) error {
 			return err
 		}
 		p.Background = uint8(background)
+	}
+	s, found, err = config.GetString("GridStore")
+	if err != nil {
+		return err
+	}
+	if found {
+		gridStore := storage.Alias(s)
+		if _, err := storage.GetStoreByAlias(gridStore); err != nil {
+			return fmt.Errorf("bad store (%s) designated for GridStore: %v", s, err)
+		}
+		p.GridStore = gridStore
+	}
+	s, found, err = config.GetString("ScaleLevel")
+	if err != nil {
+		return err
+	}
+	if found {
+		scale, err := strconv.Atoi(s)
+		if err != nil {
+			return err
+		}
+		p.ScaleLevel = scale
 	}
 	return nil
 }
@@ -1179,7 +1254,7 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 		return err
 	}
 
-	// Load and PUT each image.
+	// Load and put each image.
 	numSuccessful := 0
 	for _, filename := range filenames {
 		sliceLog := dvid.NewTimeLog()
@@ -1271,6 +1346,7 @@ func (d *Data) BlockSize() dvid.Point {
 // GetExtents retrieves current extent (and updates extents cache)
 // TODO -- refactor return since MinIndex / MaxIndex not used so should use extents3d.
 func (d *Data) GetExtents(ctx *datastore.VersionedCtx) (dvidextents dvid.Extents, err error) {
+	var extents ExtentsJSON
 	// actually fetch extents from datatype storage
 	var store storage.KeyValueDB
 	if store, err = datastore.GetKeyValueDB(d); err != nil {
@@ -1280,7 +1356,6 @@ func (d *Data) GetExtents(ctx *datastore.VersionedCtx) (dvidextents dvid.Extents
 	if serialization, err = store.Get(ctx, MetaTKey()); err != nil {
 		return
 	}
-	var extents ExtentsJSON
 	if extents, err = d.deserializeExtents(serialization); err != nil {
 		return
 	}
@@ -1328,7 +1403,7 @@ func (d *Data) PostExtents(ctx *datastore.VersionedCtx, start dvid.Point, end dv
 	if err != nil {
 		return err
 	}
-	// lock datatype to protect GET/PUT
+	// lock datatype to protect get/put
 	d.Lock()
 	defer d.Unlock()
 
@@ -1693,6 +1768,31 @@ func debugData(img image.Image, message string) {
 	}
 }
 
+func (d *Data) SendBlockRaw(w http.ResponseWriter, x, y, z int32, v []byte, compression string) error {
+	// Send block coordinate and size of data.
+	if err := binary.Write(w, binary.LittleEndian, x); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, y); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, z); err != nil {
+		return err
+	}
+
+	n := len(v)
+	if err := binary.Write(w, binary.LittleEndian, int32(n)); err != nil {
+		return err
+	}
+	if written, err := w.Write(v); err != nil || written != n {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("could not write %d bytes of value: only %d bytes written", n, written)
+	}
+	return nil
+}
+
 func (d *Data) SendBlockSimple(w http.ResponseWriter, x, y, z int32, v []byte, compression string) error {
 	// Check internal format and see if it's valid with compression choice.
 	format, checksum := dvid.DecodeSerializationFormat(dvid.SerializationFormat(v[0]))
@@ -1770,9 +1870,10 @@ func (d *Data) SendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 	finishedRequests := make(chan error, len(coordarray)/3)
 	var mutex sync.Mutex
 
-	// get store
-	var store storage.KeyValueDB
-	store, err = datastore.GetKeyValueDB(d)
+	// get store for data
+	var gridStore storage.GridStoreGetter
+	var kvDB storage.KeyValueDB
+	gridStore, _, kvDB, err = d.gridStoreGetter()
 	if err != nil {
 		return
 	}
@@ -1793,17 +1894,28 @@ func (d *Data) SendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 			return
 		}
 
-		go func(xloc, yloc, zloc int32, isprefetch bool, finishedRequests chan error, store storage.KeyValueDB) {
+		go func(xloc, yloc, zloc int32, isprefetch bool, finishedRequests chan error) {
 			var err error
 			if !isprefetch {
 				defer func() {
 					finishedRequests <- err
 				}()
 			}
-			indexBeg := dvid.IndexZYX(dvid.ChunkPoint3d{xloc, yloc, zloc})
-			keyBeg := NewTKey(&indexBeg)
+			chunkPt := dvid.ChunkPoint3d{xloc, yloc, zloc}
 
-			value, err := store.Get(ctx, keyBeg)
+			var value []byte
+			if gridStore != nil {
+				if value, err = gridStore.GridGet(d.ScaleLevel, chunkPt); err != nil || value == nil {
+					return
+				}
+				mutex.Lock()
+				defer mutex.Unlock()
+				d.SendBlockRaw(w, xloc, yloc, zloc, value, compression)
+				return
+			}
+			idx := dvid.IndexZYX(chunkPt)
+			key := NewTKey(&idx)
+			value, err = kvDB.Get(ctx, key)
 			if err != nil {
 				return
 			}
@@ -1815,7 +1927,7 @@ func (d *Data) SendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 					d.SendBlockSimple(w, xloc, yloc, zloc, value, compression)
 				}
 			}
-		}(int32(xloc), int32(yloc), int32(zloc), isprefetch, finishedRequests, store)
+		}(int32(xloc), int32(yloc), int32(zloc), isprefetch, finishedRequests)
 	}
 
 	if !isprefetch {
@@ -1830,7 +1942,7 @@ func (d *Data) SendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 	return
 }
 
-// GetBlocks returns a slice of bytes corresponding to all the blocks along a span in X
+// SendBlocks returns a slice of bytes corresponding to all the blocks along a span in X
 func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, subvol *dvid.Subvolume, compression string) error {
 	w.Header().Set("Content-type", "application/octet-stream")
 
@@ -1845,22 +1957,38 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 	timedLog := dvid.NewTimeLog()
 	defer timedLog.Infof("SendBlocks %s, span x %d, span y %d, span z %d", blockoffset, blocksize.Value(0), blocksize.Value(1), blocksize.Value(2))
 
-	store, err := datastore.GetOrderedKeyValueDB(d)
+	// get store for data
+	gridStore, okvDB, _, err := d.gridStoreGetter()
 	if err != nil {
-		return fmt.Errorf("Data type labelblk had error initializing store: %v\n", err)
+		return fmt.Errorf("cannot get suitable data store for imageblk %q: %v", d.DataName(), err)
 	}
 
 	// if only one block is requested, avoid the range query
 	if blocksize.Value(0) == int32(1) && blocksize.Value(1) == int32(1) && blocksize.Value(2) == int32(1) {
-		indexBeg := dvid.IndexZYX(dvid.ChunkPoint3d{blockoffset.Value(0), blockoffset.Value(1), blockoffset.Value(2)})
-		keyBeg := NewTKey(&indexBeg)
+		blockCoord := dvid.ChunkPoint3d{blockoffset.Value(0), blockoffset.Value(1), blockoffset.Value(2)}
 
-		value, err := store.Get(ctx, keyBeg)
+		var value []byte
+		switch {
+		case gridStore != nil:
+			if value, err = gridStore.GridGet(d.ScaleLevel, blockCoord); err != nil {
+				return err
+			}
+			if len(value) > 0 {
+				return d.SendBlockRaw(w, blockCoord[0], blockCoord[1], blockCoord[2], value, compression)
+			}
+		case okvDB != nil:
+			indexBeg := dvid.IndexZYX(blockCoord)
+			keyBeg := NewTKey(&indexBeg)
+			if value, err = okvDB.Get(ctx, keyBeg); err != nil {
+				return err
+			}
+			if len(value) > 0 {
+				return d.SendBlockSimple(w, blockCoord[0], blockCoord[1], blockCoord[2], value, compression)
+			}
+		default:
+		}
 		if err != nil {
 			return err
-		}
-		if len(value) > 0 {
-			return d.SendBlockSimple(w, blockoffset.Value(0), blockoffset.Value(1), blockoffset.Value(2), value, compression)
 		}
 		return nil
 	}
@@ -1869,7 +1997,23 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 	server.LargeMutationMutex.Lock()
 	defer server.LargeMutationMutex.Unlock()
 
-	okv := store.(storage.BufferableOps)
+	if gridStore != nil {
+		ordered := false
+		minBlock, maxBlock, err := subvol.BoundingChunks(d.BlockSize())
+		if err != nil {
+			return err
+		}
+		return gridStore.GridGetVolume(d.ScaleLevel, minBlock, maxBlock, ordered, &storage.BlockOp{}, func(b *storage.Block) error {
+			if b.Value != nil {
+				if err := d.SendBlockRaw(w, b.Coord[0], b.Coord[1], b.Coord[2], b.Value, compression); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+
+	okv := okvDB.(storage.BufferableOps)
 	// extract buffer interface
 	req, hasbuffer := okv.(storage.KeyValueRequester)
 	if hasbuffer {
@@ -1975,8 +2119,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	switch action {
 	case "get":
 	case "post":
+		// TODO -- relax this once GridStore implementations allow mutation
+		if d.GridStore != "" {
+			server.BadRequest(w, r, "Data %q uses an immutable GridStore so cannot received POSTs", d.DataName())
+			return
+		}
 	default:
-		server.BadRequest(w, r, "Can only handle GET or POST HTTP verbs")
+		server.BadRequest(w, r, "Data %q can only handle GET or POST HTTP verbs", d.DataName())
 		return
 	}
 
@@ -2008,25 +2157,25 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 	}
 
-	// Handle POST on data -> setting of configuration
-	if len(parts) == 3 && action == "put" {
-		fmt.Printf("Setting configuration of data '%s'\n", d.DataName())
-		config, err := server.DecodeJSON(r)
-		if err != nil {
-			server.BadRequest(w, r, err)
-			return
-		}
-		if err := d.ModifyConfig(config); err != nil {
-			server.BadRequest(w, r, err)
-			return
-		}
-		if err := datastore.SaveDataByUUID(uuid, d); err != nil {
-			server.BadRequest(w, r, err)
-			return
-		}
-		fmt.Fprintf(w, "Changed '%s' based on received configuration:\n%s\n", d.DataName(), config)
-		return
-	}
+	// // Handle POST on data -> setting of configuration
+	// if len(parts) == 3 && action == "post" {
+	// 	fmt.Printf("Setting configuration of data '%s'\n", d.DataName())
+	// 	config, err := server.DecodeJSON(r)
+	// 	if err != nil {
+	// 		server.BadRequest(w, r, err)
+	// 		return
+	// 	}
+	// 	if err := d.ModifyConfig(config); err != nil {
+	// 		server.BadRequest(w, r, err)
+	// 		return
+	// 	}
+	// 	if err := datastore.SaveDataByUUID(uuid, d); err != nil {
+	// 		server.BadRequest(w, r, err)
+	// 		return
+	// 	}
+	// 	fmt.Fprintf(w, "Changed '%s' based on received configuration:\n%s\n", d.DataName(), config)
+	// 	return
+	// }
 
 	if len(parts) < 4 {
 		server.BadRequest(w, r, "Incomplete API request")
@@ -2090,7 +2239,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 
 	case "specificblocks":
-		// GET <api URL>/node/<UUID>/<data name>/specificblocks?compression=&prefetch=false&blocks=x,y,z,x,y,z...
+		// GET <api URL>/node/<UUID>/<data name>/specificblocks?compression=gzip&prefetch=false&blocks=x,y,z,x,y,z...
 		compression := queryStrings.Get("compression")
 		blocklist := queryStrings.Get("blocks")
 		isprefetch := false
@@ -2343,7 +2492,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				}
 			} else {
 				if isotropic {
-					err := fmt.Errorf("can only PUT 'raw' not 'isotropic' images")
+					err := fmt.Errorf("can only POST 'raw' not 'isotropic' images")
 					server.BadRequest(w, r, err)
 					return
 				}
