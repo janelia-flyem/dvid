@@ -133,6 +133,64 @@ GET  <api URL>/node/<UUID>/<data name>/keyrange/<key1>/<key2>
 	key1          Lexicographically lowest alphanumeric key in range.
 	key2          Lexicographically highest alphanumeric key in range.
 
+GET  <api URL>/node/<UUID>/<data name>/keyrangevalues/<key1>/<key2>?<options>
+
+	This has the same response as the GET /keyvalues endpoint but a different way of
+	specifying the keys.  In this endpoint, you specify a range of keys.  In the other
+	endpoint, you must explicitly send the keys in a GET payload, which may not be
+	fully supported.
+
+	Note that this endpoint streams data to the requester, which prevents setting HTTP
+	status to error if the streaming has already started.  Instead, malformed output
+	will inform the requester of an error.
+
+	Response types:
+
+	1) json (values are expected to be valid JSON or an error is returned)
+
+		{
+			"key1": value1,
+			"key2": value2,
+			...
+		}
+
+	2) tar
+
+		A tarfile is returned with each keys specifying the file names and
+		values as the file bytes.
+
+	3) protobuf3
+	
+		KeyValue data needs to be serialized in a format defined by the following 
+		protobuf3 definitions:
+
+		message KeyValue {
+			string key = 1;
+			bytes value = 2;
+		}
+
+		message KeyValues {
+			repeated KeyValue kvs = 1;
+		}
+
+	Arguments:
+
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of keyvalue data instance.
+	key1          Lexicographically lowest alphanumeric key in range.
+	key2          Lexicographically highest alphanumeric key in range.
+
+	GET Query-string Options (only one of these allowed):
+
+	json        If set to "true", the response will be JSON as above and the values must
+				  be valid JSON or an error will be returned.
+	tar			If set to "true", the response will be a tarfile with keys as file names.
+	protobuf	If set to "true", the response will be protobuf KeyValues response
+
+	check		If json=true, setting check=false will tell server to trust that the
+				  values will be valid JSON instead of parsing it as a check.
+
+
 GET  <api URL>/node/<UUID>/<data name>/key/<key>
 POST <api URL>/node/<UUID>/<data name>/key/<key>
 DEL  <api URL>/node/<UUID>/<data name>/key/<key> 
@@ -207,10 +265,57 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of keyvalue data instance.
 
-	GET Query-string Options:
+	GET Query-string Options (only one of these allowed):
 
+	json        If
 	jsontar		If set to any value for GET, query body must be JSON array of string keys
 				and the returned data will be a tarfile with keys as file names.
+
+	Response types:
+
+	1) json (values are expected to be valid JSON or an error is returned)
+
+		{
+			"key1": value1,
+			"key2": value2,
+			...
+		}
+
+	2) tar
+
+		A tarfile is returned with each keys specifying the file names and
+		values as the file bytes.
+
+	3) protobuf3
+	
+		KeyValue data needs to be serialized in a format defined by the following 
+		protobuf3 definitions:
+
+		message KeyValue {
+			string key = 1;
+			bytes value = 2;
+		}
+
+		message KeyValues {
+			repeated KeyValue kvs = 1;
+		}
+
+	Arguments:
+
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of keyvalue data instance.
+	key1          Lexicographically lowest alphanumeric key in range.
+	key2          Lexicographically highest alphanumeric key in range.
+
+	GET Query-string Options (only one of these allowed):
+
+	json        If set to "true", the response will be JSON as above and the values must
+					be valid JSON or an error will be returned.
+	tar			If set to "true", the response will be a tarfile with keys as file names.
+	protobuf	If set to "true", the response will be protobuf KeyValues response
+
+	check		If json=true, setting check=false will tell server to trust that the
+					values will be valid JSON instead of parsing it as a check.
 `
 
 func init() {
@@ -581,6 +686,23 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		fmt.Fprintf(w, string(jsonBytes))
 		comment = fmt.Sprintf("HTTP GET keyrange [%q, %q]", keyBeg, keyEnd)
 
+	case "keyrangevalues":
+		if len(parts) < 6 {
+			server.BadRequest(w, r, "expect beginning and end keys to follow 'keyrangevalues' endpoint")
+			return
+		}
+
+		// Return JSON list of keys
+		keyBeg := parts[4]
+		keyEnd := parts[5]
+		w.Header().Set("Content-Type", "application/json")
+		numKeys, err := d.sendJSONValuesInRange(w, r, ctx, keyBeg, keyEnd)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		comment = fmt.Sprintf("HTTP GET keyrangevalues sent %d values for [%q, %q]", numKeys, keyBeg, keyEnd)
+
 	case "keyvalues":
 		switch action {
 		case "get":
@@ -691,80 +813,264 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	return
 }
 
-func (d *Data) handleKeyValues(w http.ResponseWriter, r *http.Request, uuid dvid.UUID, ctx *datastore.VersionedCtx) (numKeys, writtenBytes int, err error) {
-	jsontar := (r.URL.Query().Get("jsontar") != "")
-	var data []byte
-	data, err = ioutil.ReadAll(r.Body)
-	if err != nil {
+func (d *Data) sendJSONValuesInRange(w http.ResponseWriter, r *http.Request, ctx *datastore.VersionedCtx, keyBeg, keyEnd string) (numKeys int, err error) {
+	tarOut := (r.URL.Query().Get("jsontar") == "true") || (r.URL.Query().Get("tar") == "true")
+	jsonOut := r.URL.Query().Get("json") == "true"
+	checkVal := r.URL.Query().Get("check") == "true"
+	if tarOut && jsonOut {
+		err = fmt.Errorf("can only specify tar or json output, not both")
 		return
 	}
-	var serialization []byte
-	var found bool
-	if jsontar { // read JSON key array, write tar file.
-		var keys []string
-		if err = json.Unmarshal(data, &keys); err != nil {
+	db, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return 0, err
+	}
+
+	var kvs KeyValues
+	var tw *tar.Writer
+
+	switch {
+	case tarOut:
+		w.Header().Set("Content-type", "application/tar")
+		tw = tar.NewWriter(w)
+	case jsonOut:
+		w.Header().Set("Content-type", "application/json")
+		if _, err = w.Write([]byte("{")); err != nil {
 			return
 		}
-		numKeys = len(keys)
+	default:
+	}
 
-		var buf bytes.Buffer
-		tw := tar.NewWriter(&buf)
+	// Compute first and last key for range
+	first, err := NewTKey(keyBeg)
+	if err != nil {
+		return 0, err
+	}
+	last, err := NewTKey(keyEnd)
+	if err != nil {
+		return 0, err
+	}
 
-		var val []byte
-		for _, key := range keys {
-			if val, found, err = d.GetData(ctx, key); err != nil {
-				return
-			}
-			if !found {
-				val = nil
-			}
+	var wroteVal bool
+	err = db.ProcessRange(ctx, first, last, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+		if c == nil || c.TKeyValue == nil {
+			return nil
+		}
+		kv := c.TKeyValue
+		if kv.V == nil {
+			return nil
+		}
+		key, err := DecodeTKey(kv.K)
+		if err != nil {
+			return err
+		}
+		uncompress := true
+		val, _, err := dvid.DeserializeData(kv.V, uncompress)
+		if err != nil {
+			return fmt.Errorf("Unable to deserialize data for key %q: %v\n", key, err)
+		}
+		switch {
+		case tarOut:
 			hdr := &tar.Header{
 				Name: key,
 				Size: int64(len(val)),
 				Mode: 0755,
 			}
 			if err = tw.WriteHeader(hdr); err != nil {
-				return
+				return err
 			}
 			if _, err = tw.Write(val); err != nil {
-				return
+				return err
 			}
-		}
-		tw.Close()
-		w.Header().Set("Content-type", "application/tar")
-		serialization = buf.Bytes()
-
-	} else { // protobuf3 by default
-		var keys Keys
-		if err = keys.Unmarshal(data); err != nil {
-			return
-		}
-		numKeys = len(keys.Keys)
-		var val []byte
-		var kvs KeyValues
-		kvs.Kvs = make([]*KeyValue, numKeys)
-		for i, key := range keys.Keys {
-			if val, found, err = d.GetData(ctx, key); err != nil {
-				return
+		case jsonOut:
+			if wroteVal {
+				if _, err = w.Write([]byte(",")); err != nil {
+					return err
+				}
 			}
-			if !found {
-				val = nil
+			if len(val) == 0 {
+				val = []byte("{}")
+			} else if checkVal && !json.Valid(val) {
+				return fmt.Errorf("bad JSON for key %q", key)
 			}
-			kvs.Kvs[i] = &KeyValue{
+			out := fmt.Sprintf(`"%s":`, key)
+			if _, err = w.Write([]byte(out)); err != nil {
+				return err
+			}
+			if _, err = w.Write(val); err != nil {
+				return err
+			}
+			wroteVal = true
+		default:
+			kv := &KeyValue{
 				Key:   key,
 				Value: val,
 			}
+			kvs.Kvs = append(kvs.Kvs, kv)
 		}
+
+		return nil
+	})
+	switch {
+	case tarOut:
+		tw.Close()
+	case jsonOut:
+		if _, err = w.Write([]byte("}")); err != nil {
+			return
+		}
+	default:
+		numKeys = len(kvs.Kvs)
+		var serialization []byte
 		if serialization, err = kvs.Marshal(); err != nil {
 			return
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
+		if _, err = w.Write(serialization); err != nil {
+			return
+		}
 	}
+	return
+}
+
+func (d *Data) sendJSONKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, keys []string, checkVal bool) (writtenBytes int, err error) {
+	w.Header().Set("Content-type", "application/json")
+	if writtenBytes, err = w.Write([]byte("{")); err != nil {
+		return
+	}
+	var n int
+	var wroteVal bool
+	for _, key := range keys {
+		if wroteVal {
+			if n, err = w.Write([]byte(",")); err != nil {
+				return
+			}
+			writtenBytes += n
+		}
+		var val []byte
+		var found bool
+		if val, found, err = d.GetData(ctx, key); err != nil {
+			return
+		}
+		if !found {
+			wroteVal = false
+			continue
+		}
+		if len(val) == 0 {
+			val = []byte("{}")
+		} else if checkVal && !json.Valid(val) {
+			err = fmt.Errorf("bad JSON for key %q", key)
+			return
+		}
+		out := fmt.Sprintf(`"%s":`, key)
+		if n, err = w.Write([]byte(out)); err != nil {
+			return
+		}
+		writtenBytes += n
+		if n, err = w.Write(val); err != nil {
+			return
+		}
+		writtenBytes += n
+		wroteVal = true
+	}
+	return
+}
+
+func (d *Data) sendTarKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, keys []string) (writtenBytes int, err error) {
+	var n int
+	w.Header().Set("Content-type", "application/tar")
+	tw := tar.NewWriter(w)
+	for _, key := range keys {
+		var val []byte
+		var found bool
+		if val, found, err = d.GetData(ctx, key); err != nil {
+			return
+		}
+		if !found {
+			val = nil
+		}
+		hdr := &tar.Header{
+			Name: key,
+			Size: int64(len(val)),
+			Mode: 0755,
+		}
+		if err = tw.WriteHeader(hdr); err != nil {
+			return
+		}
+		if n, err = tw.Write(val); err != nil {
+			return
+		}
+		writtenBytes += n
+	}
+	tw.Close()
+	return
+}
+
+func (d *Data) sendProtobufKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, keys Keys) (writtenBytes int, err error) {
+	var kvs KeyValues
+	kvs.Kvs = make([]*KeyValue, len(keys.Keys))
+	for i, key := range keys.Keys {
+		var val []byte
+		var found bool
+		if val, found, err = d.GetData(ctx, key); err != nil {
+			return
+		}
+		if !found {
+			val = nil
+		}
+		kvs.Kvs[i] = &KeyValue{
+			Key:   key,
+			Value: val,
+		}
+	}
+	var serialization []byte
+	if serialization, err = kvs.Marshal(); err != nil {
+		return
+	}
+	w.Header().Set("Content-type", "application/octet-stream")
 	if writtenBytes, err = w.Write(serialization); err != nil {
 		return
 	}
 	if writtenBytes != len(serialization) {
 		err = fmt.Errorf("unable to write all %d bytes of serialized keyvalues: only %d bytes written", len(serialization), writtenBytes)
+	}
+	return
+}
+
+func (d *Data) handleKeyValues(w http.ResponseWriter, r *http.Request, uuid dvid.UUID, ctx *datastore.VersionedCtx) (numKeys, writtenBytes int, err error) {
+	tarOut := (r.URL.Query().Get("jsontar") == "true") || (r.URL.Query().Get("tar") == "true")
+	jsonOut := r.URL.Query().Get("json") == "true"
+	checkVal := r.URL.Query().Get("check") == "true"
+	if tarOut && jsonOut {
+		err = fmt.Errorf("can only specify tar or json output, not both")
+		return
+	}
+	var data []byte
+	data, err = ioutil.ReadAll(r.Body)
+	if err != nil {
+		return
+	}
+	switch {
+	case tarOut:
+		var keys []string
+		if err = json.Unmarshal(data, &keys); err != nil {
+			return
+		}
+		numKeys = len(keys)
+		writtenBytes, err = d.sendTarKV(w, ctx, keys)
+	case jsonOut:
+		var keys []string
+		if err = json.Unmarshal(data, &keys); err != nil {
+			return
+		}
+		numKeys = len(keys)
+		writtenBytes, err = d.sendJSONKV(w, ctx, keys, checkVal)
+	default:
+		var keys Keys
+		if err = keys.Unmarshal(data); err != nil {
+			return
+		}
+		numKeys = len(keys.Keys)
+		writtenBytes, err = d.sendProtobufKV(w, ctx, keys)
 	}
 	return
 }

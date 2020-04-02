@@ -257,6 +257,48 @@ type resolveResp struct {
 	Child dvid.UUID `json:"child"`
 }
 
+func TestKeyvalueRange(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+
+	config := dvid.NewConfig()
+	config.Set("versioned", "false")
+	_, err := datastore.NewData(uuid, kvtype, "unversiontest", config)
+	if err != nil {
+		t.Fatalf("Error creating new keyvalue instance: %v\n", err)
+	}
+
+	// PUT a value
+	key1 := "key1"
+	value1 := `[1, 2, 3]`
+	key1req := fmt.Sprintf("%snode/%s/unversiontest/key/%s", server.WebAPIPath, uuid, key1)
+	server.TestHTTP(t, "POST", key1req, strings.NewReader(value1))
+
+	returnValue := server.TestHTTP(t, "GET", key1req, nil)
+	if string(returnValue) != value1 {
+		t.Errorf("Error on key %q: expected %s, got %s\n", key1, value1, string(returnValue))
+	}
+
+	// Add 2nd k/v
+	key2 := "key2"
+	value2 := `{"foo":"a string", "bar":"another string", "baz":[1, 2, 3]}`
+	key2req := fmt.Sprintf("%snode/%s/unversiontest/key/%s", server.WebAPIPath, uuid, key2)
+	server.TestHTTP(t, "POST", key2req, strings.NewReader(value2))
+
+	// Test
+	rangeReq := fmt.Sprintf("%snode/%s/unversiontest/keyrangevalues/a/zz", server.WebAPIPath, uuid)
+	expectedJSON := `{"key1":[1, 2, 3],"key2":` + value2 + "}"
+
+	returnValue = server.TestHTTP(t, "GET", rangeReq+"?json=true", nil)
+	if string(returnValue) != expectedJSON {
+		t.Errorf("Error on keyrangevalues: got %s, expected %s\n", string(returnValue), expectedJSON)
+	}
+}
+
 func TestKeyvalueUnversioned(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
