@@ -367,7 +367,7 @@ func (ng *ngStore) Equal(config dvid.StoreConfig) bool {
 // For standard morton code, we'd shift Y << 1 and Z << 2 then OR the three resulting uint64.
 // But most datasets aren't symmetrical in size across dimensions.
 
-// Using compressed 3D morton code lets us use bits assymetrically and conserve bits where some
+// Using compressed 3D morton code lets us use bits asymmetrically and conserve bits where some
 // dimensions are smaller and those bits would always be zero.  Compressed morton code
 // drops the bits that would be zero across all entries because that dimension is limited in
 // size.  Say the X has max size 42,943 which requires only 16 bits (~64K) and would only use
