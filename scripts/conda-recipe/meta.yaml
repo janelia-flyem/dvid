@@ -220,12 +220,14 @@ source:
 
   # go cloud dev kit
   #
-  # FIXME:
-  # This url can't be cloned.
-  #
-  # - git_url: https://gocloud.dev
-  #   git_tag: master
-  #   folder:  src/gocloud.dev
-  #
+  - git_url: https://github.com/google/go-cloud
+    git_tag: v0.19.0
+    folder:  src/gocloud.dev
+
+  - git_url: https://github.com/google/wire
+    git_tag: v0.19.0
+    folder:  src/github.com/google/wire
+
   # Also, we probably should add the following:
-  # github.com/google/wire, golang.org/x/xerrors
+  # golang.org/x/xerrors
+  # but have not been able to find the actual github or git repo.
