@@ -185,7 +185,9 @@ GET  <api URL>/node/<UUID>/<data name>/keyrangevalues/<key1>/<key2>?<options>
 	json        If set to "true", the response will be JSON as above and the values must
 				  be valid JSON or an error will be returned.
 	tar			If set to "true", the response will be a tarfile with keys as file names.
-	protobuf	If set to "true", the response will be protobuf KeyValues response
+	protobuf	Default, or can be set to "true". Response will be protobuf KeyValues response
+
+	Additional query option:
 
 	check		If json=true, setting check=false will tell server to trust that the
 				  values will be valid JSON instead of parsing it as a check.
