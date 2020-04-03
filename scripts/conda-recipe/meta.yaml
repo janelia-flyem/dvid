@@ -1,5 +1,13 @@
 # Set version automatically from the latest tag in git
 # Drop leading 'v', e.g. from v0.8.13
+#
+# Note:
+#   If conda-build fails due to the following error:
+#
+#     "'GIT_DESCRIBE_TAG' is undefined",
+#
+#   ...then it's likely that one of the git repos below could not be cloned.
+#   Inspect the conda-build output for the specific error.
 {% set tagged_version = GIT_DESCRIBE_TAG|replace("v","") %}
 
 # If we aren't sitting at a tag directly, but some N commits after,
@@ -225,7 +233,7 @@ source:
     folder:  src/gocloud.dev
 
   - git_url: https://github.com/google/wire
-    git_tag: v0.19.0
+    git_tag: v0.4.0
     folder:  src/github.com/google/wire
 
   # Also, we probably should add the following:
