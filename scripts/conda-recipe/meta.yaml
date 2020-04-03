@@ -42,7 +42,7 @@ requirements:
   # are used to build dvid, but are not linked against
   # or incorporated into the executable in any way.
   build:
-    
+
     - go=1.12 # From flyem-forge, not conda-forge!
 
     # Anaconda's gcc build -- on Linux only for now
@@ -83,7 +83,7 @@ source:
     folder: src/github.com/janelia-flyem/go
     # Includes many:
     #   basholeveldb cron freetype-go go-humanize go-uuid
-    #   go.image gocheck goexif goji golz4-updated 
+    #   go.image gocheck goexif goji golz4-updated
     #   levigo lru lumberjack msgp murmur3 nrsc profiler resize semver
     #   toml uuid
 
@@ -192,7 +192,7 @@ source:
   - git_url: https://github.com/confluentinc/confluent-kafka-go
     git_tag: v0.11.6
     folder:  src/github.com/confluentinc/confluent-kafka-go
-    
+
   # freecache
   - git_url: https://github.com/coocood/freecache
     git_tag: master
@@ -219,6 +219,13 @@ source:
     folder:  src/github.com/janelia-flyem/protolog
 
   # go cloud dev kit
-  - git_url: https://gocloud.dev
-    git_tag: master
-    folder:  src/gocloud.dev
+  #
+  # FIXME:
+  # This url can't be cloned.
+  #
+  # - git_url: https://gocloud.dev
+  #   git_tag: master
+  #   folder:  src/gocloud.dev
+  #
+  # Also, we probably should add the following:
+  # github.com/google/wire, golang.org/x/xerrors
