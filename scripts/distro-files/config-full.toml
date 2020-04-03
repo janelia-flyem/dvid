@@ -156,7 +156,16 @@ topicSuffixes = ["bc95398cb3ae40fcab2529c7bca1ad0d:myGreatDataInstance"]
 # default is 100,000 and may be exceeded for activity logs on very busy servers
 bufferSize = 1000000
 
+# kafka config "bootstrap.servers"
 servers = ["foo.bar.com:1234", "foo2.bar.com:1234"]
+# kafka config "security.protocol"
+secProtocol = "SASL_SSL"
+# kafka config "sasl.mechanisms"
+saslMechanisms = "PLAIN"
+# kafka config "sasl.username"
+saslUsername = "KEY-TAKEN-FROM-CONFLUENT-CLOUD"
+# kafka config "sasl.password"
+saslPassword = "SECRET-TAKEN-FROM-CONFLUENT-CLOUD"
 
 # Cache support allows setting datatype-specific caching mechanisms.
 # Currently freecache is supported in labelarray and labelmap.

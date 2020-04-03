@@ -35,11 +35,15 @@ const KafkaMaxMessageSize = 980 * dvid.Kilo
 // KafkaConfig describes kafka servers and an optional local file directory into which
 // failed messages will be stored.
 type KafkaConfig struct {
-	TopicActivity string   // if supplied, will be override topic for activity log
-	TopicPrefix   string   // if supplied, will be prefixed to any mutation logging
-	TopicSuffixes []string // optional topic suffixes per data UUID
-	Servers       []string
-	BufferSize    int // queue.buffering.max.messages
+	TopicActivity  string   // if supplied, will be override topic for activity log
+	TopicPrefix    string   // if supplied, will be prefixed to any mutation logging
+	TopicSuffixes  []string // optional topic suffixes per data UUID
+	Servers        []string
+	SecProtocol    string
+	SASLMechanisms string
+	SASLUsername   string
+	SASLPassword   string
+	BufferSize     int // queue.buffering.max.messages
 }
 
 // KafkaTopicSuffix returns any configured suffix for the given data UUID or the empty string.
@@ -87,6 +91,18 @@ func (kc KafkaConfig) Initialize(hostID string) error {
 	configMap := kafka.ConfigMap{
 		"client.id":         "dvid-kafkaclient",
 		"bootstrap.servers": strings.Join(kc.Servers, ","),
+	}
+	if kc.SecProtocol != "" {
+		configMap["security.protocol"] = kc.SecProtocol
+	}
+	if kc.SASLMechanisms != "" {
+		configMap["sasl.mechanisms"] = kc.SASLMechanisms
+	}
+	if kc.SASLUsername != "" {
+		configMap["sasl.username"] = kc.SASLUsername
+	}
+	if kc.SASLPassword != "" {
+		configMap["sasl.password"] = kc.SASLPassword
 	}
 	if kc.BufferSize != 0 {
 		configMap["queue.buffering.max.messages"] = kc.BufferSize
