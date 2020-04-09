@@ -1,15 +1,22 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
+)
+
+var (
+	// KafkaTopicPrefix is the kafka topic prefix for mutation logging
+	KafkaTopicPrefix string
 )
 
 var (
@@ -19,11 +26,12 @@ var (
 	// the kafka topic for activity logging
 	kafkaActivityTopic string
 
-	// the kafka topic prefix for mutation logging
-	KafkaTopicPrefix string
-
 	// topic suffixes per data UUID for mutation logging
 	kafkaTopicSuffixes map[dvid.UUID]string
+
+	// have topics been created and verified
+	kafkaTopicExists   map[string]bool
+	kafkaTopicExistsMu sync.RWMutex
 )
 
 // assume very low throughput needed and therefore always one partition
@@ -63,6 +71,7 @@ func (kc KafkaConfig) Initialize(hostID string) error {
 	if len(kc.Servers) == 0 {
 		return nil
 	}
+	kafkaTopicExists = make(map[string]bool)
 	kafkaTopicSuffixes = make(map[dvid.UUID]string)
 	for _, spec := range kc.TopicSuffixes {
 		parts := strings.Split(spec, ":")
@@ -115,8 +124,9 @@ func (kc KafkaConfig) Initialize(hostID string) error {
 		for e := range kafkaProducer.Events() {
 			switch ev := e.(type) {
 			case *kafka.Message:
+				// dvid.Infof("Event message: %v\n", ev.TopicPartition)
 				if ev.TopicPartition.Error != nil {
-					dvid.Errorf("Delivery failed to kafka servers: %v\n", ev.TopicPartition)
+					dvid.Errorf("Delivery failed to kafka servers: %v\n", ev.TopicPartition.Error)
 				}
 			}
 		}
@@ -162,12 +172,17 @@ func LogActivityToKafka(activity map[string]interface{}) {
 // KafkaProduceMsg sends a message to kafka
 func KafkaProduceMsg(value []byte, topic string) error {
 	if kafkaProducer != nil {
+		if err := topicAvailable(topic); err != nil {
+			return err
+		}
 		kafkaMsg := &kafka.Message{
 			TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
 			Value:          value,
 			Timestamp:      time.Now(),
 		}
 		if err := kafkaProducer.Produce(kafkaMsg, nil); err != nil {
+			dvid.Errorf("Error in sending message to kafka topic %q: %v\n", topic, err)
+
 			// Store data in append-only log
 			storeFailedMsg("failed-kafka-"+topic, value)
 
@@ -179,6 +194,55 @@ func KafkaProduceMsg(value []byte, topic string) error {
 
 			return fmt.Errorf("cannot produce message to topic %q, partition %d: %s", topic, partitionID, err)
 		}
+	}
+	return nil
+}
+
+func topicAvailable(topic string) error {
+	if topic == "" {
+		return fmt.Errorf("can't use empty topic name")
+	}
+	kafkaTopicExistsMu.RLock()
+	val, found := kafkaTopicExists[topic]
+	kafkaTopicExistsMu.RUnlock()
+	if found {
+		if val == false {
+			return fmt.Errorf("unable to create topic %q [cached attempt]", topic)
+		}
+		return nil
+	}
+	kafkaTopicExistsMu.Lock()
+	defer kafkaTopicExistsMu.Unlock()
+	a, err := kafka.NewAdminClientFromProducer(kafkaProducer)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	maxDur, err := time.ParseDuration("5s")
+	if err != nil {
+		return err
+	}
+	results, err := a.CreateTopics(
+		ctx,
+		[]kafka.TopicSpecification{{
+			Topic:             topic,
+			NumPartitions:     3,
+			ReplicationFactor: 3,
+			Config: map[string]string{
+				"cleanup.policy": "compact",
+				//"delete.retention.ms": "0",
+				"max.message.bytes": "2097164",
+			},
+		}},
+		kafka.SetAdminOperationTimeout(maxDur))
+	if err != nil {
+		return err
+	}
+	kafkaTopicExists[topic] = true
+	for _, result := range results {
+		dvid.Infof("Create topic %q: %s\n", topic, result)
 	}
 	return nil
 }
