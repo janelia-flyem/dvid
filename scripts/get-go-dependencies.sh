@@ -171,7 +171,7 @@ if [[ -d ${KAFKA_GO_DIR} ]]; then
 else
     git clone https://github.com/confluentinc/confluent-kafka-go ${KAFKA_GO_DIR}
 fi
-cd ${KAFKA_GO_DIR} && git checkout v0.11.6 && cd -
+cd ${KAFKA_GO_DIR} && git checkout v1.3.0 && cd -
 
 if [ $(uname) == "Linux" ]; then
     # For some reason, the confluent kafka package cannot be built correctly unless you set LD_LIBRARY_PATH,
