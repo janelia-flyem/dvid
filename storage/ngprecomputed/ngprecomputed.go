@@ -11,6 +11,7 @@ import (
 	"image/jpeg"
 	"io"
 	"io/ioutil"
+	"math"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -305,9 +306,12 @@ func (ng *ngStore) initialize() error {
 		shardBits := scale.Sharding.ShardBits
 		minishardOff := ((on >> minishardBits) << minishardBits)
 		ng.vol.Scales[n].minishardMask = ^minishardOff
-		excessBits := 64 - shardBits - minishardBits
+		excessBits := 64 - shardBits - minishardBits - scale.Sharding.PreshiftBits
 		ng.vol.Scales[n].shardMask = (minishardOff << excessBits) >> excessBits
 		ng.vol.Scales[n].shardIndexEnd = (1 << uint64(minishardBits)) * 16
+
+		dvid.Infof("minishard mask: %0*x", 16, ng.vol.Scales[n].minishardMask)
+		dvid.Infof("    shard mask: %0*x", 16, ng.vol.Scales[n].shardMask)
 	}
 	return nil
 }
@@ -423,6 +427,7 @@ func (ng *ngStore) mortonCode(scale *ngScale, blockCoord dvid.ChunkPoint3d) (mor
 			}
 		}
 	}
+	dvid.Infof("Morton code for chunk %s: %x\n", blockCoord, mortonCode)
 	return
 }
 
@@ -581,10 +586,21 @@ func (ng *ngStore) loadMinishardMap(scale *ngScale, shardFile string, shard *sha
 func (ng *ngStore) getBlock(scale *ngScale, shardFile string, chunkID uint64, minishardMap map[uint64]valueLoc) (val []byte, err error) {
 	timedLog := dvid.NewTimeLog()
 	loc, found := minishardMap[chunkID]
+	var min, max uint64
+	min = math.MaxUint64
+	for key := range minishardMap {
+		if key < min {
+			min = key
+		}
+		if key > max {
+			max = key
+		}
+	}
 	if !found {
-		timedLog.Infof("No chunk %x found in shard file %q, returning nil", chunkID, shardFile)
+		timedLog.Infof("No chunk %x found in shard file %q, minishard [%x,%x], returning nil", chunkID, shardFile, min, max)
 		return nil, nil
 	}
+	timedLog.Infof("Found chunk %x in shard file %q, minishard [%x,%x], returning nil", chunkID, shardFile, min, max)
 	val, err = ng.rangeRead(shardFile, loc.pos, loc.size)
 	timedLog.Infof("got block %x: offset %d, size %d -> read %d bytes", chunkID, loc.pos, loc.size, len(val))
 	if _, err = jpegUncompress(val); err != nil {
