@@ -2,8 +2,9 @@
 # See config-multidb.toml for full range of configurations including
 # email notifications, authentication, and backend assignments.
 
-# NOTE: If you plan to use labelmap type, you MUST specify a log and therefore
-# need to specify both "backend" and "store" sections.  See config-full.toml.
+# NOTE: These example paths use /tmp to allow this configuration to
+#       run on your machine out-of-the-box, for demonstration purposes.
+#       For a real setup, change these paths to something permanent!
 
 [server]
 # host = "mygreatserver.test.com"  # Lets you specify a user-friendly alias for help messages.
@@ -19,10 +20,15 @@ max_log_age = 30   # days
 
 # If no backend is specified, DVID will return an error unless there is only
 # one store, which will automatically be backend.default.
-#   See config-full.toml for example of [backend] use.
+# See config-full.toml for example of [backend] use.
 # However, use of a labelmap instance requires at least a filelog store and
 # specification of a log, so a backend is required for servers with labelmap
 # instances.
+
+# NOTE: If you plan to use labelmap type, you MUST specify a log and therefore
+#       need to specify both "backend" and "store" sections.
+#       See config-full.toml.
+
 [backend]
     [backend.default]
     store = "raid6"
@@ -32,6 +38,7 @@ max_log_age = 30   # days
 # Any nickname can be used for a store.  In this case, it's "raid6" to reflect
 # that the directory is on a RAID-6 drive system.  Note that all store properties
 # like "engine" and "path" should be lower-case by convention.
+
 [store]
     [store.raid6]
     engine = "basholeveldb"
@@ -39,4 +46,4 @@ max_log_age = 30   # days
 
     [store.mutationlog]
     engine = "filelog"
-    path = "/data/mutationlog"  # directory that holds mutation log per instance-UUID.
+    path = "/tmp/data/mutationlog"  # directory that holds mutation log per instance-UUID.
