@@ -306,12 +306,12 @@ func (ng *ngStore) initialize() error {
 		shardBits := scale.Sharding.ShardBits
 		minishardOff := ((on >> minishardBits) << minishardBits)
 		ng.vol.Scales[n].minishardMask = ^minishardOff
-		excessBits := 64 - shardBits - minishardBits - scale.Sharding.PreshiftBits
+		excessBits := 64 - shardBits - minishardBits
 		ng.vol.Scales[n].shardMask = (minishardOff << excessBits) >> excessBits
 		ng.vol.Scales[n].shardIndexEnd = (1 << uint64(minishardBits)) * 16
 
-		dvid.Infof("minishard mask: %0*x", 16, ng.vol.Scales[n].minishardMask)
-		dvid.Infof("    shard mask: %0*x", 16, ng.vol.Scales[n].shardMask)
+		dvid.Infof("minishard mask: %0*x\n", 16, ng.vol.Scales[n].minishardMask)
+		dvid.Infof("    shard mask: %0*x\n", 16, ng.vol.Scales[n].shardMask)
 	}
 	return nil
 }
