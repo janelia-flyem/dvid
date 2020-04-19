@@ -287,10 +287,16 @@ func (ng *ngStore) initialize() error {
 		if scale.Sharding.FormatType != "neuroglancer_uint64_sharded_v1" {
 			return fmt.Errorf("Scale %d has unexpected shard type: %s", n, scale.Sharding.FormatType)
 		}
+		if len(scale.ChunkSizes) > 1 {
+			return fmt.Errorf("Scale %d has more than one chunk size, which is unsupported: %v", n, scale.ChunkSizes)
+		}
+		chunkSize := scale.ChunkSizes[0]
+
 		// compute the num bits required for each dimension and the max bits
 		var maxBits uint8
 		for dim := uint8(0); dim < 3; dim++ {
-			numBits := log2(scale.Size[dim])
+			chunkDim := scale.Size[dim] / chunkSize[dim]
+			numBits := log2(chunkDim)
 			if numBits > maxBits {
 				maxBits = numBits
 			}
