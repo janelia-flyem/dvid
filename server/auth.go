@@ -28,7 +28,9 @@ type authConfig struct {
 	ProxyAddress string `toml:"proxy_address"`
 	AuthFile     string `toml:"auth_file"`
 	SecretKey    string `toml:"secret_key"`
-	NoEnforce    bool   `toml:"no_enforce"` // if true, accept all requestw
+	Enforce      string `toml:"enforce"` // either "none", "token" or "authfile"
+
+	NoEnforce bool `toml:"no_enforce"` // legacy: if true, accept all requests
 }
 
 // generateJWT returns a JWT given a user and secret key string
@@ -50,7 +52,11 @@ func generateJWT(user string) (string, error) {
 func isAuthorized(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		reqToken := r.Header.Get("Authorization")
-		if tc.Auth.NoEnforce {
+		enforce := strings.ToLower(tc.Auth.Enforce)
+		if tc.Auth.NoEnforce && enforce == "" {
+			enforce = "none"
+		}
+		if enforce == "none" {
 			h.ServeHTTP(w, r)
 			return
 		}
@@ -85,7 +91,7 @@ func isAuthorized(c *web.C, h http.Handler) http.Handler {
 					BadRequest(w, r, "user %v is not a simple string", user)
 					return
 				}
-				if !globalIsAuthorized(user, r.Method) {
+				if enforce == "authfile" && !globalIsAuthorized(user, r.Method) {
 					BadRequest(w, r, "user %q is not authorized", user)
 					return
 				}

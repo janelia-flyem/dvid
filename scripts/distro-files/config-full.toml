@@ -47,7 +47,8 @@ min_mutation_id_start = 1000100000  # mutation id will start from this or higher
 [auth]
 proxy_address = "http://some-flyem-services"  # URL to running github.com/janelia-flyem/flyem-services
 secret_key = "mysecretpasshrase" # This could be done with environ variable
-no_enforce = false # if true, doesn't block requests without valid JWT
+enforce = "none" # "none" = no JWT required, "token" requires valid JWT, and
+                 # "authfile" requires user to be in auth_file below.
 # File containing authorized emails in JSON format of style {"email":"priv", ...} 
 # where email could be "*" for wildcard and priv can be "read", "write", or "readwrite".
 #auth_file = "/demo/auth.txt" 
