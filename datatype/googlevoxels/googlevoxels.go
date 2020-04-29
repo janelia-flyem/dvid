@@ -189,7 +189,7 @@ func init() {
 var (
 	DefaultTileSize   int32  = 512
 	DefaultTileFormat string = "png"
-	bmapsPrefix       string = "https://brainmaps.googleapis.com/v1beta2"
+	bmapsPrefix       string = "https://brainmaps.googleapis.com/v1"
 )
 
 // Type embeds the datastore's Type to create a unique type with tile functions.
@@ -670,16 +670,22 @@ func (d *Data) GetGoogleSubvolGeom(scaling Scaling, shape dvid.DataShape, offset
 // or token needs to be added to the returned string to form a valid URL.  The formatStr
 // parameter is of the form "jpeg" or "jpeg:80" or "png:8" where an optional compression
 // level follows the image format and a colon.  Leave formatStr empty for default.
-func (gsg GoogleSubvolGeom) GetURL(volumeid, formatStr string) (string, error) {
-	url := fmt.Sprintf("%s/volumes/%s/binary", bmapsPrefix, volumeid)
+func (gsg GoogleSubvolGeom) GetURL(volumeid, formatStr string) (url string, opts io.Reader, err error) {
+	url = fmt.Sprintf("%s/volumes/%s", bmapsPrefix, volumeid)
+
+	jsonSpec := fmt.Sprintf(`{"imageSpec":{"geometry": {"corner":"%d,%d,%d","size":"%d,%d,%d","scale": %d}`,
+		gsg.offset[0], gsg.offset[1], gsg.offset[2],
+		gsg.size[0], gsg.size[1], gsg.size[2], gsg.gi)
 	if gsg.shape == XYZ {
-		url += "/subvolume"
+		url += "/subvolume:binary"
+		if formatStr != "" {
+			jsonSpec += `,"subvolumeFormat": "SINGLE_IMAGE"`
+		} else {
+			jsonSpec += `,"subvolumeFormat": "RAW_SNAPPY"`
+		}
 	} else {
-		url += "/tile"
+		url += "/imagetile:binary"
 	}
-	url += fmt.Sprintf("/corner=%d,%d,%d", gsg.offset[0], gsg.offset[1], gsg.offset[2])
-	url += fmt.Sprintf("/size=%d,%d,%d", gsg.size[0], gsg.size[1], gsg.size[2])
-	url += fmt.Sprintf("/scale=%d", gsg.gi)
 
 	if formatStr != "" {
 		format := strings.Split(formatStr, ":")
@@ -690,32 +696,31 @@ func (gsg GoogleSubvolGeom) GetURL(volumeid, formatStr string) (string, error) {
 		case "png":
 			gformat = "PNG"
 		default:
-			return "", fmt.Errorf("Google tiles only support JPEG or PNG formats, not %q", format[0])
+			err = fmt.Errorf("googlevoxels tiles only support JPEG or PNG formats, not %q", format[0])
+			return
 		}
-		url += fmt.Sprintf("/imageFormat=%s", gformat)
+		jsonSpec += fmt.Sprintf(`,"imageOptions":{"imageFormat":%q`, gformat)
 		if len(format) > 1 {
-			level, err := strconv.Atoi(format[1])
+			var level int
+			level, err = strconv.Atoi(format[1])
 			if err != nil {
-				return url, err
+				return
 			}
 			switch format[0] {
 			case "jpeg":
-				url += fmt.Sprintf("/jpegQuality=%d", level)
+				jsonSpec += fmt.Sprintf(`,"jpegQuality":%d`, level)
 			case "png":
-				url += fmt.Sprintf("/pngCompressionLevel=%d", level)
+				jsonSpec += fmt.Sprintf(`,"pngCompressionLevel":%d`, level)
 			}
 		}
+		jsonSpec += "}"
 	}
-	if gsg.shape == XYZ {
-		if formatStr != "" {
-			url += "/subvolumeFormat=SINGLE_IMAGE"
-		} else {
-			url += "/subvolumeFormat=raw_snappy"
-		}
-	}
-	url += "?alt=media"
+	jsonSpec += "}}"
+	dvid.Infof("Sending image options:\n%s\n", jsonSpec)
+	opts = bytes.NewBufferString(jsonSpec)
+	// url += "?alt=media"
 
-	return url, nil
+	return
 }
 
 // padData takes returned data and pads it to full expected size.
@@ -861,7 +866,7 @@ type Data struct {
 	client *http.Client // HTTP client that provides Authorization headers
 }
 
-// Returns a potentially cached client that handles authorization to Google.
+// GetClient returns a potentially cached client that handles authorization to Google.
 // Assumes a JSON Web Token has been loaded into Data or else returns an error.
 func (d *Data) GetClient() (*http.Client, error) {
 	if d.client != nil {
@@ -967,7 +972,7 @@ func (d *Data) serveTile(w http.ResponseWriter, r *http.Request, geom *GoogleSub
 	}
 
 	// If we are within volume, get data from Google.
-	url, err := geom.GetURL(d.VolumeID, formatStr)
+	url, imgOptions, err := geom.GetURL(d.VolumeID, formatStr)
 	if err != nil {
 		return err
 	}
@@ -978,7 +983,7 @@ func (d *Data) serveTile(w http.ResponseWriter, r *http.Request, geom *GoogleSub
 		dvid.Errorf("Can't get OAuth2 connection to Google: %v\n", err)
 		return err
 	}
-	resp, err := client.Get(url)
+	resp, err := client.Post(url, "application/json", imgOptions)
 	if err != nil {
 		return err
 	}
@@ -1047,7 +1052,7 @@ func (d *Data) serveVolume(w http.ResponseWriter, r *http.Request, geom *GoogleS
 	}
 
 	// If we are within volume, get data from Google.
-	url, err := geom.GetURL(d.VolumeID, formatstr)
+	url, imgOptions, err := geom.GetURL(d.VolumeID, formatstr)
 	if err != nil {
 		return err
 	}
@@ -1058,7 +1063,7 @@ func (d *Data) serveVolume(w http.ResponseWriter, r *http.Request, geom *GoogleS
 		dvid.Errorf("Can't get OAuth2 connection to Google: %v\n", err)
 		return err
 	}
-	resp, err := client.Get(url)
+	resp, err := client.Post(url, "application/json", imgOptions)
 	if err != nil {
 		return err
 	}
