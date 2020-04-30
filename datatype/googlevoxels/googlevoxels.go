@@ -25,7 +25,6 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
-	"github.com/golang/snappy"
 	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
 
@@ -170,7 +169,7 @@ GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?qu
 
     Query-string Options:
 
-    compression   Allows retrieval or submission of 3d data in "snappy (default) or "lz4" format.  
+    compression   Allows retrieval or submission of 3d data in "raw" (default) or "lz4" format.  
                      The 2d data will ignore this and use the image-based codec.
   	scale         Default is 0.  For scale N, returns an image down-sampled by a factor of 2^N.
     throttle      Only works for 3d data requests.  If "true", makes sure only N compute-intense operation 
@@ -673,7 +672,7 @@ func (d *Data) GetGoogleSubvolGeom(scaling Scaling, shape dvid.DataShape, offset
 func (gsg GoogleSubvolGeom) GetURL(volumeid, formatStr string) (url string, opts io.Reader, err error) {
 	url = fmt.Sprintf("%s/volumes/%s", bmapsPrefix, volumeid)
 
-	jsonSpec := fmt.Sprintf(`{"imageSpec":{"geometry": {"corner":"%d,%d,%d","size":"%d,%d,%d","scale": %d}`,
+	jsonSpec := fmt.Sprintf(`{"geometry": {"corner":"%d,%d,%d","size":"%d,%d,%d","scale": %d}`,
 		gsg.offset[0], gsg.offset[1], gsg.offset[2],
 		gsg.size[0], gsg.size[1], gsg.size[2], gsg.gi)
 	if gsg.shape == XYZ {
@@ -681,9 +680,10 @@ func (gsg GoogleSubvolGeom) GetURL(volumeid, formatStr string) (url string, opts
 		if formatStr != "" {
 			jsonSpec += `,"subvolumeFormat": "SINGLE_IMAGE"`
 		} else {
-			jsonSpec += `,"subvolumeFormat": "RAW_SNAPPY"`
+			jsonSpec += `,"subvolumeFormat": "RAW"`
 		}
 	} else {
+		jsonSpec = `{"imageSpec":` + jsonSpec
 		url += "/imagetile:binary"
 	}
 
@@ -715,7 +715,11 @@ func (gsg GoogleSubvolGeom) GetURL(volumeid, formatStr string) (url string, opts
 		}
 		jsonSpec += "}"
 	}
-	jsonSpec += "}}"
+	if gsg.shape == XYZ {
+		jsonSpec += "}"
+	} else {
+		jsonSpec += "}}"
+	}
 	dvid.Infof("Sending image options:\n%s\n", jsonSpec)
 	opts = bytes.NewBufferString(jsonSpec)
 	// url += "?alt=media"
@@ -1087,16 +1091,12 @@ func (d *Data) serveVolume(w http.ResponseWriter, r *http.Request, geom *GoogleS
 
 	switch compression {
 	case "lz4":
-		// Decompress snappy
-		sdata, err := ioutil.ReadAll(resp.Body)
-		timedLog.Infof("Got snappy-encoded subvolume from Google, %d bytes\n", len(sdata))
+		data, err := ioutil.ReadAll(resp.Body)
+		timedLog.Infof("Got raw subvolume from Google, %d bytes\n", len(data))
 		if err != nil {
 			return err
 		}
-		data, err := snappy.Decode(nil, sdata)
-		if err != nil {
-			return err
-		}
+
 		// Recompress and transmit as lz4
 		lz4data := make([]byte, lz4.CompressBound(data))
 		outSize, err := lz4.Compress(data, lz4data)
@@ -1108,8 +1108,8 @@ func (d *Data) serveVolume(w http.ResponseWriter, r *http.Request, geom *GoogleS
 		}
 		timedLog.Infof("Sent lz4-encoded subvolume from DVID, %d bytes\n", outSize)
 
-	default: // "snappy"
-		// Just stream data from Google
+	case "", "raw":
+		// Just stream raw data from Google
 		respBytes := 0
 		const BufferSize = 32 * 1024
 		buf := make([]byte, BufferSize)
@@ -1131,6 +1131,8 @@ func (d *Data) serveVolume(w http.ResponseWriter, r *http.Request, geom *GoogleS
 			}
 		}
 		timedLog.Infof("Proxied encoded subvolume from Google, %d bytes\n", respBytes)
+	default:
+		return fmt.Errorf("unknown compression requested %q", compression)
 	}
 
 	return nil
