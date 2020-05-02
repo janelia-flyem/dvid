@@ -639,28 +639,33 @@ func initRoutes() {
 	if webMux.routesSetup {
 		return
 	}
-	copts := cors.Options{
-		AllowedMethods: []string{"GET", "POST", "DELETE", "HEAD"},
-	}
-	if len(corsDomains) == 0 {
-		copts.AllowedOrigins = []string{"*"}
-	} else {
-		copts.AllowOriginFunc = corsValidator
-	}
+	var c *cors.Cors
 	authorizationOn := (len(tc.Auth.ProxyAddress) != 0)
-	if authorizationOn {
-		copts.AllowOriginFunc = corsValidator
-		copts.AllowedHeaders = []string{"Authorization", "authorization"}
-		copts.AllowCredentials = true
+	if len(corsDomains) > 0 {
+		copts := cors.Options{
+			AllowedMethods: []string{"GET", "POST", "DELETE", "HEAD"},
+		}
+		if len(corsDomains) == 1 {
+			copts.AllowedOrigins = []string{"*"}
+		} else {
+			copts.AllowOriginFunc = corsValidator
+		}
+		if authorizationOn {
+			copts.AllowOriginFunc = corsValidator
+			copts.AllowedHeaders = []string{"Authorization", "authorization"}
+			copts.AllowCredentials = true
+		}
+		c = cors.New(copts)
 	}
-	c := cors.New(copts)
 
 	webMuxMu.Lock()
 	silentMux := web.New()
 	webMux.Handle("/api/load", silentMux)
 	webMux.Handle("/api/heartbeat", silentMux)
 	webMux.Handle("/api/user-latencies", silentMux)
-	silentMux.Use(c.Handler)
+	if c != nil {
+		silentMux.Use(c.Handler)
+	}
 	silentMux.Use(latencyHandler)
 	silentMux.Get("/api/load", loadHandler)
 	silentMux.Get("/api/heartbeat", heartbeatHandler)
@@ -673,7 +678,9 @@ func initRoutes() {
 	mainMux.Use(httpAvailHandler)
 	mainMux.Use(recoverHandler)
 	mainMux.Use(adminPrivHandler)
-	mainMux.Use(c.Handler)
+	if c != nil {
+		mainMux.Use(c.Handler)
+	}
 
 	mainMux.Get("/interface", interfaceHandler)
 	mainMux.Get("/interface/version", versionHandler)
