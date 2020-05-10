@@ -1453,9 +1453,10 @@ func serverTokenHandler(w http.ResponseWriter, r *http.Request) {
 	profileURL := "https://" + strings.TrimSuffix(tc.Auth.ProxyAddress, "/") + "/profile"
 	req, err := http.NewRequest(http.MethodGet, profileURL, nil)
 	if err != nil {
-		BadRequest(w, r, err)
+		BadRequest(w, r, "unable to create new /profile request: %v", err)
 		return
 	}
+
 	for _, cookie := range r.Cookies() {
 		req.AddCookie(cookie)
 	}
@@ -1463,31 +1464,34 @@ func serverTokenHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		dvid.Infof("error just trying get /profile!\n")
-		BadRequest(w, r, err)
+		BadRequest(w, r, "unable to get profile from %s: %v", tc.Auth.ProxyAddress, err)
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		BadRequest(w, r, "unable to get profile from %s (status %d), perhaps not logged in?", tc.Auth.ProxyAddress, err)
 		return
 	}
 	defer resp.Body.Close()
 	data, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		BadRequest(w, r, err)
+		BadRequest(w, r, "unable to read /profile response from %s: %v", tc.Auth.ProxyAddress, err)
 		return
 	}
 	var profileData map[string]string
 	if err := json.Unmarshal(data, &profileData); err != nil {
-		BadRequest(w, r, err)
+		BadRequest(w, r, "unable to decode JSON for profile: %v", err)
 		return
 	}
 	user := profileData["Email"]
 	if len(user) == 0 {
-		BadRequest(w, r, fmt.Errorf("could not get user (email) from proxy %q", profileURL))
+		BadRequest(w, r, "unable to get user (email) from %s", profileURL)
 		return
 	}
 
 	// generate JWT
 	tokenString, err := generateJWT(user)
 	if err != nil {
-		BadRequest(w, r, err)
+		BadRequest(w, r, "unable to generate JWT: %v", err)
 		return
 	}
 	dvid.Infof("Returning JWT for user %s.\n", user)
