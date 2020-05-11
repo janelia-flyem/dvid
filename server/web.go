@@ -665,6 +665,8 @@ func initRoutes() {
 	webMux.Handle("/api/user-latencies", silentMux)
 	if c != nil {
 		silentMux.Use(c.Handler)
+	} else if !authorizationOn {
+		silentMux.Use(wildcardAccessHandler)
 	}
 	silentMux.Use(latencyHandler)
 	silentMux.Get("/api/load", loadHandler)
@@ -680,6 +682,8 @@ func initRoutes() {
 	mainMux.Use(adminPrivHandler)
 	if c != nil {
 		mainMux.Use(c.Handler)
+	} else if !authorizationOn {
+		mainMux.Use(wildcardAccessHandler)
 	}
 
 	mainMux.Get("/interface", interfaceHandler)
@@ -843,6 +847,15 @@ func recoverHandler(c *web.C, h http.Handler) http.Handler {
 			}
 		}()
 
+		h.ServeHTTP(w, r)
+	}
+	return http.HandlerFunc(fn)
+}
+
+// Middleware that allows any server to access to prevent CORS issues.
+func wildcardAccessHandler(c *web.C, h http.Handler) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Access-Control-Allow-Origin", "*")
 		h.ServeHTTP(w, r)
 	}
 	return http.HandlerFunc(fn)
