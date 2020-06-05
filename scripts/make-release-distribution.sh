@@ -20,12 +20,20 @@ DVID_DISTRO_ENV=$(conda info --base)/envs/dvid-distro
 
 # Cleanup from the previous distro env, if it exists.
 if [ -d ${DVID_DISTRO_ENV} ]; then
-    
+
     conda remove -y -n dvid-distro --all
 fi
 
-# Create the new distro environment and install dvid to it 
+# Create the new distro environment and install dvid to it
 conda create -y -n dvid-distro dvid
+
+# Install both versions of the dvid-web-console (old and new)
+conda install -y -n dvid-distro dvid-web-console=3
+cp -R ${DVID_DISTRO_ENV}/http/dvid-web-console ${DVID_DISTRO_ENV}/http/dvid-web-console-3
+
+# ...leave the old one active by default.
+conda install -y -n dvid-distro dvid-web-console=2.1.6
+cp -R ${DVID_DISTRO_ENV}/http/dvid-web-console ${DVID_DISTRO_ENV}/http/dvid-web-console-2
 
 cp ${THIS_SCRIPT_DIR}/distro-files/* ${DVID_DISTRO_ENV}
 
@@ -43,7 +51,7 @@ rm -f ${TARBALL_NAME}
 
 mv dvid-distro ${DIST_NAME}
 
-echo "Creating ${TARBALL_NAME} ..." 
+echo "Creating ${TARBALL_NAME} ..."
 
 tar -cjf ${TARBALL_NAME} ${DIST_NAME}
 
