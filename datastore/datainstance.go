@@ -68,6 +68,19 @@ func NewVersionedCtx(data dvid.Data, versionID dvid.VersionID) *VersionedCtx {
 	return &VersionedCtx{DataContext: storage.NewDataContext(data, versionID)}
 }
 
+// NewVersionedCtxMasterLeaf creates a new versioned context for the master branch leaf.
+func NewVersionedCtxMasterLeaf(data dvid.Data) (*VersionedCtx, error) {
+	if manager == nil {
+		return nil, ErrManagerNotInitialized
+	}
+	uuidSpec := string(data.RootUUID()) + ":master"
+	_, versionID, err := manager.matchingUUID(uuidSpec)
+	if err != nil {
+		return nil, err
+	}
+	return &VersionedCtx{DataContext: storage.NewDataContext(data, versionID)}, nil
+}
+
 // VersionedKeyValue returns the key-value pair corresponding to this key's version
 // given a list of key-value pairs across many versions.  If no suitable key-value
 // pair is found or a tombstone is encounterd closest to version, nil is returned.

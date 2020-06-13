@@ -1454,14 +1454,20 @@ func (d *Data) String() string {
 	return string(d.DataName())
 }
 
+// MarshalJSON returns a JSON representation of the data assuming that any
+// extents are for the master branch leaf.
 func (d *Data) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		Base     *datastore.Data
-		Extended Properties
-	}{
-		d.Data,
-		d.Properties,
-	})
+	vctx, err := datastore.NewVersionedCtxMasterLeaf(d)
+	if err != nil {
+		return json.Marshal(struct {
+			Base     *datastore.Data
+			Extended Properties
+		}{
+			d.Data,
+			d.Properties,
+		})
+	}
+	return d.MarshalJSONExtents(vctx)
 }
 
 func (d *Data) MarshalJSONExtents(ctx *datastore.VersionedCtx) ([]byte, error) {

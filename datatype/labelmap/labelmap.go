@@ -45,8 +45,8 @@ const (
 )
 
 const helpMessage = `
-API for label block data type (github.com/janelia-flyem/dvid/datatype/labelmap)
-===============================================================================
+API for label map data type (github.com/janelia-flyem/dvid/datatype/labelmap)
+=============================================================================
 
 Note: UUIDs referenced below are strings that may either be a unique prefix of a
 hexadecimal UUID string (e.g., 3FA22) or a branch leaf specification that adds
@@ -1670,19 +1670,23 @@ type propsJSON struct {
 }
 
 func (d *Data) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		Base     *datastore.Data
-		Extended propsJSON
-	}{
-		d.Data.Data,
-		propsJSON{
-			Properties:      d.Data.Properties,
-			MaxLabel:        d.MaxLabel,
-			MaxRepoLabel:    d.MaxRepoLabel,
-			IndexedLabels:   d.IndexedLabels,
-			MaxDownresLevel: d.MaxDownresLevel,
-		},
-	})
+	vctx, err := datastore.NewVersionedCtxMasterLeaf(d)
+	if err != nil {
+		return json.Marshal(struct {
+			Base     *datastore.Data
+			Extended propsJSON
+		}{
+			d.Data.Data,
+			propsJSON{
+				Properties:      d.Data.Properties,
+				MaxLabel:        d.MaxLabel,
+				MaxRepoLabel:    d.MaxRepoLabel,
+				IndexedLabels:   d.IndexedLabels,
+				MaxDownresLevel: d.MaxDownresLevel,
+			},
+		})
+	}
+	return d.MarshalJSONExtents(vctx)
 }
 
 func (d *Data) MarshalJSONExtents(ctx *datastore.VersionedCtx) ([]byte, error) {

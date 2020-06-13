@@ -215,6 +215,8 @@ Repo-Level REST endpoints
  GET  /api/repos/info
 
 	Returns JSON for the repositories under management by this server.
+	Note that any versioned properties for image-based data instances (e.g., extents) 
+	will be drawn from the leaf of the master branch.
 
  HEAD /api/repo/{uuid}
 
@@ -224,6 +226,8 @@ Repo-Level REST endpoints
 
 	Returns JSON for just the repository with given root UUID.  The UUID string can be
 	shortened as long as it is uniquely identifiable across the managed repositories.
+	Note that any versioned properties for image-based data instances (e.g., extents) 
+	will be drawn from the leaf of the master branch.
 
  POST /api/repo/{uuid}/instance
 
@@ -340,6 +344,17 @@ Repo-Level REST endpoints
 -------------------------
 Node-Level REST endpoints
 -------------------------
+
+Note: UUIDs referenced below are strings that may either be a unique prefix of a
+hexadecimal UUID string (e.g., 3FA22) or a branch leaf specification that adds
+a colon (":") followed by the case-dependent branch name.  In the case of a
+branch leaf specification, the unique UUID prefix just identifies the repo of
+the branch, and the UUID referenced is really the leaf of the branch name.
+For example, if we have a DAG with root A -> B -> C where C is the current
+HEAD or leaf of the "master" (default) branch, then asking for "B:master" is
+the same as asking for "C".  If we add another version so A -> B -> C -> D, then
+references to "B:master" now return the data from "D".
+
 
   GET /api/node/{uuid}/note
  POST /api/node/{uuid}/note
