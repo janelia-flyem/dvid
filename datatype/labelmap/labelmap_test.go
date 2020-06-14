@@ -1040,6 +1040,98 @@ func TestBadCalls(t *testing.T) {
 	server.TestBadHTTP(t, "POST", reqStr, nil)
 }
 
+func TestExtents(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := datastore.NewTestRepo()
+	if len(uuid) < 5 {
+		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
+	}
+	server.CreateTestInstance(t, uuid, "labelmap", "labels", dvid.Config{})
+
+	extents := `{
+		"MinPoint": [68, 127, 210],
+		"MaxPoint": [1023, 4811, 12187]
+	}`
+	apiStr := fmt.Sprintf("%snode/%s/labels/extents", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(extents))
+
+	apiStr = fmt.Sprintf("%snode/%s/commit", server.WebAPIPath, uuid)
+	payload := bytes.NewBufferString(`{"note": "first version"}`)
+	server.TestHTTP(t, "POST", apiStr, payload)
+
+	versionReq := fmt.Sprintf("%snode/%s/newversion", server.WebAPIPath, uuid)
+	respData := server.TestHTTP(t, "POST", versionReq, nil)
+	resp := struct {
+		Child dvid.UUID `json:"child"`
+	}{}
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		t.Errorf("Expected 'child' JSON response.  Got %s\n", string(respData))
+	}
+
+	extents2 := `{
+		"MinPoint": [3, 4, 210],
+		"MaxPoint": [2048, 4811, 12187]
+	}`
+	apiStr = fmt.Sprintf("%snode/%s/labels/extents", server.WebAPIPath, resp.Child)
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(extents2))
+
+	apiStr = fmt.Sprintf("%snode/%s/labels/info", server.WebAPIPath, uuid)
+	result := server.TestHTTP(t, "GET", apiStr, nil)
+	var parsed = struct {
+		Base struct {
+			TypeName, Name string
+		}
+		Extended struct {
+			BlockSize  dvid.Point3d
+			VoxelSize  dvid.NdFloat32
+			VoxelUnits dvid.NdString
+			MinPoint   dvid.Point3d
+			MaxPoint   dvid.Point3d
+			MinIndex   dvid.Point3d
+			MaxIndex   dvid.Point3d
+		}
+	}{}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("Error parsing JSON response of new instance metadata: %v\n", err)
+	}
+	fmt.Printf("got: %s\n", string(result))
+	if !parsed.Extended.MinPoint.Equals(dvid.Point3d{68, 127, 210}) {
+		t.Errorf("Bad MinPoint in new labelmap instance: %s\n", parsed.Extended.MinPoint)
+	}
+	if !parsed.Extended.MaxPoint.Equals(dvid.Point3d{1023, 4811, 12187}) {
+		t.Errorf("Bad MaxPoint in new labelmap instance: %s\n", parsed.Extended.MaxPoint)
+	}
+	if !parsed.Extended.MinIndex.Equals(dvid.Point3d{1, 1, 3}) {
+		t.Errorf("Bad MinIndex in new labelmap instance: %s\n", parsed.Extended.MinIndex)
+	}
+	if !parsed.Extended.MaxIndex.Equals(dvid.Point3d{15, 75, 190}) {
+		t.Errorf("Bad MaxIndex in new labelmap instance: %s\n", parsed.Extended.MaxIndex)
+	}
+
+	apiStr = fmt.Sprintf("%snode/%s/labels/info", server.WebAPIPath, resp.Child)
+	result = server.TestHTTP(t, "GET", apiStr, nil)
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("Error parsing JSON response of new instance metadata: %v\n", err)
+	}
+	fmt.Printf("got: %s\n", string(result))
+	if !parsed.Extended.MinPoint.Equals(dvid.Point3d{3, 4, 210}) {
+		t.Errorf("Bad MinPoint in new labelmap instance: %s\n", parsed.Extended.MinPoint)
+	}
+	if !parsed.Extended.MaxPoint.Equals(dvid.Point3d{2048, 4811, 12187}) {
+		t.Errorf("Bad MaxPoint in new labelmap instance: %s\n", parsed.Extended.MaxPoint)
+	}
+	if !parsed.Extended.MinIndex.Equals(dvid.Point3d{0, 0, 3}) {
+		t.Errorf("Bad MinIndex in new labelmap instance: %s\n", parsed.Extended.MinIndex)
+	}
+	if !parsed.Extended.MaxIndex.Equals(dvid.Point3d{32, 75, 190}) {
+		t.Errorf("Bad MaxIndex in new labelmap instance: %s\n", parsed.Extended.MaxIndex)
+	}
+}
+
 func TestMultiscaleIngest(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)

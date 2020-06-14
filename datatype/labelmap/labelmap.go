@@ -3224,6 +3224,17 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		w.Header().Set("Content-Type", "application/vnd.dvid-nd-data+json")
 		fmt.Fprintln(w, jsonStr)
 
+	case "extents":
+		jsonBytes, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if err := d.SetExtents(ctx, uuid, jsonBytes); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+
 	case "resolution":
 		jsonBytes, err := ioutil.ReadAll(r.Body)
 		if err != nil {
