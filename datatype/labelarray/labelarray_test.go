@@ -1176,7 +1176,6 @@ func TestPostBlocks(t *testing.T) {
 			t.Fatalf("unable to gzip compress block: %v\n", err)
 		}
 		writeInt32(t, &buf, int32(len(gzipped)))
-		fmt.Printf("Wrote %d gzipped block bytes for block %s\n", len(gzipped), blockCoords[i])
 		n, err := buf.Write(gzipped)
 		if err != nil {
 			t.Fatalf("unable to write gzip block: %v\n", err)

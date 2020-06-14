@@ -3047,6 +3047,106 @@ func mergeCleave(t *testing.T, wg *sync.WaitGroup, uuid dvid.UUID, name dvid.Ins
 	return nil
 }
 
+// Test concurrent POST blocks and then extents that should have data-wide mutex so no
+// overwriting of extents.
+func TestPostBlocksExtents(t *testing.T) {
+	numTests := 3
+	for i := 0; i < numTests; i++ {
+		runTestBlocksExtents(t, i)
+	}
+}
+
+func runTestBlocksExtents(t *testing.T, run int) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := datastore.NewTestRepo()
+	if len(uuid) < 5 {
+		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
+	}
+	server.CreateTestInstance(t, uuid, "labelmap", "labels", dvid.Config{})
+
+	data := loadTestData(t, testFiles[0])
+	gzippedData, err := data.b.CompressGZIP()
+	if err != nil {
+		t.Fatalf("unable to gzip compress block: %v\n", err)
+	}
+
+	apiStr := fmt.Sprintf("%snode/%s/labels/blocks", server.WebAPIPath, uuid)
+	sz := 128
+	span := int32(sz / 64)
+	wg := new(sync.WaitGroup)
+	wg.Add(int(span * span * span))
+	for z := int32(0); z < span; z++ {
+		for y := int32(0); y < span; y++ {
+			for x := int32(0); x < span; x++ {
+				go writeConcurrentBlock(t, wg, apiStr, x, y, z, gzippedData)
+			}
+		}
+	}
+	wg.Wait()
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	// check extents...
+	apiStr = fmt.Sprintf("%snode/%s/labels/info", server.WebAPIPath, uuid)
+	r := server.TestHTTP(t, "GET", apiStr, nil)
+	jsonResp := make(map[string]map[string]interface{})
+	if err := json.Unmarshal(r, &jsonResp); err != nil {
+		t.Fatalf("Unable to unmarshal labels/info response: %v\n", r)
+	}
+	extJSON, found := jsonResp["Extended"]
+	if !found {
+		t.Fatalf("No Extended property in labels/info response: %v\n", jsonResp)
+	}
+	val, found := extJSON["MinPoint"]
+	if !found {
+		t.Fatalf("No MinPoint property in labels/info response: %v\n", extJSON)
+	}
+	minPoint := val.([]interface{})
+	for i, pt := range minPoint {
+		coord := pt.(float64)
+		if coord != 0 {
+			t.Fatalf("Bad min coord at position %d in run %d: %v\n", i, run, val)
+		}
+	}
+	val, found = extJSON["MaxPoint"]
+	if !found {
+		t.Fatalf("No MaxPoint property in labels/info response: %v\n", extJSON)
+	}
+	maxPoint := val.([]interface{})
+	for i, pt := range maxPoint {
+		coord := pt.(float64)
+		if coord != 127 {
+			t.Fatalf("Bad max coord at position %d in run %d: %v\n", i, run, val)
+		}
+	}
+}
+
+func writeConcurrentBlock(t *testing.T, wg *sync.WaitGroup, apiStr string, x, y, z int32, gzippedData []byte) {
+	if x == 0 && y == 0 && z == 0 { // randomly pause this block to see if extents correct
+		t := time.Duration(rand.Int63() % 100)
+		time.Sleep(t * time.Millisecond)
+	}
+	var buf bytes.Buffer
+	writeTestInt32(t, &buf, x)
+	writeTestInt32(t, &buf, y)
+	writeTestInt32(t, &buf, z)
+	writeTestInt32(t, &buf, int32(len(gzippedData)))
+	n, err := buf.Write(gzippedData)
+	if err != nil {
+		t.Fatalf("unable to write gzip block: %v\n", err)
+	}
+	if n != len(gzippedData) {
+		t.Fatalf("unable to write %d bytes to buffer, only wrote %d bytes\n", len(gzippedData), n)
+	}
+	server.TestHTTP(t, "POST", apiStr, &buf)
+	wg.Done()
+}
+
 var (
 	body1 = testBody{
 		label:  1,

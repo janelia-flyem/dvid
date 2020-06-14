@@ -81,7 +81,7 @@ func TestHTTPCreate(t *testing.T) {
 		t.Fatalf("Unable to unmarshal repos/info response: %s\n", string(r))
 	}
 	if len(jsonResp) != 1 {
-		t.Errorf("Bad repos/infoote return: %s\n", string(r))
+		t.Errorf("Bad repos/info return: %s\n", string(r))
 	}
 	repoData, ok := jsonResp["28841c8277e044a7b187dda03e18da13"]
 	if !ok {

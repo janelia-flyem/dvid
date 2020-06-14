@@ -72,20 +72,20 @@ func (ext *Extents) AdjustPoints(pointBeg, pointEnd Point) bool {
 	ext.pointMu.Lock()
 	defer ext.pointMu.Unlock()
 
-	var changed bool
+	var minChanged, maxChanged bool
 	if ext.MinPoint == nil {
 		ext.MinPoint = pointBeg
-		changed = true
+		minChanged = true
 	} else {
-		ext.MinPoint, changed = ext.MinPoint.Min(pointBeg)
+		ext.MinPoint, minChanged = ext.MinPoint.Min(pointBeg)
 	}
 	if ext.MaxPoint == nil {
 		ext.MaxPoint = pointEnd
-		changed = true
+		maxChanged = true
 	} else {
-		ext.MaxPoint, changed = ext.MaxPoint.Max(pointEnd)
+		ext.MaxPoint, maxChanged = ext.MaxPoint.Max(pointEnd)
 	}
-	return changed
+	return minChanged || maxChanged
 }
 
 // AdjustIndices modifies extents based on new block indices in concurrency-safe manner.

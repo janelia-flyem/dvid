@@ -271,7 +271,6 @@ func writeTestBlock(t *testing.T, buf *bytes.Buffer, serialization []byte, block
 	zw.Close()
 	gzipped := gzipOut.Bytes()
 	writeTestInt32(t, buf, int32(len(gzipped)))
-	fmt.Printf("Wrote %d gzipped block bytes (down from %d bytes) for block %s\n", len(gzipped), len(serialization), blockCoord)
 	n, err := buf.Write(gzipped)
 	if err != nil {
 		t.Fatalf("unable to write gzip block: %v\n", err)

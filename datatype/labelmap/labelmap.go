@@ -2705,6 +2705,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 			}
 			go d.updateBlockMaxLabel(ctx.VersionID(), block)
 		}
+		dvid.Infof("Read block %d,%d,%d when extents are min %s, max %s, extentsChanged = %t\n", bx, by, bz, extents.MinPoint, extents.MaxPoint, extentsChanged)
 		serialization, err := dvid.SerializePrecompressedData(compressed, d.Compression(), d.Checksum())
 		if err != nil {
 			return fmt.Errorf("can't serialize received block %s data: %v", bcoord, err)

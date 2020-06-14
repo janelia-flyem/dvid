@@ -121,7 +121,7 @@ func getLabelIndex(ctx *datastore.VersionedCtx, label uint64) (*labels.Index, er
 
 // should only call putCachedLabelIndex external to this file.
 func putLabelIndex(ctx *datastore.VersionedCtx, idx *labels.Index) error {
-	timedLog := dvid.NewTimeLog()
+	// timedLog := dvid.NewTimeLog()
 	store, err := datastore.GetOrderedKeyValueDB(ctx.Data())
 	if err != nil {
 		return fmt.Errorf("data %q PutLabelMeta had error initializing store: %v", ctx.Data().DataName(), err)
@@ -140,7 +140,7 @@ func putLabelIndex(ctx *datastore.VersionedCtx, idx *labels.Index) error {
 	if err := store.Put(ctx, tk, compressed); err != nil {
 		return fmt.Errorf("unable to store indices for label %d, data %s: %v", idx.Label, ctx.Data().DataName(), err)
 	}
-	timedLog.Infof("stored label %d index with %d blocks", idx.Label, len(idx.Blocks))
+	// timedLog.Infof("stored label %d index with %d blocks", idx.Label, len(idx.Blocks))
 	return nil
 }
 
