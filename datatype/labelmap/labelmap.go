@@ -197,6 +197,17 @@ POST <api URL>/node/<UUID>/<data name>/info
     UUID          Hexadecimal string with enough characters to uniquely identify a version node.
     data name     Name of labelmap instance.
 
+POST <api URL>/node/<UUID>/<data name>/extents
+  
+	Sets the extents for the image volume.  This is primarily used when POSTing from multiple
+  	DVID servers not sharing common metadata to a shared backend.
+
+	Extents should be in JSON in the following format:
+	{
+		"MinPoint": [0,0,0],
+		"MaxPoint": [300,400,500]
+	}
+
 POST  <api URL>/node/<UUID>/<data name>/resolution
   
   	Sets the resolution for the image volume. 
