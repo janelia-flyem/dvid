@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/jpeg"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -330,7 +331,8 @@ GET  <api URL>/node/<UUID>/<data name>/subvolblocks/<size>/<offset>[?queryopts]
 
     Query-string Options:
 
-    compression   Allows retrieval of block data in "jpeg" (default) or "uncompressed".
+	compression   Allows retrieval of block data in "jpeg" (default) or "uncompressed". 
+					Note that if the data isn't stored as JPEG, it cannot be requested. 
     throttle      If "true", makes sure only N compute-intense operation (all API calls that can be throttled) 
                     are handled.  If the server can't initiate the API call right away, a 503 (Service Unavailable) 
                     status code is returned.
@@ -1774,7 +1776,26 @@ func debugData(img image.Image, message string) {
 	}
 }
 
-func (d *Data) SendBlockRaw(w http.ResponseWriter, x, y, z int32, v []byte, compression string) error {
+// SendUnserializedBlock writes a raw data block to the writer with given compression.
+func (d *Data) SendUnserializedBlock(w http.ResponseWriter, x, y, z int32, v []byte, compression string) error {
+	var data []byte
+	switch compression {
+	case "jpeg":
+		if d.Compression().Format() != dvid.JPEG {
+			return fmt.Errorf("can't encode JPEG: expected internal block data to be JPEG, was %s instead", d.Compression().Format())
+		}
+		data = v
+	case "uncompressed":
+		b := bytes.NewBuffer(v)
+		imgdata, err := jpeg.Decode(b)
+		if err != nil {
+			return err
+		}
+
+		data2 := imgdata.(*image.Gray)
+		data = data2.Pix
+	}
+
 	// Send block coordinate and size of data.
 	if err := binary.Write(w, binary.LittleEndian, x); err != nil {
 		return err
@@ -1790,7 +1811,7 @@ func (d *Data) SendBlockRaw(w http.ResponseWriter, x, y, z int32, v []byte, comp
 	if err := binary.Write(w, binary.LittleEndian, int32(n)); err != nil {
 		return err
 	}
-	if written, err := w.Write(v); err != nil || written != n {
+	if written, err := w.Write(data); err != nil || written != n {
 		if err != nil {
 			return err
 		}
@@ -1799,12 +1820,13 @@ func (d *Data) SendBlockRaw(w http.ResponseWriter, x, y, z int32, v []byte, comp
 	return nil
 }
 
-func (d *Data) SendBlockSimple(w http.ResponseWriter, x, y, z int32, v []byte, compression string) error {
+// SendSerializedBlock writes a serialized data block to the writer with given compression.
+func (d *Data) SendSerializedBlock(w http.ResponseWriter, x, y, z int32, v []byte, compression string) error {
 	// Check internal format and see if it's valid with compression choice.
 	format, checksum := dvid.DecodeSerializationFormat(dvid.SerializationFormat(v[0]))
 
 	if (compression == "jpeg") && format != dvid.JPEG {
-		return fmt.Errorf("Expected internal block data to be JPEG, was %s instead.", format)
+		return fmt.Errorf("can't encode JPEG: expected internal block data to be JPEG, was %s instead", format)
 	}
 
 	// Send block coordinate and size of data.
@@ -1916,7 +1938,7 @@ func (d *Data) SendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 				}
 				mutex.Lock()
 				defer mutex.Unlock()
-				d.SendBlockRaw(w, xloc, yloc, zloc, value, compression)
+				d.SendUnserializedBlock(w, xloc, yloc, zloc, value, compression)
 				return
 			}
 			idx := dvid.IndexZYX(chunkPt)
@@ -1930,7 +1952,7 @@ func (d *Data) SendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 					// lock shared resource
 					mutex.Lock()
 					defer mutex.Unlock()
-					d.SendBlockSimple(w, xloc, yloc, zloc, value, compression)
+					d.SendSerializedBlock(w, xloc, yloc, zloc, value, compression)
 				}
 			}
 		}(int32(xloc), int32(yloc), int32(zloc), isprefetch, finishedRequests)
@@ -1980,7 +2002,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 				return err
 			}
 			if len(value) > 0 {
-				return d.SendBlockRaw(w, blockCoord[0], blockCoord[1], blockCoord[2], value, compression)
+				return d.SendUnserializedBlock(w, blockCoord[0], blockCoord[1], blockCoord[2], value, compression)
 			}
 		case okvDB != nil:
 			indexBeg := dvid.IndexZYX(blockCoord)
@@ -1989,7 +2011,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 				return err
 			}
 			if len(value) > 0 {
-				return d.SendBlockSimple(w, blockCoord[0], blockCoord[1], blockCoord[2], value, compression)
+				return d.SendSerializedBlock(w, blockCoord[0], blockCoord[1], blockCoord[2], value, compression)
 			}
 		default:
 		}
@@ -2011,7 +2033,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 		}
 		return gridStore.GridGetVolume(d.ScaleLevel, minBlock, maxBlock, ordered, &storage.BlockOp{}, func(b *storage.Block) error {
 			if b.Value != nil {
-				if err := d.SendBlockRaw(w, b.Coord[0], b.Coord[1], b.Coord[2], b.Value, compression); err != nil {
+				if err := d.SendUnserializedBlock(w, b.Coord[0], b.Coord[1], b.Coord[2], b.Value, compression); err != nil {
 					return err
 				}
 			}
@@ -2056,7 +2078,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 					if z != sz || y != sy || x < sx || x >= sx+int32(blocksize.Value(0)) {
 						return nil
 					}
-					if err := d.SendBlockSimple(w, x, y, z, kv.V, compression); err != nil {
+					if err := d.SendSerializedBlock(w, x, y, z, kv.V, compression); err != nil {
 						return err
 					}
 					return nil
@@ -2090,7 +2112,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 					}
 					x, y, z := indexZYX.Unpack()
 
-					if err := d.SendBlockSimple(w, x, y, z, kv.V, compression); err != nil {
+					if err := d.SendSerializedBlock(w, x, y, z, kv.V, compression); err != nil {
 						return err
 					}
 					return nil
