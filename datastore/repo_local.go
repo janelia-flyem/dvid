@@ -129,7 +129,7 @@ func Initialize(initMetadata bool, iconfig Config) error {
 		if data.IsDeleted() {
 			continue
 		}
-		dvid.TimeInfof("Initializing data instance %q, type %q", data.DataName(), data.TypeName())
+		dvid.TimeInfof("Initializing data instance %q, type %q\n", data.DataName(), data.TypeName())
 		logwriter, ok := data.(storage.LogWritable)
 		if ok && logwriter.WriteLogRequired() {
 			writeLog := logwriter.GetWriteLog()
@@ -148,7 +148,7 @@ func Initialize(initMetadata bool, iconfig Config) error {
 		if ok {
 			d.Initialize() // Should be done sequentially in case its necessary to start receiving requests.
 		}
-		dvid.TimeInfof("Finished initializing data instance %q", data.DataName())
+		dvid.TimeInfof("Finished initializing data instance %q\n", data.DataName())
 	}
 
 	return nil
