@@ -730,10 +730,7 @@ func initRoutes() {
 	serverMux.Post("/api/server/reload-auth", serverReloadAuthHandler)
 	serverMux.Post("/api/server/reload-auth/", serverReloadAuthHandler)
 
-	if !readonly {
-		mainMux.Post("/api/repos", reposPostHandler)
-	}
-
+	mainMux.Post("/api/repos", reposPostHandler)
 	mainMux.Get("/api/repos/info", reposInfoHandler)
 
 	repoRawMux := web.New()
@@ -1071,7 +1068,8 @@ func adminPrivHandler(c *web.C, h http.Handler) http.Handler {
 func repoRawSelector(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		method := strings.ToLower(r.Method)
-		if readonly && method != "get" && method != "head" {
+		adminPriv := c.Env["adminPriv"].(bool)
+		if !adminPriv && readonly && method != "get" && method != "head" {
 			BadRequest(w, r, "Server in read-only mode and will only accept GET and HEAD requestcs")
 			return
 		}
@@ -1122,7 +1120,8 @@ func nodeSelector(c *web.C, h http.Handler) http.Handler {
 func repoSelector(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		method := strings.ToLower(r.Method)
-		if readonly && method != "get" && method != "head" {
+		adminPriv := c.Env["adminPriv"].(bool)
+		if !adminPriv && readonly && method != "get" && method != "head" {
 			BadRequest(w, r, "Server in read-only mode and will only accept GET and HEAD requests")
 			return
 		}
@@ -1670,7 +1669,12 @@ func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
 
 // TODO -- Maybe allow assignment of child UUID via JSON in POST.  Right now, we only
 // allow this potentially dangerous function via command-line.
-func reposPostHandler(w http.ResponseWriter, r *http.Request) {
+func reposPostHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	adminPriv := c.Env["adminPriv"].(bool)
+	if !adminPriv && readonly {
+		BadRequest(w, r, "Cannot POST on repos endpoints in read-only mode")
+		return
+	}
 	config := dvid.NewConfig()
 	if r.Body != nil {
 		if err := config.SetByJSON(r.Body); err != nil {
