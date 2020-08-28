@@ -660,15 +660,21 @@ func initRoutes() {
 		copts := cors.Options{
 			AllowedMethods: []string{"GET", "POST", "DELETE", "HEAD"},
 		}
-		if len(corsDomains) == 1 {
-			copts.AllowedOrigins = []string{"*"}
-		} else {
-			copts.AllowOriginFunc = corsValidator
-		}
 		if authorizationOn {
 			copts.AllowOriginFunc = corsValidator
 			copts.AllowedHeaders = []string{"Authorization", "authorization"}
 			copts.AllowCredentials = true
+		} else {
+			var allowed []string
+			for domain := range corsDomains {
+				if domain == "*" {
+					allowed = []string{"*"}
+					break
+				}
+				allowed = append(allowed, domain)
+			}
+			copts.AllowedOrigins = allowed
+			dvid.Infof("setting allowed origins to %v\n", allowed)
 		}
 		c = cors.New(copts)
 	}
@@ -680,8 +686,6 @@ func initRoutes() {
 	webMux.Handle("/api/user-latencies", silentMux)
 	if c != nil {
 		silentMux.Use(c.Handler)
-	} else if !authorizationOn {
-		silentMux.Use(wildcardAccessHandler)
 	}
 	silentMux.Use(latencyHandler)
 	silentMux.Get("/api/load", loadHandler)
@@ -697,8 +701,6 @@ func initRoutes() {
 	mainMux.Use(adminPrivHandler)
 	if c != nil {
 		mainMux.Use(c.Handler)
-	} else if !authorizationOn {
-		mainMux.Use(wildcardAccessHandler)
 	}
 
 	mainMux.Get("/interface", interfaceHandler)
