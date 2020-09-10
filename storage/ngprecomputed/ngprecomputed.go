@@ -615,6 +615,23 @@ func (ng *ngStore) getBlock(scale *ngScale, shardFile string, chunkID uint64, mi
 	return
 }
 
+// ---- Functions to satisfy the storage.GridStoreGetter interface ------
+
+// GridProperties returns properties of a GridStore.
+func (ng *ngStore) GridProperties(scaleLevel int) (props storage.GridProps, err error) {
+	if scaleLevel < 0 || scaleLevel >= len(ng.vol.Scales) {
+		err = fmt.Errorf("Cannot get grid properties for bad scale %d (only %d scales)", scaleLevel, len(ng.vol.Scales))
+		return
+	}
+	scaleProps := ng.vol.Scales[scaleLevel]
+	props.ChunkSize = scaleProps.ChunkSizes[0]
+	props.VolumeSize = scaleProps.Size
+	props.Encoding = scaleProps.Encoding
+	props.Resolution = scaleProps.Resolution
+	return
+}
+
+// GridGet returns a chunk of data given a block coordinate.
 func (ng *ngStore) GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) ([]byte, error) {
 	scale := &(ng.vol.Scales[scaleLevel])
 	shardFile, minishard, chunkID, err := ng.calcShard(scale, blockCoord)

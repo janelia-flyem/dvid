@@ -76,7 +76,9 @@ $ dvid repo <UUID> new imageblk <data name> <settings...>
     BlockSize      Size in pixels  (default: %d)
     VoxelSize      Resolution of voxels (default: %f)
     VoxelUnits     Resolution units (default: "nanometers")
-    Background     Integer value that signifies background in any element (default: 0)
+	Background     Integer value that signifies background in any element (default: 0)
+	GridStore      Store designation that gives neuroglancer precomputed specification
+	ScaleLevel     Used if GridStore set.  Specifies scale level (int) of resolution.
 
 $ dvid node <UUID> <data name> load <offset> <image glob>
 
@@ -532,7 +534,15 @@ func (dtype *Type) NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.Instanc
 	if err := p.setByConfig(c); err != nil {
 		return nil, err
 	}
-
+	if p.GridStore != "" {
+		gridProps, err := getGridProperties(p.GridStore, p.ScaleLevel)
+		if err != nil {
+			return nil, err
+		}
+		p.MaxPoint = gridProps.VolumeSize
+		p.Resolution.Set3dNanometers(gridProps.Resolution)
+		p.BlockSize = gridProps.ChunkSize
+	}
 	data := &Data{
 		Data:       basedata,
 		Properties: p,
@@ -779,6 +789,26 @@ type Properties struct {
 	ScaleLevel int
 }
 
+// getGridProperties returns the properties of a GridStore
+func getGridProperties(storeName storage.Alias, scale int) (props storage.GridProps, err error) {
+	if storeName == "" {
+		err = fmt.Errorf("cannot get GridStore properties for a blank name")
+		return
+	}
+	var store dvid.Store
+	store, err = storage.GetStoreByAlias(storeName)
+	if err != nil {
+		return
+	}
+	gridStore, ok := store.(storage.GridStoreGetter)
+	if !ok {
+		err = fmt.Errorf("GridStore %q is not valid", storeName)
+		return
+	}
+	return gridStore.GridProperties(scale)
+}
+
+// gridStoreGetter either returns a gridStore or (okvDB, kvDB) as fallback, not both.
 func (d *Data) gridStoreGetter() (gridStore storage.GridStoreGetter, okvDB storage.OrderedKeyValueDB, kvDB storage.KeyValueDB, err error) {
 	if d.GridStore != "" {
 		var store dvid.Store
@@ -789,6 +819,8 @@ func (d *Data) gridStoreGetter() (gridStore storage.GridStoreGetter, okvDB stora
 			if ok {
 				return
 			}
+			gridStore = nil
+			dvid.Infof("Found gridstore %q but was not a GridStoreGetter, defaulting...\n", d.GridStore)
 		}
 	}
 	okvDB, err = datastore.GetOrderedKeyValueDB(d)

@@ -255,8 +255,18 @@ type Block struct {
 // BlockFunc is a function that accepts a Block.
 type BlockFunc func(*Block) error
 
+// GridProps describes the properties of a GridStore.
+// This matches neuroglancer precomputed volume specs.
+type GridProps struct {
+	VolumeSize dvid.Point3d
+	ChunkSize  dvid.Point3d
+	Encoding   string       // "raw", "jpeg", or "compressed_segmentation"
+	Resolution dvid.Point3d // resolution in nm for a voxel along dimensions
+}
+
 // GridStoreGetter describes nD block getter functions
 type GridStoreGetter interface {
+	GridProperties(scaleLevel int) (GridProps, error)
 	GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) ([]byte, error)
 	GridGetVolume(scaleLevel int, minBlock, maxBlock dvid.ChunkPoint3d, ordered bool, op *BlockOp, f BlockFunc) error
 }

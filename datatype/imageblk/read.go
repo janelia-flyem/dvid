@@ -329,31 +329,32 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 	timedLog := dvid.NewTimeLog()
 	defer timedLog.Infof("GetVoxels %s", vox)
 
-	// get store for data
+	// get store for data -- we will either have gridStore or okv/req/hasbuffer
 	var gridStore storage.GridStoreGetter
 	var okvDB storage.OrderedKeyValueDB
-	gridStore, okvDB, _, err = d.gridStoreGetter()
-	if err != nil {
-		return fmt.Errorf("data type imageblk had error initializing store: %v", err)
-	}
-	if gridStore != nil {
-		return fmt.Errorf("GetVoxels not implemented yet for ngprecomputed backend")
+	// TODO -- Add gridStore support to GetVoxels
+	// gridStore, okvDB, _, err = d.gridStoreGetter()
+	// if err != nil {
+	// 	return fmt.Errorf("data type imageblk had error initializing store: %v", err)
+	// }
+	ctx := datastore.NewVersionedCtx(d, v)
+	var okv storage.BufferableOps
+	var req storage.KeyValueRequester
+	var hasbuffer bool
+	if gridStore == nil {
+		okv = okvDB.(storage.BufferableOps)
+		// extract buffer interface
+		req, hasbuffer = okv.(storage.KeyValueRequester)
+		if hasbuffer {
+			okv = req.NewBuffer(ctx)
+		}
 	}
 
 	// Only do one request at a time, although each request can start many goroutines.
 	server.LargeMutationMutex.Lock()
 	defer server.LargeMutationMutex.Unlock()
 
-	ctx := datastore.NewVersionedCtx(d, v)
-
 	wg := new(sync.WaitGroup)
-
-	okv := okvDB.(storage.BufferableOps)
-	// extract buffer interface
-	req, hasbuffer := okv.(storage.KeyValueRequester)
-	if hasbuffer {
-		okv = req.NewBuffer(ctx)
-	}
 
 	for it, err := vox.NewIndexIterator(d.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
 		indexBeg, indexEnd, err := it.IndexSpan()
