@@ -1816,11 +1816,6 @@ func debugData(img image.Image, message string) {
 func (d *Data) SendUnserializedBlock(w http.ResponseWriter, x, y, z int32, v []byte, compression string) error {
 	var data []byte
 	switch compression {
-	case "jpeg":
-		if d.Compression().Format() != dvid.JPEG {
-			return fmt.Errorf("can't encode JPEG: expected internal block data to be JPEG, was %s instead", d.Compression().Format())
-		}
-		data = v
 	case "uncompressed":
 		b := bytes.NewBuffer(v)
 		imgdata, err := jpeg.Decode(b)
@@ -1830,6 +1825,8 @@ func (d *Data) SendUnserializedBlock(w http.ResponseWriter, x, y, z int32, v []b
 
 		data2 := imgdata.(*image.Gray)
 		data = data2.Pix
+	default: // JPEG by default
+		data = v
 	}
 
 	// Send block coordinate and size of data.
