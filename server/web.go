@@ -654,6 +654,7 @@ func initRoutes() {
 	if webMux.routesSetup {
 		return
 	}
+	var wildcardOrigin bool
 	var c *cors.Cors
 	authorizationOn := (len(tc.Auth.ProxyAddress) != 0)
 	if len(corsDomains) > 0 {
@@ -664,19 +665,23 @@ func initRoutes() {
 			copts.AllowOriginFunc = corsValidator
 			copts.AllowedHeaders = []string{"Authorization", "authorization"}
 			copts.AllowCredentials = true
+			c = cors.New(copts)
 		} else {
 			var allowed []string
 			for domain := range corsDomains {
 				if domain == "*" {
-					allowed = []string{"*"}
+					dvid.Infof("setting allowed origins to wildcard *\n")
+					wildcardOrigin = true
 					break
 				}
 				allowed = append(allowed, domain)
 			}
-			copts.AllowedOrigins = allowed
-			dvid.Infof("setting allowed origins to %v\n", allowed)
+			if !wildcardOrigin {
+				copts.AllowedOrigins = allowed
+				dvid.Infof("setting allowed origins to %v\n", allowed)
+				c = cors.New(copts)
+			}
 		}
-		c = cors.New(copts)
 	}
 
 	webMuxMu.Lock()
@@ -686,6 +691,8 @@ func initRoutes() {
 	webMux.Handle("/api/user-latencies", silentMux)
 	if c != nil {
 		silentMux.Use(c.Handler)
+	} else if wildcardOrigin {
+		silentMux.Use(wildcardAccessHandler)
 	}
 	silentMux.Use(latencyHandler)
 	silentMux.Get("/api/load", loadHandler)
@@ -701,6 +708,8 @@ func initRoutes() {
 	mainMux.Use(adminPrivHandler)
 	if c != nil {
 		mainMux.Use(c.Handler)
+	} else if wildcardOrigin {
+		mainMux.Use(wildcardAccessHandler)
 	}
 
 	mainMux.Get("/interface", interfaceHandler)
