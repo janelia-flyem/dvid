@@ -193,15 +193,55 @@ func gzipUncompress(in []byte) (out []byte, err error) {
 	return
 }
 
-func jpegUncompress(in []byte) (out []byte, err error) {
+// chunkSize = expected chunk volume, e.g., 64 x 64 x 64
+// clippedSize = if on edge of image volume, this is actual size of clipped chunk
+func jpegUncompress(chunkSize, clippedSize dvid.Point3d, in []byte) (out []byte, err error) {
 	b := bytes.NewBuffer(in)
 	imgdata, err := jpeg.Decode(b)
 	if err != nil {
 		return nil, err
 	}
+	grayscale, ok := imgdata.(*image.Gray)
+	if !ok {
+		err = fmt.Errorf("jpeg uncompression failed because jpeg was not image.Gray")
+		return
+	}
+	jpegData := grayscale.Pix
+	// dvid.Infof("Chunk size %s\n", chunkSize)
+	// dvid.Infof("Clipped Size %s\n", clippedSize)
+	// dvid.Infof("JPEG Gray image: Stride %d, Rect %v\n", grayscale.Stride, grayscale.Rect)
+	chunkVoxels := chunkSize.Prod()
+	clippedVoxels := clippedSize.Prod()
+	jpegVoxels := int64(grayscale.Rect.Dx()) * int64(grayscale.Rect.Dy())
+	if jpegVoxels != clippedVoxels {
+		err = fmt.Errorf("JPEG image %d voxels does not equal clipped %d voxels in this chunk", jpegVoxels, clippedVoxels)
+		return
+	}
+	inflated := make([]byte, chunkVoxels)
+	var src, x, y, z int32
+	for z = 0; z < clippedSize[2]; z++ {
+		for y = 0; y < clippedSize[1]; y++ {
+			dst := z*chunkSize[1]*chunkSize[0] + y*chunkSize[0]
+			for x = 0; x < clippedSize[0]; x++ {
+				inflated[dst] = jpegData[src]
+				src++
+				dst++
+			}
+		}
+	}
+	return inflated, nil
+}
 
-	data2 := imgdata.(*image.Gray)
-	return data2.Pix, nil
+func jpegCompress(chunkSize dvid.Point3d, in []byte) (out []byte, err error) {
+	nx := int(chunkSize[0])
+	ny := int(chunkSize[1] * chunkSize[2])
+	rect := image.Rectangle{image.Point{0, 0}, image.Point{nx, ny}}
+	graydata := &image.Gray{Pix: []uint8(in), Stride: nx, Rect: rect}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, graydata, &jpeg.Options{Quality: dvid.DefaultJPEGQuality}); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // ---- NG Precomputed implementation --------
@@ -324,7 +364,7 @@ func (ng *ngStore) initialize() error {
 
 // returns nil/nil if key does not exist.
 func (ng *ngStore) rangeRead(key string, offset, size uint64) (data []byte, err error) {
-	timedLog := dvid.NewTimeLog()
+	// timedLog := dvid.NewTimeLog()
 	ctx := context.Background()
 	r, err := ng.bucket.NewRangeReader(ctx, key, int64(offset), int64(size), nil)
 	if err != nil {
@@ -339,7 +379,7 @@ func (ng *ngStore) rangeRead(key string, offset, size uint64) (data []byte, err 
 	if _, err := io.Copy(buf, r); err != nil {
 		return nil, err
 	}
-	timedLog.Infof("Range read of object %q, offset %d, size %d", key, offset, size)
+	// timedLog.Infof("Range read of object %q, offset %d, size %d", key, offset, size)
 	return buf.Bytes(), nil
 }
 
@@ -433,7 +473,7 @@ func (ng *ngStore) mortonCode(scale *ngScale, blockCoord dvid.ChunkPoint3d) (mor
 			}
 		}
 	}
-	dvid.Infof("Morton code for chunk %s: %x\n", blockCoord, mortonCode)
+	// dvid.Infof("Morton code for chunk %s: %x\n", blockCoord, mortonCode)
 	return
 }
 
@@ -511,12 +551,12 @@ func (ng *ngStore) loadShardIndex(scale *ngScale, shardFile string) (shard *shar
 		index:      shardData,
 		minishards: make(map[uint64]map[uint64]valueLoc),
 	}
-	timedLog.Infof("loaded shard index from object %q", shardFile)
+	// timedLog.Infof("loaded shard index from object %q", shardFile)
 	return
 }
 
 func (ng *ngStore) loadMinishardMap(scale *ngScale, shardFile string, shard *shardT, minishard uint64) (minishardMap map[uint64]valueLoc, err error) {
-	timedLog := dvid.NewTimeLog()
+	// timedLog := dvid.NewTimeLog()
 
 	pos := minishard * 16
 	begByte := binary.LittleEndian.Uint64(shard.index[pos:pos+8]) + scale.shardIndexEnd
@@ -584,13 +624,28 @@ func (ng *ngStore) loadMinishardMap(scale *ngScale, shardFile string, shard *sha
 		offsetPos += 8
 		sizePos += 8
 	}
-
-	timedLog.Infof("loaded minishard map with %s encoding: %d entries, %d bytes", scale.Sharding.IndexEncoding, n, indexSize)
+	// timedLog.Infof("loaded minishard map with %s encoding: %d entries, %d bytes", scale.Sharding.IndexEncoding, n, indexSize)
 	return
 }
 
-func (ng *ngStore) getBlock(scale *ngScale, shardFile string, chunkID uint64, minishardMap map[uint64]valueLoc) (val []byte, err error) {
+func (ng *ngStore) getBlock(scale *ngScale, blockCoord dvid.ChunkPoint3d, shardFile string, chunkID uint64, minishardMap map[uint64]valueLoc) (val []byte, err error) {
 	timedLog := dvid.NewTimeLog()
+	chunkSize := scale.ChunkSizes[0]
+	minPt := blockCoord.MinPoint(chunkSize).(dvid.Point3d)
+	maxPt := blockCoord.MaxPoint(chunkSize).(dvid.Point3d)
+	clippedSize := minPt.Sub(scale.Size).(dvid.Point3d)
+	if clippedSize[0] >= chunkSize[0] || clippedSize[1] >= chunkSize[1] || clippedSize[2] >= chunkSize[2] {
+		timedLog.Infof("Chunk %s with start voxel %s is out of bounding box %s\n",
+			blockCoord, minPt, scale.Size)
+	}
+	clippedSize = chunkSize.Duplicate().(dvid.Point3d)
+	for i := 0; i < 3; i++ {
+		if maxPt[i] < scale.Size[i] {
+			clippedSize[i] = chunkSize[i]
+		} else {
+			clippedSize[i] = scale.Size[i] - minPt[i]
+		}
+	}
 	loc, found := minishardMap[chunkID]
 	var min, max uint64
 	min = math.MaxUint64
@@ -603,16 +658,24 @@ func (ng *ngStore) getBlock(scale *ngScale, shardFile string, chunkID uint64, mi
 		}
 	}
 	if !found {
-		timedLog.Infof("No chunk %x found in shard file %q, minishard [%x,%x], returning nil", chunkID, shardFile, min, max)
+		// timedLog.Infof("No chunk %x found in shard file %q, minishard [%x,%x], returning nil", chunkID, shardFile, min, max)
 		return nil, nil
 	}
-	timedLog.Infof("Found chunk %x in shard file %q, minishard [%x,%x], returning nil", chunkID, shardFile, min, max)
+	// timedLog.Infof("Found chunk %x in shard file %q, minishard [%x,%x], returning nil", chunkID, shardFile, min, max)
 	val, err = ng.rangeRead(shardFile, loc.pos, loc.size)
-	timedLog.Infof("got block %x: offset %d, size %d -> read %d bytes", chunkID, loc.pos, loc.size, len(val))
-	if _, err = jpegUncompress(val); err != nil {
-		dvid.Errorf("bad JPEG, block %x, offset %d, size %d: %v\n", chunkID, loc.pos, loc.size, err)
+	// timedLog.Infof("got block %x: offset %d, size %d -> read %d bytes", chunkID, loc.pos, loc.size, len(val))
+
+	chunkVoxels := chunkSize.Prod()
+	clippedVoxels := clippedSize.Prod()
+	if chunkVoxels == clippedVoxels {
+		return
 	}
-	return
+	var inflated []byte
+	inflated, err = jpegUncompress(chunkSize, clippedSize, val)
+	if err != nil {
+		return
+	}
+	return jpegCompress(chunkSize, inflated)
 }
 
 // ---- Functions to satisfy the storage.GridStoreGetter interface ------
@@ -631,14 +694,16 @@ func (ng *ngStore) GridProperties(scaleLevel int) (props storage.GridProps, err 
 	return
 }
 
-// GridGet returns a chunk of data given a block coordinate.
+// GridGet returns a chunk of data given a block coordinate.  Automatically inflates
+// partial blocks on edges so that chunks meet contract with other DVID systems that
+// expect a full block.
 func (ng *ngStore) GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) ([]byte, error) {
 	scale := &(ng.vol.Scales[scaleLevel])
 	shardFile, minishard, chunkID, err := ng.calcShard(scale, blockCoord)
 	if err != nil {
 		return nil, err
 	}
-	dvid.Infof("Scale %d chunk %s: mapped to shard file %q, minishard %d, chunk ID %x\n", scaleLevel, blockCoord, shardFile, minishard, chunkID)
+	// dvid.Infof("Scale %d chunk %s: mapped to shard file %q, minishard %d, chunk ID %x\n", scaleLevel, blockCoord, shardFile, minishard, chunkID)
 
 	minishardMap, err := ng.getMinishardMap(scale, shardFile, minishard)
 	if err != nil {
@@ -648,7 +713,7 @@ func (ng *ngStore) GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) ([]byte
 		dvid.Infof("No minishard map found in shard %q for minishard %d\n", shardFile, minishard)
 		return nil, nil
 	}
-	return ng.getBlock(scale, shardFile, chunkID, minishardMap)
+	return ng.getBlock(scale, blockCoord, shardFile, chunkID, minishardMap)
 }
 
 // GridGetVolume calls the given function with the results of retrived block data in an ordered or

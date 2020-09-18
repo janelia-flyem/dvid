@@ -1840,10 +1840,12 @@ func (d *Data) SendUnserializedBlock(w http.ResponseWriter, x, y, z int32, v []b
 		return err
 	}
 
-	n := len(v)
+	n := len(data)
 	if err := binary.Write(w, binary.LittleEndian, int32(n)); err != nil {
 		return err
 	}
+	copydata := make([]byte, len(data))
+	copy(copydata, data)
 	if written, err := w.Write(data); err != nil || written != n {
 		if err != nil {
 			return err
