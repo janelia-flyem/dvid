@@ -207,21 +207,26 @@ func jpegUncompress(chunkSize, clippedSize dvid.Point3d, in []byte) (out []byte,
 		return
 	}
 	jpegData := grayscale.Pix
-	// dvid.Infof("Chunk size %s\n", chunkSize)
-	// dvid.Infof("Clipped Size %s\n", clippedSize)
-	// dvid.Infof("JPEG Gray image: Stride %d, Rect %v\n", grayscale.Stride, grayscale.Rect)
+	// dvid.Infof("JPEG Gray image: Stride %d, Rect %v, Bytes %d\n", grayscale.Stride, grayscale.Rect, len(jpegData))
 	chunkVoxels := chunkSize.Prod()
-	clippedVoxels := clippedSize.Prod()
-	jpegVoxels := int64(grayscale.Rect.Dx()) * int64(grayscale.Rect.Dy())
-	if jpegVoxels != clippedVoxels {
-		err = fmt.Errorf("JPEG image %d voxels does not equal clipped %d voxels in this chunk", jpegVoxels, clippedVoxels)
+	dx := int32(grayscale.Rect.Dx())
+	dy := int32(grayscale.Rect.Dy())
+	jpegVoxels := int64(dx * dy)
+	if jpegVoxels == chunkVoxels {
+		return jpegData, nil
+	}
+	if dy%chunkSize[2] != 0 {
+		err = fmt.Errorf("Unexpected JPEG image size of %d x %d for clipped block size %s", dx, dy, clippedSize)
 		return
 	}
 	inflated := make([]byte, chunkVoxels)
-	var src, x, y, z int32
+	apparentY := dy / chunkSize[2]
+	dvid.Infof("Apparent size of Y in JPEG is %d\n", apparentY)
+	var x, y, z int32
 	for z = 0; z < clippedSize[2]; z++ {
 		for y = 0; y < clippedSize[1]; y++ {
 			dst := z*chunkSize[1]*chunkSize[0] + y*chunkSize[0]
+			src := z*apparentY*int32(grayscale.Stride) + y*dx
 			for x = 0; x < clippedSize[0]; x++ {
 				inflated[dst] = jpegData[src]
 				src++
@@ -633,18 +638,24 @@ func (ng *ngStore) getBlock(scale *ngScale, blockCoord dvid.ChunkPoint3d, shardF
 	chunkSize := scale.ChunkSizes[0]
 	minPt := blockCoord.MinPoint(chunkSize).(dvid.Point3d)
 	maxPt := blockCoord.MaxPoint(chunkSize).(dvid.Point3d)
-	clippedSize := minPt.Sub(scale.Size).(dvid.Point3d)
-	if clippedSize[0] >= chunkSize[0] || clippedSize[1] >= chunkSize[1] || clippedSize[2] >= chunkSize[2] {
+	outsideSize := minPt.Sub(scale.Size).(dvid.Point3d)
+	// dvid.Infof("Block %s with chunk size %s\n", blockCoord, chunkSize)
+	// dvid.Infof("Min pt %s, max pt %s\n", minPt, maxPt)
+	// dvid.Infof("Scale size: %s\n", scale.Size)
+	if outsideSize[0] >= 0 || outsideSize[1] >= 0 || outsideSize[2] >= 0 {
 		timedLog.Infof("Chunk %s with start voxel %s is out of bounding box %s\n",
 			blockCoord, minPt, scale.Size)
 	}
-	clippedSize = chunkSize.Duplicate().(dvid.Point3d)
+	clippedSize := chunkSize.Duplicate().(dvid.Point3d)
 	for i := 0; i < 3; i++ {
 		if maxPt[i] < scale.Size[i] {
 			clippedSize[i] = chunkSize[i]
 		} else {
 			clippedSize[i] = scale.Size[i] - minPt[i]
 		}
+	}
+	if clippedSize.Prod() != chunkSize.Prod() {
+		dvid.Infof("Clipped size: %s\n", clippedSize)
 	}
 	loc, found := minishardMap[chunkID]
 	var min, max uint64
