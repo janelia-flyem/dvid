@@ -35,25 +35,53 @@ func TestReload(t *testing.T) {
 
 	uuid, _ := datastore.NewTestRepo()
 
+	// Change an alias / description of repo
+	alias := "myGreatAlias"
+	desc := "A super description"
+	jsonStr := fmt.Sprintf(`{"alias":%q,"description":%q}`, alias, desc)
+	payload := bytes.NewBufferString(jsonStr)
+	infoURL := fmt.Sprintf("%srepo/%s/info", WebAPIPath, uuid)
+	TestHTTP(t, "POST", infoURL, payload)
+
 	// Post a note
 	note := "everything is awesome"
-	jsonStr := fmt.Sprintf(`{"note": %q}`, note)
-	payload := bytes.NewBufferString(jsonStr)
-	apiStr := fmt.Sprintf("%snode/%s/note", WebAPIPath, uuid)
-	TestHTTP(t, "POST", apiStr, payload)
+	jsonStr = fmt.Sprintf(`{"note": %q}`, note)
+	payload = bytes.NewBufferString(jsonStr)
+	noteURL := fmt.Sprintf("%snode/%s/note", WebAPIPath, uuid)
+	TestHTTP(t, "POST", noteURL, payload)
 
 	datastore.CloseReopenTest()
 
 	// Verify it was saved.
-	r := TestHTTP(t, "GET", apiStr, nil)
-	jsonResp := make(map[string]string)
+	r := TestHTTP(t, "GET", infoURL, nil)
+	jsonResp := make(map[string]interface{})
 	if err := json.Unmarshal(r, &jsonResp); err != nil {
 		t.Fatalf("Unable to unmarshal log response: %s\n", string(r))
 	}
-	if len(jsonResp) != 1 {
+	data, ok := jsonResp["Alias"].(string)
+	if !ok {
+		t.Fatalf("No 'Alias' data returned: %s\n", string(r))
+	}
+	if data != alias {
+		t.Errorf("expected alias to be %q, got: %s\n", alias, data)
+	}
+	data, ok = jsonResp["Description"].(string)
+	if !ok {
+		t.Fatalf("No 'Description' data returned: %s\n", string(r))
+	}
+	if data != desc {
+		t.Errorf("expected description to be %q, got: %s\n", desc, data)
+	}
+
+	r = TestHTTP(t, "GET", noteURL, nil)
+	jsonResp2 := make(map[string]string)
+	if err := json.Unmarshal(r, &jsonResp2); err != nil {
+		t.Fatalf("Unable to unmarshal log response: %s\n", string(r))
+	}
+	if len(jsonResp2) != 1 {
 		t.Errorf("Bad note return: %s\n", string(r))
 	}
-	data, ok := jsonResp["note"]
+	data, ok = jsonResp2["note"]
 	if !ok {
 		t.Fatalf("No 'note' data returned: %s\n", string(r))
 	}

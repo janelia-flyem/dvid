@@ -229,6 +229,17 @@ Repo-Level REST endpoints
 	Note that any versioned properties for image-based data instances (e.g., extents) 
 	will be drawn from the leaf of the master branch.
 
+ POST /api/repo/{uuid}/info
+
+	Allows changing of some repository properties by POSTing of a JSON similar to what
+	you'd use in posting a new repo.  The "alias" and "description" properties can be
+	optionally modified using this endpoint by POST of a JSON like:
+	{
+		"alias": "myrepo",
+		"description": "This is the best repository in the universe"
+	}
+	Leaving out a property will keep it unchanged.
+
  POST /api/repo/{uuid}/instance
 
 	Creates a new instance of the given data type.  Expects configuration data in JSON
@@ -761,6 +772,7 @@ func initRoutes() {
 	repoMux.Use(activityLogHandler)
 	repoMux.Use(repoSelector)
 	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
+	repoMux.Post("/api/repo/:uuid/info", repoPostInfoHandler)
 	repoMux.Post("/api/repo/:uuid/instance", repoNewDataHandler)
 	repoMux.Get("/api/repo/:uuid/branch-versions/:name", repoBranchVersionsHandler)
 	repoMux.Get("/api/repo/:uuid/log", getRepoLogHandler)
@@ -1753,6 +1765,50 @@ func repoInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, jsonStr)
+}
+
+func repoPostInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	adminPriv := c.Env["adminPriv"].(bool)
+	if !adminPriv && readonly {
+		BadRequest(w, r, "Cannot POST on repo endpoint in read-only mode")
+		return
+	}
+	config := dvid.NewConfig()
+	if r.Body != nil {
+		if err := config.SetByJSON(r.Body); err != nil {
+			BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for POST repo: %v", err))
+			return
+		}
+	}
+
+	uuid := (c.Env["uuid"]).(dvid.UUID)
+
+	var alias, description string
+	var found bool
+	var err error
+
+	alias, found, err = config.GetString("alias")
+	if err != nil {
+		BadRequest(w, r, "POST on repo/info endpoint requires valid 'alias': %v", err)
+		return
+	}
+	if found {
+		err := datastore.SetRepoAlias(uuid, alias)
+		if err != nil {
+			BadRequest(w, r, "Unable to set alias for repo %q: %v", uuid, err)
+		}
+	}
+	description, found, err = config.GetString("description")
+	if err != nil {
+		BadRequest(w, r, "POST on repo/info endpoint requires valid 'description': %v", err)
+		return
+	}
+	if found {
+		err := datastore.SetRepoDescription(uuid, description)
+		if err != nil {
+			BadRequest(w, r, "Unable to set description for repo %q: %v", uuid, err)
+		}
+	}
 }
 
 func repoBranchVersionsHandler(c web.C, w http.ResponseWriter, r *http.Request) {
