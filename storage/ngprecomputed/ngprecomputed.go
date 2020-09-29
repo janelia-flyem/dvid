@@ -207,7 +207,6 @@ func jpegUncompress(chunkSize, clippedSize dvid.Point3d, in []byte) (out []byte,
 		return
 	}
 	jpegData := grayscale.Pix
-	// dvid.Infof("JPEG Gray image: Stride %d, Rect %v, Bytes %d\n", grayscale.Stride, grayscale.Rect, len(jpegData))
 	chunkVoxels := chunkSize.Prod()
 	dx := int32(grayscale.Rect.Dx())
 	dy := int32(grayscale.Rect.Dy())
@@ -219,14 +218,28 @@ func jpegUncompress(chunkSize, clippedSize dvid.Point3d, in []byte) (out []byte,
 		err = fmt.Errorf("Unexpected JPEG image size of %d x %d for clipped block size %s", dx, dy, clippedSize)
 		return
 	}
+	clippedBytes := clippedSize.Prod()
+	jpegBytes := int64(len(jpegData))
+	if clippedBytes > jpegBytes {
+		err = fmt.Errorf("JPEG data (%d bytes) is less than clipped volume size: %d bytes", jpegBytes, clippedBytes)
+		return
+	}
 	inflated := make([]byte, chunkVoxels)
 	apparentY := dy / chunkSize[2]
-	dvid.Infof("Apparent size of Y in JPEG is %d\n", apparentY)
-	var x, y, z int32
+
+	var dst, src, x, y, z int32
+	defer func() {
+		if r := recover(); r != nil {
+			dvid.Errorf("Panic in JPEG chunk uncompression at (%d,%d,%d) src %d -> dst %d\n", x, y, z, src, dst)
+			dvid.Errorf("JPEG Gray image: Stride %d, Rect %v, Bytes %d\n", grayscale.Stride, grayscale.Rect, len(jpegData))
+			dvid.Errorf("Apparent size of Y in JPEG: %d\n", apparentY)
+			err = fmt.Errorf("Unable to uncompress JPEG and inflate to chunk size %s", chunkSize)
+		}
+	}()
 	for z = 0; z < clippedSize[2]; z++ {
 		for y = 0; y < clippedSize[1]; y++ {
-			dst := z*chunkSize[1]*chunkSize[0] + y*chunkSize[0]
-			src := z*apparentY*int32(grayscale.Stride) + y*dx
+			dst = z*chunkSize[1]*chunkSize[0] + y*chunkSize[0]
+			src = z*apparentY*int32(grayscale.Stride) + y*dx
 			for x = 0; x < clippedSize[0]; x++ {
 				inflated[dst] = jpegData[src]
 				src++
@@ -684,6 +697,7 @@ func (ng *ngStore) getBlock(scale *ngScale, blockCoord dvid.ChunkPoint3d, shardF
 	var inflated []byte
 	inflated, err = jpegUncompress(chunkSize, clippedSize, val)
 	if err != nil {
+		dvid.Errorf("Error in jpeg uncompression for block %s\n", blockCoord)
 		return
 	}
 	return jpegCompress(chunkSize, inflated)
