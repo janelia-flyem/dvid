@@ -353,8 +353,8 @@ func (ng *ngStore) initialize() error {
 		// compute the num bits required for each dimension and the max bits
 		var maxBits uint8
 		for dim := uint8(0); dim < 3; dim++ {
-			chunkDim := scale.Size[dim] / chunkSize[dim]
-			numBits := log2(chunkDim)
+			chunkDim := float64(scale.Size[dim]) / float64(chunkSize[dim])
+			numBits := uint8(math.Ceil(math.Log2(chunkDim)))
 			if numBits > maxBits {
 				maxBits = numBits
 			}
