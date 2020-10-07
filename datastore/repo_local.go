@@ -124,6 +124,43 @@ func Initialize(initMetadata bool, iconfig Config) error {
 	// Set the package variable.  We are good to go...
 	manager = m
 
+	// Add ephemeral data instances if a store wants it.
+	stores, err := storage.AllStores()
+	for alias, store := range stores {
+		istore, ok := store.(dvid.AutoInstanceStore)
+		dvid.Infof("Store %q auto instance store %t\n", store, ok)
+		if ok {
+			name, n := istore.AutoInstances()
+			if name == "" || n == 0 {
+				dvid.Infof("Store %q could require automatic instances but didn't.\n", store)
+				continue
+			}
+			typeservice, err := TypeServiceByName(dvid.TypeString("uint8blk"))
+			if err != nil {
+				return err
+			}
+			config := dvid.NewConfig()
+			config.Set("compression", "jpeg")
+			config.Set("versioned", "true")
+			config.Set("GridStore", string(alias))
+			for i := 0; i < n; i++ {
+				var suffix string
+				if i > 0 {
+					suffix = fmt.Sprintf("_%d", i)
+				}
+				config.Set("ScaleLevel", fmt.Sprintf("%d", i))
+				for _, uuid := range m.repoToUUID {
+					dataname := dvid.InstanceName(name + suffix)
+					if _, err := NewData(uuid, typeservice, dataname, config); err != nil {
+						dvid.Infof("Couldn't create transient data instance %q for uuid %s: %v\n", dataname, uuid, err)
+					} else {
+						dvid.Infof("Created data instance %q for uuid %s: %v\n", dataname, uuid, config)
+					}
+				}
+			}
+		}
+	}
+
 	// Allow data instance to initialize if desired.
 	for _, data := range m.iids {
 		if data.IsDeleted() {

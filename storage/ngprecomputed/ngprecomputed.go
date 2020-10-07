@@ -91,7 +91,7 @@ func (e Engine) Delete(config dvid.StoreConfig) error {
 	return nil
 }
 
-func parseConfig(config dvid.StoreConfig) (ref string, testing bool, err error) {
+func parseConfig(config dvid.StoreConfig) (ref string, testing bool, instance string, err error) {
 	c := config.GetAll()
 
 	v, found := c["ref"]
@@ -105,6 +105,14 @@ func parseConfig(config dvid.StoreConfig) (ref string, testing bool, err error) 
 		err = fmt.Errorf("%q setting must be a string (%v)", "ref", v)
 		return
 	}
+	v, found = c["instance"]
+	if found {
+		instance, ok = v.(string)
+		if !ok {
+			err = fmt.Errorf("%q setting must be a string (%v)", "instance", v)
+			return
+		}
+	}
 	v, found = c["testing"]
 	if found {
 		testing, ok = v.(bool)
@@ -116,10 +124,8 @@ func parseConfig(config dvid.StoreConfig) (ref string, testing bool, err error) 
 	return
 }
 
-// newLogs returns a file-based append-only log backend, creating a log
-// at the path if it doesn't already exist.
 func (e Engine) newStore(config dvid.StoreConfig) (*ngStore, bool, error) {
-	ref, _, err := parseConfig(config)
+	ref, _, instance, err := parseConfig(config)
 	if err != nil {
 		return nil, false, err
 	}
@@ -163,6 +169,7 @@ func (e Engine) newStore(config dvid.StoreConfig) (*ngStore, bool, error) {
 	ng := &ngStore{
 		ref:        ref,
 		bucket:     bucket,
+		instance:   instance,
 		shardIndex: make(map[string]*shardT),
 	}
 	if err := json.Unmarshal(data, &(ng.vol)); err != nil {
@@ -172,7 +179,6 @@ func (e Engine) newStore(config dvid.StoreConfig) (*ngStore, bool, error) {
 		return nil, false, err
 	}
 	dvid.Infof("Loaded %q [%s] @ %q ...\n", ng.vol.StoreType, ng.vol.VolumeType, ref)
-
 	return ng, false, nil
 }
 
@@ -301,9 +307,10 @@ type ngVolume struct {
 }
 
 type ngStore struct {
-	ref    string
-	vol    ngVolume
-	bucket *blob.Bucket
+	ref      string
+	vol      ngVolume
+	bucket   *blob.Bucket
+	instance string // if set, create ephemeral multi-scale instances with this base name
 
 	// cached shard information
 	shardIndex   map[string]*shardT // cache of shard filename to shard data
@@ -342,9 +349,6 @@ func (ng *ngStore) initialize() error {
 		return fmt.Errorf("NG Store volume type %q, DVID driver can only handle 'image' type", ng.vol.VolumeType)
 	}
 	for n, scale := range ng.vol.Scales {
-		if scale.Sharding.FormatType != "neuroglancer_uint64_sharded_v1" {
-			return fmt.Errorf("Scale %d has unexpected shard type: %s", n, scale.Sharding.FormatType)
-		}
 		if len(scale.ChunkSizes) > 1 {
 			return fmt.Errorf("Scale %d has more than one chunk size, which is unsupported: %v", n, scale.ChunkSizes)
 		}
@@ -364,20 +368,43 @@ func (ng *ngStore) initialize() error {
 		dvid.Infof("Scale %d requires maximum %d bits for a dimension.\n", n, maxBits)
 		ng.vol.Scales[n].maxBits = maxBits
 
-		// compute minishard and shard masks for the hashed chunk ID
-		const on uint64 = 0xFFFFFFFFFFFFFFFF
-		minishardBits := scale.Sharding.MinishardBits
-		shardBits := scale.Sharding.ShardBits
-		minishardOff := ((on >> minishardBits) << minishardBits)
-		ng.vol.Scales[n].minishardMask = ^minishardOff
-		excessBits := 64 - shardBits - minishardBits
-		ng.vol.Scales[n].shardMask = (minishardOff << excessBits) >> excessBits
-		ng.vol.Scales[n].shardIndexEnd = (1 << uint64(minishardBits)) * 16
+		switch scale.Sharding.FormatType {
+		case "":
+			dvid.Infof("Scale %d uses unsharded.\n", n)
+		case "neuroglancer_uint64_sharded_v1":
+			// compute minishard and shard masks for the hashed chunk ID
+			const on uint64 = 0xFFFFFFFFFFFFFFFF
+			minishardBits := scale.Sharding.MinishardBits
+			shardBits := scale.Sharding.ShardBits
+			minishardOff := ((on >> minishardBits) << minishardBits)
+			ng.vol.Scales[n].minishardMask = ^minishardOff
+			excessBits := 64 - shardBits - minishardBits
+			ng.vol.Scales[n].shardMask = (minishardOff << excessBits) >> excessBits
+			ng.vol.Scales[n].shardIndexEnd = (1 << uint64(minishardBits)) * 16
 
-		dvid.Infof("minishard mask: %0*x\n", 16, ng.vol.Scales[n].minishardMask)
-		dvid.Infof("    shard mask: %0*x\n", 16, ng.vol.Scales[n].shardMask)
+			dvid.Infof("Scale %d minishard mask: %0*x\n", n, 16, ng.vol.Scales[n].minishardMask)
+			dvid.Infof("Scale %d     shard mask: %0*x\n", n, 16, ng.vol.Scales[n].shardMask)
+		default:
+			return fmt.Errorf("Scale %d has unexpected shard type: %s", n, scale.Sharding.FormatType)
+		}
 	}
 	return nil
+}
+
+// returns nil/nil if key does not exist.
+func (ng *ngStore) read(key string) (data []byte, err error) {
+	// timedLog := dvid.NewTimeLog()
+	ctx := context.Background()
+	r, err := ng.bucket.NewReader(ctx, key, nil)
+	if err != nil {
+		if gcerrors.Code(err) == gcerrors.NotFound {
+			dvid.Errorf("Could not find unsharded block %q\n", key)
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer r.Close()
+	return ioutil.ReadAll(r)
 }
 
 // returns nil/nil if key does not exist.
@@ -414,11 +441,24 @@ func (ng *ngStore) String() string {
 }
 
 func (ng *ngStore) Equal(config dvid.StoreConfig) bool {
-	ref, _, err := parseConfig(config)
+	ref, _, instance, err := parseConfig(config)
 	if err != nil {
 		return false
 	}
-	return ref == ng.ref
+	return ref == ng.ref && instance == ng.instance
+}
+
+// ----- storage.AutoInstanceEngine interface implementation -------
+
+// AutoInstances returns a name if ephemeral instances are to be automatically
+// created, and if so, the "n" return value specifies the number of scales.
+// If name is empty, no ephemeral instances are to be created.
+func (ng *ngStore) AutoInstances() (name string, n int) {
+	if ng.instance != "" {
+		name = ng.instance
+		n = len(ng.vol.Scales)
+	}
+	return
 }
 
 // ----- storage.GridStoreGetter ----
@@ -646,63 +686,6 @@ func (ng *ngStore) loadMinishardMap(scale *ngScale, shardFile string, shard *sha
 	return
 }
 
-func (ng *ngStore) getBlock(scale *ngScale, blockCoord dvid.ChunkPoint3d, shardFile string, chunkID uint64, minishardMap map[uint64]valueLoc) (val []byte, err error) {
-	timedLog := dvid.NewTimeLog()
-	chunkSize := scale.ChunkSizes[0]
-	minPt := blockCoord.MinPoint(chunkSize).(dvid.Point3d)
-	maxPt := blockCoord.MaxPoint(chunkSize).(dvid.Point3d)
-	outsideSize := minPt.Sub(scale.Size).(dvid.Point3d)
-	// dvid.Infof("Block %s with chunk size %s\n", blockCoord, chunkSize)
-	// dvid.Infof("Min pt %s, max pt %s\n", minPt, maxPt)
-	// dvid.Infof("Scale size: %s\n", scale.Size)
-	if outsideSize[0] >= 0 || outsideSize[1] >= 0 || outsideSize[2] >= 0 {
-		timedLog.Infof("Chunk %s with start voxel %s is out of bounding box %s\n",
-			blockCoord, minPt, scale.Size)
-	}
-	clippedSize := chunkSize.Duplicate().(dvid.Point3d)
-	for i := 0; i < 3; i++ {
-		if maxPt[i] < scale.Size[i] {
-			clippedSize[i] = chunkSize[i]
-		} else {
-			clippedSize[i] = scale.Size[i] - minPt[i]
-		}
-	}
-	if clippedSize.Prod() != chunkSize.Prod() {
-		dvid.Infof("Clipped size: %s\n", clippedSize)
-	}
-	loc, found := minishardMap[chunkID]
-	var min, max uint64
-	min = math.MaxUint64
-	for key := range minishardMap {
-		if key < min {
-			min = key
-		}
-		if key > max {
-			max = key
-		}
-	}
-	if !found {
-		// timedLog.Infof("No chunk %x found in shard file %q, minishard [%x,%x], returning nil", chunkID, shardFile, min, max)
-		return nil, nil
-	}
-	// timedLog.Infof("Found chunk %x in shard file %q, minishard [%x,%x], returning nil", chunkID, shardFile, min, max)
-	val, err = ng.rangeRead(shardFile, loc.pos, loc.size)
-	// timedLog.Infof("got block %x: offset %d, size %d -> read %d bytes", chunkID, loc.pos, loc.size, len(val))
-
-	chunkVoxels := chunkSize.Prod()
-	clippedVoxels := clippedSize.Prod()
-	if chunkVoxels == clippedVoxels {
-		return
-	}
-	var inflated []byte
-	inflated, err = jpegUncompress(chunkSize, clippedSize, val)
-	if err != nil {
-		dvid.Errorf("Error in jpeg uncompression for block %s\n", blockCoord)
-		return
-	}
-	return jpegCompress(chunkSize, inflated)
-}
-
 // ---- Functions to satisfy the storage.GridStoreGetter interface ------
 
 // GridProperties returns properties of a GridStore.
@@ -722,23 +705,90 @@ func (ng *ngStore) GridProperties(scaleLevel int) (props storage.GridProps, err 
 // GridGet returns a chunk of data given a block coordinate.  Automatically inflates
 // partial blocks on edges so that chunks meet contract with other DVID systems that
 // expect a full block.
-func (ng *ngStore) GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) ([]byte, error) {
+func (ng *ngStore) GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) (val []byte, err error) {
+	timedLog := dvid.NewTimeLog()
 	scale := &(ng.vol.Scales[scaleLevel])
-	shardFile, minishard, chunkID, err := ng.calcShard(scale, blockCoord)
-	if err != nil {
-		return nil, err
+	chunkSize := scale.ChunkSizes[0]
+	minPt := blockCoord.MinPoint(chunkSize).(dvid.Point3d)
+	maxPt := minPt.Add(chunkSize).(dvid.Point3d)
+	outsideSize := minPt.Sub(scale.Size).(dvid.Point3d)
+	// dvid.Infof("Block %s with chunk size %s\n", blockCoord, chunkSize)
+	// dvid.Infof("Min pt %s, max pt %s\n", minPt, maxPt)
+	// dvid.Infof("Scale size: %s\n", scale.Size)
+	if outsideSize[0] >= 0 || outsideSize[1] >= 0 || outsideSize[2] >= 0 {
+		timedLog.Infof("Chunk %s with start voxel %s is out of bounding box %s\n",
+			blockCoord, minPt, scale.Size)
 	}
-	// dvid.Infof("Scale %d chunk %s: mapped to shard file %q, minishard %d, chunk ID %x\n", scaleLevel, blockCoord, shardFile, minishard, chunkID)
+	clippedSize := chunkSize.Duplicate().(dvid.Point3d)
+	for i := 0; i < 3; i++ {
+		if maxPt[i] <= scale.Size[i] {
+			clippedSize[i] = chunkSize[i]
+		} else {
+			clippedSize[i] = scale.Size[i] - minPt[i]
+		}
+	}
+	if clippedSize.Prod() != chunkSize.Prod() {
+		dvid.Infof("Clipped size: %s\n", clippedSize)
+	}
 
-	minishardMap, err := ng.getMinishardMap(scale, shardFile, minishard)
+	switch scale.Sharding.FormatType {
+	case "":
+		key := fmt.Sprintf("%s/%d-%d_%d-%d_%d-%d", scale.Key, minPt[0], maxPt[0], minPt[1], maxPt[1], minPt[2], maxPt[2])
+		val, err = ng.read(key)
+
+	case "neuroglancer_uint64_sharded_v1":
+		var shardFile string
+		var minishard, chunkID uint64
+		shardFile, minishard, chunkID, err = ng.calcShard(scale, blockCoord)
+		if err != nil {
+			return
+		}
+
+		var minishardMap map[uint64]valueLoc
+		minishardMap, err = ng.getMinishardMap(scale, shardFile, minishard)
+		if err != nil {
+			return
+		}
+		if minishardMap == nil {
+			dvid.Infof("No minishard map found in shard %q for minishard %d\n", shardFile, minishard)
+			return nil, nil
+		}
+
+		loc, found := minishardMap[chunkID]
+		var min, max uint64
+		min = math.MaxUint64
+		for key := range minishardMap {
+			if key < min {
+				min = key
+			}
+			if key > max {
+				max = key
+			}
+		}
+		if !found {
+			return nil, nil
+		}
+		val, err = ng.rangeRead(shardFile, loc.pos, loc.size)
+
+	default:
+		return nil, fmt.Errorf("Scale %d has unexpected shard type: %s", scaleLevel, scale.Sharding.FormatType)
+	}
+
 	if err != nil {
-		return nil, err
+		return
 	}
-	if minishardMap == nil {
-		dvid.Infof("No minishard map found in shard %q for minishard %d\n", shardFile, minishard)
-		return nil, nil
+	chunkVoxels := chunkSize.Prod()
+	clippedVoxels := clippedSize.Prod()
+	if chunkVoxels == clippedVoxels {
+		return
 	}
-	return ng.getBlock(scale, blockCoord, shardFile, chunkID, minishardMap)
+	var inflated []byte
+	inflated, err = jpegUncompress(chunkSize, clippedSize, val)
+	if err != nil {
+		dvid.Errorf("Error in jpeg uncompression for block %s\n", blockCoord)
+		return
+	}
+	return jpegCompress(chunkSize, inflated)
 }
 
 // GridGetVolume calls the given function with the results of retrived block data in an ordered or

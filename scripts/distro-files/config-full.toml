@@ -143,6 +143,7 @@ blobstore = "raid6"
     [store.ng]
     engine = "ngprecomputed"
     ref = "the-GCS-bucket-name" # note this is ref and not path
+    instance = "basename" # if supplied, auto creates multi-scale uint8blk instances
 
 # Kafka support can be specified.  This allows mutations to be logged and facilitates
 # syncing, etc.  If a "filelog" store is available as default, then any failed kafka
