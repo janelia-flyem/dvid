@@ -220,7 +220,8 @@ func jpegUncompress(chunkSize, clippedSize dvid.Point3d, in []byte) (out []byte,
 	if jpegVoxels == chunkVoxels {
 		return jpegData, nil
 	}
-	if dy%chunkSize[2] != 0 {
+	apparentY := dy / clippedSize[2]
+	if dy%clippedSize[2] != 0 {
 		err = fmt.Errorf("Unexpected JPEG image size of %d x %d for clipped block size %s", dx, dy, clippedSize)
 		return
 	}
@@ -231,7 +232,6 @@ func jpegUncompress(chunkSize, clippedSize dvid.Point3d, in []byte) (out []byte,
 		return
 	}
 	inflated := make([]byte, chunkVoxels)
-	apparentY := dy / chunkSize[2]
 
 	var dst, src, x, y, z int32
 	defer func() {
