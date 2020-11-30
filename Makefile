@@ -56,12 +56,18 @@ all: dvid dvid-backup dvid-transfer
 dvid: bin/dvid
 dvid-backup: bin/dvid-backup
 dvid-transfer: bin/dvid-transfer
+analyze-block: bin/analyze-block
+analyze-index: bin/analyze-index
+body-blocks: bin/body-blocks
 
 # Install: Copy all executables to the CONDA_PREFIX
-install: dvid dvid-backup dvid-transfer
+install: dvid dvid-backup dvid-transfer analyze-block analyze-index body-blocks
 	cp bin/dvid ${CONDA_PREFIX}/bin/dvid
 	cp bin/dvid-backup ${CONDA_PREFIX}/bin/dvid-backup
 	cp bin/dvid-transfer ${CONDA_PREFIX}/bin/dvid-transfer
+	cp bin/analyze-block ${CONDA_PREFIX}/bin/analyze-block
+	cp bin/analyze-index ${CONDA_PREFIX}/bin/analyze-index
+	cp bin/body-blocks ${CONDA_PREFIX}/bin/body-blocks
 
 # Compile a helper program that generates version.go
 bin/dvid-gen-version: cmd/gen-version/main.go
@@ -102,6 +108,15 @@ bin/dvid-backup: cmd/backup/main.go
 
 bin/dvid-transfer: $(shell find cmd/transfer -name "*.go")
 	go build -o bin/dvid-transfer -v -tags "${DVID_TAGS}" cmd/transfer/*.go
+
+bin/analyze-block: $(shell find cmd/labelmap-utils/analyze-block -name "*.go")
+	go build -o bin/analyze-block -v -tags "${DVID_TAGS}" cmd/labelmap-utils/analyze-block/*.go
+
+bin/analyze-index: $(shell find cmd/labelmap-utils/analyze-index -name "*.go")
+	go build -o bin/analyze-index -v -tags "${DVID_TAGS}" cmd/labelmap-utils/analyze-index/*.go
+
+bin/body-blocks: $(shell find cmd/labelmap-utils/body-blocks -name "*.go")
+	go build -o bin/body-blocks -v -tags "${DVID_TAGS}" cmd/labelmap-utils/body-blocks/*.go
 
 ##
 ## TEST
