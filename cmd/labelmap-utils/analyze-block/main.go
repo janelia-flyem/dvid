@@ -21,7 +21,9 @@ displays information on a compressed label block and one coordinate using the DV
 
 Usage: analyze-block [options] <server> <uuid> <instance name> <voxel x> <voxel y> <voxel z>
 
-      -blockwidth  (int)     Size of blocks in each dimension, default 64
+	  -blockwidth  (int)     Size of blocks in each dimension, default 64
+	  -scale       (int) 	 A number from 0 up to MaxDownresLevel where each level has 1/2
+	      					   resolution of previous level. Level 0 (default) is highest res.
       -supervoxels (flag)    Access raw blocks without mapping to body labels.
       -verbose     (flag)    Run in verbose mode, e.g., shows sub-block data.
   -h, -help        (flag)    Show help message
@@ -33,6 +35,7 @@ var (
 	runVerbose  = flag.Bool("verbose", false, "Run in verbose mode")
 	supervoxels = flag.Bool("supervoxels", false, "Access raw blocks without mapping to body labels")
 	blockwidth  = flag.Int("blockwidth", 64, "Size of blocks in each dimension, default 64")
+	scale       = flag.Int("scale", 0, "Scale from 0 (highest res) to larger scales")
 )
 
 var usage = func() {
@@ -76,6 +79,9 @@ func main() {
 	// url := fmt.Sprintf("http://emdata1:8900/api/node/fa6b/segmentation/blocks/64_64_64/%d_%d_%d?compression=blocks", offset[0], offset[1], offset[2])
 
 	url := fmt.Sprintf("http://%s/api/node/%s/%s/specificblocks?supervoxels=%t&blocks=%d,%d,%d", server, uuid, name, *supervoxels, bcoord[0], bcoord[1], bcoord[2])
+	if *scale != 0 {
+		url += fmt.Sprintf("&scale=%d", *scale)
+	}
 	resp, err := http.Get(url)
 	data, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
