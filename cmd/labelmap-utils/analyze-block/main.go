@@ -83,6 +83,10 @@ func main() {
 		url += fmt.Sprintf("&scale=%d", *scale)
 	}
 	resp, err := http.Get(url)
+	if err != nil {
+		fmt.Printf("bad HTTP blocks request response: %v\n", err)
+		os.Exit(1)
+	}
 	data, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Printf("couldn't read block data: %v\n", err)
