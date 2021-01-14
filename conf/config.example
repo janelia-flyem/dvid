@@ -1,0 +1,13 @@
+[server]
+httpAddress = ":8000"
+rpcAddress = ":8001"
+webClient = "/console"
+
+[backend]
+    [backend.default]
+        store = "mutable"
+            log = "mutationlog"
+[store]
+    [store.mutable]
+        engine = "basholeveldb"
+            path = "/data/dbs/dataset"

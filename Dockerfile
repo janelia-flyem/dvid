@@ -19,5 +19,6 @@ COPY --from=consolebuilder /app/build /console
 RUN curl -L -O https://github.com/janelia-flyem/dvid/releases/download/v${DVID_VERSION}/dvid-${DVID_VERSION}-dist-linux.tar.bz2
 RUN tar -jxf dvid-${DVID_VERSION}-dist-linux.tar.bz2
 RUN ln -s /app/dvid-${DVID_VERSION}-dist-linux/bin/dvid /usr/local/bin
+COPY ./conf/config.example /conf/config.toml
 CMD ["dvid", "-verbose", "serve", "/conf/config.toml"]
 #CMD ["/bin/bash"]
