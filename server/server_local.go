@@ -124,6 +124,13 @@ func Initialize() error {
 		corsDomains[domain] = struct{}{}
 	}
 
+	switch tc.Server.RWMode {
+	case "readonly":
+		readonly = true
+	case "fullwrite":
+		fullwrite = true
+	}
+
 	if err := tc.Kafka.Initialize(WebServer()); err != nil {
 		return err
 	}
@@ -386,6 +393,7 @@ type localConfig struct {
 	PidFile         string
 	Note            string
 	CorsDomains     []string
+	RWMode          string // optional setting can be empty, "readonly" or "fullwrite"
 
 	AllowTiming        bool   // If true, returns * for Timing-Allow-Origin in response headers.
 	StartWebhook       string // http address that should be called when server is started up.

@@ -28,6 +28,10 @@ corsDomains = ["mydomain.org"] # Allow CORS origin in these domains (not subdoma
                                # If ["*"] will use * wildcard for origins.
                                # If empty array or omitted, no Access-Control-Allow-Origin will be set.
 
+# rwmode settings allow read-only and full write modes similar to command-line flags
+# rwmode = "readonly"
+# rwmode = "fullwrite"
+
 # if a start-up webhook is provided, DVID will do a POST on the webhook address and send JSON
 # with the server attributes including the values for "host", "note", and other server properties.
 # startWebhook = "http://dvidmonitor.hhmi.org"
