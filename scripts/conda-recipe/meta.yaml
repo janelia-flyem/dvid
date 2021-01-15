@@ -151,11 +151,11 @@ source:
     #        cloud.google.com/go/bigtable
     #        cloud.google.com/go/storage
 
-  - git_url: https://code.googlesource.com/google-api-go-client
-    git_tag: master
-    folder:  src/google.golang.org/api
-    # Includes:
-    #        src/google.golang.org/api/option
+  # - git_url: https://code.googlesource.com/google-api-go-client
+  #   git_tag: master
+  #   folder:  src/google.golang.org/api
+  #   # Includes:
+  #   #        src/google.golang.org/api/option
 
   # grpc (not gorpc)
   - git_url: https://github.com/grpc/grpc-go
