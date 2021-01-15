@@ -43,6 +43,8 @@ fi
 
 echo "Fetching third-party go sources..."
 
+export GO111MODULE=auto
+
 # gopackages
 go get github.com/janelia-flyem/go
 cd ${GOPATH}/src/github.com/janelia-flyem/go
