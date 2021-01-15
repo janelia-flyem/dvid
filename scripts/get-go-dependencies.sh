@@ -120,7 +120,7 @@ go get github.com/gogo/protobuf/protoc-gen-gogoslick
 #
 # We can't use 'go get github.com/dgraph-io/ristretto/...' because we don't want the latest tag.
 # (See badger notes below. Same reason.)
-RISTRETTO_DIR=${GOPATH}/src/github.com/dgraph-io/badger
+RISTRETTO_DIR=${GOPATH}/src/github.com/dgraph-io/ristretto
 RISTRETTO_VERSION=v0.0.1 # Don't change this without also changing it in meta.yaml!!
 if [[ -d ${RISTRETTO_DIR} ]]; then
     cd ${RISTRETTO_DIR} && git fetch && cd -
