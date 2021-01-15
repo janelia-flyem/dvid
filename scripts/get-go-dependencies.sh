@@ -10,6 +10,7 @@
 ##
 
 set -e
+set -x
 
 if [[ "${GOPATH}" == "" ]]; then
   1>&2 echo "You must define GOPATH to use this script!"
@@ -79,11 +80,13 @@ go get github.com/golang/groupcache
 go get golang.org/x/oauth2
 go get cloud.google.com/go/compute/metadata
 
+go get google.golang.org/api/option
+go get google.golang.org/api/option/internaloption
+go get google.golang.org/grpc
+
 # gcloud
 go get cloud.google.com/go/bigtable
 go get cloud.google.com/go/storage
-go get google.golang.org/api/option
-go get google.golang.org/grpc
 go get github.com/golang/protobuf/proto
 go get github.com/golang/protobuf/protoc-gen-go
 
