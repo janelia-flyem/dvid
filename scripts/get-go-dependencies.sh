@@ -119,7 +119,7 @@ if [[ -d ${RISTRETTO_DIR} ]]; then
 else
     git clone https://github.com/dgraph-io/ristretto ${RISTRETTO_DIR}
 fi
-cd ${RISTRETTO_DIR} && git checkout ${RISTRETTO_VERSION} && cd -
+cd ${RISTRETTO_DIR} && git fetch --tags origin && git checkout ${RISTRETTO_VERSION} && cd -
 #go install -i github.com/dgraph-io/ristretto
 
 # badger
@@ -135,7 +135,7 @@ if [[ -d ${BADGER_DIR} ]]; then
 else
     git clone https://github.com/dgraph-io/badger ${BADGER_DIR}
 fi
-cd ${BADGER_DIR} && git checkout ${BADGER_VERSION} && cd -
+cd ${BADGER_DIR} && git fetch --tags origin && git checkout ${BADGER_VERSION} && cd -
 #go install -i github.com/dgraph-io/badger
 
 # badger dependencies
@@ -171,7 +171,7 @@ if [[ -d ${KAFKA_GO_DIR} ]]; then
 else
     git clone https://github.com/confluentinc/confluent-kafka-go ${KAFKA_GO_DIR}
 fi
-cd ${KAFKA_GO_DIR} && git checkout v1.3.0 && cd -
+cd ${KAFKA_GO_DIR} && git fetch --tags origin && git checkout v1.3.0 && cd -
 
 if [ $(uname) == "Linux" ]; then
     # For some reason, the confluent kafka package cannot be built correctly unless you set LD_LIBRARY_PATH,
