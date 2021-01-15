@@ -56,8 +56,8 @@ requirements:
     # Anaconda's gcc build -- on Linux only for now
     # (getting their clang binary to work on recent versions of MacOS is
     # tricky for some reason, related to SDK versions, etc.)
-    - {{ compiler('c') }}
-    - {{ compiler('cxx') }}
+    - {{ compiler('c') }}    # [linux]
+    - {{ compiler('cxx') }}  # [linux]
 
     - pkg-config
 
