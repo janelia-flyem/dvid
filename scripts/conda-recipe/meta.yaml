@@ -184,15 +184,15 @@ source:
     #        src/github.com/gogo/protobuf/gogoproto
     #        src/github.com/gogo/protobuf/protoc-gen-gogoslick
 
-  # gofuse
-  - git_url: https://github.com/bazil/fuse
-    git_tag: master
-    folder:  src/bazil.org/fuse
+  # # gofuse
+  # - git_url: https://github.com/bazil/fuse
+  #   git_tag: master
+  #   folder:  src/bazil.org/fuse
 
-  # gobolt
-  - git_url: https://github.com/boltdb/bolt
-    git_tag: master
-    folder:  src/github.com/boltdb/bolt
+  # # gobolt
+  # - git_url: https://github.com/boltdb/bolt
+  #   git_tag: master
+  #   folder:  src/github.com/boltdb/bolt
 
   # kafka
   #  NOTE: This is tied to the librdkafka version.
