@@ -1205,6 +1205,17 @@ func TestMultiscaleIngest(t *testing.T) {
 			t.Errorf("expected label %d but got %d in /listlabels pos %d\n", label, gotLabel, i)
 		}
 	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/listlabels?start=4&number=2", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(r) != 2*8 {
+		t.Fatalf("expected %d labels from /listlabels but got %d bytes\n", 2, len(r))
+	}
+	for i, label := range expectedLabels[2:4] {
+		gotLabel := binary.LittleEndian.Uint64(r[i*8 : i*8+8])
+		if label != gotLabel {
+			t.Errorf("expected label %d but got %d in /listlabels pos %d\n", label, gotLabel, i)
+		}
+	}
 
 	// Verify the label + voxel count streaming endpoint.
 	reqStr = fmt.Sprintf("%snode/%s/labels/listlabels?sizes=true", server.WebAPIPath, uuid)

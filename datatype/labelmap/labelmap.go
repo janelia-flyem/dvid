@@ -3747,6 +3747,7 @@ func (d *Data) handleIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 
 func (d *Data) handleListLabels(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	// GET <api URL>/node/<UUID>/<data name>/listlabels
+	const MaxReturnedLabels = 10000000
 	timedLog := dvid.NewTimeLog()
 
 	queryStrings := r.URL.Query()
@@ -3771,9 +3772,11 @@ func (d *Data) handleListLabels(ctx *datastore.VersionedCtx, w http.ResponseWrit
 			server.BadRequest(w, r, err)
 			return
 		}
+	} else {
+		number = MaxReturnedLabels
 	}
-	if number > 10000000 {
-		number = 10000000
+	if number > MaxReturnedLabels {
+		number = MaxReturnedLabels
 	}
 
 	method := strings.ToLower(r.Method)

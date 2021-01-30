@@ -1484,13 +1484,17 @@ func (d *Data) writeMappings(w io.Writer, v dvid.VersionID, binaryFormat, consis
 
 // Streams labels and optionally # voxels for the label to the http.ResponseWriter.
 func (d *Data) listLabels(ctx *datastore.VersionedCtx, start, number uint64, countVoxels bool, w http.ResponseWriter) (numLabels uint64, err error) {
+	if number == 0 {
+		return
+	}
 	var store storage.OrderedKeyValueDB
 	store, err = datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return 0, fmt.Errorf("problem getting store for data %q: %v", d.DataName(), err)
 	}
 	begTKey := NewLabelIndexTKey(start)
-	endTKey := NewLabelIndexTKey(start + number - 1)
+	endTKey := NewLabelIndexTKey(math.MaxUint64)
+	haltFakeErr := fmt.Errorf("terminate range query")
 	err = store.ProcessRange(ctx, begTKey, endTKey, nil, func(c *storage.Chunk) error {
 		if c == nil || c.V == nil || len(c.V) == 0 {
 			return nil
@@ -1525,8 +1529,14 @@ func (d *Data) listLabels(ctx *datastore.VersionedCtx, start, number uint64, cou
 				return err
 			}
 		}
+		if numLabels == number {
+			return haltFakeErr
+		}
 		return nil
 	})
+	if err == haltFakeErr {
+		err = nil
+	}
 	return
 }
 
