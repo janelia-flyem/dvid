@@ -1262,11 +1262,20 @@ GET <api URL>/node/<UUID>/<data name>/listlabels[?queryopts]
 
 	Note that because the data is streamed over HTTP, an error code cannot be sent once data is 
 	in flight, so any error is marked by four consecutive uint64 with value 0.
+
+	The query strings allow you to page through vast amounts of labels by changing the start. 
+	For example:
+	   GET /api/node/37af8/segmentation/listlables?start=0    --> returns batch up to label 10,281,384 since some gaps in labeling.
+	   GET /api/node/37af8/segmentation/listlabels?start=10281385   --> returns next batch
+	
+	Note that the start is a label identifier and not a position or index.  Since labels are
+	stored consecutively, you can use start=0 to guarantee you will get the smallest label, which
+	should be non-zero since 0 is used only for background.
 	
 	Query-string options:
 
-		start: starting label id
-		count: number of labels to return (if not specified, returns maximum of 1,000,000 labels)
+		start: starting label id (use 0 to start at very beginning since labels are stored consecutively)
+		count: number of labels to return (if not specified, returns maximum of 10,000,000 labels)
 		sizes: if "true", returns the number of voxels for each label.
 
 GET <api URL>/node/<UUID>/<data name>/indices
