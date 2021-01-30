@@ -1278,7 +1278,7 @@ GET <api URL>/node/<UUID>/<data name>/listlabels[?queryopts]
 	Query-string options:
 
 		start: starting label id (use 0 to start at very beginning since labels are stored consecutively)
-		count: number of labels to return (if not specified, returns maximum of 10,000,000 labels)
+		number: number of labels to return (if not specified, returns maximum of 10,000,000 labels)
 		sizes: if "true", returns the number of voxels for each label.
 
 GET <api URL>/node/<UUID>/<data name>/indices
