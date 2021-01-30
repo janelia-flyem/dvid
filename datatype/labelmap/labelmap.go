@@ -1265,12 +1265,15 @@ GET <api URL>/node/<UUID>/<data name>/listlabels[?queryopts]
 
 	The query strings allow you to page through vast amounts of labels by changing the start. 
 	For example:
-	   GET /api/node/37af8/segmentation/listlables?start=0    --> returns batch up to label 10,281,384 since some gaps in labeling.
-	   GET /api/node/37af8/segmentation/listlabels?start=10281385   --> returns next batch
+	   GET /api/node/37af8/segmentation/listlables
+	      which is equivalent to
+	   GET /api/node/37af8/segmentation/listlables?start=0    --> say it returns up to label 10,281,384 due to some gaps in labeling.
+	      and then you can call
+	   GET /api/node/37af8/segmentation/listlabels?start=10281385   --> to return next batch, start with last received label + 1
 	
 	Note that the start is a label identifier and not a position or index.  Since labels are
-	stored consecutively, you can use start=0 to guarantee you will get the smallest label, which
-	should be non-zero since 0 is used only for background.
+	stored consecutively, you can omit the start query string (default is start=0) to guarantee 
+	you will get the smallest label, which should be non-zero since 0 is used only for background.
 	
 	Query-string options:
 
