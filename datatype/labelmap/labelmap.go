@@ -1253,6 +1253,22 @@ POST <api URL>/node/<UUID>/<data name>/index/<label>
 
 	If the blocks map is empty on a POST, the label index is deleted.
 	
+GET <api URL>/node/<UUID>/<data name>/listlabels[?queryopts]
+
+	Streams labels and optionally their voxel counts in numerical order up to a maximum
+	of 10 million labels.  The GET returns a stream of little-endian uint64.  If label sizes are
+	requested, the stream is <label id i> <voxels in label i> <label id i+1> <voxels in label i+1> ...
+	If label sizes aren't requested, the stream is simply <label id i> <label id i+1> ...
+
+	Note that because the data is streamed over HTTP, an error code cannot be sent once data is 
+	in flight, so any error is marked by four consecutive uint64 with value 0.
+	
+	Query-string options:
+
+		start: starting label id
+		count: number of labels to return (if not specified, returns maximum of 1,000,000 labels)
+		sizes: if "true", returns the number of voxels for each label.
+
 GET <api URL>/node/<UUID>/<data name>/indices
 
 	Allows bulk GET of indices (blocks per supervoxel and their voxel count) by
@@ -3327,6 +3343,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "labels":
 		d.handleLabels(ctx, w, r)
 
+	case "listlabels":
+		d.handleListLabels(ctx, w, r)
+
 	case "mapping":
 		d.handleMapping(ctx, w, r)
 
@@ -3724,6 +3743,58 @@ func (d *Data) handleIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 	}
 
 	timedLog.Infof("HTTP %s index for label %d (%s)", r.Method, label, r.URL)
+}
+
+func (d *Data) handleListLabels(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+	// GET <api URL>/node/<UUID>/<data name>/listlabels
+	timedLog := dvid.NewTimeLog()
+
+	queryStrings := r.URL.Query()
+	var err error
+	var start, number uint64
+	var sizes bool
+	startStr := queryStrings.Get("start")
+	numberStr := queryStrings.Get("number")
+	if queryStrings.Get("sizes") == "true" {
+		sizes = true
+	}
+	if startStr != "" {
+		start, err = strconv.ParseUint(startStr, 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+	}
+	if numberStr != "" {
+		number, err = strconv.ParseUint(numberStr, 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+	}
+	if number > 10000000 {
+		number = 10000000
+	}
+
+	method := strings.ToLower(r.Method)
+	switch method {
+	case "get":
+	default:
+		server.BadRequest(w, r, "only GET actions allowed for /listlabels endpoint")
+		return
+	}
+
+	w.Header().Set("Content-type", "application/octet-stream")
+	numLabels, err := d.listLabels(ctx, start, number, sizes, w)
+	if err != nil {
+		// Because streaming HTTP writes precludes ability to signal error, we cap with four 0 uint64.
+		for i := 0; i < 4; i++ {
+			binary.Write(w, binary.LittleEndian, uint64(0))
+		}
+		dvid.Errorf("Error in trying to transmit label list stream: %v\n", err)
+	}
+
+	timedLog.Infof("HTTP %s listlabels for %d labels (%s)", method, numLabels, r.URL)
 }
 
 func (d *Data) handleIndices(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {

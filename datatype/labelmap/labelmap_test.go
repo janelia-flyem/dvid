@@ -1166,8 +1166,11 @@ func TestMultiscaleIngest(t *testing.T) {
 	hires.verifyLabel(t, 209, 55, 100, 55)
 	hires.verifyLabel(t, 311, 81, 81, 41)
 
+	expectedLabels := []uint64{1, 2, 13, 209, 311}
+	expectedSize := uint64(40 * 40 * 40)
+
 	// Verify our label index voxel counts are correct.
-	for _, label := range []uint64{1, 2, 13, 209, 311} {
+	for _, label := range expectedLabels {
 		reqStr := fmt.Sprintf("%snode/%s/labels/size/%d", server.WebAPIPath, uuid, label)
 		r := server.TestHTTP(t, "GET", reqStr, nil)
 		var jsonVal struct {
@@ -1176,8 +1179,8 @@ func TestMultiscaleIngest(t *testing.T) {
 		if err := json.Unmarshal(r, &jsonVal); err != nil {
 			t.Fatalf("unable to get size for label %d: %v", label, err)
 		}
-		if jsonVal.Voxels != 40*40*40 {
-			t.Errorf("thought label %d would have %d voxels, got %d\n", label, 40*40*40, jsonVal.Voxels)
+		if jsonVal.Voxels != expectedSize {
+			t.Errorf("thought label %d would have %d voxels, got %d\n", label, expectedSize, jsonVal.Voxels)
 		}
 	}
 	reqStr := fmt.Sprintf("%snode/%s/labels/size/3", server.WebAPIPath, uuid)
@@ -1188,6 +1191,36 @@ func TestMultiscaleIngest(t *testing.T) {
 	r := server.TestHTTP(t, "GET", reqStr, bytes.NewBufferString(bodystr))
 	if string(r) != "[64000,64000,0,64000,64000,64000]" {
 		t.Errorf("bad batch sizes result.  got: %s\n", string(r))
+	}
+
+	// Verify the label streaming endpoint.
+	reqStr = fmt.Sprintf("%snode/%s/labels/listlabels", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(r) != len(expectedLabels)*8 {
+		t.Errorf("expected %d labels from /listlabels but got %d bytes\n", len(expectedLabels), len(r))
+	}
+	for i, label := range expectedLabels {
+		gotLabel := binary.LittleEndian.Uint64(r[i*8 : i*8+8])
+		if label != gotLabel {
+			t.Errorf("expected label %d but got %d in /listlabels pos %d\n", label, gotLabel, i)
+		}
+	}
+
+	// Verify the label + voxel count streaming endpoint.
+	reqStr = fmt.Sprintf("%snode/%s/labels/listlabels?sizes=true", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(r) != len(expectedLabels)*16 {
+		t.Errorf("expected %d labels and sizes from /listlabels but got %d bytes\n", len(expectedLabels), len(r))
+	}
+	for i, label := range expectedLabels {
+		gotLabel := binary.LittleEndian.Uint64(r[i*16 : i*16+8])
+		if label != gotLabel {
+			t.Errorf("expected label %d but got %d in /listlabels pos %d\n", label, gotLabel, i)
+		}
+		gotSize := binary.LittleEndian.Uint64(r[i*16+8 : i*16+16])
+		if expectedSize != gotSize {
+			t.Errorf("expected size %d for label %d but got %d in /listlabels pos %d\n", expectedSize, label, gotSize, i)
+		}
 	}
 
 	// Check the first downres: 64^3

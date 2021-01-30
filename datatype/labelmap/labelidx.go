@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
 	"os"
 	"sort"
 	"sync"
@@ -1479,6 +1480,54 @@ func (d *Data) writeMappings(w io.Writer, v dvid.VersionID, binaryFormat, consis
 	svm.RUnlock()
 	timedLog.Infof("Finished retrieving %d mappings (%d errors) for data %q, version %d", numMappings, numErrors, d.DataName(), v)
 	return nil
+}
+
+// Streams labels and optionally # voxels for the label to the http.ResponseWriter.
+func (d *Data) listLabels(ctx *datastore.VersionedCtx, start, number uint64, countVoxels bool, w http.ResponseWriter) (numLabels uint64, err error) {
+	var store storage.OrderedKeyValueDB
+	store, err = datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return 0, fmt.Errorf("problem getting store for data %q: %v", d.DataName(), err)
+	}
+	begTKey := NewLabelIndexTKey(start)
+	endTKey := NewLabelIndexTKey(start + number - 1)
+	err = store.ProcessRange(ctx, begTKey, endTKey, nil, func(c *storage.Chunk) error {
+		if c == nil || c.V == nil || len(c.V) == 0 {
+			return nil
+		}
+		numLabels++
+		label, err := DecodeLabelIndexTKey(c.K)
+		if err != nil {
+			return err
+		}
+		if err = binary.Write(w, binary.LittleEndian, label); err != nil {
+			return err
+		}
+		if countVoxels {
+			var data []byte
+			data, _, err = dvid.DeserializeData(c.V, true)
+			if err != nil {
+				return err
+			}
+			idx := new(labels.Index)
+			if err := idx.Unmarshal(data); err != nil {
+				return err
+			}
+			var numVoxels uint64
+			for _, svc := range idx.Blocks {
+				if svc != nil && len(svc.Counts) != 0 {
+					for _, count := range svc.Counts {
+						numVoxels += uint64(count)
+					}
+				}
+			}
+			if err = binary.Write(w, binary.LittleEndian, numVoxels); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return
 }
 
 func (d *Data) indexThread(f *os.File, mu *sync.Mutex, wg *sync.WaitGroup, chunkCh chan *storage.Chunk) {
