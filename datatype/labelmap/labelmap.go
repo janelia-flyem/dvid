@@ -1265,9 +1265,9 @@ GET <api URL>/node/<UUID>/<data name>/listlabels[?queryopts]
 
 	The query strings allow you to page through vast amounts of labels by changing the start. 
 	For example:
-	   GET /api/node/37af8/segmentation/listlables
+	   GET /api/node/37af8/segmentation/listlabels
 	      which is equivalent to
-	   GET /api/node/37af8/segmentation/listlables?start=0    --> say it returns up to label 10,281,384 due to some gaps in labeling.
+	   GET /api/node/37af8/segmentation/listlabels?start=0    --> say it returns up to label 10,281,384 due to some gaps in labeling.
 	      and then you can call
 	   GET /api/node/37af8/segmentation/listlabels?start=10281385   --> to return next batch, start with last received label + 1
 	
