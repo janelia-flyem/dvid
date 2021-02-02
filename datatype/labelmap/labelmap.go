@@ -1273,7 +1273,7 @@ GET <api URL>/node/<UUID>/<data name>/listlabels[?queryopts]
 	
 	Note that the start is a label identifier and not a position or index.  Since labels are
 	stored consecutively, you can omit the start query string (default is start=0) to guarantee 
-	you will get the smallest label, which should be non-zero since 0 is used only for background.
+	you will get the smallest label identifier, which should be non-zero since 0 is used only for background.
 	
 	Query-string options:
 
