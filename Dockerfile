@@ -1,6 +1,6 @@
 FROM node:14 as consolebuilder
 WORKDIR /app
-ARG CONSOLE_VERSION=3.4.9
+ARG CONSOLE_VERSION=3.4.12
 RUN npm install -g npm@7
 RUN git clone --depth 1 --branch v${CONSOLE_VERSION} https://github.com/janelia-flyem/dvid-console.git .
 RUN npm install
@@ -8,7 +8,7 @@ RUN npm run build
 
 FROM ubuntu:20.04 as builder
 ARG DVID_VERSION=0.9.7
-ARG CONSOLE_VERSION=3.4.9
+ARG CONSOLE_VERSION=3.4.12
 MAINTAINER flyem project team
 LABEL maintainer="neuprint@janelia.hhmi.org"
 LABEL dvid_version=${DVID_VERSION}
