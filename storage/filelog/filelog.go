@@ -127,8 +127,10 @@ func (f *fileLog) writeHeader(msg storage.LogMessage) error {
 	binary.LittleEndian.PutUint16(buf[:2], msg.EntryType)
 	size := uint32(len(msg.Data))
 	binary.LittleEndian.PutUint32(buf[2:], size)
-	_, err := f.Write(buf)
-	return err
+	if _, err := f.Write(buf); err != nil {
+		return err
+	}
+	return f.Sync()
 }
 
 func (f *fileLog) readAll() ([]storage.LogMessage, error) {
@@ -326,12 +328,16 @@ func (flogs *fileLogs) Append(dataID, version dvid.UUID, msg storage.LogMessage)
 		fl.Unlock()
 		return fmt.Errorf("bad write of log header to data %s, uuid %s: %v", dataID, version, err)
 	}
-	_, err = fl.Write(msg.Data)
+	if _, err = fl.Write(msg.Data); err != nil {
+		fl.Unlock()
+		return fmt.Errorf("append log %q: %v", flogs, err)
+	}
+	err = fl.Sync()
 	fl.Unlock()
 	if err != nil {
-		err = fmt.Errorf("append log %q: %v", flogs, err)
+		return fmt.Errorf("err on sync of append log %q: %v", flogs, err)
 	}
-	return err
+	return nil
 }
 
 func (flogs *fileLogs) CloseLog(dataID, version dvid.UUID) error {
@@ -349,12 +355,16 @@ func (flogs *fileLogs) TopicAppend(topic string, msg storage.LogMessage) error {
 		fl.Unlock()
 		return fmt.Errorf("bad write of log header to topic %q: %v", topic, err)
 	}
-	_, err = fl.Write(msg.Data)
+	if _, err = fl.Write(msg.Data); err != nil {
+		fl.Unlock()
+		return fmt.Errorf("bad write to append log %q, topic %q: %v", flogs, topic, err)
+	}
+	err = fl.Sync()
 	fl.Unlock()
 	if err != nil {
-		err = fmt.Errorf("append log %q: %v", flogs, err)
+		return fmt.Errorf("err on sync of append log %q, topic %q: %v", flogs, topic, err)
 	}
-	return err
+	return nil
 }
 
 func (flogs *fileLogs) TopicClose(topic string) error {

@@ -92,6 +92,13 @@ func LogJSONMutation(versionID, dataID dvid.UUID, jsondata []byte) error {
 	lf.Lock()
 	w := protolog.NewTypedWriter(jsonMsgTypeID, lf.f)
 	_, err = w.Write(jsondata)
+	if err != nil {
+		lf.Unlock()
+		return err
+	}
+	// For mutation logs, we want to fsync just in case there is server power loss
+	// and mutations are relatively infrequent anyway.
+	err = lf.f.Sync()
 	lf.Unlock()
 	return err
 }
