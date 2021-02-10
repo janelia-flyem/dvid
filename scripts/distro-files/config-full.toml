@@ -49,15 +49,22 @@ instance_id_start = 100  # new ids start at least from this.
 min_mutation_id_start = 1000100000  # mutation id will start from this or higher
 
 # if the "auth" section is included, requests must be signed with a JWT obtained via
-# the /api/server/token endpoint, which assumes that there's a flyem-services cookie.
+# the /api/server/token endpoint.  There are two methods of authentication:
+# The current approach is that a Google ID token is passed to /api/server/token and
+# a JWT is returned that should be sharable among other FlyEM services.  The environment
+# variable DVID_JWT_SECRET_KEY must be provided for authentication to be enabled.
+# The legacy approach is to supply a deprecated proxy_address to a flyem-services server.
 [auth]
-proxy_address = "http://some-flyem-services"  # URL to running github.com/janelia-flyem/flyem-services
-secret_key = "mysecretpasshrase" # This could be done with environ variable
 enforce = "none" # "none" = no JWT required, "token" requires valid JWT, and
                  # "authfile" requires user to be in auth_file below.
 # File containing authorized emails in JSON format of style {"email":"priv", ...} 
 # where email could be "*" for wildcard and priv can be "read", "write", or "readwrite".
 #auth_file = "/demo/auth.txt" 
+
+public_versions = []  # Add lists of committed UUIDs that should have public access.
+
+# This is legacy method that is deprecated and won't be used.
+# proxy_address = "http://some-flyem-services"  # URL to running github.com/janelia-flyem/flyem-services
 
 # Email server to use for notifications and server issuing email-based authorization tokens.
 [email]

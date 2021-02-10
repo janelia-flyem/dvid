@@ -67,6 +67,9 @@ go get github.com/zenazn/goji
 # JWT support
 go get github.com/dgrijalva/jwt-go
 
+# Google ID OAuth2 support
+go get google.golang.org/api/oauth2/v2
+
 # CORS support
 go get github.com/rs/cors
 

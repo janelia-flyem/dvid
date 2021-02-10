@@ -135,7 +135,7 @@ func Initialize() error {
 		return err
 	}
 
-	if err := loadAuthFile(); err != nil {
+	if err := authorizations.initialize(); err != nil {
 		return err
 	}
 

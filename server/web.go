@@ -7,7 +7,6 @@ package server
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -764,10 +763,10 @@ func initRoutes() {
 	repoMux := web.New()
 	mainMux.Handle("/api/repo/:uuid/:action", repoMux)
 	mainMux.Handle("/api/repo/:uuid/:action/:name", repoMux)
+	repoMux.Use(repoRawSelector)
 	if authorizationOn {
 		repoMux.Use(isAuthorized)
 	}
-	repoMux.Use(repoRawSelector)
 	repoMux.Use(mutationsHandler)
 	repoMux.Use(activityLogHandler)
 	repoMux.Use(repoSelector)
@@ -783,10 +782,10 @@ func initRoutes() {
 	nodeMux := web.New()
 	mainMux.Handle("/api/node/:uuid", nodeMux)
 	mainMux.Handle("/api/node/:uuid/:action", nodeMux)
+	nodeMux.Use(repoRawSelector)
 	if authorizationOn {
 		nodeMux.Use(isAuthorized)
 	}
-	nodeMux.Use(repoRawSelector)
 	nodeMux.Use(mutationsHandler)
 	nodeMux.Use(activityLogHandler)
 	nodeMux.Use(nodeSelector)
@@ -803,10 +802,10 @@ func initRoutes() {
 	instanceMux := web.New()
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword", instanceMux)
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword/*", instanceMux)
+	instanceMux.Use(repoRawSelector)
 	if authorizationOn {
 		instanceMux.Use(isAuthorized)
 	}
-	instanceMux.Use(repoRawSelector)
 	instanceMux.Use(mutationsHandler)
 	instanceMux.Use(instanceSelector)
 	instanceMux.NotFound(notFound)
@@ -1488,67 +1487,6 @@ func serverNoteHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, tc.Server.Note)
 }
 
-func serverTokenHandler(w http.ResponseWriter, r *http.Request) {
-	if len(tc.Auth.ProxyAddress) == 0 {
-		BadRequest(w, r, "must have proxy_address configured in Auth section of TOML config")
-		return
-	}
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-	client := &http.Client{
-		Timeout:   time.Second * 30,
-		Transport: tr,
-	}
-	profileURL := "https://" + strings.TrimSuffix(tc.Auth.ProxyAddress, "/") + "/profile"
-	req, err := http.NewRequest(http.MethodGet, profileURL, nil)
-	if err != nil {
-		BadRequest(w, r, "unable to create new /profile request: %v", err)
-		return
-	}
-
-	for _, cookie := range r.Cookies() {
-		req.AddCookie(cookie)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		BadRequest(w, r, "unable to get profile from %s: %v", tc.Auth.ProxyAddress, err)
-		return
-	}
-	if resp.StatusCode != http.StatusOK {
-		BadRequest(w, r, "unable to get profile from %s (status %d), perhaps not logged in?", tc.Auth.ProxyAddress, err)
-		return
-	}
-	defer resp.Body.Close()
-	data, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		BadRequest(w, r, "unable to read /profile response from %s: %v", tc.Auth.ProxyAddress, err)
-		return
-	}
-	var profileData map[string]string
-	if err := json.Unmarshal(data, &profileData); err != nil {
-		BadRequest(w, r, "unable to decode JSON for profile: %v", err)
-		return
-	}
-	user := profileData["Email"]
-	if len(user) == 0 {
-		BadRequest(w, r, "unable to get user (email) from %s", profileURL)
-		return
-	}
-
-	// generate JWT
-	tokenString, err := generateJWT(user)
-	if err != nil {
-		BadRequest(w, r, "unable to generate JWT: %v", err)
-		return
-	}
-	dvid.Infof("Returning JWT for user %s.\n", user)
-	w.Header().Set("Content-Type", "text/plain")
-	fmt.Fprintf(w, tokenString)
-}
-
 func serverTypesHandler(w http.ResponseWriter, r *http.Request) {
 	jsonMap := make(map[dvid.TypeString]string)
 	typemap, err := datastore.Types()
@@ -1634,7 +1572,7 @@ func serverSettingsHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func serverReloadAuthHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	if err := loadAuthFile(); err != nil {
+	if err := authorizations.loadAuthFile(); err != nil {
 		BadRequest(w, r, "unable to reload auth file: %v", err)
 		return
 	}
