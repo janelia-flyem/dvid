@@ -155,13 +155,17 @@ $ dvid node <UUID> <data name> set-nextlabel <label>
 
 	Sets the counter for new labels repo-wide for the given labelmap instance.
 	Note that the next label will be one more than the given label, and the given
-	label must be 1 or more.  This is a dangerous command if you set the next label
-	to a low value.  If this is not set, new labels always grow from the current
-	maximum label.  Use with caution.
+	label must be 1 or more.  If label is 0, then this next label setting will
+	be ignored and future labels will be determined by the repo-wide max label
+	as is the default.
+	
+	This is a dangerous command if you set the next label to a low value because
+	it will not check if it starts to encroach higher label values, so use with
+	caution.
 
     Example: 
 
-	$ dvid node 3f8c segmentation label 999
+	$ dvid node 3f8c segmentation set-nextlabel 999
 	
 	The next new label, for example in a cleave, will be 1000.
 
