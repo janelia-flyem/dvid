@@ -1306,6 +1306,7 @@ GET <api URL>/node/<UUID>/<data name>/listlabels[?queryopts]
 
 GET <api URL>/node/<UUID>/<data name>/indices
 
+	Note: For more optimized bulk index retrieval, see /indices-compressed.
 	Allows bulk GET of indices (blocks per supervoxel and their voxel count) by
 	including in the GET body a JSON array of requested labels (max 50,000 labels):
 
@@ -1319,6 +1320,35 @@ GET <api URL>/node/<UUID>/<data name>/indices
 
 	where LabelIndex is defined by the protobuf above in the /index documentation.
 
+GET <api URL>/node/<UUID>/<data name>/indices-compressed
+
+	The fastest and most efficient way for bulk index retrieval.  Streams lz4 
+	compressed LabelIndex protobuf messages with minimal processing server-side.  
+	This allows lz4 uncompression to be done in parallel on clients as well as
+	immediate processing of each label index as it is received.
+	Up to 50,000 labels may be requested at once by sending a JSON array of 
+	requested labels in GET body:
+
+		[ 1028193, 883177046, ... ]
+
+	The GET returns a stream of data with the following format:
+
+	first label index size (uint64 little endian)
+	first label id (uint64 little endian)
+	first label index protobuf (see definition in /index doc), lz4 compressed
+	second label index size (uint64 little endian)
+	second label id (uint64 little endian)
+	second label index protobuf, lz4 compressed
+	...
+
+	Although the label id is included in the protobuf, the stream includes the label
+	of the record in case there is corruption of the record or other issues.  So this
+	call allows verifying the records are properly stored.  
+
+	Missing labels will have 0 size and no bytes for the protobuf data.
+
+	If an error occurs, zeros will be transmitted for a label index size and a label id.
+	
 POST <api URL>/node/<UUID>/<data name>/indices
 
 	Allows bulk storage of indices (blocks per supervoxel and their voxel count) for any
@@ -3548,6 +3578,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "indices":
 		d.handleIndices(ctx, w, r)
 
+	case "indices-compressed":
+		d.handleIndicesCompressed(ctx, w, r)
+
 	case "mappings":
 		d.handleMappings(ctx, w, r)
 
@@ -4002,22 +4035,22 @@ func (d *Data) handleIndices(ctx *datastore.VersionedCtx, w http.ResponseWriter,
 	} else { // GET
 		var labelList []uint64
 		if err := json.Unmarshal(dataIn, &labelList); err != nil {
-			server.BadRequest(w, r, fmt.Sprintf("expected JSON label list for GET /indices: %v", err))
+			server.BadRequest(w, r, "expected JSON label list for GET /indices: %v", err)
 			return
 		}
-		if len(labelList) > 50000 {
-			server.BadRequest(w, r, fmt.Sprintf("only 50,000 label indices can be returned at a time, %d given", len(labelList)))
+		numLabels = len(labelList)
+		if numLabels > 50000 {
+			server.BadRequest(w, r, "only 50,000 label indices can be returned at a time, %d given", len(labelList))
 			return
 		}
 		var indices proto.LabelIndices
 		indices.Indices = make([]*proto.LabelIndex, len(labelList))
 		for i, label := range labelList {
-			idx, err := getCachedLabelIndex(d, ctx.VersionID(), label)
+			idx, err := getLabelIndex(ctx, label)
 			if err != nil {
 				server.BadRequest(w, r, "could not get label %d index in position %d: %v", label, i, err)
 				return
 			}
-			fmt.Printf("indices.Indices[%d]: %v\n", i, idx)
 			if idx != nil {
 				indices.Indices[i] = &(idx.LabelIndex)
 			} else {
@@ -4050,6 +4083,80 @@ func (d *Data) handleIndices(ctx *datastore.VersionedCtx, w http.ResponseWriter,
 		}
 	}
 	timedLog.Infof("HTTP %s indices for %d labels (%s)", method, numLabels, r.URL)
+}
+
+func (d *Data) handleIndicesCompressed(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+	// GET <api URL>/node/<UUID>/<data name>/indices-compressed
+	timedLog := dvid.NewTimeLog()
+
+	queryStrings := r.URL.Query()
+	if throttle := queryStrings.Get("throttle"); throttle == "on" || throttle == "true" {
+		if server.ThrottledHTTP(w) {
+			return
+		}
+		defer server.ThrottledOpDone()
+	}
+
+	if r.Method != http.MethodGet {
+		server.BadRequest(w, r, "only GET action allowed for /indices endpoint")
+		return
+	}
+	if r.Body == nil {
+		server.BadRequest(w, r, fmt.Errorf("expected data to be sent for /indices request"))
+		return
+	}
+	dataIn, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		server.BadRequest(w, r, err)
+	}
+	var numLabels int
+	var labelList []uint64
+	if err := json.Unmarshal(dataIn, &labelList); err != nil {
+		server.BadRequest(w, r, "expected JSON label list for GET /indices: %v", err)
+		return
+	}
+	numLabels = len(labelList)
+	if numLabels > 50000 {
+		server.BadRequest(w, r, "only 50,000 label indices can be returned at a time, %d given", len(labelList))
+		return
+	}
+	store, err := datastore.GetKeyValueDB(d)
+	if err != nil {
+		server.BadRequest(w, r, "can't get store for data %q", d.DataName())
+		return
+	}
+
+	defer timedLog.Infof("HTTP %s compressed indices for %d labels (%s)", r.Method, numLabels, r.URL)
+
+	headerBytes := make([]byte, 16)
+	zeroBytes := make([]byte, 16)
+	binary.LittleEndian.PutUint64(zeroBytes[0:8], 0)
+	binary.LittleEndian.PutUint64(zeroBytes[8:16], 0)
+	w.Header().Set("Content-type", "application/octet-stream")
+	for i, label := range labelList {
+		data, err := getLabelIndexCompressed(store, ctx, label)
+		if err != nil {
+			w.Write(zeroBytes)
+			dvid.Errorf("Error reading streaming compressed label index at pos %d, label %d: %v\n", i, label, err)
+			return
+		}
+		length := uint64(len(data))
+		binary.LittleEndian.PutUint64(headerBytes[0:8], length)
+		binary.LittleEndian.PutUint64(headerBytes[8:16], label)
+
+		if _, err = w.Write(headerBytes); err != nil {
+			w.Write(zeroBytes)
+			dvid.Errorf("Error writing header of streaming compressed label index at pos %d, label %d: %v\n", i, label, err)
+			return
+		}
+
+		if length > 0 {
+			if _, err = w.Write(data); err != nil {
+				dvid.Errorf("Error writing data of streaming compressed label index at pos %d, label %d: %v\n", i, label, err)
+				return
+			}
+		}
+	}
 }
 
 func (d *Data) handleMappings(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {

@@ -120,6 +120,18 @@ func getLabelIndex(ctx *datastore.VersionedCtx, label uint64) (*labels.Index, er
 	return idx, nil
 }
 
+func getLabelIndexCompressed(store storage.KeyValueGetter, ctx *datastore.VersionedCtx, label uint64) ([]byte, error) {
+	compressed, err := store.Get(ctx, NewLabelIndexTKey(label))
+	if err != nil {
+		return nil, err
+	}
+	if len(compressed) == 0 {
+		// timedLog.Infof("retrieved empty index for label %d", label)
+		return nil, nil
+	}
+	return compressed, nil
+}
+
 // should only call putCachedLabelIndex external to this file.
 func putLabelIndex(ctx *datastore.VersionedCtx, idx *labels.Index) error {
 	// timedLog := dvid.NewTimeLog()

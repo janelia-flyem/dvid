@@ -1636,6 +1636,59 @@ func TestPostBlocks(t *testing.T) {
 	if returnData != nil {
 		t.Fatalf("got non-nil response from bad request: %v\n", returnData)
 	}
+
+	// test GET /indices-compressed
+	apiStr = fmt.Sprintf("%snode/%s/labels/indices-compressed", server.WebAPIPath, uuid)
+	returnData = server.TestHTTP(t, "GET", apiStr, strings.NewReader(`[0, 1, 52011980226]`))
+
+	i := 0
+	datasize := binary.LittleEndian.Uint64(returnData[i : i+8])
+	i += 8
+	label := binary.LittleEndian.Uint64(returnData[i : i+8])
+	if label != 0 || datasize != 0 {
+		t.Fatalf("got bad label 0 index return: label %d, datasize %d\n", label, datasize)
+	}
+
+	i += 8
+	datasize = binary.LittleEndian.Uint64(returnData[i : i+8])
+	i += 8
+	label = binary.LittleEndian.Uint64(returnData[i : i+8])
+	if label != 1 || datasize != 0 {
+		t.Fatalf("got bad label 1 index return: label %d, datasize %d\n", label, datasize)
+	}
+
+	i += 8
+	datasize = binary.LittleEndian.Uint64(returnData[i : i+8])
+	i += 8
+	label = binary.LittleEndian.Uint64(returnData[i : i+8])
+	i += 8
+	if label != 52011980226 || datasize != 38 {
+		t.Fatalf("got bad label 52011980226 index return: label %d, datasize %d\n", label, datasize)
+	}
+	idx := uncompressIndex(t, returnData[i:i+38])
+	if idx.Label != 52011980226 || len(idx.Blocks) != 1 && idx.Blocks[13194143727618].Counts[52011980226] != 7963 {
+		t.Fatalf("got bad label 52011980226 index return: %v\n", *idx)
+	}
+	server.TestBadHTTP(t, "GET", apiStr, nil)
+	server.TestBadHTTP(t, "GET", apiStr, strings.NewReader(``))
+	server.TestBadHTTP(t, "GET", apiStr, strings.NewReader(`{}`))
+	returnData = server.TestHTTP(t, "GET", apiStr, strings.NewReader(`[]`))
+	if returnData != nil {
+		t.Fatalf("got non-nil response from bad request: %v\n", returnData)
+	}
+}
+
+func uncompressIndex(t *testing.T, data []byte) *labels.Index {
+	val, _, err := dvid.DeserializeData(data, true)
+	if err != nil {
+		t.Fatalf("unable to uncompress label index data, %d bytes", len(data))
+	}
+
+	idx := new(labels.Index)
+	if err := idx.Unmarshal(val); err != nil {
+		t.Fatalf("unable to uncompress label index data, %d bytes", len(data))
+	}
+	return idx
 }
 
 func testExtents(t *testing.T, name string, uuid dvid.UUID, min, max dvid.Point3d) {
