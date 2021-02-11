@@ -628,7 +628,7 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op labels.CleaveOp) error {
 	// d.Lock()
 	// defer d.Unlock()
-	dvid.Infof("Starting cleave sync to annotation %q: %v\n", d.DataName(), op)
+	dvid.Infof("Starting cleave sync on instance %q to target %d with resulting label %d using %d cleaved svs\n", d.DataName(), op.Target, op.CleavedLabel, len(op.CleavedSupervoxels))
 	timedLog := dvid.NewTimeLog()
 
 	labelData := d.getSyncedLabels()
