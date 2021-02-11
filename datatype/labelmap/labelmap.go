@@ -1333,10 +1333,10 @@ GET <api URL>/node/<UUID>/<data name>/indices-compressed
 
 	The GET returns a stream of data with the following format:
 
-	first label index size (uint64 little endian)
+	first label index compressed size in bytes (uint64 little endian)
 	first label id (uint64 little endian)
 	first label index protobuf (see definition in /index doc), lz4 compressed
-	second label index size (uint64 little endian)
+	second label index compressed size in bytes (uint64 little endian)
 	second label id (uint64 little endian)
 	second label index protobuf, lz4 compressed
 	...
