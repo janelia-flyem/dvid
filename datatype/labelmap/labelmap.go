@@ -151,6 +151,25 @@ $ dvid node <UUID> <data name> dump <dump type> <file path>
 	dump type     One of "svcount", "mappings", or "indices".
 	file path     Absolute path to a writable file that the dvid server has write privileges to.
 	
+$ dvid node <UUID> <data name> set-nextlabel <label>
+
+	Sets the counter for new labels repo-wide for the given labelmap instance.
+	Note that the next label will be one more than the given label, and the given
+	label must be 1 or more.  This is a dangerous command if you set the next label
+	to a low value.  If this is not set, new labels always grow from the current
+	maximum label.  Use with caution.
+
+    Example: 
+
+	$ dvid node 3f8c segmentation label 999
+	
+	The next new label, for example in a cleave, will be 1000.
+
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of data to add.
+	label     	  A uint64 label ID
 	
     ------------------
 
@@ -735,7 +754,7 @@ POST <api URL>/node/<UUID>/<data name>/maxlabel/<max label>
 		"Timestamp":  time.Now().String(),
 	}
 
-	GET <api URL>/node/<UUID>/<data name>/nextlabel
+GET <api URL>/node/<UUID>/<data name>/nextlabel
 
 	GET returns what would be a new label for the version of data in JSON form assuming the version
 	has not been committed:
@@ -1387,6 +1406,8 @@ var (
 
 	zeroLabelBytes = make([]byte, 8, 8)
 
+	newLabelID = make(map[dvid.VersionID]uint64)
+
 	DefaultBlockSize int32   = 64
 	DefaultRes       float32 = imageblk.DefaultRes
 	DefaultUnits             = imageblk.DefaultUnits
@@ -1548,6 +1569,11 @@ type Data struct {
 	// conflict across all versions within this repo.
 	MaxRepoLabel uint64
 
+	// The next label ID to be returned for new labels.  This can override MaxRepoLabel
+	// if it is non-zero.  If zero, it is not used.  This was added to allow new
+	// labels to be assigned that have lower IDs than existing labels.
+	NextLabel uint64
+
 	// True if sparse volumes (split, merge, sparse volume optimized GET) are supported
 	// for this data instance.  (Default true)
 	IndexedLabels bool
@@ -1630,6 +1656,7 @@ func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSp
 		d.MaxLabel[k] = v
 	}
 	d.MaxRepoLabel = d2.MaxRepoLabel
+	d.NextLabel = d2.NextLabel
 
 	d.IndexedLabels = d2.IndexedLabels
 	d.MaxDownresLevel = d2.MaxDownresLevel
@@ -1704,6 +1731,7 @@ type propsJSON struct {
 	imageblk.Properties
 	MaxLabel        map[dvid.VersionID]uint64
 	MaxRepoLabel    uint64
+	NextLabel       uint64
 	IndexedLabels   bool
 	MaxDownresLevel uint8
 }
@@ -1720,6 +1748,7 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 				Properties:      d.Data.Properties,
 				MaxLabel:        d.MaxLabel,
 				MaxRepoLabel:    d.MaxRepoLabel,
+				NextLabel:       d.NextLabel,
 				IndexedLabels:   d.IndexedLabels,
 				MaxDownresLevel: d.MaxDownresLevel,
 			},
@@ -1753,6 +1782,7 @@ func (d *Data) MarshalJSONExtents(ctx *datastore.VersionedCtx) ([]byte, error) {
 			Properties:      props,
 			MaxLabel:        d.MaxLabel,
 			MaxRepoLabel:    d.MaxRepoLabel,
+			NextLabel:       d.NextLabel,
 			IndexedLabels:   d.IndexedLabels,
 			MaxDownresLevel: d.MaxDownresLevel,
 		},
@@ -1883,6 +1913,17 @@ func (d *Data) persistMaxRepoLabel() error {
 	return store.Put(ctx, maxRepoLabelTKey, buf)
 }
 
+func (d *Data) persistNextLabel() error {
+	store, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return err
+	}
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, d.NextLabel)
+	ctx := storage.NewDataContext(d, 0)
+	return store.Put(ctx, nextLabelTKey, buf)
+}
+
 // newLabel returns a new label for the given version.
 func (d *Data) newLabel(v dvid.VersionID) (uint64, error) {
 	d.mlMu.Lock()
@@ -1897,7 +1938,14 @@ func (d *Data) newLabel(v dvid.VersionID) (uint64, error) {
 		return 0, fmt.Errorf("can't ask for new label in a locked version id %d", v)
 	}
 
-	// Increment and store.
+	// Increment and store if we don't have an ephemeral new label start ID.
+	if d.NextLabel != 0 {
+		d.NextLabel++
+		if err := d.persistNextLabel(); err != nil {
+			return d.NextLabel, err
+		}
+		return d.NextLabel, nil
+	}
 	d.MaxRepoLabel++
 	d.MaxLabel[v] = d.MaxRepoLabel
 	if err := d.persistMaxLabel(v); err != nil {
@@ -1928,6 +1976,15 @@ func (d *Data) newLabels(v dvid.VersionID, numLabels uint64) (begin, end uint64,
 	}
 
 	// Increment and store.
+	if d.NextLabel != 0 {
+		begin = d.NextLabel + 1
+		end = d.NextLabel + numLabels
+		d.NextLabel = end
+		if err = d.persistNextLabel(); err != nil {
+			return
+		}
+		return
+	}
 	begin = d.MaxRepoLabel + 1
 	end = d.MaxRepoLabel + numLabels
 	d.MaxRepoLabel = end
@@ -1941,10 +1998,20 @@ func (d *Data) newLabels(v dvid.VersionID, numLabels uint64) (begin, end uint64,
 	return
 }
 
+// SetNextLabelStart sets the next label ID for this labelmap instance across
+// the entire repo.
+func (d *Data) SetNextLabelStart(nextLabelID uint64) error {
+	d.NextLabel = nextLabelID
+	if err := d.persistNextLabel(); err != nil {
+		return err
+	}
+	return nil
+}
+
 // --- datastore.InstanceMutator interface -----
 
 // LoadMutable loads mutable properties of label volumes like the maximum labels
-// for each version.  Note that we load these max labels from key-value pairs
+// for each version.  Note that we load these max and next labels from key-value pairs
 // rather than data instance properties persistence, because in the case of a crash,
 // the actually stored repo data structure may be out-of-date compared to the guaranteed
 // up-to-date key-value pairs for max labels.
@@ -1961,7 +2028,7 @@ func (d *Data) LoadMutable(root dvid.VersionID, storedVersion, expectedVersion u
 
 	// Start appropriate migration function if any.
 	var saveRequired bool
-	go d.loadMaxLabels(wg, ch)
+	go d.loadLabelIDs(wg, ch)
 
 	// Send the max label data per version
 	minKey, err := ctx.MinVersionKey(maxLabelTKey)
@@ -1979,12 +2046,15 @@ func (d *Data) LoadMutable(root dvid.VersionID, storedVersion, expectedVersion u
 	wg.Wait()
 
 	dvid.Infof("Loaded max label values for labelmap %q with repo-wide max %d\n", d.DataName(), d.MaxRepoLabel)
+	if d.NextLabel != 0 {
+		dvid.Infof("Loaded next label id for labelmap %q: %d\n", d.DataName(), d.NextLabel)
+	}
 	return saveRequired, nil
 }
 
 const veryLargeLabel = 10000000000 // 10 billion
 
-func (d *Data) loadMaxLabels(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
+func (d *Data) loadLabelIDs(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 	ctx := storage.NewDataContext(d, 0)
 	var repoMax uint64
 	d.MaxLabel = make(map[dvid.VersionID]uint64)
@@ -2035,6 +2105,19 @@ func (d *Data) loadMaxLabels(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 			d.MaxRepoLabel = repoMax
 		}
 	}
+
+	// Load in next label if set.
+	data, err = store.Get(ctx, nextLabelTKey)
+	if err != nil {
+		dvid.Errorf("Error getting repo-wide next label: %v\n", err)
+		return
+	}
+	if data == nil || len(data) != 8 {
+		dvid.Errorf("Could not load repo-wide next label for instance %q.  No next label override of max label.\n", d.DataName())
+	} else {
+		d.NextLabel = binary.LittleEndian.Uint64(data)
+	}
+
 	wg.Done()
 }
 
@@ -2799,6 +2882,41 @@ func (d *Data) PushData(p *datastore.PushSession) error {
 // DoRPC acts as a switchboard for RPC commands.
 func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 	switch req.TypeCommand() {
+	case "set-nextlabel":
+		if len(req.Command) < 5 {
+			return fmt.Errorf("Poorly formatted set-nextlabel command.  See command-line help.")
+		}
+
+		// Parse the request
+		var uuidStr, dataName, cmdStr, labelStr string
+		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &labelStr)
+
+		uuid, _, err := datastore.MatchingUUID(uuidStr)
+		if err != nil {
+			return err
+		}
+
+		dataservice, err := datastore.GetDataByUUIDName(uuid, dvid.InstanceName(dataName))
+		if err != nil {
+			return err
+		}
+		lmData, ok := dataservice.(*Data)
+		if !ok {
+			return fmt.Errorf("Instance %q of uuid %s was not a labelmap instance", dataName, uuid)
+		}
+
+		nextLabelID, err := strconv.ParseUint(labelStr, 10, 64)
+		if err != nil {
+			return err
+		}
+
+		if err := lmData.SetNextLabelStart(nextLabelID); err != nil {
+			return err
+		}
+
+		reply.Text = fmt.Sprintf("Set next label ID to %d.\n", nextLabelID)
+		return nil
+
 	case "load":
 		if len(req.Command) < 5 {
 			return fmt.Errorf("Poorly formatted load command.  See command-line help.")
@@ -4778,7 +4896,11 @@ func (d *Data) handleNextlabel(ctx *datastore.VersionedCtx, w http.ResponseWrite
 	w.Header().Set("Content-Type", "application/json")
 	switch strings.ToLower(r.Method) {
 	case "get":
-		fmt.Fprintf(w, `{"nextlabel": %d}`, d.MaxRepoLabel+1)
+		if d.NextLabel == 0 {
+			fmt.Fprintf(w, `{"nextlabel": %d}`, d.MaxRepoLabel+1)
+		} else {
+			fmt.Fprintf(w, `{"nextlabel": %d}`, d.NextLabel+1)
+		}
 	case "post":
 		if len(parts) < 5 {
 			server.BadRequest(w, r, "DVID requires number of requested labels to follow POST /nextlabel")

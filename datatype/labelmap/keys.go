@@ -34,6 +34,9 @@ const (
 
 	// Stores the single repo-wide max label for the instance.  Used for new labels on split.
 	keyRepoLabelMax = 238
+
+	// Stores the single repo-wide next label for the instance.  Overrides max labels.
+	keyRepoNextLabel = 239
 )
 
 // DescribeTKeyClass returns a string explanation of what a particular TKeyClass
@@ -52,6 +55,8 @@ func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
 		return "labelmap label max key"
 	case keyRepoLabelMax:
 		return "labelmap repo label max key"
+	case keyRepoNextLabel:
+		return "labelmap next label key"
 	default:
 	}
 	return "unknown labelmap key"
@@ -60,6 +65,7 @@ func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
 var (
 	maxLabelTKey     = storage.NewTKey(keyLabelMax, nil)
 	maxRepoLabelTKey = storage.NewTKey(keyRepoLabelMax, nil)
+	nextLabelTKey    = storage.NewTKey(keyRepoNextLabel, nil)
 )
 
 // NewBlockTKey returns a TKey for a label block, which is a slice suitable for

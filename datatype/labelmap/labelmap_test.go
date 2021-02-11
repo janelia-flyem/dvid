@@ -2244,3 +2244,25 @@ func TestLabels(t *testing.T) {
 func TestLabelsUnindexed(t *testing.T) {
 	testLabels(t, false)
 }
+
+func TestNextLabels(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, versionID := initTestRepo()
+	lbls := newDataInstance(uuid, t, "mylabels")
+
+	if err := lbls.SetNextLabelStart(10); err != nil {
+		t.Errorf("Error on setting next label start: %v\n", err)
+	}
+	expectedLabel := uint64(11)
+	n, err := lbls.newLabel(versionID)
+	if err != nil {
+		t.Errorf("error on newLabel: %v\n", err)
+	}
+	if n != expectedLabel {
+		t.Errorf("Expected next label to be %d, got %d\n", expectedLabel, n)
+	}
+}
