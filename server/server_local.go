@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -129,6 +130,16 @@ func Initialize() error {
 		readonly = true
 	case "fullwrite":
 		fullwrite = true
+	}
+
+	// don't let server start if it can't create critical directories like
+	// mutation log files.
+	if tc.Mutations.Jsonstore != "" {
+		if _, err := os.Stat(tc.Mutations.Jsonstore); os.IsNotExist(err) {
+			if err := os.MkdirAll(tc.Mutations.Jsonstore, 0744); err != nil {
+				return err
+			}
+		}
 	}
 
 	if err := tc.Kafka.Initialize(WebServer()); err != nil {

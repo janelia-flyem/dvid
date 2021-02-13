@@ -66,11 +66,6 @@ func getJSONLogFile(versionID, dataID dvid.UUID) (lf *logFile, err error) {
 	var found bool
 	lf, found = jsonLogFiles[fname]
 	if !found {
-		if _, err := os.Stat(tc.Mutations.Jsonstore); os.IsNotExist(err) {
-			if err := os.MkdirAll(tc.Mutations.Jsonstore, 0744); err != nil {
-				return nil, err
-			}
-		}
 		var f *os.File
 		f, err = os.OpenFile(fname, os.O_APPEND|os.O_CREATE|os.O_RDWR|os.O_SYNC, 0755)
 		if err != nil {

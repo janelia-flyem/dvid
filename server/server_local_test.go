@@ -28,6 +28,7 @@ func TestStartWebhook(t *testing.T) {
 	if err := LoadConfig("../scripts/distro-files/config-full.toml"); err != nil {
 		t.Fatalf("bad TOML configuration: %v\n", err)
 	}
+	tc.Mutations.Jsonstore = ""
 
 	// test handler for standard start webhook
 	var sent []byte

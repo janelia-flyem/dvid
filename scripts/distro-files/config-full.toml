@@ -80,12 +80,12 @@ max_log_size = 500 # MB
 max_log_age = 30   # days
 
 [mutations]
+# store JSON mutation records for selected instances in Data+Version UUID log files.
+jsonstore = "/path/to/json-mutlog"
 # use kafka server with "my-mutations" topic.
 # httpstore = "kafka:my-mutations"
 # use local log store with automatic UUID topic
 httpstore = "logstore:mutationlog"
-# store JSON mutation records for selected instances in Data+Version UUID log files
-jsonstore = "/path/to/json-mutlog"
 # store any large POST body into blobstore with unique ref stored in kafka
 blobstore = "raid6"
 
