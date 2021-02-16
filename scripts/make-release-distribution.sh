@@ -32,7 +32,7 @@ conda install -y -n dvid-distro dvid-web-console=3
 cp -R ${DVID_DISTRO_ENV}/http/dvid-web-console ${DVID_DISTRO_ENV}/http/dvid-web-console-3
 
 # ...leave the old one active by default.
-conda install -y -n dvid-distro dvid-web-console=2.1.6
+conda install -y -n dvid-distro dvid-web-console=2.1.7
 cp -R ${DVID_DISTRO_ENV}/http/dvid-web-console ${DVID_DISTRO_ENV}/http/dvid-web-console-2
 
 cp ${THIS_SCRIPT_DIR}/distro-files/* ${DVID_DISTRO_ENV}
