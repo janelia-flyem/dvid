@@ -419,16 +419,6 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			var typename, dataname string
 			cmd.CommandArgs(3, &typename, &dataname)
 
-			var locked bool
-			locked, err = datastore.LockedUUID(uuid)
-			if err != nil {
-				return
-			}
-			if !fullwrite && locked {
-				reply.Text = fmt.Sprintf("Cannot create new data %q in a locked node %s\n", dataname, uuidStr)
-				return
-			}
-
 			// Get TypeService
 			var typeservice datastore.TypeService
 			if typeservice, err = datastore.TypeServiceByName(dvid.TypeString(typename)); err != nil {
@@ -448,16 +438,6 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			cmd.CommandArgs(3, &name1, &name2, &passcode)
 			oldname := dvid.InstanceName(name1)
 			newname := dvid.InstanceName(name2)
-
-			var locked bool
-			locked, err = datastore.LockedUUID(uuid)
-			if err != nil {
-				return
-			}
-			if !fullwrite && locked {
-				reply.Text = fmt.Sprintf("Cannot rename data %q in a locked node %s\n", oldname, uuidStr)
-				return
-			}
 
 			// Make sure this instance exists.
 			if _, err = datastore.GetDataByUUIDName(uuid, oldname); err != nil {
