@@ -209,8 +209,8 @@ For each platform (Mac and Linux):
    (This doesn't build dvid again; it uses the conda package you uploaded in the previous step.)
 
     ```
-    $ ./scripts/make-release-distribution.sh
-    $ ls dvid-0.8.20-dist-mac.tar.bz2 # <--- Distribution tarball includes dvid and all dependencies
+    $ ./scripts/make-release-distribution.sh 0.9.10
+    $ ls dvid-0.9.10-dist-mac.tar.bz2 # <--- Distribution tarball includes dvid and all dependencies
     ```
 
 4. [Draft a GitHub release.][creating-releases]

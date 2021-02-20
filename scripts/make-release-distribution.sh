@@ -2,6 +2,15 @@
 
 set -e
 
+DVID_VERSION=$1
+if [[ -z "${DVID_VERSION}" ]]; then
+    1>&2 echo "Error: Please supply an exact dvid version."
+    1>&2 echo "For example:"
+    1>&2 echo ""
+    1>&2 echo "  $0 0.9.10"
+    exit 1
+fi
+
 ORIG_DIR=$(pwd)
 THIS_SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
@@ -10,7 +19,7 @@ if [[  "$(uname)" == "Darwin" ]]; then
 elif [[ "$(uname)" == "Linux" ]]; then
     OS=linux
 else
-    1>&2 "Error: Unknown platform: $(uname)"
+    1>&2 echo "Error: Unknown platform: $(uname)"
     exit 1
 fi
 
@@ -25,7 +34,7 @@ if [ -d ${DVID_DISTRO_ENV} ]; then
 fi
 
 # Create the new distro environment and install dvid to it
-conda create -y -n dvid-distro dvid
+conda create -y -n dvid-distro dvid=${DVID_VERSION}
 
 # Install both versions of the dvid-web-console (old and new)
 conda install -y -n dvid-distro dvid-web-console=3
