@@ -48,6 +48,23 @@ export GO111MODULE=auto
 echo $(type go)
 echo $(go version)
 
+ensure_checkout() {
+    REMOTE=$1
+    LOCAL=$2
+    TAG=$3
+    SHA=$4
+
+    if [[ -d ${LOCAL} ]]; then
+        cd ${LOCAL} && git fetch --tags && git checkout ${TAG} && cd -
+    else
+        git clone --depth 1 --branch ${TAG} ${REMOTE} ${LOCAL}
+    fi
+
+    if [[ ! -z "${SHA}" ]]; then
+        cd ${LOCAL} && git pull --unshallow && git fetch --tags && git checkout ${SHA} && cd -
+    fi
+}
+
 # gopackages
 go get github.com/janelia-flyem/go
 cd ${GOPATH}/src/github.com/janelia-flyem/go
@@ -123,15 +140,12 @@ go get github.com/gogo/protobuf/protoc-gen-gogoslick
 #
 # We can't use 'go get github.com/dgraph-io/ristretto/...' because we don't want the latest tag.
 # (See badger notes below. Same reason.)
-RISTRETTO_DIR=${GOPATH}/src/github.com/dgraph-io/ristretto
-RISTRETTO_VERSION=v0.0.1 # Don't change this without also changing it in meta.yaml!!
-if [[ -d ${RISTRETTO_DIR} ]]; then
-    cd ${RISTRETTO_DIR} && git fetch && cd -
-else
-    git clone https://github.com/dgraph-io/ristretto ${RISTRETTO_DIR}
-fi
-cd ${RISTRETTO_DIR} && git fetch --tags origin && git checkout ${RISTRETTO_VERSION} && cd -
 #go install -i github.com/dgraph-io/ristretto
+#go get github.com/dgraph-io/ristretto
+RISTRETTO_REPO=https://github.com/dgraph-io/ristretto
+RISTRETTO_DIR=${GOPATH}/src/github.com/dgraph-io/ristretto
+RISTRETTO_TAG=v0.0.1 # Don't change this without also changing it in meta.yaml!!
+ensure_checkout ${RISTRETTO_REPO} ${RISTRETTO_DIR} ${RISTRETTO_TAG}
 
 # badger
 #
@@ -139,19 +153,14 @@ cd ${RISTRETTO_DIR} && git fetch --tags origin && git checkout ${RISTRETTO_VERSI
 #   Eventually we should switch to using 'go get' in 'module-aware' mode:
 #   https://golang.org/cmd/go/#hdr-Modules__module_versions__and_more
 #   ...in which case we'll be able to refer to a specific tag of the main badger repo.
-BADGER_DIR=${GOPATH}/src/github.com/dgraph-io/badger
-BADGER_VERSION=v2.0.0 # Don't change this without also changing it in meta.yaml!!
-if [[ -d ${BADGER_DIR} ]]; then
-    cd ${BADGER_DIR} && git fetch && cd -
-else
-    git clone https://github.com/dgraph-io/badger ${BADGER_DIR}
-fi
-cd ${BADGER_DIR} && git fetch --tags origin && git checkout ${BADGER_VERSION} && cd -
 #go install -i github.com/dgraph-io/badger
+BADGER_REPO=https://github.com/dgraph-io/badger
+BADGER_DIR=${GOPATH}/src/github.com/dgraph-io/badger
+BADGER_TAG=v2.0.0 # Don't change this without also changing it in meta.yaml!!
+ensure_checkout ${BADGER_REPO} ${BADGER_DIR} ${BADGER_TAG}
 
 # badger dependencies
 go get github.com/DataDog/zstd
-go get github.com/dgraph-io/ristretto
 
 go get github.com/AndreasBriese/bbloom
 go get github.com/dgryski/go-farm
@@ -163,7 +172,12 @@ go get github.com/dustin/go-humanize
 go get github.com/coocood/freecache
 
 # Openstack Swift
-go get github.com/ncw/swift
+#go get github.com/ncw/swift
+SWIFT_REPO=https://github.com/ncw/swift
+SWIFT_DIR=${GOPATH}/src/github.com/ncw/swift
+SWIFT_TAG=master
+SWIFT_SHA=753d2090bb62619675997bd87a8e3af423a00f2d
+ensure_checkout ${SWIFT_REPO} ${SWIFT_DIR} ${SWIFT_TAG} ${SWIFT_SHA}
 
 # Go Cloud Development Kit
 go get gocloud.dev
@@ -171,18 +185,10 @@ go get github.com/google/wire
 go get golang.org/x/xerrors
 
 # kafka
-CONFLUENTINC_DIR=${GOPATH}/src/github.com/confluentinc
-KAFKA_GO_DIR=${CONFLUENTINC_DIR}/confluent-kafka-go
-mkdir -p ${CONFLUENTINC_DIR}
-
-# Can't use 'go get' directly, because that gets the newest version and we want something older.
-# Instead, we clone it manually, checkout the tag we want, and then build it.
-if [[ -d ${KAFKA_GO_DIR} ]]; then
-    cd ${KAFKA_GO_DIR} && git fetch && cd -
-else
-    git clone https://github.com/confluentinc/confluent-kafka-go ${KAFKA_GO_DIR}
-fi
-cd ${KAFKA_GO_DIR} && git fetch --tags origin && git checkout v1.3.0 && cd -
+KAFKA_GO_REPO=https://github.com/confluentinc/confluent-kafka-go
+KAFKA_GO_DIR=${GOPATH}/src/github.com/confluentinc/confluent-kafka-go
+KAFKA_GO_TAG=v1.3.0
+ensure_checkout ${KAFKA_GO_REPO} ${KAFKA_GO_DIR} ${KAFKA_GO_TAG}
 
 if [ $(uname) == "Linux" ]; then
     # For some reason, the confluent kafka package cannot be built correctly unless you set LD_LIBRARY_PATH,
