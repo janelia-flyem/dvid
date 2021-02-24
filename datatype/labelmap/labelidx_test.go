@@ -84,20 +84,44 @@ func TestIngest(t *testing.T) {
 		}
 	}
 
+	checkReq := fmt.Sprintf("%snode/%s/labels/maxlabel", server.WebAPIPath, root)
+	respData := server.TestHTTP(t, "GET", checkReq, nil)
+	respMax := struct {
+		MaxLabel uint64 `json:"maxlabel"`
+	}{}
+	if err := json.Unmarshal(respData, &respMax); err != nil {
+		t.Errorf("Expected 'maxlabel' JSON response.  Got %s\n", string(respData))
+	}
+	if respMax.MaxLabel != 4 {
+		t.Errorf("Expected maxlabel 4, got %d\n", respMax.MaxLabel)
+	}
+
+	checkReq = fmt.Sprintf("%snode/%s/labels/nextlabel", server.WebAPIPath, root)
+	respData = server.TestHTTP(t, "GET", checkReq, nil)
+	respNext := struct {
+		NextLabel uint64 `json:"nextlabel"`
+	}{}
+	if err := json.Unmarshal(respData, &respNext); err != nil {
+		t.Errorf("Expected 'nextlabel' JSON response.  Got %s\n", string(respData))
+	}
+	if respNext.NextLabel != 5 {
+		t.Errorf("Expected nextlabel 5, got %d\n", respNext.NextLabel)
+	}
+
 	// commit and create child version
 	payload := bytes.NewBufferString(`{"note": "Base Supervoxels"}`)
 	commitReq := fmt.Sprintf("%snode/%s/commit", server.WebAPIPath, root)
 	server.TestHTTP(t, "POST", commitReq, payload)
 
 	newVersionReq := fmt.Sprintf("%snode/%s/newversion", server.WebAPIPath, root)
-	respData := server.TestHTTP(t, "POST", newVersionReq, nil)
-	resp := struct {
+	respData = server.TestHTTP(t, "POST", newVersionReq, nil)
+	respChild := struct {
 		Child string `json:"child"`
 	}{}
-	if err := json.Unmarshal(respData, &resp); err != nil {
+	if err := json.Unmarshal(respData, &respChild); err != nil {
 		t.Errorf("Expected 'child' JSON response.  Got %s\n", string(respData))
 	}
-	child1 := dvid.UUID(resp.Child)
+	child1 := dvid.UUID(respChild.Child)
 
 	// Test labels in child shouldn't have changed.
 	retrieved := newTestVolume(128, 128, 128)
@@ -181,6 +205,24 @@ func TestIngest(t *testing.T) {
 	ingestIndex(t, child1, idx1)
 	ingestIndex(t, child1, idx3)
 
+	checkReq = fmt.Sprintf("%snode/%s/labels/maxlabel", server.WebAPIPath, child1)
+	respData = server.TestHTTP(t, "GET", checkReq, nil)
+	if err := json.Unmarshal(respData, &respMax); err != nil {
+		t.Errorf("Expected 'maxlabel' JSON response.  Got %s\n", string(respData))
+	}
+	if respMax.MaxLabel != 8 {
+		t.Errorf("Expected maxlabel 8, got %d\n", respMax.MaxLabel)
+	}
+
+	checkReq = fmt.Sprintf("%snode/%s/labels/nextlabel", server.WebAPIPath, child1)
+	respData = server.TestHTTP(t, "GET", checkReq, nil)
+	if err := json.Unmarshal(respData, &respNext); err != nil {
+		t.Errorf("Expected 'nextlabel' JSON response.  Got %s\n", string(respData))
+	}
+	if respNext.NextLabel != 9 {
+		t.Errorf("Expected nextlabel 9, got %d\n", respNext.NextLabel)
+	}
+
 	blankIdx := new(labels.Index)
 	blankIdx.Label = 2
 	ingestIndex(t, child1, blankIdx)
@@ -207,10 +249,10 @@ func TestIngest(t *testing.T) {
 
 	newVersionReq = fmt.Sprintf("%snode/%s/newversion", server.WebAPIPath, child1)
 	respData = server.TestHTTP(t, "POST", newVersionReq, nil)
-	if err := json.Unmarshal(respData, &resp); err != nil {
+	if err := json.Unmarshal(respData, &respChild); err != nil {
 		t.Errorf("Expected 'child' JSON response.  Got %s\n", string(respData))
 	}
-	child2 := dvid.UUID(resp.Child)
+	child2 := dvid.UUID(respChild.Child)
 
 	// POST second set of mappings to reset supervoxels to original and ingest label indices
 	m.Mappings = make([]*proto.MappingOp, 3)

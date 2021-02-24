@@ -153,8 +153,14 @@ func putLabelIndex(ctx *datastore.VersionedCtx, idx *labels.Index) error {
 	if err := store.Put(ctx, tk, compressed); err != nil {
 		return fmt.Errorf("unable to store indices for label %d, data %s: %v", idx.Label, ctx.Data().DataName(), err)
 	}
+	d, ok := ctx.Data().(*Data)
+	if !ok {
+		return fmt.Errorf("Unable to update max label during PUT label index due to bad data ptr")
+	}
+	_, err = d.updateMaxLabel(ctx.VersionID(), idx.Label)
+
 	// timedLog.Infof("stored label %d index with %d blocks", idx.Label, len(idx.Blocks))
-	return nil
+	return err
 }
 
 func deleteLabelIndex(ctx *datastore.VersionedCtx, label uint64) error {
