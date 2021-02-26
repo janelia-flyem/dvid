@@ -212,7 +212,7 @@ HEAD <api URL>/node/<UUID>/<data name>/key/<key>
 
 	For HEAD returns:
 	200 (OK) if a sparse volume of the given label exists within any optional bounds.
-	204 (No Content) if there is no sparse volume for the given label within any optional bounds.
+	404 (File not Found) if there is no sparse volume for the given label within any optional bounds.
 
 	Arguments:
 
@@ -742,7 +742,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			if found {
 				w.WriteHeader(http.StatusOK)
 			} else {
-				w.WriteHeader(http.StatusNoContent)
+				w.WriteHeader(http.StatusNotFound)
 			}
 			return
 

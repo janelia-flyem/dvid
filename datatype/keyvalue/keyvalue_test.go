@@ -169,8 +169,8 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 	key1 := "mykey"
 	key1req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), key1)
 	resp := server.TestHTTPResponse(t, "HEAD", key1req, nil)
-	if resp.Code != http.StatusNoContent {
-		t.Errorf("HEAD on %s did not return 204 (No Content).  Status = %d\n", key1req, resp.Code)
+	if resp.Code != http.StatusNotFound {
+		t.Errorf("HEAD on %s did not return 404 (File not found).  Status = %d\n", key1req, resp.Code)
 	}
 
 	// PUT a value
@@ -197,8 +197,8 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 	key2req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), key2)
 
 	resp = server.TestHTTPResponse(t, "HEAD", key2req, nil)
-	if resp.Code != http.StatusNoContent {
-		t.Errorf("HEAD on %s did not return 204 (No Content).  Status = %d\n", key2req, resp.Code)
+	if resp.Code != http.StatusNotFound {
+		t.Errorf("HEAD on %s did not return 404 (File Not Found).  Status = %d\n", key2req, resp.Code)
 	}
 
 	value2 := "more good stuff"
