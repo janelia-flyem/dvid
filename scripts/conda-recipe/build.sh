@@ -32,7 +32,9 @@ ${DVID_REPO}/scripts/get-go-dependencies.sh
 make dvid
 
 # Test
-make test
+if [[ -z ${DVID_CONDA_SKIP_TESTS} || ${DVID_CONDA_SKIP_TESTS} == 0 ]]; then
+    make test
+fi
 
 # Install
 make install

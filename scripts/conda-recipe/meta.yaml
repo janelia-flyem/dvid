@@ -41,6 +41,7 @@ build:
   script_env:
     - DVID_BACKENDS
     - DVID_LOW_MEMORY
+    - DVID_CONDA_SKIP_TESTS
     - GOMAXPROCS
     - GOTRACEBACK
     - GODEBUG
