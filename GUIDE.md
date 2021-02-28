@@ -138,7 +138,7 @@ For each platform (Mac and Linux):
 
     ```
     $ conda activate base
-    $ GOMAXPROCS=4 DVID_LOW_MEMORY=1 conda build scripts/conda-recipe
+    $ GOMAXPROCS=4 conda build scripts/conda-recipe
     $ anaconda upload -u flyem-forge $(conda info --base)/conda-bld/osx-64/dvid-someVersionPlusHash-0.tar.bz2 # Mac
     $ anaconda upload -u flyem-forge $(conda info --base)/conda-bld/linux-64/dvid-someVersionPlusHash-0.tar.bz2 # Linux
     ```
@@ -153,8 +153,6 @@ For each platform (Mac and Linux):
    **Note:** Make sure your Docker container has plenty of RAM, or DVID's test
    suite may encounter random unexplained failures.
    (See Docker Preferences > Advanced.)
-   Also, it's recommended to use `DVID_LOW_MEMORY=1` when building in a Docker container,
-   even if the container has plenty of RAM. 
    
    ```
    # Launch the container
@@ -168,7 +166,7 @@ For each platform (Mac and Linux):
    cd /flyem-workspace/gopath/src/github.com/janelia-flyem/dvid
    git pull
    git checkout <tag>
-   GOMAXPROCS=4 DVID_LOW_MEMORY=1 conda build scripts/conda-recipe
+   GOMAXPROCS=4 conda build scripts/conda-recipe
    anaconda upload -u flyem-forge /opt/conda/conda-bld/linux-64/dvid-someVersionPlusHash-0.tar.bz2
    ```
    
