@@ -152,7 +152,7 @@ For each platform (Mac and Linux):
    
    **Note:** Make sure your Docker container has plenty of RAM, or DVID's test
    suite may encounter random unexplained failures.
-   (See Docker Preferences > Advanced.)
+   (Set at least 16GB in Docker Preferences > Advanced.)
    
    ```
    # Launch the container
@@ -163,11 +163,13 @@ For each platform (Mac and Linux):
 
    # Within the container
    # Note: It's recommended to use GOMAXPROCS to limit the cpus used in the build/tests
+   conda activate
    cd /flyem-workspace/gopath/src/github.com/janelia-flyem/dvid
    git pull
    git checkout <tag>
    GOMAXPROCS=4 conda build scripts/conda-recipe
-   anaconda upload -u flyem-forge /opt/conda/conda-bld/linux-64/dvid-someVersionPlusHash-0.tar.bz2
+   anaconda upload -u flyem-forge /opt/conda/conda-bld/linux-64/dvid-someVersion-someHash_0.tar.bz2
+   scripts/make-release-distribution.sh someVersion
    ```
    
    You can move the generated tarball to the host from your container with the following:
