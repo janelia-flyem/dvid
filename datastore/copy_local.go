@@ -105,6 +105,7 @@ type nodeSpec struct {
 	Version  string
 	NodeNote string
 	NodeLog  []string
+	Branch   string
 }
 
 type storeSpec struct {
@@ -214,8 +215,15 @@ func FlattenMetadata(uuid dvid.UUID, configFName string) error {
 			}
 			node, found := flattenRepo.dag.nodes[v]
 			if found {
-				node.note = vmeta.NodeNote
-				node.log = vmeta.NodeLog
+				if vmeta.NodeNote != "" {
+					node.note = vmeta.NodeNote
+				}
+				if len(vmeta.NodeLog) != 0 {
+					node.log = vmeta.NodeLog
+				}
+				if (vmeta.Branch == "" && node.branch != "") || vmeta.Branch != "" {
+					node.branch = vmeta.Branch
+				}
 			} else {
 				dvid.Errorf("unable to get node for VersionsMeta[%q] in flattened repo\n", vmeta.Version)
 			}

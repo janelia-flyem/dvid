@@ -96,8 +96,6 @@ EXPERIMENTAL COMMANDS
 
 		Migrates instances specified in the config file from a source to a 
 		destination store, similar to the above "migrate" command but in a batch.  
-		Before running this command, you must modify the config TOML file so the 
-		destination store is available.
 
 		The migrate config file contains JSON with the following format:
 			{
@@ -133,8 +131,7 @@ EXPERIMENTAL COMMANDS
 	
 	repo <UUID> flatten-metadata <flatten config file>
     
-		Creates reduced nodes metadata into a destination metadata store (specified by
-		the nickname in TOML file).
+		Creates reduced nodes metadata into a destination metadata store.
 
 		NOTE: If versions are skipped, the skipped portion cannot be branched or the
 		created metadata will not work.
@@ -156,12 +153,14 @@ EXPERIMENTAL COMMANDS
 					{
 						"Version": "2881e9",
 						"NodeNote": "a new commit message for this node",
-						"NodeLog": ["some new", "log statements", "for the repo node"]		
+						"NodeLog": ["some new", "log statements", "for the repo node"],
+						"Branch": "another branch"	
 					},
 					{
 						"Version": "52a13",
 						"NodeNote": "a new commit message for this node",
-						"NodeLog": ["some new", "log statements", "for the repo node"]		
+						"NodeLog": ["some new", "log statements", "for the repo node"],
+						"Branch": "some other branch"
 					}
 				]
 			}
