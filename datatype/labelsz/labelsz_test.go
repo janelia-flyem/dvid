@@ -470,6 +470,9 @@ func TestLabels(t *testing.T) {
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
+	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
+		t.Fatalf("Error blocking on sync of bodies: %v\n", err)
+	}
 
 	// Add annotations syncing with "labels" instance.
 	server.CreateTestInstance(t, uuid, "annotation", "mysynapses", config)
@@ -555,6 +558,9 @@ func TestLabelsResync(t *testing.T) {
 
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
+		t.Fatalf("Error blocking on sync of bodies: %v\n", err)
 	}
 
 	// Add annotations syncing with "labels" instance.

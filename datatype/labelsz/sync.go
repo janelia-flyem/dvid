@@ -65,6 +65,11 @@ func (d *Data) GetSyncSubs(synced dvid.Data) (datastore.SyncSubs, error) {
 	return subs, nil
 }
 
+// SyncPending returns true if any sync messages are in queue
+func (d *Data) SyncPending() bool {
+	return len(d.syncCh) > 0
+}
+
 // If annotation elements are added or deleted, adjust the label counts.
 func (d *Data) processEvents() {
 	defer func() {
