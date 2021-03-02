@@ -173,11 +173,11 @@ func FlattenMetadata(uuid dvid.UUID, configFName string) error {
 	}
 
 	uuids := make([]dvid.UUID, len(fc.Versions))
-	versions := make([]dvid.VersionID, len(fc.Versions))
 	var okVersions map[dvid.VersionID]struct{}
 	repoToUUID := make(map[dvid.RepoID]dvid.UUID)
 	versionToUUID := make(map[dvid.VersionID]dvid.UUID)
 	if len(fc.Versions) != 0 {
+		versions := make([]dvid.VersionID, len(fc.Versions))
 		okVersions = make(map[dvid.VersionID]struct{}, len(fc.Versions))
 		for i, uuidStr := range fc.Versions {
 			uuids[i], versions[i], err = MatchingUUID(uuidStr)
@@ -190,6 +190,7 @@ func FlattenMetadata(uuid dvid.UUID, configFName string) error {
 	} else {
 		for v, node := range origRepo.dag.nodes {
 			versionToUUID[v] = node.uuid
+			okVersions[v] = struct{}{}
 		}
 	}
 
