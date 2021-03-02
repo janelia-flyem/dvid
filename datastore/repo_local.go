@@ -130,7 +130,7 @@ func Initialize(initMetadata bool, iconfig Config) error {
 		istore, ok := store.(dvid.AutoInstanceStore)
 		dvid.Infof("Store %q auto instance store %t\n", store, ok)
 		if ok {
-			name, n := istore.AutoInstances()
+			name, uuidStr, n := istore.AutoInstances()
 			if name == "" || n == 0 {
 				dvid.Infof("Store %q could require automatic instances but didn't.\n", store)
 				continue
@@ -138,6 +138,23 @@ func Initialize(initMetadata bool, iconfig Config) error {
 			typeservice, err := TypeServiceByName(dvid.TypeString("uint8blk"))
 			if err != nil {
 				return err
+			}
+			var uuid dvid.UUID
+			if uuidStr == "" {
+				for _, repoUUID := range m.repoToUUID {
+					uuid = repoUUID
+					break
+				}
+				if uuid == "" {
+					dvid.Infof("Unable to get uuid for repo to create auto instance... skipping\n")
+					continue
+				}
+			} else {
+				uuid, _, err = m.matchingUUID(uuidStr)
+				if err != nil {
+					dvid.Infof("Instance %q was assigned uuid %s that cannot be matched... skipping\n", name, uuidStr)
+					continue
+				}
 			}
 			config := dvid.NewConfig()
 			config.Set("compression", "jpeg")
@@ -149,13 +166,11 @@ func Initialize(initMetadata bool, iconfig Config) error {
 					suffix = fmt.Sprintf("_%d", i)
 				}
 				config.Set("ScaleLevel", fmt.Sprintf("%d", i))
-				for _, uuid := range m.repoToUUID {
-					dataname := dvid.InstanceName(name + suffix)
-					if _, err := NewData(uuid, typeservice, dataname, config); err != nil {
-						dvid.Infof("Couldn't create transient data instance %q for uuid %s: %v\n", dataname, uuid, err)
-					} else {
-						dvid.Infof("Created data instance %q for uuid %s: %v\n", dataname, uuid, config)
-					}
+				dataname := dvid.InstanceName(name + suffix)
+				if _, err := NewData(uuid, typeservice, dataname, config); err != nil {
+					dvid.Infof("Couldn't auto-create data instance %q for uuid %s: %v\n", dataname, uuid, err)
+				} else {
+					dvid.Infof("Auto-created data instance %q for uuid %s: %v\n", dataname, uuid, config)
 				}
 			}
 		}

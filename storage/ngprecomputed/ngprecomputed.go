@@ -91,7 +91,7 @@ func (e Engine) Delete(config dvid.StoreConfig) error {
 	return nil
 }
 
-func parseConfig(config dvid.StoreConfig) (ref string, testing bool, instance string, err error) {
+func parseConfig(config dvid.StoreConfig) (ref string, testing bool, instance, uuid string, err error) {
 	c := config.GetAll()
 
 	v, found := c["ref"]
@@ -113,6 +113,14 @@ func parseConfig(config dvid.StoreConfig) (ref string, testing bool, instance st
 			return
 		}
 	}
+	v, found = c["uuid"]
+	if found {
+		uuid, ok = v.(string)
+		if !ok {
+			err = fmt.Errorf("%q setting must be a string (%v)", "uuid", v)
+			return
+		}
+	}
 	v, found = c["testing"]
 	if found {
 		testing, ok = v.(bool)
@@ -125,7 +133,7 @@ func parseConfig(config dvid.StoreConfig) (ref string, testing bool, instance st
 }
 
 func (e Engine) newStore(config dvid.StoreConfig) (*ngStore, bool, error) {
-	ref, _, instance, err := parseConfig(config)
+	ref, _, instance, uuid, err := parseConfig(config)
 	if err != nil {
 		return nil, false, err
 	}
@@ -170,6 +178,7 @@ func (e Engine) newStore(config dvid.StoreConfig) (*ngStore, bool, error) {
 		ref:        ref,
 		bucket:     bucket,
 		instance:   instance,
+		uuid:       uuid,
 		shardIndex: make(map[string]*shardT),
 	}
 	if err := json.Unmarshal(data, &(ng.vol)); err != nil {
@@ -311,6 +320,7 @@ type ngStore struct {
 	vol      ngVolume
 	bucket   *blob.Bucket
 	instance string // if set, create ephemeral multi-scale instances with this base name
+	uuid     string // if set, create ephemeral instance only in repo with this uuid
 
 	// cached shard information
 	shardIndex   map[string]*shardT // cache of shard filename to shard data
@@ -441,11 +451,11 @@ func (ng *ngStore) String() string {
 }
 
 func (ng *ngStore) Equal(config dvid.StoreConfig) bool {
-	ref, _, instance, err := parseConfig(config)
+	ref, _, instance, uuid, err := parseConfig(config)
 	if err != nil {
 		return false
 	}
-	return ref == ng.ref && instance == ng.instance
+	return ref == ng.ref && instance == ng.instance && uuid == ng.uuid
 }
 
 // ----- storage.AutoInstanceEngine interface implementation -------
@@ -453,9 +463,10 @@ func (ng *ngStore) Equal(config dvid.StoreConfig) bool {
 // AutoInstances returns a name if ephemeral instances are to be automatically
 // created, and if so, the "n" return value specifies the number of scales.
 // If name is empty, no ephemeral instances are to be created.
-func (ng *ngStore) AutoInstances() (name string, n int) {
+func (ng *ngStore) AutoInstances() (name, uuid string, n int) {
 	if ng.instance != "" {
 		name = ng.instance
+		uuid = ng.uuid
 		n = len(ng.vol.Scales)
 	}
 	return

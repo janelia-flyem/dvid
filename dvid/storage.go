@@ -26,7 +26,7 @@ type Store interface {
 // AutoInstanceStore is a store that can request automatic temporary instances
 // to be created.
 type AutoInstanceStore interface {
-	AutoInstances() (name string, n int) // name is empty string if none requested
+	AutoInstances() (name, repoUUID string, n int) // name is empty string if none requested
 }
 
 // StoreConfig is a store-specific configuration where each store implementation
