@@ -188,6 +188,7 @@ func FlattenMetadata(uuid dvid.UUID, configFName string) error {
 			versionToUUID[versions[i]] = uuids[i]
 		}
 	} else {
+		okVersions = make(map[dvid.VersionID]struct{}, len(origRepo.dag.nodes))
 		for v, node := range origRepo.dag.nodes {
 			versionToUUID[v] = node.uuid
 			okVersions[v] = struct{}{}
