@@ -949,6 +949,8 @@ func TestLabelarrayRepoPersistence(t *testing.T) {
 	config.Set("BlockSize", "12,13,14")
 	config.Set("VoxelSize", "1.1,2.8,11")
 	config.Set("VoxelUnits", "microns,millimeters,nanometers")
+	config.Set("MinPoint", "1,2,3")
+	config.Set("MaxPoint", "7,8,9")
 	config.Set("CountLabels", "false")
 	config.Set("MaxDownresLevel", "5")
 	dataservice, err := datastore.NewData(uuid, labelsT, "mylabels", config)
@@ -972,6 +974,47 @@ func TestLabelarrayRepoPersistence(t *testing.T) {
 	}
 	oldData := *lbls
 
+	// Check properties setting.
+	apiStr := fmt.Sprintf("%snode/%s/mylabels/info", server.WebAPIPath, uuid)
+	result := server.TestHTTP(t, "GET", apiStr, nil)
+	var parsed = struct {
+		Base struct {
+			TypeName, Name string
+		}
+		Extended struct {
+			BlockSize       dvid.Point3d
+			VoxelSize       dvid.NdFloat32
+			VoxelUnits      dvid.NdString
+			MinPoint        dvid.Point3d
+			MaxPoint        dvid.Point3d
+			MaxDownresLevel int
+		}
+	}{}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("Error parsing JSON response of metadata: %v\n", err)
+	}
+	if !parsed.Extended.BlockSize.Equals(dvid.Point3d{64, 32, 16}) {
+		t.Errorf("Bad BlockSize in new labelmap instance: %s\n", parsed.Extended.BlockSize)
+	}
+	if parsed.Extended.MaxDownresLevel != 5 {
+		t.Errorf("Bad MaxDownresLevel in new labelmap instance: %d\n", parsed.Extended.MaxDownresLevel)
+	}
+	if !parsed.Extended.VoxelSize.Equals(dvid.NdFloat32{1.1, 2.8, 11.0}) {
+		t.Errorf("Bad VoxelSize in new labelmap instance: %s\n", parsed.Extended.VoxelSize)
+	}
+	if !parsed.Extended.MinPoint.Equals(dvid.Point3d{1, 2, 3}) {
+		t.Errorf("Bad MinPoint in new labelmap instance: %s\n", parsed.Extended.MinPoint)
+	}
+	if !parsed.Extended.MaxPoint.Equals(dvid.Point3d{7, 8, 9}) {
+		t.Errorf("Bad MaxPoint in new labelmap instance: %s\n", parsed.Extended.MaxPoint)
+	}
+
+	payload := bytes.NewBufferString(`{"MaxDownresLevel":"8"}`)
+	result = server.TestHTTP(t, "POST", apiStr, payload)
+	if lbls.MaxDownresLevel != 8 {
+		t.Errorf("Bad MaxDownresLevel after POST /info: %d\n", lbls.MaxDownresLevel)
+	}
+
 	// Restart test datastore and see if datasets are still there.
 	if err = datastore.SaveDataByUUID(uuid, lbls); err != nil {
 		t.Fatalf("Unable to save repo during labels persistence test: %v\n", err)
@@ -989,7 +1032,7 @@ func TestLabelarrayRepoPersistence(t *testing.T) {
 	if !oldData.Equals(lbls2) {
 		t.Errorf("Expected %v, got %v\n", oldData, *lbls2)
 	}
-	if lbls2.MaxDownresLevel != 5 {
+	if lbls2.MaxDownresLevel != 8 {
 		t.Errorf("Bad MaxDownresLevel: %d\n", lbls2.MaxDownresLevel)
 	}
 }

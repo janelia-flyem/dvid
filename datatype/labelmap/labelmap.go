@@ -212,8 +212,15 @@ POST <api URL>/node/<UUID>/<data name>/info
 
     GET <api URL>/node/3f8c/segmentation/info
 
-    Returns JSON with configuration settings that include location in DVID space and
-    min/max block indices.
+    Returns or posts JSON of configuration settings with the following optional fields:
+
+     "BlockSize"        Size in pixels  (default: 64,64,64 and should be multiples of 16)
+     "VoxelSize"        Resolution of voxels (default: 8.0,8.0,8.0)
+     "VoxelUnits"       Resolution units (default: "nanometers")
+	 "MinPoint"         Minimum voxel coordinate as 3d point
+	 "MaxPoint"         Maximum voxel coordinate as 3d point
+	 "GridStore"        Store identifier in TOML config file that specifies precomputed store.
+	 "MaxDownresLevel"  The maximum down-res level supported.  Each down-res is factor of 2.
 
     Arguments:
 
@@ -1622,6 +1629,26 @@ type Data struct {
 	mlMu sync.RWMutex // For atomic access of MaxLabel and MaxRepoLabel
 
 	voxelMu sync.Mutex // Only allow voxel-level label mutation ops sequentially.
+}
+
+// --- Override of DataService interface ---
+
+func (d *Data) modifyConfig(config dvid.Config) error {
+	if err := d.Data.ModifyConfig(config); err != nil {
+		return err
+	}
+	s, found, err := config.GetString("MaxDownresLevel")
+	if err != nil {
+		return err
+	}
+	if found {
+		maxDownresLevel, err := strconv.ParseUint(s, 10, 8)
+		if err != nil {
+			return err
+		}
+		d.MaxDownresLevel = uint8(maxDownresLevel)
+	}
+	return nil
 }
 
 // --- LogReadable interface ---
@@ -3367,25 +3394,6 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		parts = parts[:len(parts)-1]
 	}
 
-	// Handle POST on data -> setting of configuration
-	if len(parts) == 3 && action == "post" {
-		config, err := server.DecodeJSON(r)
-		if err != nil {
-			server.BadRequest(w, r, err)
-			return
-		}
-		if err := d.ModifyConfig(config); err != nil {
-			server.BadRequest(w, r, err)
-			return
-		}
-		if err := datastore.SaveDataByUUID(uuid, d); err != nil {
-			server.BadRequest(w, r, err)
-			return
-		}
-		fmt.Fprintf(w, "Changed '%s' based on received configuration:\n%s\n", d.DataName(), config)
-		return
-	}
-
 	if len(parts) < 4 {
 		server.BadRequest(w, r, "Incomplete API request")
 		return
@@ -3438,13 +3446,31 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 
 	case "info":
-		jsonBytes, err := d.MarshalJSONExtents(ctx)
-		if err != nil {
-			server.BadRequest(w, r, err)
+		if action == "post" {
+			config, err := server.DecodeJSON(r)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			if err := d.modifyConfig(config); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			if err := datastore.SaveDataByUUID(uuid, d); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			fmt.Fprintf(w, "Changed '%s' based on received configuration:\n%s\n", d.DataName(), config)
 			return
+		} else {
+			jsonBytes, err := d.MarshalJSONExtents(ctx)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, string(jsonBytes))
 		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, string(jsonBytes))
 
 	case "tags":
 		if action == "post" {
