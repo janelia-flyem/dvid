@@ -124,9 +124,8 @@ func (kc KafkaConfig) Initialize(hostID string) error {
 		for e := range kafkaProducer.Events() {
 			switch ev := e.(type) {
 			case *kafka.Message:
-				// dvid.Infof("Event message: %v\n", ev.TopicPartition)
 				if ev.TopicPartition.Error != nil {
-					dvid.Errorf("Delivery failed to kafka servers: %v\n", ev.TopicPartition.Error)
+					dvid.Errorf("Delivery failed to kafka (topic %s): %v\n", *ev.TopicPartition.Topic, ev.TopicPartition.Error)
 				}
 			}
 		}
