@@ -974,6 +974,7 @@ func (d *Data) sendJSONKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, ke
 		writtenBytes += n
 		wroteVal = true
 	}
+	_, err = w.Write([]byte("}"))
 	return
 }
 
