@@ -241,6 +241,28 @@ func NewVersion(parent dvid.UUID, note string, branchname string, assign *dvid.U
 	return manager.newVersion(parent, note, branchname, assign)
 }
 
+// MakeMaster makes the branch at given UUID (that node and all its children)
+// the new master branch and renames the old master branch to the given
+// branch name.  NOTE: This command will fail if the given UUID is not
+// a node that is directly branched off master.
+func MakeMaster(newMasterNode dvid.UUID, oldMasterBranchName string) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
+	}
+	return manager.makeMaster(newMasterNode, oldMasterBranchName)
+}
+
+// HideBranch makes the branch at given UUID (that node and all its children)
+// the new master branch and renames the old master branch to the given
+// branch name.  NOTE: This command will fail if the given UUID is not
+// a node that is directly branched off master.
+func HideBranch(uuid dvid.UUID, branchName string) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
+	}
+	return manager.hideBranch(uuid, branchName)
+}
+
 // GetParents returns the parent nodes of the given version id.
 func GetParentsByVersion(v dvid.VersionID) ([]dvid.VersionID, error) {
 	if manager == nil {

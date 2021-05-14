@@ -60,6 +60,20 @@ DANGEROUS COMMANDS (only available via command line)
 
 		Delete the given data instance.
 
+	repo <UUID> make-master <old-master-branch-name>
+
+		Makes the branch at given UUID (that node and all its children) the
+		new master branch and renames the old master branch to the given
+		branch name.  NOTE: This command will fail if the given UUID is not
+		a node that is directly branched off master.
+
+	repo <UUID> hide-branch <branch-name>
+
+		Removes metadata for the given branch so that it is not visible.
+		This does not remove the key-value pairs associated wiith the given
+		nodes, since doing so would be very expensive.  Instead, the old
+		key values aren't accessible.
+
 
 EXPERIMENTAL COMMANDS
 
@@ -620,6 +634,22 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 				dvid.Errorf("limit-versions error: %v\n", err)
 			}
 			reply.Text = fmt.Sprintf("Limited metadata versions for repo %s\n", uuid)
+
+		case "make-master":
+			var newMasterBranchName string
+			cmd.CommandArgs(3, &newMasterBranchName)
+			if err = datastore.MakeMaster(uuid, newMasterBranchName); err != nil {
+				dvid.Errorf("make-master error: %v\n", err)
+			}
+			reply.Text = fmt.Sprintf("Made branch from %s the new master\n", uuid)
+
+		case "hide-branch":
+			var branchName string
+			cmd.CommandArgs(3, &branchName)
+			if err = datastore.HideBranch(uuid, branchName); err != nil {
+				dvid.Errorf("make-master error: %v\n", err)
+			}
+			reply.Text = fmt.Sprintf("Hid branch %s in repo with UUID %s\n", branchName, uuid)
 
 		case "push":
 			var target string

@@ -1592,6 +1592,109 @@ func (m *repoManager) commit(uuid dvid.UUID, note string, log []string) error {
 	return r.save()
 }
 
+func (m *repoManager) hideBranch(uuid dvid.UUID, branch string) error {
+	if branch == "" {
+		return fmt.Errorf("cannot hide master branch")
+	}
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return err
+	}
+	m.repoMutex.Lock()
+	r.Lock()
+	del_set := make(map[dvid.VersionID]struct{})
+	for v, node := range r.dag.nodes {
+		if node.branch == branch {
+			del_set[v] = struct{}{}
+			del_uuid := m.versionToUUID[v]
+			delete(m.versionToUUID, v)
+			delete(m.uuidToVersion, del_uuid)
+			delete(r.dag.nodes, v)
+			delete(m.repos, del_uuid)
+		}
+	}
+	for _, node := range r.dag.nodes {
+		var children []dvid.VersionID
+		for _, cv := range node.children {
+			if _, found := del_set[cv]; !found {
+				children = append(children, cv)
+			}
+		}
+		if len(children) < len(node.children) {
+			node.children = children
+		}
+	}
+	r.Unlock()
+	m.repoMutex.Unlock()
+	return r.save()
+}
+
+func (m *repoManager) makeMaster(newMasterUUID dvid.UUID, oldMasterBranchName string) error {
+	if oldMasterBranchName == "" {
+		return fmt.Errorf("renamed master branch cannot be empty string")
+	}
+	r, err := m.repoFromUUID(newMasterUUID)
+	if err != nil {
+		return err
+	}
+	newMasterV, err := m.versionFromUUID(newMasterUUID)
+	if err != nil {
+		return err
+	}
+
+	r.RLock()
+	defer r.RUnlock()
+	newMasterNode, found := r.dag.nodes[newMasterV]
+	if !found {
+		return fmt.Errorf("unable to find node with version %d, UUID %s", newMasterV, newMasterUUID)
+	}
+	if newMasterNode.branch == "" {
+		return fmt.Errorf("designated node is already on the master branch")
+	}
+
+	// Get master branch that must be sibling.
+	if len(newMasterNode.parents) == 0 {
+		return fmt.Errorf("given UUID must be the first node of the branch to make master")
+	}
+	parentV := newMasterNode.parents[0]
+	oldMasterNode, err := r.getChildBranchNode(parentV, "")
+	if err != nil {
+		return err
+	}
+	if oldMasterNode == nil {
+		return fmt.Errorf("no sibling master branch found for UUID %s", newMasterUUID)
+	}
+
+	// Change the master nodes to the appropriate rename
+	for {
+		oldMasterNode.branch = oldMasterBranchName
+		childNode, err := r.getChildBranchNode(oldMasterNode.version, "")
+		if err != nil {
+			return err
+		}
+		if childNode == nil {
+			break
+		}
+		oldMasterNode = childNode
+	}
+
+	// Change the new master nodes to the master branch.
+	oldBranchName := newMasterNode.branch
+	for {
+		newMasterNode.branch = ""
+		childNode, err := r.getChildBranchNode(newMasterNode.version, oldBranchName)
+		if err != nil {
+			return err
+		}
+		if childNode == nil {
+			break
+		}
+		newMasterNode = childNode
+	}
+
+	return r.save()
+}
+
 // newVersion creates a new version as a child of the given parent.  If the
 // assign parameter is not nil, the new node is given the UUID.
 func (m *repoManager) newVersion(parent dvid.UUID, note string, branchname string, assign *dvid.UUID) (dvid.UUID, error) {
@@ -2733,6 +2836,25 @@ func (r *repoT) versionSet() map[dvid.VersionID]struct{} {
 	}
 	r.RUnlock()
 	return vset
+}
+
+// get the given branch child from this node.
+func (r *repoT) getChildBranchNode(parentV dvid.VersionID, branch string) (branchNode *nodeT, err error) {
+	parent, found := r.dag.nodes[parentV]
+	if !found {
+		return nil, ErrInvalidVersion
+	}
+	for _, v := range parent.children {
+		node, found := r.dag.nodes[v]
+		if !found {
+			continue
+		}
+		if node.branch == branch {
+			branchNode = node
+			break
+		}
+	}
+	return
 }
 
 // --------------------------------------
