@@ -102,7 +102,7 @@ func Initialize(initMetadata bool, iconfig Config) error {
 	// TODO: parallelize metadata init fetches for high-latency backends
 	if initMetadata {
 		// Initialize repo management data in storage
-		dvid.TimeInfof("Initializing repo management data in storage")
+		dvid.TimeInfof("Initializing repo management data in storage\n")
 		if err := m.putNewIDs(); err != nil {
 			return err
 		}
@@ -115,11 +115,11 @@ func Initialize(initMetadata bool, iconfig Config) error {
 		}
 	} else {
 		// Load the repo metadata
-		dvid.TimeInfof("Loading metadata from storage (read-only %t)", m.readOnly)
+		dvid.TimeInfof("Loading metadata from storage (read-only %t)\n", m.readOnly)
 		if err = m.loadMetadata(); err != nil {
 			return fmt.Errorf("Error loading metadata: %v", err)
 		}
-		dvid.TimeInfof("Finished loading metadata from storage (read-only %t)", m.readOnly)
+		dvid.TimeInfof("Finished loading metadata from storage (read-only %t)\n", m.readOnly)
 	}
 	// Set the package variable.  We are good to go...
 	manager = m
