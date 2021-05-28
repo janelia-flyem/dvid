@@ -3,9 +3,7 @@ DVID       [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github
 
 *Status: In production use at Janelia.  See [wiki page for outside lab use of DVID](https://github.com/janelia-flyem/dvid/wiki/State-of-DVID-for-External-Use).*
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/janelia-flyem/dvid)](https://goreportcard.com/report/github.com/janelia-flyem/dvid)
 [![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) 
-[![Travis CI Status](https://travis-ci.org/janelia-flyem/dvid.svg?branch=master)](https://travis-ci.org/janelia-flyem/dvid)
 
 Both high-level and detailed descriptions of DVID and its ecosystem can found here:
 
