@@ -512,7 +512,7 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			parents := make([]dvid.UUID, len(uuids)+1)
 			parents[0] = dvid.UUID(uuid)
 			i := 1
-			for uuid := range uuids {
+			for _, uuid := range uuids {
 				parents[i] = dvid.UUID(uuid)
 				i++
 			}
