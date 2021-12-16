@@ -37,7 +37,6 @@ ifdef DVID_LOW_MEMORY
 	DVID_TAGS += lowmem
 endif
 
-export CGO_ENABLED = 1
 export CGO_CFLAGS = -I${CONDA_PREFIX}/include
 export CGO_LDFLAGS = -L${CONDA_PREFIX}/lib -Wl,-rpath,${CONDA_PREFIX}/lib
 
@@ -73,6 +72,8 @@ server/version.go: bin/dvid-gen-version \
 DVID_SOURCES = $(shell find . -name "*.go")
 
 bin/dvid: cmd/dvid/main.go server/version.go .last-build-git-description ${DVID_SOURCES}
+	go env -w CGO_ENABLED=1
+	go env -w GO111MODULE=off
 	go build -o bin/dvid -v -tags "${DVID_TAGS}" cmd/dvid/main.go
 
 bin/dvid-backup: cmd/backup/main.go
