@@ -52,6 +52,7 @@ requirements:
   # or incorporated into the executable in any way.
   build:
 
+#    - go=1.12 # From flyem-forge, not conda-forge!
     - go=1.12 # From flyem-forge, not conda-forge!
 
     # Anaconda's gcc build -- on Linux only for now
@@ -138,10 +139,10 @@ source:
   #   # Includes:
   #   #        src/golang.org/x/net/context
 
-  # # lumberjack
-  # - git_url: https://gopkg.in/natefinch/lumberjack.v2
-  #   git_tag: v2.0
-  #   folder:  src/gopkg.in/natefinch/lumberjack.v2
+  # lumberjack
+  - git_url: https://github.com/natefinch/lumberjack
+    git_tag: v2.0
+    folder:  src/github.com/natefinch/lumberjack
 
   # # snappy
   # - git_url: https://github.com/golang/snappy

@@ -43,7 +43,8 @@ fi
 
 echo "Fetching third-party go sources..."
 
-export GO111MODULE=auto
+export CGO_ENABLED=1
+export GO111MODULE=off
 
 echo $(type go)
 echo $(go version)
@@ -56,12 +57,14 @@ ensure_checkout() {
 
     if [[ -d ${LOCAL} ]]; then
         cd ${LOCAL} && git fetch --tags && git checkout ${TAG} && cd -
+        if [[ ! -z "${SHA}" ]]; then
+            cd ${LOCAL} && git pull && git fetch --tags && git checkout ${SHA} && cd -
+        fi
     else
         git clone --depth 1 --branch ${TAG} ${REMOTE} ${LOCAL}
-    fi
-
-    if [[ ! -z "${SHA}" ]]; then
-        cd ${LOCAL} && git pull --unshallow && git fetch --tags && git checkout ${SHA} && cd -
+        if [[ ! -z "${SHA}" ]]; then
+            cd ${LOCAL} && git pull --unshallow && git fetch --tags && git checkout ${SHA} && cd -
+        fi
     fi
 }
 
@@ -96,7 +99,11 @@ go get github.com/rs/cors
 go get golang.org/x/net/context
 
 # lumberjack
-go get gopkg.in/natefinch/lumberjack.v2
+#go get gopkg.in/natefinch/lumberjack.v2
+LUMBERJACK_REPO=https://github.com/natefinch/lumberjack
+LUMBERJACK_DIR=${GOPATH}/src/github.com/natefinch/lumberjack
+LUMBERJACK_TAG=v2.0 # Don't change this without also changing it in meta.yaml!!
+ensure_checkout ${LUMBERJACK_REPO} ${LUMBERJACK_DIR} ${LUMBERJACK_TAG}
 
 # snappy
 go get github.com/golang/snappy
@@ -168,6 +175,8 @@ go get github.com/pkg/errors
 go get golang.org/x/sys/unix
 go get github.com/dustin/go-humanize
 
+go get github.com/cespare/xxhash
+
 # freecache
 go get github.com/coocood/freecache
 
@@ -190,7 +199,7 @@ KAFKA_GO_DIR=${GOPATH}/src/github.com/confluentinc/confluent-kafka-go
 KAFKA_GO_TAG=v1.3.0
 ensure_checkout ${KAFKA_GO_REPO} ${KAFKA_GO_DIR} ${KAFKA_GO_TAG}
 
-if [ $(uname) == "Linux" ]; then
+#if [ $(uname) == "Linux" ]; then
     # For some reason, the confluent kafka package cannot be built correctly unless you set LD_LIBRARY_PATH,
     # despite the fact that our copy of librdkafka.so does correctly provide an internal RPATH.
     # (I think the kafka build scripts are not properly calling the 'ld' command with -rpath or -rpath-link.)
@@ -207,9 +216,10 @@ if [ $(uname) == "Linux" ]; then
     #   ...
 
     # So simply define LD_LIBRARY_PATH first.
-    LD_LIBRARY_PATH=${CONDA_PREFIX}/lib go build github.com/confluentinc/confluent-kafka-go/kafka
-else
-    go build github.com/confluentinc/confluent-kafka-go/kafka
-fi
+    #echo "need to set LD_LIBRARY_PATH"
+    #export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib 
+    # LD_LIBRARY_PATH=${CONDA_PREFIX}/lib go build github.com/confluentinc/confluent-kafka-go/kafka
+#fi
+go build github.com/confluentinc/confluent-kafka-go/kafka
 
 echo "Done fetching third-party go sources."

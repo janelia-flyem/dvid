@@ -16,7 +16,7 @@ set -e
 THIS_SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd ${THIS_SCRIPT_DIR}
 
-GO_VERSION=1.12.5
+GO_VERSION=1.16.10
 
 if [[ $(uname) == "Darwin" ]]; then
     # Force MacOS builds to use current Xcode rather than download.

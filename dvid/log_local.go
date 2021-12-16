@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 
-	"gopkg.in/natefinch/lumberjack.v2"
+	"github.com/natefinch/lumberjack"
 )
 
 type stdLogger struct {

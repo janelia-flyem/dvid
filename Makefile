@@ -37,6 +37,7 @@ ifdef DVID_LOW_MEMORY
 	DVID_TAGS += lowmem
 endif
 
+export CGO_ENABLED = 1
 export CGO_CFLAGS = -I${CONDA_PREFIX}/include
 export CGO_LDFLAGS = -L${CONDA_PREFIX}/lib -Wl,-rpath,${CONDA_PREFIX}/lib
 
