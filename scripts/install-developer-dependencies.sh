@@ -16,17 +16,16 @@ set -e
 THIS_SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd ${THIS_SCRIPT_DIR}
 
-GO_VERSION=1.16.10
+#GO_VERSION=1.16.10
 
 if [[ $(uname) == "Darwin" ]]; then
     # Force MacOS builds to use current Xcode rather than download.
-    # COMPILER_PACKAGE=clangxx_osx-64
-    echo "skipping install of clang for MacOSX"
+    echo "Note that XCode should be installed independently and command line tools like xcrun available."
 else
     COMPILER_PACKAGE=gxx_linux-64
 fi
 
-CMD="conda install -y -c flyem-forge -c conda-forge snappy basholeveldb lz4-c 'librdkafka=1.3.0' go=${GO_VERSION} pkg-config ${COMPILER_PACKAGE}"
+CMD="conda install -y -c flyem-forge -c conda-forge snappy basholeveldb lz4-c 'librdkafka=1.3.0' go-cgo pkg-config ${COMPILER_PACKAGE}"
 echo ${CMD}
 ${CMD}
 

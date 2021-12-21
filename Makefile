@@ -40,6 +40,7 @@ endif
 export CGO_CFLAGS = -I${CONDA_PREFIX}/include
 export CGO_LDFLAGS = -L${CONDA_PREFIX}/lib -Wl,-rpath,${CONDA_PREFIX}/lib
 
+HEADERPATH := 
 
 # In a Makefile, the first listed target is
 # the default target for a bare 'make' command:
@@ -71,7 +72,16 @@ server/version.go: bin/dvid-gen-version \
 # FIXME: This finds ALL go source files, not just the selection of sources that are needed for dvid.
 DVID_SOURCES = $(shell find . -name "*.go")
 
+ifneq ($(OS),Windows_NT)
+	ifeq ($(shell uname -s),Darwin)
+		HEADERPATH=$(shell xcrun --sdk macosx --show-sdk-path)
+	endif
+endif
+
 bin/dvid: cmd/dvid/main.go server/version.go .last-build-git-description ${DVID_SOURCES}
+ifdef HEADERPATH
+	export SDKROOT=$(HEADERPATH)
+endif
 	go env -w CGO_ENABLED=1
 	go env -w GO111MODULE=off
 	go build -o bin/dvid -v -tags "${DVID_TAGS}" cmd/dvid/main.go
