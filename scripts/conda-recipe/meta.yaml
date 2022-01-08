@@ -51,7 +51,7 @@ requirements:
   # are used to build dvid, but are not linked against
   # or incorporated into the executable in any way.
   build:
-    - go=1.16
+    - go-cgo=1.16
 
     - {{ compiler('c') }}
     - {{ compiler('cxx') }}
