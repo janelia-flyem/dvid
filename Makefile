@@ -73,7 +73,11 @@ DVID_SOURCES = $(shell find . -name "*.go")
 HEADERPATH := 
 ifneq ($(OS),Windows_NT)
 	ifeq ($(shell uname -s),Darwin)
-		HEADERPATH=$(shell xcrun --sdk macosx --show-sdk-path)
+		ifeq (${CONDA_BUILD_SYSROOT},)
+			HEADERPATH=$(shell xcrun --sdk macosx --show-sdk-path)
+		else
+			HEADERPATH := ${CONDA_BUILD_SYSROOT}
+		endif
 	endif
 endif
 
