@@ -1,5 +1,5 @@
 ifndef GOPATH
-$(error GOPATH must be defined)
+    $(error GOPATH must be defined)
 endif
 
 # When building in the context of the conda-recipe,
@@ -34,11 +34,19 @@ endif
 
 DVID_TAGS = ${DVID_BACKENDS}
 ifdef DVID_LOW_MEMORY
-	DVID_TAGS += lowmem
+    DVID_TAGS += lowmem
 endif
 
 export CGO_CFLAGS = -I${CONDA_PREFIX}/include
 export CGO_LDFLAGS = -L${CONDA_PREFIX}/lib -Wl,-rpath,${CONDA_PREFIX}/lib
+
+ifeq ($(shell uname -s),Darwin)
+    ifdef MACOSX_DEPLOYMENT_TARGET
+        $(info MACOSX_DEPLOYMENT_TARGET is ${MACOSX_DEPLOYMENT_TARGET})
+        export CGO_CFLAGS += -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}
+        export CGO_LDFLAGS += -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}
+	endif
+endif
 
 # In a Makefile, the first listed target is
 # the default target for a bare 'make' command:
@@ -72,10 +80,16 @@ DVID_SOURCES = $(shell find . -name "*.go")
 
 HEADERPATH := 
 ifneq ($(OS),Windows_NT)
-	ifeq ($(shell uname -s),Darwin)
-		HEADERPATH=$(shell xcrun --sdk macosx --show-sdk-path)
-	endif
+    ifeq ($(shell uname -s),Darwin)
+        ifeq (${CONDA_BUILD_SYSROOT},)
+            HEADERPATH=$(shell xcrun --sdk macosx --show-sdk-path)
+		else
+            HEADERPATH := ${CONDA_BUILD_SYSROOT}
+        endif
+    endif
 endif
+
+$(info HEADERPATH is $(HEADERATH))
 
 bin/dvid: export SDKROOT=$(HEADERPATH)
 bin/dvid: cmd/dvid/main.go server/version.go .last-build-git-description ${DVID_SOURCES}
@@ -96,11 +110,11 @@ DVID_GO = github.com/janelia-flyem/dvid
 DVID_PACKAGES = ${DVID_GO}/dvid/... ${DVID_GO}/storage/... ${DVID_GO}/datastore ${DVID_GO}/server ${DVID_GO}/datatype/... ${DVID_GO}/tests_integration
 
 ifdef PACKAGES
-	DVID_PACKAGES = ${DVID_GO}/${PACKAGES}
+    DVID_PACKAGES = ${DVID_GO}/${PACKAGES}
 endif
 
 ifdef TEST
-	SPECIFIC_TEST = -test.run ${TEST}
+    SPECIFIC_TEST = -test.run ${TEST}
 endif
 
 test: dvid 

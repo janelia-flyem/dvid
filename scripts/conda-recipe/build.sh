@@ -16,6 +16,12 @@ echo "******************"
 echo "GOROOT: ${GOROOT}"
 echo "******************"
 
+
+if [ "$(uname)" == "Darwin" ]; then
+    echo "CONDA_BUILD_SYSROOT: ${CONDA_BUILD_SYSROOT}"
+    echo "MACOSX_DEPLOYMENT_TARGET: ${MACOSX_DEPLOYMENT_TARGET}"
+fi
+
 # The dvid repo was cloned to the appropriate internal directory
 DVID_REPO=${GOPATH}/src/github.com/janelia-flyem/dvid
 cd ${DVID_REPO}

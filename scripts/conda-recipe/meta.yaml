@@ -51,15 +51,10 @@ requirements:
   # are used to build dvid, but are not linked against
   # or incorporated into the executable in any way.
   build:
+    - go-cgo=1.16
 
-#    - go=1.12 # From flyem-forge, not conda-forge!
-    - go=1.12 # From flyem-forge, not conda-forge!
-
-    # Anaconda's gcc build -- on Linux only for now
-    # (getting their clang binary to work on recent versions of MacOS is
-    # tricky for some reason, related to SDK versions, etc.)
-    - {{ compiler('c') }}    # [linux]
-    - {{ compiler('cxx') }}  # [linux]
+    - {{ compiler('c') }}
+    - {{ compiler('cxx') }}
 
     - pkg-config
 
