@@ -14,7 +14,8 @@ import (
 )
 
 // GetMutationHistory writes JSON of the mutations that were done to the given label at toUUID version,
-// where we delimit the time range of interest to [fromUUID, toUUID] versions.
+// where we delimit the time range of interest to [fromUUID, toUUID] versions.  The mutations are written
+// backwards in time toUUID -> fromUUID.
 func (d *Data) GetMutationHistory(w http.ResponseWriter, fromUUID, toUUID dvid.UUID, target uint64) error {
 	fromV, err := datastore.VersionFromUUID(fromUUID)
 	if err != nil {
@@ -24,10 +25,8 @@ func (d *Data) GetMutationHistory(w http.ResponseWriter, fromUUID, toUUID dvid.U
 	if err != nil {
 		return err
 	}
-	ancestors, err := datastore.GetAncestry(toV)
-	if err != nil {
-		return err
-	}
+
+	// Get latest supervoxels assigned to target id.
 	supervoxelSet, err := d.GetSupervoxels(toV, target)
 	if err != nil {
 		return err
@@ -37,12 +36,22 @@ func (d *Data) GetMutationHistory(w http.ResponseWriter, fromUUID, toUUID dvid.U
 	for sv := range supervoxelSet {
 		supervoxels[i] = sv
 	}
+
+	// Get the starting version labels mapped to the target's supervoxels -> origBodies set
 	mapped, _, err := d.GetMappedLabels(fromV, supervoxels)
+	if err != nil {
+		return err
+	}
 	origBodies := make(labels.Set, len(mapped))
 	for _, label := range mapped {
 		origBodies[label] = struct{}{}
 	}
 
+	// Get all UUIDs in [fromUUID, toUUID] span -> versions
+	ancestors, err := datastore.GetAncestry(toV)
+	if err != nil {
+		return err
+	}
 	var record bool
 	var versions []dvid.VersionID
 	for i := len(ancestors) - 1; i >= 0; i-- { // work from root to toUUID
@@ -58,15 +67,7 @@ func (d *Data) GetMutationHistory(w http.ResponseWriter, fromUUID, toUUID dvid.U
 		}
 	}
 
-	out := fmt.Sprintf(`echo "For label %d at version %s, there were %d supervoxels"`, target, toUUID, len(supervoxels))
-	if _, err = w.Write([]byte(out)); err != nil {
-		return err
-	}
-	out = fmt.Sprintf(`echo "The above maps to labels %v at version %s"`, origBodies, fromUUID)
-	if _, err = w.Write([]byte(out)); err != nil {
-		return err
-	}
-
+	// Write the mutations for any fromUUID label touched by supervoxels in the toUUID target label.
 	for _, v := range versions {
 		timedLog := dvid.NewTimeLog()
 		ch := make(chan storage.LogMessage, 100)
@@ -193,7 +194,7 @@ func processMutationLogStream(w http.ResponseWriter, v dvid.VersionID, ch chan s
 		default:
 		}
 		if len(out) != 0 {
-			_, err := w.Write([]byte(out))
+			_, err := w.Write(out)
 			if err != nil {
 				dvid.Errorf("Error writing mutation history for %s: %v\n", origBodies, err)
 			}

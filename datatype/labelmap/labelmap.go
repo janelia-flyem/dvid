@@ -538,7 +538,8 @@ GET <api URL>/node/<UUID>/<data name>/labels[?queryopts]
 
 GET <api URL>/node/<UUID>/<data name>/history/<label>/<from UUID>/<to UUID>
 
-	Returns JSON for the all mutations pertinent to the label in the region of versions.
+	Returns JSON for mutations involving labels in "from UUID" version that correspond to the
+	supervoxels in the "to UUID" target label.
 	
     Arguments:
     UUID          Hexadecimal string with enough characters to uniquely identify a version node.
