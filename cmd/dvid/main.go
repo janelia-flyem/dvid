@@ -36,6 +36,7 @@ import (
 	_ "github.com/janelia-flyem/dvid/datatype/labelsz"
 	_ "github.com/janelia-flyem/dvid/datatype/labelvol"
 	_ "github.com/janelia-flyem/dvid/datatype/multichan16"
+	_ "github.com/janelia-flyem/dvid/datatype/neuronjson"
 	_ "github.com/janelia-flyem/dvid/datatype/roi"
 	_ "github.com/janelia-flyem/dvid/datatype/tarsupervoxels"
 )

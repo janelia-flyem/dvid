@@ -1,18 +1,26 @@
 /*
-	Package keyvalue implements DVID support for data using generic key-value.
+	Package neuronjson implements DVID support for neuron JSON annotations
 */
-package keyvalue
+package neuronjson
 
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"cloud.google.com/go/firestore"
+	"google.golang.org/api/iterator"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -22,13 +30,21 @@ import (
 
 const (
 	Version  = "0.2"
-	RepoURL  = "github.com/janelia-flyem/dvid/datatype/keyvalue"
-	TypeName = "keyvalue"
+	RepoURL  = "github.com/janelia-flyem/dvid/datatype/neuronjson"
+	TypeName = "neuronjson"
 )
 
 const helpMessage = `
-API for 'keyvalue' datatype (github.com/janelia-flyem/dvid/datatype/keyvalue)
+API for 'neuronjson' datatype (github.com/janelia-flyem/dvid/datatype/neuronjson)
 =============================================================================
+
+The neuronjson datatype is similar supports most of the keyvalue datatype methods
+but extends them to include queries.  
+
+The keys are body identifier uint64 thatare represented as strings for 
+backward-compatibility with clients that used to use the keyvalue datatype 
+for these neuron JSON annotations. The values are assumed to be JSON data, 
+and the queries are similar to how Firestore handles queries.
 
 Note: UUIDs referenced below are strings that may either be a unique prefix of a
 hexadecimal UUID string (e.g., 3FA22) or a branch leaf specification that adds
@@ -42,13 +58,13 @@ references to "B:master" now return the data from "D".
 
 Command-line:
 
-$ dvid repo <UUID> new keyvalue <data name> <settings...>
+$ dvid repo <UUID> new neuronjson <data name> <settings...>
 
-	Adds newly named key-value data to repo with specified UUID.
+	Adds newly named neuronjson data to repo with specified UUID.
 
 	Example:
 
-	$ dvid repo 3f8c new keyvalue stuff
+	$ dvid repo 3f8c new neuronjson stuff
 
 	Arguments:
 
@@ -58,15 +74,15 @@ $ dvid repo <UUID> new keyvalue <data name> <settings...>
 
 	Configuration Settings (case-insensitive keys):
 
-	Versioned      Set to "false" or "0" if the keyvalue instance is unversioned (repo-wide).
-				   An unversioned keyvalue will only use the UUIDs to look up the repo and
+	Versioned      Set to "false" or "0" if the neuronjson instance is unversioned (repo-wide).
+				   An unversioned neuronjson will only use the UUIDs to look up the repo and
 				   not differentiate between versions in the same repo.  Note that unlike
 				   versioned data, distribution (push/pull) of unversioned data is not defined 
 				   at this time.
 
 $ dvid -stdin node <UUID> <data name> put <key> < data
 
-	Puts stdin data into the keyvalue data instance under the given key.
+	Puts stdin data into the neuronjson data instance under the given key.
 
 	
 	------------------
@@ -96,7 +112,7 @@ POST <api URL>/node/<UUID>/<data name>/info
 	Arguments:
 
 	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
-	data name     Name of keyvalue data instance.
+	data name     Name of neuronjson data instance.
 
 GET <api URL>/node/<UUID>/<data name>/tags
 POST <api URL>/node/<UUID>/<data name>/tags?<options>
@@ -129,13 +145,13 @@ GET  <api URL>/node/<UUID>/<data name>/keyrange/<key1>/<key2>
 	Arguments:
 
 	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
-	data name     Name of keyvalue data instance.
+	data name     Name of neuronjson data instance.
 	key1          Lexicographically lowest alphanumeric key in range.
 	key2          Lexicographically highest alphanumeric key in range.
 
 GET  <api URL>/node/<UUID>/<data name>/keyrangevalues/<key1>/<key2>?<options>
 
-	This has the same response as the GET /keyvalues endpoint but a different way of
+	This has the same response as the GET /neuronjsons endpoint but a different way of
 	specifying the keys.  In this endpoint, you specify a range of keys.  In the other
 	endpoint, you must explicitly send the keys in a GET payload, which may not be
 	fully supported.
@@ -161,7 +177,7 @@ GET  <api URL>/node/<UUID>/<data name>/keyrangevalues/<key1>/<key2>?<options>
 
 	3) protobuf3
 	
-		KeyValue data needs to be serialized in a format defined by the following 
+		neuronjson data needs to be serialized in a format defined by the following 
 		protobuf3 definitions:
 
 		message KeyValue {
@@ -176,7 +192,7 @@ GET  <api URL>/node/<UUID>/<data name>/keyrangevalues/<key1>/<key2>?<options>
 	Arguments:
 
 	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
-	data name     Name of keyvalue data instance.
+	data name     Name of neuronjson data instance.
 	key1          Lexicographically lowest alphanumeric key in range.
 	key2          Lexicographically highest alphanumeric key in range.
 
@@ -217,7 +233,7 @@ HEAD <api URL>/node/<UUID>/<data name>/key/<key>
 	Arguments:
 
 	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
-	data name     Name of keyvalue data instance.
+	data name     Name of neuronjson data instance.
 	key           An alphanumeric key.
 	
 	POSTs will be logged as a Kafka JSON message with the following format:
@@ -233,7 +249,7 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 
 	Allows batch query or ingest of data. 
 
-	KeyValue data needs to be serialized in a format defined by the following protobuf3 definitions:
+	neuronjson data needs to be serialized in a format defined by the following protobuf3 definitions:
 
 		message KeyValue {
 			string key = 1;
@@ -265,7 +281,7 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 	Arguments:
 
 	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
-	data name     Name of keyvalue data instance.
+	data name     Name of neuronjson data instance.
 
 	GET Query-string Options (only one of these allowed):
 
@@ -305,7 +321,7 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 	Arguments:
 
 	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
-	data name     Name of keyvalue data instance.
+	data name     Name of neuronjson data instance.
 	key1          Lexicographically lowest alphanumeric key in range.
 	key2          Lexicographically highest alphanumeric key in range.
 
@@ -328,12 +344,12 @@ func init() {
 	gob.Register(&Data{})
 }
 
-// Type embeds the datastore's Type to create a unique type for keyvalue functions.
+// Type embeds the datastore's Type to create a unique type for neuronjson functions.
 type Type struct {
 	datastore.Type
 }
 
-// NewType returns a pointer to a new keyvalue Type with default values set.
+// NewType returns a pointer to a new neuronjson Type with default values set.
 func NewType() *Type {
 	dtype := new(Type)
 	dtype.Type = datastore.Type{
@@ -349,13 +365,27 @@ func NewType() *Type {
 
 // --- TypeService interface ---
 
-// NewDataService returns a pointer to new keyvalue data with default values.
+// NewDataService returns a pointer to new neuronjson data with default values.
 func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (datastore.DataService, error) {
 	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
 	if err != nil {
 		return nil, err
 	}
-	return &Data{basedata}, nil
+	projectID, found, err := c.GetString("ProjectID")
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("neuronjson instances must have ProjectID set in the configuration")
+	}
+	datasetID, found, err := c.GetString("DatasetID")
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("neuronjson instances must have DatasetID set in the configuration")
+	}
+	return &Data{Data: basedata, ProjectID: projectID, DatasetID: datasetID}, nil
 }
 
 func (dtype *Type) Help() string {
@@ -370,14 +400,26 @@ func GetByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	}
 	data, ok := source.(*Data)
 	if !ok {
-		return nil, fmt.Errorf("Instance '%s' is not a keyvalue datatype!", name)
+		return nil, fmt.Errorf("Instance '%s' is not a neuronjson datatype!", name)
 	}
 	return data, nil
 }
 
-// Data embeds the datastore's Data and extends it with keyvalue properties (none for now).
+// Data embeds the datastore's Data and extends it with neuronjson properties.
 type Data struct {
 	*datastore.Data
+
+	// Firestore ProjectID
+	ProjectID string
+
+	// Dataset to keep in-memory
+	DatasetID string
+
+	// The in-memory dataset.
+	db      map[uint64]map[string]interface{}
+	ids     []uint64 // sorted list of body ids
+	dbReady bool
+	dbMu    sync.RWMutex
 }
 
 func (d *Data) Equals(d2 *Data) bool {
@@ -412,136 +454,190 @@ func (d *Data) GobEncode() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// Parses keys as body ids, including things like 'a' that might be used in keyrange/0/a.
+func parseKeyStr(key string) (uint64, error) {
+	if len(key) == 0 {
+		return 0, fmt.Errorf("key string is empty")
+	}
+	if key[0] > '9' {
+		return math.MaxUint64, nil
+	} else if key[0] < '0' {
+		return 0, nil
+	}
+	return strconv.ParseUint(key, 10, 64)
+}
+
+// Get bodyid from a JSON-like map
+func getBodyID(data map[string]interface{}) (uint64, error) {
+	bodyidVal, ok := data["bodyid"]
+	if !ok {
+		return 0, fmt.Errorf("neuronjson record has no 'bodyid' field")
+	}
+	bodyid, ok := bodyidVal.(uint64)
+	if !ok {
+		return 0, fmt.Errorf("neuronjson record 'bodyid' is not a uint64 value: %v", bodyidVal)
+	}
+	return bodyid, nil
+}
+
+// --- DataInitializer interface ---
+
+// InitDataHandlers initializes ephemeral data for this instance, which is
+// the in-memory keyvalue store where the values are neuron annotation JSON.
+func (d *Data) InitDataHandlers() error {
+	ctx := context.Background()
+	tlog := dvid.NewTimeLog()
+	client, err := firestore.NewClient(ctx, d.ProjectID)
+	if err != nil {
+		return fmt.Errorf("firestore.NewClient: %v", err)
+	}
+	defer client.Close()
+
+	d.db = make(map[uint64]map[string]interface{})
+	d.dbMu.Lock()
+	defer d.dbMu.Unlock()
+
+	numdocs := 0
+	it := client.Collection("clio_annotations_global").Doc("neurons").Collection(d.DatasetID).Where("_head", "==", true).Documents(ctx)
+	for {
+		doc, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("documents iterator: %v", err)
+		}
+		annotation := doc.Data()
+		bodyid, err := getBodyID(annotation)
+		if err != nil {
+			return err
+		}
+		d.db[bodyid] = annotation
+		d.ids = append(d.ids, bodyid) // assumes there are no duplicate bodyid among HEAD annotations
+		numdocs++
+		if numdocs%1000 == 0 {
+			tlog.Infof("Loaded %d HEAD annotations", numdocs)
+		}
+	}
+	sort.Slice(d.ids, func(i, j int) bool { return d.ids[i] < d.ids[j] })
+	tlog.Infof("Completed loading of %d HEAD annotations", numdocs)
+	d.dbReady = true
+
+	return nil
+}
+
+func (d *Data) addBodyID(bodyid uint64) {
+	i := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] >= bodyid })
+	if i < len(d.ids) && d.ids[i] == bodyid {
+		return
+	}
+	d.ids = append(d.ids, 0)
+	copy(d.ids[i+1:], d.ids[i:])
+	d.ids[i] = bodyid
+}
+
+func (d *Data) deleteBodyID(bodyid uint64) {
+	i := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] == bodyid })
+	if i == len(d.ids) {
+		return
+	}
+	d.ids = append(d.ids[:i], d.ids[i+1:]...)
+}
+
+func (d *Data) addRecord(data map[string]interface{}) error {
+	bodyid, err := getBodyID(data)
+	if err != nil {
+		return err
+	}
+	d.dbMu.Lock()
+	d.db[bodyid] = data
+	d.addBodyID(bodyid)
+	d.dbMu.Unlock()
+	return nil
+}
+
 // KeyExists returns true if a key is found.
-func (d *Data) KeyExists(ctx storage.Context, keyStr string) (bool, error) {
-	db, err := datastore.GetKeyValueDB(d)
+func (d *Data) KeyExists(keyStr string) (bool, error) {
+	bodyid, err := strconv.ParseUint(keyStr, 10, 64)
 	if err != nil {
 		return false, err
 	}
-	tk, err := NewTKey(keyStr)
-	if err != nil {
-		return false, err
-	}
-	return db.Exists(ctx, tk)
+	d.dbMu.RLock()
+	defer d.dbMu.RUnlock()
+	_, found := d.db[bodyid]
+	return found, nil
 }
 
-func (d *Data) GetKeysInRange(ctx storage.Context, keyBeg, keyEnd string) ([]string, error) {
-	db, err := datastore.GetOrderedKeyValueDB(d)
-	if err != nil {
-		return nil, err
-	}
-
-	// Compute first and last key for range
-	first, err := NewTKey(keyBeg)
-	if err != nil {
-		return nil, err
-	}
-	last, err := NewTKey(keyEnd)
-	if err != nil {
-		return nil, err
-	}
-	keys, err := db.KeysInRange(ctx, first, last)
-	if err != nil {
-		fmt.Printf("Error detected at GetKeysInRange level: %v\n", err)
-		return nil, err
-	}
-	keyList := []string{}
-	for _, key := range keys {
-		keyStr, err := DecodeTKey(key)
-		if err != nil {
-			return nil, err
-		}
-		keyList = append(keyList, keyStr)
-	}
-	return keyList, nil
+func (d *Data) GetKeysInRange(keyBeg, keyEnd string) ([]string, error) {
+	return nil, nil
 }
 
-func (d *Data) GetKeys(ctx storage.Context) ([]string, error) {
-	db, err := datastore.GetOrderedKeyValueDB(d)
-	if err != nil {
-		return nil, err
+func (d *Data) GetKeys() ([]string, error) {
+	keyStrings := make([]string, len(d.ids))
+	d.dbMu.RLock()
+	for i, bodyid := range d.ids {
+		keyStrings[i] = strconv.FormatUint(bodyid, 10)
 	}
-
-	// Compute first and last key for range
-	first := storage.MinTKey(keyStandard)
-	last := storage.MaxTKey(keyStandard)
-	keys, err := db.KeysInRange(ctx, first, last)
-	if err != nil {
-		return nil, err
-	}
-	keyList := []string{}
-	for _, key := range keys {
-		keyStr, err := DecodeTKey(key)
-		if err != nil {
-			return nil, err
-		}
-		keyList = append(keyList, keyStr)
-	}
-	return keyList, nil
+	d.dbMu.RUnlock()
+	return keyStrings, nil
 }
 
 // GetData gets a value using a key
-func (d *Data) GetData(ctx storage.Context, keyStr string) ([]byte, bool, error) {
-	db, err := datastore.GetOrderedKeyValueDB(d)
+func (d *Data) GetData(keyStr string) ([]byte, bool, error) {
+	bodyid, err := strconv.ParseUint(keyStr, 10, 64)
 	if err != nil {
 		return nil, false, err
 	}
-	tk, err := NewTKey(keyStr)
-	if err != nil {
-		return nil, false, err
-	}
-	data, err := db.Get(ctx, tk)
-	if err != nil {
-		return nil, false, fmt.Errorf("Error in retrieving key '%s': %v", keyStr, err)
-	}
-	if data == nil {
+	d.dbMu.RLock()
+	defer d.dbMu.RUnlock()
+	value, found := d.db[bodyid]
+	if !found {
 		return nil, false, nil
 	}
-	uncompress := true
-	value, _, err := dvid.DeserializeData(data, uncompress)
-	if err != nil {
-		return nil, false, fmt.Errorf("Unable to deserialize data for key '%s': %v\n", keyStr, err)
-	}
-	return value, true, nil
+	data, err := json.Marshal(value)
+	return data, true, err
 }
 
 // PutData puts a key-value at a given uuid
-func (d *Data) PutData(ctx storage.Context, keyStr string, value []byte) error {
-	db, err := datastore.GetOrderedKeyValueDB(d)
+func (d *Data) PutData(keyStr string, value []byte) error {
+	bodyid, err := strconv.ParseUint(keyStr, 10, 64)
 	if err != nil {
 		return err
 	}
-	serialization, err := dvid.SerializeData(value, d.Compression(), d.Checksum())
-	if err != nil {
-		return fmt.Errorf("Unable to serialize data: %v\n", err)
-	}
-	tk, err := NewTKey(keyStr)
-	if err != nil {
+	d.dbMu.Lock()
+	defer d.dbMu.Unlock()
+	var jsonData map[string]interface{}
+	if err := json.Unmarshal(value, &jsonData); err != nil {
 		return err
 	}
-	return db.Put(ctx, tk, serialization)
+	d.db[bodyid] = jsonData
+	d.addBodyID(bodyid)
+	return nil
 }
 
 // DeleteData deletes a key-value pair
-func (d *Data) DeleteData(ctx storage.Context, keyStr string) error {
-	db, err := datastore.GetOrderedKeyValueDB(d)
+func (d *Data) DeleteData(keyStr string) error {
+	bodyid, err := strconv.ParseUint(keyStr, 10, 64)
 	if err != nil {
 		return err
 	}
-	tk, err := NewTKey(keyStr)
-	if err != nil {
-		return err
+	d.dbMu.Lock()
+	defer d.dbMu.Unlock()
+	_, found := d.db[bodyid]
+	if found {
+		delete(d.db, bodyid)
+		d.deleteBodyID(bodyid)
 	}
-	return db.Delete(ctx, tk)
+	return nil
 }
 
 // put handles a PUT command-line request.
 func (d *Data) put(cmd datastore.Request, reply *datastore.Response) error {
 	if len(cmd.Command) < 5 {
-		return fmt.Errorf("The key name must be specified after 'put'")
+		return fmt.Errorf("key name must be specified after 'put'")
 	}
 	if len(cmd.Input) == 0 {
-		return fmt.Errorf("No data was passed into standard input")
+		return fmt.Errorf("no data was passed into standard input")
 	}
 	var uuidStr, dataName, cmdStr, keyStr string
 	cmd.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &keyStr)
@@ -559,12 +655,11 @@ func (d *Data) put(cmd datastore.Request, reply *datastore.Response) error {
 			return err
 		}
 	}
-	ctx := datastore.NewVersionedCtx(d, versionID)
-	if err = d.PutData(ctx, keyStr, cmd.Input); err != nil {
-		return fmt.Errorf("Error on put to key %q for keyvalue %q: %v\n", keyStr, d.DataName(), err)
+	if err = d.PutData(keyStr, cmd.Input); err != nil {
+		return fmt.Errorf("error on put to key %q for neuronjson %q: %v", keyStr, d.DataName(), err)
 	}
 
-	reply.Output = []byte(fmt.Sprintf("Put %d bytes into key %q for keyvalue %q, uuid %s\n",
+	reply.Output = []byte(fmt.Sprintf("Put %d bytes into key %q for neuronjson %q, uuid %s\n",
 		len(cmd.Input), keyStr, d.DataName(), uuidStr))
 	return nil
 }
@@ -627,7 +722,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, jsonStr)
+		fmt.Fprint(w, jsonStr)
 		return
 
 	case "tags":
@@ -644,11 +739,11 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintf(w, string(jsonBytes))
+			fmt.Fprint(w, string(jsonBytes))
 		}
 
 	case "keys":
-		keyList, err := d.GetKeys(ctx)
+		keyList, err := d.GetKeys()
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -659,7 +754,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, string(jsonBytes))
+		fmt.Fprint(w, string(jsonBytes))
 		comment = "HTTP GET keys"
 
 	case "keyrange":
@@ -671,7 +766,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		// Return JSON list of keys
 		keyBeg := parts[4]
 		keyEnd := parts[5]
-		keyList, err := d.GetKeysInRange(ctx, keyBeg, keyEnd)
+		keyList, err := d.GetKeysInRange(keyBeg, keyEnd)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -682,7 +777,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, string(jsonBytes))
+		fmt.Fprint(w, string(jsonBytes))
 		comment = fmt.Sprintf("HTTP GET keyrange [%q, %q]", keyBeg, keyEnd)
 
 	case "keyrangevalues":
@@ -695,7 +790,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		keyBeg := parts[4]
 		keyEnd := parts[5]
 		w.Header().Set("Content-Type", "application/json")
-		numKeys, err := d.sendJSONValuesInRange(w, r, ctx, keyBeg, keyEnd)
+		numKeys, err := d.sendJSONValuesInRange(w, r, keyBeg, keyEnd)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -705,14 +800,14 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "keyvalues":
 		switch action {
 		case "get":
-			numKeys, writtenBytes, err := d.handleKeyValues(w, r, uuid, ctx)
+			numKeys, writtenBytes, err := d.handleKeyValues(w, r, uuid)
 			if err != nil {
 				server.BadRequest(w, r, "GET /keyvalues on %d keys, data %q: %v", numKeys, d.DataName(), err)
 				return
 			}
 			comment = fmt.Sprintf("HTTP GET keyvalues on %d keys, %d bytes, data %q", numKeys, writtenBytes, d.DataName())
 		case "post":
-			if err := d.handleIngest(r, uuid, ctx); err != nil {
+			if err := d.handleIngest(r, uuid); err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
@@ -731,7 +826,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 		switch action {
 		case "head":
-			found, err := d.KeyExists(ctx, keyStr)
+			found, err := d.KeyExists(keyStr)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
@@ -745,7 +840,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 		case "get":
 			// Return value of single key
-			value, found, err := d.GetData(ctx, keyStr)
+			value, found, err := d.GetData(keyStr)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
@@ -762,14 +857,14 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				}
 				w.Header().Set("Content-Type", "application/octet-stream")
 			}
-			comment = fmt.Sprintf("HTTP GET key %q of keyvalue %q: %d bytes (%s)", keyStr, d.DataName(), len(value), url)
+			comment = fmt.Sprintf("HTTP GET key %q of neuronjson %q: %d bytes (%s)", keyStr, d.DataName(), len(value), url)
 
 		case "delete":
-			if err := d.DeleteData(ctx, keyStr); err != nil {
+			if err := d.DeleteData(keyStr); err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
-			comment = fmt.Sprintf("HTTP DELETE data with key %q of keyvalue %q (%s)", keyStr, d.DataName(), url)
+			comment = fmt.Sprintf("HTTP DELETE data with key %q of neuronjson %q (%s)", keyStr, d.DataName(), url)
 
 		case "post":
 			data, err := ioutil.ReadAll(r.Body)
@@ -780,7 +875,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 			go func() {
 				msginfo := map[string]interface{}{
-					"Action":    "postkv",
+					"Action":    "postneuronjson",
 					"Key":       keyStr,
 					"Bytes":     len(data),
 					"UUID":      string(uuid),
@@ -788,16 +883,16 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				}
 				jsonmsg, _ := json.Marshal(msginfo)
 				if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
-					dvid.Errorf("Error on sending keyvalue POST op to kafka: %v\n", err)
+					dvid.Errorf("Error on sending neuronjson POST op to kafka: %v\n", err)
 				}
 			}()
 
-			err = d.PutData(ctx, keyStr, data)
+			err = d.PutData(keyStr, data)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
-			comment = fmt.Sprintf("HTTP POST keyvalue '%s': %d bytes (%s)", d.DataName(), len(data), url)
+			comment = fmt.Sprintf("HTTP POST neuronjson '%s': %d bytes (%s)", d.DataName(), len(data), url)
 		default:
 			server.BadRequest(w, r, "key endpoint does not support %q HTTP verb", action)
 			return
@@ -812,7 +907,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	return
 }
 
-func (d *Data) sendJSONValuesInRange(w http.ResponseWriter, r *http.Request, ctx *datastore.VersionedCtx, keyBeg, keyEnd string) (numKeys int, err error) {
+func (d *Data) sendJSONValuesInRange(w http.ResponseWriter, r *http.Request, keyBeg, keyEnd string) (numKeys int, err error) {
+	if len(keyBeg) == 0 || len(keyEnd) == 0 {
+		return 0, fmt.Errorf("must specify non-empty beginning and ending key")
+	}
 	tarOut := (r.URL.Query().Get("jsontar") == "true") || (r.URL.Query().Get("tar") == "true")
 	jsonOut := r.URL.Query().Get("json") == "true"
 	checkVal := r.URL.Query().Get("check") == "true"
@@ -820,14 +918,8 @@ func (d *Data) sendJSONValuesInRange(w http.ResponseWriter, r *http.Request, ctx
 		err = fmt.Errorf("can only specify tar or json output, not both")
 		return
 	}
-	db, err := datastore.GetOrderedKeyValueDB(d)
-	if err != nil {
-		return 0, err
-	}
 
-	var kvs KeyValues
 	var tw *tar.Writer
-
 	switch {
 	case tarOut:
 		w.Header().Set("Content-type", "application/tar")
@@ -840,76 +932,75 @@ func (d *Data) sendJSONValuesInRange(w http.ResponseWriter, r *http.Request, ctx
 	default:
 	}
 
-	// Compute first and last key for range
-	first, err := NewTKey(keyBeg)
+	// Accept arbitrary strings for first and last key for range
+	bodyidBeg, err := parseKeyStr(keyBeg)
 	if err != nil {
 		return 0, err
 	}
-	last, err := NewTKey(keyEnd)
+	bodyidEnd, err := parseKeyStr(keyEnd)
 	if err != nil {
 		return 0, err
 	}
+	begI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] >= bodyidBeg })
+	endI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] >= bodyidEnd })
 
+	// Collect JSON values in range
+	var kvs KeyValues
 	var wroteVal bool
-	err = db.ProcessRange(ctx, first, last, &storage.ChunkOp{}, func(c *storage.Chunk) error {
-		if c == nil || c.TKeyValue == nil {
-			return nil
+	for i := begI; i <= endI; i++ {
+		bodyid := d.ids[i]
+		jsonData, ok := d.db[bodyid]
+		if !ok {
+			dvid.Errorf("inconsistent neuronjson DB: bodyid %d at pos %d is not in db cache... skipping", bodyid, i)
+			continue
 		}
-		kv := c.TKeyValue
-		if kv.V == nil {
-			return nil
-		}
-		key, err := DecodeTKey(kv.K)
+		key := strconv.FormatUint(bodyid, 10)
+		var jsonBytes []byte
+		jsonBytes, err = json.Marshal(jsonData)
 		if err != nil {
-			return err
-		}
-		uncompress := true
-		val, _, err := dvid.DeserializeData(kv.V, uncompress)
-		if err != nil {
-			return fmt.Errorf("Unable to deserialize data for key %q: %v\n", key, err)
+			return 0, err
 		}
 		switch {
 		case tarOut:
 			hdr := &tar.Header{
 				Name: key,
-				Size: int64(len(val)),
+				Size: int64(len(jsonBytes)),
 				Mode: 0755,
 			}
 			if err = tw.WriteHeader(hdr); err != nil {
-				return err
+				return
 			}
-			if _, err = tw.Write(val); err != nil {
-				return err
+			if _, err = tw.Write(jsonBytes); err != nil {
+				return
 			}
 		case jsonOut:
 			if wroteVal {
 				if _, err = w.Write([]byte(",")); err != nil {
-					return err
+					return
 				}
 			}
-			if len(val) == 0 {
-				val = []byte("{}")
-			} else if checkVal && !json.Valid(val) {
-				return fmt.Errorf("bad JSON for key %q", key)
+			if len(jsonBytes) == 0 {
+				jsonBytes = []byte("{}")
+			} else if checkVal && !json.Valid(jsonBytes) {
+				return 0, fmt.Errorf("bad JSON for key %q", key)
 			}
 			out := fmt.Sprintf(`"%s":`, key)
 			if _, err = w.Write([]byte(out)); err != nil {
-				return err
+				return
 			}
-			if _, err = w.Write(val); err != nil {
-				return err
+			if _, err = w.Write(jsonBytes); err != nil {
+				return
 			}
 			wroteVal = true
 		default:
 			kv := &KeyValue{
 				Key:   key,
-				Value: val,
+				Value: jsonBytes,
 			}
 			kvs.Kvs = append(kvs.Kvs, kv)
 		}
+	}
 
-		return nil
-	})
 	switch {
 	case tarOut:
 		tw.Close()
@@ -931,7 +1022,7 @@ func (d *Data) sendJSONValuesInRange(w http.ResponseWriter, r *http.Request, ctx
 	return
 }
 
-func (d *Data) sendJSONKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, keys []string, checkVal bool) (writtenBytes int, err error) {
+func (d *Data) sendJSONKV(w http.ResponseWriter, keys []string, checkVal bool) (writtenBytes int, err error) {
 	w.Header().Set("Content-type", "application/json")
 	if writtenBytes, err = w.Write([]byte("{")); err != nil {
 		return
@@ -947,7 +1038,7 @@ func (d *Data) sendJSONKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, ke
 		}
 		var val []byte
 		var found bool
-		if val, found, err = d.GetData(ctx, key); err != nil {
+		if val, found, err = d.GetData(key); err != nil {
 			return
 		}
 		if !found {
@@ -975,14 +1066,14 @@ func (d *Data) sendJSONKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, ke
 	return
 }
 
-func (d *Data) sendTarKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, keys []string) (writtenBytes int, err error) {
+func (d *Data) sendTarKV(w http.ResponseWriter, keys []string) (writtenBytes int, err error) {
 	var n int
 	w.Header().Set("Content-type", "application/tar")
 	tw := tar.NewWriter(w)
 	for _, key := range keys {
 		var val []byte
 		var found bool
-		if val, found, err = d.GetData(ctx, key); err != nil {
+		if val, found, err = d.GetData(key); err != nil {
 			return
 		}
 		if !found {
@@ -1005,13 +1096,13 @@ func (d *Data) sendTarKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, key
 	return
 }
 
-func (d *Data) sendProtobufKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, keys Keys) (writtenBytes int, err error) {
+func (d *Data) sendProtobufKV(w http.ResponseWriter, keys Keys) (writtenBytes int, err error) {
 	var kvs KeyValues
 	kvs.Kvs = make([]*KeyValue, len(keys.Keys))
 	for i, key := range keys.Keys {
 		var val []byte
 		var found bool
-		if val, found, err = d.GetData(ctx, key); err != nil {
+		if val, found, err = d.GetData(key); err != nil {
 			return
 		}
 		if !found {
@@ -1036,7 +1127,7 @@ func (d *Data) sendProtobufKV(w http.ResponseWriter, ctx *datastore.VersionedCtx
 	return
 }
 
-func (d *Data) handleKeyValues(w http.ResponseWriter, r *http.Request, uuid dvid.UUID, ctx *datastore.VersionedCtx) (numKeys, writtenBytes int, err error) {
+func (d *Data) handleKeyValues(w http.ResponseWriter, r *http.Request, uuid dvid.UUID) (numKeys, writtenBytes int, err error) {
 	tarOut := (r.URL.Query().Get("jsontar") == "true") || (r.URL.Query().Get("tar") == "true")
 	jsonOut := r.URL.Query().Get("json") == "true"
 	checkVal := r.URL.Query().Get("check") == "true"
@@ -1056,26 +1147,26 @@ func (d *Data) handleKeyValues(w http.ResponseWriter, r *http.Request, uuid dvid
 			return
 		}
 		numKeys = len(keys)
-		writtenBytes, err = d.sendTarKV(w, ctx, keys)
+		writtenBytes, err = d.sendTarKV(w, keys)
 	case jsonOut:
 		var keys []string
 		if err = json.Unmarshal(data, &keys); err != nil {
 			return
 		}
 		numKeys = len(keys)
-		writtenBytes, err = d.sendJSONKV(w, ctx, keys, checkVal)
+		writtenBytes, err = d.sendJSONKV(w, keys, checkVal)
 	default:
 		var keys Keys
 		if err = keys.Unmarshal(data); err != nil {
 			return
 		}
 		numKeys = len(keys.Keys)
-		writtenBytes, err = d.sendProtobufKV(w, ctx, keys)
+		writtenBytes, err = d.sendProtobufKV(w, keys)
 	}
 	return
 }
 
-func (d *Data) handleIngest(r *http.Request, uuid dvid.UUID, ctx *datastore.VersionedCtx) error {
+func (d *Data) handleIngest(r *http.Request, uuid dvid.UUID) error {
 	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return err
@@ -1085,7 +1176,7 @@ func (d *Data) handleIngest(r *http.Request, uuid dvid.UUID, ctx *datastore.Vers
 		return err
 	}
 	for _, kv := range kvs.Kvs {
-		err = d.PutData(ctx, kv.Key, kv.Value)
+		err = d.PutData(kv.Key, kv.Value)
 		if err != nil {
 			return err
 		}
@@ -1099,7 +1190,7 @@ func (d *Data) handleIngest(r *http.Request, uuid dvid.UUID, ctx *datastore.Vers
 		}
 		jsonmsg, _ := json.Marshal(msginfo)
 		if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
-			dvid.Errorf("Error on sending keyvalue POST op to kafka: %v\n", err)
+			dvid.Errorf("Error on sending neuronjson POST op to kafka: %v\n", err)
 		}
 	}
 	return nil

@@ -117,11 +117,13 @@ go get cloud.google.com/go/compute/metadata
 
 go get google.golang.org/api/option
 go get google.golang.org/api/option/internaloption
+go get google.golang.org/api/iterator
 go get google.golang.org/grpc
 
 # gcloud
 go get cloud.google.com/go/bigtable
 go get cloud.google.com/go/storage
+go get cloud.google.com/go/firestore
 go get github.com/golang/protobuf/proto
 go get github.com/golang/protobuf/protoc-gen-go
 

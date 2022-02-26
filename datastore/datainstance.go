@@ -294,7 +294,7 @@ type VersionInitializer interface {
 
 // DataInitializer is a data instance that needs to be initialized, e.g., start
 // long-lived goroutines that handle data syncs, etc.  Initialization should only
-// constitute supporting data and goroutines and not change the data itself like
+// constitute ephemeral data and goroutines and not require persisting data itself like
 // InstanceMutator, so no saveNeeded flag needs to be returned.
 type DataInitializer interface {
 	InitDataHandlers() error
