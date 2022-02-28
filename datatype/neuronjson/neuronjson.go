@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	Version  = "0.2"
+	Version  = "0.1"
 	RepoURL  = "github.com/janelia-flyem/dvid/datatype/neuronjson"
 	TypeName = "neuronjson"
 )
@@ -130,6 +130,11 @@ POST <api URL>/node/<UUID>/<data name>/tags?<options>
 	replace   Set to "true" if you want passed tags to replace and not be appended to current tags.
 				Default operation is false (append).
 			   	
+GET  <api URL>/node/<UUID>/<data name>/all
+
+	Returns a list of JSON annotations
+
+			
 GET  <api URL>/node/<UUID>/<data name>/keys
 
 	Returns all keys for this data instance in JSON format:
@@ -285,7 +290,7 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 
 	GET Query-string Options (only one of these allowed):
 
-	json        If
+	json        If true, returns JSON
 	jsontar		If set to any value for GET, query body must be JSON array of string keys
 				and the returned data will be a tarfile with keys as file names.
 
@@ -422,6 +427,19 @@ type Data struct {
 	dbMu    sync.RWMutex
 }
 
+// CopyPropertiesFrom copies the data instance-specific properties from a given
+// data instance into the receiver's properties. Fulfills the datastore.PropertyCopier interface.
+func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSpec) error {
+	d2, ok := src.(*Data)
+	if !ok {
+		return fmt.Errorf("unable to copy properties from non-neuronjson data %q", src.DataName())
+	}
+
+	d.ProjectID = d2.ProjectID
+	d.DatasetID = d2.DatasetID
+	return nil
+}
+
 func (d *Data) Equals(d2 *Data) bool {
 	return d.Data.Equals(d2.Data)
 }
@@ -454,6 +472,15 @@ func (d *Data) GobEncode() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// Remove any fields that have underscore prefix.
+func removeReservedFields(data map[string]interface{}) {
+	for field := range data {
+		if len(field) > 0 && field[0] == '_' {
+			delete(data, field)
+		}
+	}
+}
+
 // Parses keys as body ids, including things like 'a' that might be used in keyrange/0/a.
 func parseKeyStr(key string) (uint64, error) {
 	if len(key) == 0 {
@@ -473,11 +500,11 @@ func getBodyID(data map[string]interface{}) (uint64, error) {
 	if !ok {
 		return 0, fmt.Errorf("neuronjson record has no 'bodyid' field")
 	}
-	bodyid, ok := bodyidVal.(uint64)
+	bodyid, ok := bodyidVal.(int64)
 	if !ok {
 		return 0, fmt.Errorf("neuronjson record 'bodyid' is not a uint64 value: %v", bodyidVal)
 	}
-	return bodyid, nil
+	return uint64(bodyid), nil
 }
 
 // --- DataInitializer interface ---
@@ -508,6 +535,7 @@ func (d *Data) InitDataHandlers() error {
 			return fmt.Errorf("documents iterator: %v", err)
 		}
 		annotation := doc.Data()
+		// dvid.Infof("annotation: %v\n", annotation)
 		bodyid, err := getBodyID(annotation)
 		if err != nil {
 			return err
@@ -572,6 +600,19 @@ func (d *Data) GetKeysInRange(keyBeg, keyEnd string) ([]string, error) {
 	return nil, nil
 }
 
+func (d *Data) GetAll() ([]map[string]interface{}, error) {
+	d.dbMu.RLock()
+	out := make([]map[string]interface{}, len(d.db))
+	i := 0
+	for _, data := range d.db {
+		removeReservedFields(data)
+		out[i] = data
+		i++
+	}
+	d.dbMu.RUnlock()
+	return out, nil
+}
+
 func (d *Data) GetKeys() ([]string, error) {
 	keyStrings := make([]string, len(d.ids))
 	d.dbMu.RLock()
@@ -594,6 +635,7 @@ func (d *Data) GetData(keyStr string) ([]byte, bool, error) {
 	if !found {
 		return nil, false, nil
 	}
+	removeReservedFields(value)
 	data, err := json.Marshal(value)
 	return data, true, err
 }
@@ -741,6 +783,21 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprint(w, string(jsonBytes))
 		}
+
+	case "all":
+		kvList, err := d.GetAll()
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		jsonBytes, err := json.Marshal(kvList)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, string(jsonBytes))
+		comment = "HTTP GET all"
 
 	case "keys":
 		keyList, err := d.GetKeys()

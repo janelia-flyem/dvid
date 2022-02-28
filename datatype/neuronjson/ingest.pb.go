@@ -84,9 +84,9 @@ func (m *KeyValues) GetKvs() []*KeyValue {
 }
 
 func init() {
-	proto.RegisterType((*KeyValue)(nil), "keyvalue.KeyValue")
-	proto.RegisterType((*Keys)(nil), "keyvalue.Keys")
-	proto.RegisterType((*KeyValues)(nil), "keyvalue.KeyValues")
+	proto.RegisterType((*KeyValue)(nil), "neuronjson.KeyValue")
+	proto.RegisterType((*Keys)(nil), "neuronjson.Keys")
+	proto.RegisterType((*KeyValues)(nil), "neuronjson.KeyValues")
 }
 func (this *KeyValue) Equal(that interface{}) bool {
 	if that == nil {
