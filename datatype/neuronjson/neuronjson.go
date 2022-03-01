@@ -41,7 +41,7 @@ API for 'neuronjson' datatype (github.com/janelia-flyem/dvid/datatype/neuronjson
 The neuronjson datatype is similar supports most of the keyvalue datatype methods
 but extends them to include queries.  
 
-The keys are body identifier uint64 thatare represented as strings for 
+The keys are body identifier uint64 that are represented as strings for 
 backward-compatibility with clients that used to use the keyvalue datatype 
 for these neuron JSON annotations. The values are assumed to be JSON data, 
 and the queries are similar to how Firestore handles queries.
@@ -132,7 +132,7 @@ POST <api URL>/node/<UUID>/<data name>/tags?<options>
 			   	
 GET  <api URL>/node/<UUID>/<data name>/all
 
-	Returns a list of JSON annotations
+	Returns a list of all JSON annotations
 
 			
 GET  <api URL>/node/<UUID>/<data name>/keys
@@ -394,7 +394,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 }
 
 func (dtype *Type) Help() string {
-	return fmt.Sprintf(helpMessage)
+	return fmt.Sprint(helpMessage)
 }
 
 // GetByUUIDName returns a pointer to labelblk data given a UUID and data name.
@@ -405,7 +405,7 @@ func GetByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	}
 	data, ok := source.(*Data)
 	if !ok {
-		return nil, fmt.Errorf("Instance '%s' is not a neuronjson datatype!", name)
+		return nil, fmt.Errorf("instance '%s' is not a neuronjson datatype", name)
 	}
 	return data, nil
 }
@@ -447,10 +447,17 @@ func (d *Data) Equals(d2 *Data) bool {
 func (d *Data) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Base     *datastore.Data
-		Extended struct{}
+		Extended struct {
+			ProjectID, DatasetID string
+		}
 	}{
 		d.Data,
-		struct{}{},
+		struct {
+			ProjectID, DatasetID string
+		}{
+			ProjectID: d.ProjectID,
+			DatasetID: d.DatasetID,
+		},
 	})
 }
 
@@ -460,6 +467,12 @@ func (d *Data) GobDecode(b []byte) error {
 	if err := dec.Decode(&(d.Data)); err != nil {
 		return err
 	}
+	if err := dec.Decode(&(d.ProjectID)); err != nil {
+		return fmt.Errorf("decoding neuronjson %q: no ProjectID", d.DataName())
+	}
+	if err := dec.Decode(&(d.DatasetID)); err != nil {
+		return fmt.Errorf("decoding neuronjson %q: no DatasetID", d.DataName())
+	}
 	return nil
 }
 
@@ -467,6 +480,12 @@ func (d *Data) GobEncode() ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(d.Data); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.ProjectID); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.DatasetID); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
