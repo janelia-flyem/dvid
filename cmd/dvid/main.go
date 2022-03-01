@@ -69,6 +69,9 @@ var (
 
 	// Accept and send stdin to server for use in commands if true.
 	useStdin = flag.Bool("stdin", false, "")
+
+	// Number of seconds to sleep before starting
+	sleepSecs = flag.Int("sleep", 0, "")
 )
 
 const helpMessage = `
@@ -85,6 +88,7 @@ Usage: dvid [options] <command>
       -stdin      (flag)    Accept and send stdin to server for use in commands.
       -verbose    (flag)    Run in verbose mode.
       -fullwrite  (flag)    Allow limited ops to all nodes, even committed ones. [Limit to expert use]
+	  -sleep      =number	Number of seconds to sleep before starting. Useful for remote debugging.
   -h, -help       (flag)    Show help message
 
 Commands that can be performed without a running server:
@@ -192,6 +196,11 @@ func main() {
 		dvid.NumCPU = 1
 	}
 	runtime.GOMAXPROCS(dvid.NumCPU)
+
+	// Optional sleep before starting.
+	if *sleepSecs != 0 {
+		time.Sleep(time.Duration(*sleepSecs) * time.Second)
+	}
 
 	command := dvid.Command(flag.Args())
 	if err := DoCommand(command); err != nil {
