@@ -420,6 +420,10 @@ type Data struct {
 	// Dataset to keep in-memory
 	DatasetID string
 
+	// Persistence for schema and schema_batch necessary for neuTu/neu3 clients.
+	Schema      string
+	SchemaBatch string
+
 	// The in-memory dataset.
 	db      map[uint64]map[string]interface{}
 	ids     []uint64 // sorted list of body ids
@@ -437,6 +441,8 @@ func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSp
 
 	d.ProjectID = d2.ProjectID
 	d.DatasetID = d2.DatasetID
+	d.Schema = d2.Schema
+	d.SchemaBatch = d2.SchemaBatch
 	return nil
 }
 
@@ -448,15 +454,17 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Base     *datastore.Data
 		Extended struct {
-			ProjectID, DatasetID string
+			ProjectID, DatasetID, Schema, SchemaBatch string
 		}
 	}{
 		d.Data,
 		struct {
-			ProjectID, DatasetID string
+			ProjectID, DatasetID, Schema, SchemaBatch string
 		}{
-			ProjectID: d.ProjectID,
-			DatasetID: d.DatasetID,
+			ProjectID:   d.ProjectID,
+			DatasetID:   d.DatasetID,
+			Schema:      d.Schema,
+			SchemaBatch: d.SchemaBatch,
 		},
 	})
 }
@@ -473,6 +481,12 @@ func (d *Data) GobDecode(b []byte) error {
 	if err := dec.Decode(&(d.DatasetID)); err != nil {
 		return fmt.Errorf("decoding neuronjson %q: no DatasetID", d.DataName())
 	}
+	if err := dec.Decode(&(d.Schema)); err != nil {
+		return fmt.Errorf("decoding neuronjson %q: no Schema", d.DataName())
+	}
+	if err := dec.Decode(&(d.SchemaBatch)); err != nil {
+		return fmt.Errorf("decoding neuronjson %q: no SchemaBatch", d.DataName())
+	}
 	return nil
 }
 
@@ -486,6 +500,12 @@ func (d *Data) GobEncode() ([]byte, error) {
 		return nil, err
 	}
 	if err := enc.Encode(d.DatasetID); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.Schema); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.SchemaBatch); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -528,36 +548,35 @@ func getBodyID(data map[string]interface{}) (uint64, error) {
 
 // --- DataInitializer interface ---
 
-// InitDataHandlers initializes ephemeral data for this instance, which is
-// the in-memory keyvalue store where the values are neuron annotation JSON.
-func (d *Data) InitDataHandlers() error {
-	ctx := context.Background()
+func (d *Data) loadFirestoreDB() {
 	tlog := dvid.NewTimeLog()
+	numdocs := 0
+
+	ctx := context.Background()
 	client, err := firestore.NewClient(ctx, d.ProjectID)
 	if err != nil {
-		return fmt.Errorf("firestore.NewClient: %v", err)
+		dvid.Errorf("Could not connect to Firestore for project %q: %v\n", d.ProjectID, err)
+		return
 	}
 	defer client.Close()
-
-	d.db = make(map[uint64]map[string]interface{})
-	d.dbMu.Lock()
-	defer d.dbMu.Unlock()
-
-	numdocs := 0
 	it := client.Collection("clio_annotations_global").Doc("neurons").Collection(d.DatasetID).Where("_head", "==", true).Documents(ctx)
+
+	d.dbMu.Lock() // Note that the mutex is NOT unlocked if firestore DB doesn't load.
+
 	for {
 		doc, err := it.Next()
 		if err == iterator.Done {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("documents iterator: %v", err)
+			dvid.Errorf("documents iterator error -- can't load Firebase for project %q, dataset %q: %v", d.ProjectID, d.DatasetID, err)
+			return
 		}
 		annotation := doc.Data()
-		// dvid.Infof("annotation: %v\n", annotation)
 		bodyid, err := getBodyID(annotation)
 		if err != nil {
-			return err
+			dvid.Errorf("error getting bodyID from annotation: %v\n", annotation)
+			return
 		}
 		d.db[bodyid] = annotation
 		d.ids = append(d.ids, bodyid) // assumes there are no duplicate bodyid among HEAD annotations
@@ -567,9 +586,17 @@ func (d *Data) InitDataHandlers() error {
 		}
 	}
 	sort.Slice(d.ids, func(i, j int) bool { return d.ids[i] < d.ids[j] })
-	tlog.Infof("Completed loading of %d HEAD annotations", numdocs)
-	d.dbReady = true
 
+	tlog.Infof("Completed loading of %d HEAD annotations", numdocs)
+	d.dbMu.Unlock()
+	d.dbReady = true
+}
+
+// InitDataHandlers initializes ephemeral data for this instance, which is
+// the in-memory keyvalue store where the values are neuron annotation JSON.
+func (d *Data) InitDataHandlers() error {
+	d.db = make(map[uint64]map[string]interface{})
+	go d.loadFirestoreDB()
 	return nil
 }
 
@@ -737,7 +764,7 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 // --- DataService interface ---
 
 func (d *Data) Help() string {
-	return fmt.Sprintf(helpMessage)
+	return fmt.Sprint(helpMessage)
 }
 
 // DoRPC acts as a switchboard for RPC commands.
@@ -746,7 +773,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	case "put":
 		return d.put(request, reply)
 	default:
-		return fmt.Errorf("Unknown command.  Data '%s' [%s] does not support '%s' command.",
+		return fmt.Errorf("unknown command.  Data '%s' [%s] does not support '%s' command",
 			d.DataName(), d.TypeName(), request.TypeCommand())
 	}
 }
@@ -765,6 +792,17 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	if len(parts) < 4 {
 		server.BadRequest(w, r, "incomplete API specification")
 		return
+	}
+
+	// abort requests if database wasn't able to be initialized.
+	switch parts[3] {
+	case "help", "info", "tags":
+		// can operate without database
+	default:
+		if !d.dbReady {
+			server.BadRequest(w, r, "firestore not available, see logs")
+			return
+		}
 	}
 
 	var comment string
@@ -801,6 +839,94 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			}
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprint(w, string(jsonBytes))
+		}
+
+	case "schema":
+		switch action {
+		case "head":
+			if d.Schema != "" {
+				w.WriteHeader(http.StatusOK)
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+			}
+			return
+
+		case "get":
+			value := []byte(d.Schema)
+			if _, err := w.Write(value); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			comment = fmt.Sprintf("HTTP GET schema of neuronjson %q: %d bytes (%s)", d.DataName(), len(value), url)
+
+		case "delete":
+			d.Schema = ""
+			if err := datastore.SaveDataByUUID(uuid, d); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			comment = fmt.Sprintf("HTTP DELETE schema of neuronjson %q (%s)", d.DataName(), url)
+
+		case "post":
+			data, err := ioutil.ReadAll(r.Body)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			d.Schema = string(data)
+			if err := datastore.SaveDataByUUID(uuid, d); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			comment = fmt.Sprintf("HTTP POST schema neuronjson '%s': %d bytes (%s)", d.DataName(), len(data), url)
+		default:
+			server.BadRequest(w, r, "key endpoint does not support %q HTTP verb", action)
+			return
+		}
+
+	case "schema_batch":
+		switch action {
+		case "head":
+			if d.SchemaBatch != "" {
+				w.WriteHeader(http.StatusOK)
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+			}
+			return
+
+		case "get":
+			value := []byte(d.SchemaBatch)
+			if _, err := w.Write(value); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			comment = fmt.Sprintf("HTTP GET schema_batch of neuronjson %q: %d bytes (%s)", d.DataName(), len(value), url)
+
+		case "delete":
+			d.SchemaBatch = ""
+			if err := datastore.SaveDataByUUID(uuid, d); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			comment = fmt.Sprintf("HTTP DELETE schema_batch of neuronjson %q (%s)", d.DataName(), url)
+
+		case "post":
+			data, err := ioutil.ReadAll(r.Body)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			d.SchemaBatch = string(data)
+			if err := datastore.SaveDataByUUID(uuid, d); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			comment = fmt.Sprintf("HTTP POST schema_batch neuronjson '%s': %d bytes (%s)", d.DataName(), len(data), url)
+		default:
+			server.BadRequest(w, r, "key endpoint does not support %q HTTP verb", action)
+			return
 		}
 
 	case "all":
