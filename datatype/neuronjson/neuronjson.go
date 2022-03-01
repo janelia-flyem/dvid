@@ -642,8 +642,29 @@ func (d *Data) KeyExists(keyStr string) (bool, error) {
 	return found, nil
 }
 
-func (d *Data) GetKeysInRange(keyBeg, keyEnd string) ([]string, error) {
-	return nil, nil
+func (d *Data) GetKeysInRange(keyBeg, keyEnd string) (keys []string, err error) {
+	var bodyidBeg, bodyidEnd uint64
+	if bodyidBeg, err = parseKeyStr(keyBeg); err != nil {
+		return
+	}
+	if bodyidEnd, err = parseKeyStr(keyEnd); err != nil {
+		return
+	}
+	begI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] >= bodyidBeg })
+	endI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] > bodyidEnd })
+	size := endI - begI
+	if size <= 0 {
+		keys = []string{}
+		return
+	}
+	keys = make([]string, size)
+	pos := 0
+	for i := begI; i < endI; i++ {
+		bodyid := d.ids[i]
+		keys[pos] = strconv.FormatUint(bodyid, 10)
+		pos++
+	}
+	return
 }
 
 func (d *Data) GetAll() ([]map[string]interface{}, error) {
@@ -1144,12 +1165,12 @@ func (d *Data) sendJSONValuesInRange(w http.ResponseWriter, r *http.Request, key
 		return 0, err
 	}
 	begI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] >= bodyidBeg })
-	endI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] >= bodyidEnd })
+	endI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] > bodyidEnd })
 
 	// Collect JSON values in range
 	var kvs KeyValues
 	var wroteVal bool
-	for i := begI; i <= endI; i++ {
+	for i := begI; i < endI; i++ {
 		bodyid := d.ids[i]
 		jsonData, ok := d.db[bodyid]
 		if !ok {
