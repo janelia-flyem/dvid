@@ -1169,7 +1169,7 @@ func (d *Data) PutBlob(b []byte) (ref string, err error) {
 	return
 }
 
-func (d *Data) ProduceKafkaMsg(b []byte) error {
+func (d *Data) PublishKafkaMsg(b []byte) error {
 	// create topic (repo ID + data instance uuid)
 	// NOTE: Kafka server must be configured to allow topic creation from
 	// messages sent to a non-existent topic

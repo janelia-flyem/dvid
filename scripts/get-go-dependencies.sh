@@ -194,34 +194,9 @@ ensure_checkout ${SWIFT_REPO} ${SWIFT_DIR} ${SWIFT_TAG} ${SWIFT_SHA}
 go get gocloud.dev
 go get github.com/google/wire
 go get golang.org/x/xerrors
+go get golang.org/x/sync/errgroup
 
-# kafka
-KAFKA_GO_REPO=https://github.com/confluentinc/confluent-kafka-go
-KAFKA_GO_DIR=${GOPATH}/src/github.com/confluentinc/confluent-kafka-go
-KAFKA_GO_TAG=v1.3.0
-ensure_checkout ${KAFKA_GO_REPO} ${KAFKA_GO_DIR} ${KAFKA_GO_TAG}
-
-#if [ $(uname) == "Linux" ]; then
-    # For some reason, the confluent kafka package cannot be built correctly unless you set LD_LIBRARY_PATH,
-    # despite the fact that our copy of librdkafka.so does correctly provide an internal RPATH.
-    # (I think the kafka build scripts are not properly calling the 'ld' command with -rpath or -rpath-link.)
-    #
-    # FWIW, The errors look like this:
-    # 
-    #   #github.com/confluentinc/confluent-kafka-go/kafka
-    #   /opt/rh/devtoolset-3/root/usr/libexec/gcc/x86_64-redhat-linux/4.9.2/ld: warning: libssl.so.1.0.0, needed by /opt/conda/envs/test-dvid/lib/librdkafka.so, not found (try using -rpath or -rpath-link)
-    #   /opt/rh/devtoolset-3/root/usr/libexec/gcc/x86_64-redhat-linux/4.9.2/ld: warning: liblz4.so.1, needed by /opt/conda/envs/test-dvid/lib/librdkafka.so, not found (try using -rpath or -rpath-link)
-    #   /opt/rh/devtoolset-3/root/usr/libexec/gcc/x86_64-redhat-linux/4.9.2/ld: warning: libcrypto.so.1.0.0, needed by /opt/conda/envs/test-dvid/lib/librdkafka.so, not found (try using -rpath or -rpath-link)
-    #   /opt/conda/envs/test-dvid/lib/librdkafka.so: undefined reference to `SHA256'
-    #   /opt/conda/envs/test-dvid/lib/librdkafka.so: undefined reference to `SSL_get_error'
-    #   /opt/conda/envs/test-dvid/lib/librdkafka.so: undefined reference to `PKCS12_free'
-    #   ...
-
-    # So simply define LD_LIBRARY_PATH first.
-    #echo "need to set LD_LIBRARY_PATH"
-    #export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib 
-    # LD_LIBRARY_PATH=${CONDA_PREFIX}/lib go build github.com/confluentinc/confluent-kafka-go/kafka
-#fi
-go build github.com/confluentinc/confluent-kafka-go/kafka
+# Sarama for kafka support
+go get github.com/Shopify/sarama
 
 echo "Done fetching third-party go sources."

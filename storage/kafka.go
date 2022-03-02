@@ -7,11 +7,11 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 
-	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"gocloud.dev/pubsub"
+	"gocloud.dev/pubsub/kafkapubsub"
 )
 
 var (
@@ -20,22 +20,22 @@ var (
 )
 
 var (
-	// global producer
-	kafkaProducer *kafka.Producer
+	// kafkaServers
+	kafkaServers []string
+
+	// activity pubsub
+	kafkaActivityTopic *pubsub.Topic
 
 	// the kafka topic for activity logging
-	kafkaActivityTopic string
+	kafkaActivityTopicName string
 
 	// topic suffixes per data UUID for mutation logging
 	kafkaTopicSuffixes map[dvid.UUID]string
 
-	// have topics been created and verified
-	kafkaTopicExists   map[string]bool
-	kafkaTopicExistsMu sync.RWMutex
+	// topics per data UUID for mutation logging
+	kafkaTopics   map[string]*pubsub.Topic
+	kafkaTopicsMu sync.RWMutex
 )
-
-// assume very low throughput needed and therefore always one partition
-const partitionID = 0
 
 // KafkaMaxMessageSize is the max message size in bytes for a Kafka message.
 const KafkaMaxMessageSize = 980 * dvid.Kilo
@@ -43,15 +43,11 @@ const KafkaMaxMessageSize = 980 * dvid.Kilo
 // KafkaConfig describes kafka servers and an optional local file directory into which
 // failed messages will be stored.
 type KafkaConfig struct {
-	TopicActivity  string   // if supplied, will be override topic for activity log
-	TopicPrefix    string   // if supplied, will be prefixed to any mutation logging
-	TopicSuffixes  []string // optional topic suffixes per data UUID
-	Servers        []string
-	SecProtocol    string
-	SASLMechanisms string
-	SASLUsername   string
-	SASLPassword   string
-	BufferSize     int // queue.buffering.max.messages
+	TopicActivity string   // if supplied, will be override topic for activity log
+	TopicPrefix   string   // if supplied, will be prefixed to any mutation logging
+	TopicSuffixes []string // optional topic suffixes per data UUID
+	Servers       []string
+	BufferSize    int // queue.buffering.max.messages
 }
 
 // KafkaTopicSuffix returns any configured suffix for the given data UUID or the empty string.
@@ -66,12 +62,14 @@ func KafkaTopicSuffix(dataUUID dvid.UUID) string {
 	return suffix
 }
 
-// Initialize sets up default activity topic and launches goroutine for handling async kafka messages.
+// Initialize sets up default activity topic and support for on-the-fly mutation topics
 func (kc KafkaConfig) Initialize(hostID string) error {
 	if len(kc.Servers) == 0 {
 		return nil
 	}
-	kafkaTopicExists = make(map[string]bool)
+	dvid.Infof("Trying to initialize kafka...")
+	kafkaServers = kc.Servers
+	kafkaTopics = make(map[string]*pubsub.Topic)
 	kafkaTopicSuffixes = make(map[dvid.UUID]string)
 	for _, spec := range kc.TopicSuffixes {
 		parts := strings.Split(spec, ":")
@@ -87,161 +85,86 @@ func (kc KafkaConfig) Initialize(hostID string) error {
 	}
 
 	if kc.TopicActivity != "" {
-		kafkaActivityTopic = kc.TopicActivity
+		kafkaActivityTopicName = kc.TopicActivity
 	} else {
-		kafkaActivityTopic = "dvidactivity-" + hostID
+		kafkaActivityTopicName = "dvidactivity-" + hostID
 	}
-	reg, err := regexp.Compile("[^a-zA-Z0-9\\._\\-]+")
+	reg, err := regexp.Compile(`[^a-zA-Z0-9\\._\\-]+`)
 	if err != nil {
 		return err
 	}
-	kafkaActivityTopic = reg.ReplaceAllString(kafkaActivityTopic, "-")
+	kafkaActivityTopicName = reg.ReplaceAllString(kafkaActivityTopicName, "-")
 
-	configMap := kafka.ConfigMap{
-		"client.id":         "dvid-kafkaclient",
-		"bootstrap.servers": strings.Join(kc.Servers, ","),
-	}
-	if kc.SecProtocol != "" {
-		configMap["security.protocol"] = kc.SecProtocol
-	}
-	if kc.SASLMechanisms != "" {
-		configMap["sasl.mechanisms"] = kc.SASLMechanisms
-	}
-	if kc.SASLUsername != "" {
-		configMap["sasl.username"] = kc.SASLUsername
-	}
-	if kc.SASLPassword != "" {
-		configMap["sasl.password"] = kc.SASLPassword
-	}
-	if kc.BufferSize != 0 {
-		configMap["queue.buffering.max.messages"] = kc.BufferSize
-	}
-	if kafkaProducer, err = kafka.NewProducer(&configMap); err != nil {
+	config := kafkapubsub.MinimalConfig()
+	if kafkaActivityTopic, err = kafkapubsub.OpenTopic(kc.Servers, config, kafkaActivityTopicName, nil); err != nil {
 		return err
 	}
-
-	go func() {
-		for e := range kafkaProducer.Events() {
-			switch ev := e.(type) {
-			case *kafka.Message:
-				if ev.TopicPartition.Error != nil {
-					dvid.Errorf("Delivery failed to kafka (topic %s): %v\n", *ev.TopicPartition.Topic, ev.TopicPartition.Error)
-				}
-			}
-		}
-	}()
+	dvid.Infof("Finished with initial Kafka setup")
 	return nil
 }
 
 // KafkaShutdown makes sure that the kafka queue is flushed before stopping.
 func KafkaShutdown() {
-	if kafkaProducer != nil {
-		dvid.Infof("Shutting down kafka producer %q...\n", kafkaProducer.String())
-		var numTries int
-		for {
-			queueRemain := kafkaProducer.Flush(15 * 1000) // wait for max 15 seconds
-			dvid.Infof("Kafka queue remaining: %d\n", queueRemain)
-			if queueRemain == 0 {
-				break
-			}
-			numTries++
-			if numTries == 4 {
-				dvid.Criticalf("Flushed for 60 seconds but still have %d in kafka queue.  Aborting.\n", numTries)
-				break
-			}
+	if kafkaServers != nil {
+		if kafkaActivityTopic != nil {
+			dvid.Infof("Shutting down kafka activity topic %q...\n", kafkaActivityTopicName)
+			ctx := context.Background()
+			kafkaActivityTopic.Shutdown(ctx)
+		}
+		for name, kafkaTopic := range kafkaTopics {
+			dvid.Infof("Shutting down kafka mutation topic %q...\n", name)
+			ctx := context.Background()
+			kafkaTopic.Shutdown(ctx)
 		}
 	}
 }
 
 // LogActivityToKafka publishes activity
 func LogActivityToKafka(activity map[string]interface{}) {
-	if kafkaActivityTopic != "" {
+	if kafkaActivityTopic != nil {
 		go func() {
 			jsonmsg, err := json.Marshal(activity)
 			if err != nil {
 				dvid.Errorf("unable to marshal activity for kafka logging: %v\n", err)
 			}
-			if err := KafkaProduceMsg(jsonmsg, kafkaActivityTopic); err != nil {
-				dvid.Errorf("unable to publish activity to kafka activity topic: %v\n", err)
+			ctx := context.Background()
+			if err := kafkaActivityTopic.Send(ctx, &pubsub.Message{Body: jsonmsg}); err != nil {
+				dvid.Errorf("unable to publish activity to kafka topic %q: %v\n", kafkaActivityTopicName, err)
 			}
 		}()
 	}
 }
 
 // KafkaProduceMsg sends a message to kafka
-func KafkaProduceMsg(value []byte, topic string) error {
-	if kafkaProducer != nil {
-		if err := topicAvailable(topic); err != nil {
-			return err
-		}
-		kafkaMsg := &kafka.Message{
-			TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
-			Value:          value,
-			Timestamp:      time.Now(),
-		}
-		if err := kafkaProducer.Produce(kafkaMsg, nil); err != nil {
-			dvid.Errorf("Error in sending message to kafka topic %q: %v\n", topic, err)
-
-			// Store data in append-only log
-			storeFailedMsg("failed-kafka-"+topic, value)
-
-			// Notify via email at least once per 10 minutes
-			notification := fmt.Sprintf("Error in kafka messaging to topic %q, partition id %d: %v\n", topic, partitionID, err)
-			if err := dvid.SendEmail("Kafka Error", notification, nil, "kakfa"); err != nil {
-				dvid.Errorf("couldn't send email about kafka error: %v\n", err)
-			}
-
-			return fmt.Errorf("cannot produce message to topic %q, partition %d: %s", topic, partitionID, err)
-		}
-	}
-	return nil
-}
-
-func topicAvailable(topic string) error {
-	if topic == "" {
-		return fmt.Errorf("can't use empty topic name")
-	}
-	kafkaTopicExistsMu.RLock()
-	val, found := kafkaTopicExists[topic]
-	kafkaTopicExistsMu.RUnlock()
-	if found {
-		if val == false {
-			return fmt.Errorf("unable to create topic %q [cached attempt]", topic)
-		}
+func KafkaProduceMsg(value []byte, topicName string) (err error) {
+	if kafkaTopics == nil {
 		return nil
 	}
-	kafkaTopicExistsMu.Lock()
-	defer kafkaTopicExistsMu.Unlock()
-	a, err := kafka.NewAdminClientFromProducer(kafkaProducer)
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	kafkaTopicsMu.RLock()
+	topic, found := kafkaTopics[topicName]
+	kafkaTopicsMu.RUnlock()
+	if !found {
+		kafkaTopicsMu.Lock()
+		defer kafkaTopicsMu.Unlock()
 
-	maxDur, err := time.ParseDuration("5s")
-	if err != nil {
-		return err
+		config := kafkapubsub.MinimalConfig()
+		if topic, err = kafkapubsub.OpenTopic(kafkaServers, config, topicName, nil); err != nil {
+			return err
+		}
+		kafkaTopics[topicName] = topic
 	}
-	results, err := a.CreateTopics(
-		ctx,
-		[]kafka.TopicSpecification{{
-			Topic:             topic,
-			NumPartitions:     3,
-			ReplicationFactor: 3,
-			Config: map[string]string{
-				"cleanup.policy": "compact",
-				//"delete.retention.ms": "0",
-				"max.message.bytes": "2097164",
-			},
-		}},
-		kafka.SetAdminOperationTimeout(maxDur))
-	if err != nil {
-		return err
-	}
-	kafkaTopicExists[topic] = true
-	for _, result := range results {
-		dvid.Infof("Create topic %q: %s\n", topic, result)
+	ctx := context.Background()
+	if err := topic.Send(ctx, &pubsub.Message{Body: value}); err != nil {
+		dvid.Errorf("unable to publish data to kafka topic %q: %v\n", topicName, err)
+
+		// Store data in append-only log
+		storeFailedMsg("failed-kafka-"+topicName, value)
+
+		// Notify via email at least once per 10 minutes
+		notification := fmt.Sprintf("Error in kafka messaging to topic %q, partition id %d: %v\n", topicName, err)
+		if err := dvid.SendEmail("Kafka Error", notification, nil, "kakfa"); err != nil {
+			dvid.Errorf("couldn't send email about kafka error: %v\n", err)
+		}
 	}
 	return nil
 }

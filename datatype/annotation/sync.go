@@ -445,7 +445,7 @@ func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, chunkPt dvid.ChunkPoint3
 		"Delta":     delta,
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
-	if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
+	if err := d.PublishKafkaMsg(jsonmsg); err != nil {
 		dvid.Errorf("unable to write ingest-block to kafka for data %q: %v\n", d.DataName(), err)
 	}
 }
@@ -541,7 +541,7 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, mutID uint64, chunkPt dv
 		"Delta":      delta,
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
-	if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
+	if err := d.PublishKafkaMsg(jsonmsg); err != nil {
 		dvid.Errorf("unable to write mutate-block to kafka for data %q: %v\n", d.DataName(), err)
 	}
 }
@@ -611,7 +611,7 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 			msginfo["DataRef"] = postRef
 			jsonBytes, _ = json.Marshal(msginfo)
 		}
-		if err := d.ProduceKafkaMsg(jsonBytes); err != nil {
+		if err := d.PublishKafkaMsg(jsonBytes); err != nil {
 			dvid.Errorf("unable to write merge to kafka for data %q: %v\n", d.DataName(), err)
 		}
 	}
@@ -722,7 +722,7 @@ func (d *Data) cleaveLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, o
 			msginfo["DataRef"] = postRef
 			jsonBytes, _ = json.Marshal(msginfo)
 		}
-		if err := d.ProduceKafkaMsg(jsonBytes); err != nil {
+		if err := d.PublishKafkaMsg(jsonBytes); err != nil {
 			dvid.Errorf("unable to write cleave to kafka for data %q: %v\n", d.DataName(), err)
 		}
 	}
@@ -837,7 +837,7 @@ func (d *Data) splitLabelsCoarse(batcher storage.KeyValueBatcher, v dvid.Version
 		msginfo["DataRef"] = postRef
 		jsonBytes, _ = json.Marshal(msginfo)
 	}
-	if err := d.ProduceKafkaMsg(jsonBytes); err != nil {
+	if err := d.PublishKafkaMsg(jsonBytes); err != nil {
 		dvid.Errorf("unable to write coarse split to kafka for data %q: %v\n", d.DataName(), err)
 	}
 	return nil
@@ -961,7 +961,7 @@ func (d *Data) splitLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 		msginfo["DataRef"] = postRef
 		jsonBytes, _ = json.Marshal(msginfo)
 	}
-	if err := d.ProduceKafkaMsg(jsonBytes); err != nil {
+	if err := d.PublishKafkaMsg(jsonBytes); err != nil {
 		dvid.Errorf("unable to write split to kafka for data %q: %v\n", d.DataName(), err)
 	}
 	return nil
