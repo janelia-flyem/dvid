@@ -782,6 +782,295 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 	return string(m), nil
 }
 
+func (d *Data) sendJSONValuesInRange(w http.ResponseWriter, r *http.Request, keyBeg, keyEnd string) (numKeys int, err error) {
+	if len(keyBeg) == 0 || len(keyEnd) == 0 {
+		return 0, fmt.Errorf("must specify non-empty beginning and ending key")
+	}
+	tarOut := (r.URL.Query().Get("jsontar") == "true") || (r.URL.Query().Get("tar") == "true")
+	jsonOut := r.URL.Query().Get("json") == "true"
+	checkVal := r.URL.Query().Get("check") == "true"
+	if tarOut && jsonOut {
+		err = fmt.Errorf("can only specify tar or json output, not both")
+		return
+	}
+
+	var tw *tar.Writer
+	switch {
+	case tarOut:
+		w.Header().Set("Content-type", "application/tar")
+		tw = tar.NewWriter(w)
+	case jsonOut:
+		w.Header().Set("Content-type", "application/json")
+		if _, err = w.Write([]byte("{")); err != nil {
+			return
+		}
+	default:
+	}
+
+	// Accept arbitrary strings for first and last key for range
+	bodyidBeg, err := parseKeyStr(keyBeg)
+	if err != nil {
+		return 0, err
+	}
+	bodyidEnd, err := parseKeyStr(keyEnd)
+	if err != nil {
+		return 0, err
+	}
+	begI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] >= bodyidBeg })
+	endI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] > bodyidEnd })
+
+	// Collect JSON values in range
+	var kvs KeyValues
+	var wroteVal bool
+	for i := begI; i < endI; i++ {
+		bodyid := d.ids[i]
+		jsonData, ok := d.db[bodyid]
+		if !ok {
+			dvid.Errorf("inconsistent neuronjson DB: bodyid %d at pos %d is not in db cache... skipping", bodyid, i)
+			continue
+		}
+		key := strconv.FormatUint(bodyid, 10)
+		var jsonBytes []byte
+		jsonBytes, err = json.Marshal(jsonData)
+		if err != nil {
+			return 0, err
+		}
+		switch {
+		case tarOut:
+			hdr := &tar.Header{
+				Name: key,
+				Size: int64(len(jsonBytes)),
+				Mode: 0755,
+			}
+			if err = tw.WriteHeader(hdr); err != nil {
+				return
+			}
+			if _, err = tw.Write(jsonBytes); err != nil {
+				return
+			}
+		case jsonOut:
+			if wroteVal {
+				if _, err = w.Write([]byte(",")); err != nil {
+					return
+				}
+			}
+			if len(jsonBytes) == 0 {
+				jsonBytes = []byte("{}")
+			} else if checkVal && !json.Valid(jsonBytes) {
+				return 0, fmt.Errorf("bad JSON for key %q", key)
+			}
+			out := fmt.Sprintf(`"%s":`, key)
+			if _, err = w.Write([]byte(out)); err != nil {
+				return
+			}
+			if _, err = w.Write(jsonBytes); err != nil {
+				return
+			}
+			wroteVal = true
+		default:
+			kv := &KeyValue{
+				Key:   key,
+				Value: jsonBytes,
+			}
+			kvs.Kvs = append(kvs.Kvs, kv)
+		}
+	}
+
+	switch {
+	case tarOut:
+		tw.Close()
+	case jsonOut:
+		if _, err = w.Write([]byte("}")); err != nil {
+			return
+		}
+	default:
+		numKeys = len(kvs.Kvs)
+		var serialization []byte
+		if serialization, err = kvs.Marshal(); err != nil {
+			return
+		}
+		w.Header().Set("Content-type", "application/octet-stream")
+		if _, err = w.Write(serialization); err != nil {
+			return
+		}
+	}
+	return
+}
+
+func (d *Data) sendJSONKV(w http.ResponseWriter, keys []string, checkVal bool) (writtenBytes int, err error) {
+	w.Header().Set("Content-type", "application/json")
+	if writtenBytes, err = w.Write([]byte("{")); err != nil {
+		return
+	}
+	var n int
+	var wroteVal bool
+	for _, key := range keys {
+		if wroteVal {
+			if n, err = w.Write([]byte(",")); err != nil {
+				return
+			}
+			writtenBytes += n
+		}
+		var val []byte
+		var found bool
+		if val, found, err = d.GetData(key); err != nil {
+			return
+		}
+		if !found {
+			wroteVal = false
+			continue
+		}
+		if len(val) == 0 {
+			val = []byte("{}")
+		} else if checkVal && !json.Valid(val) {
+			err = fmt.Errorf("bad JSON for key %q", key)
+			return
+		}
+		out := fmt.Sprintf(`"%s":`, key)
+		if n, err = w.Write([]byte(out)); err != nil {
+			return
+		}
+		writtenBytes += n
+		if n, err = w.Write(val); err != nil {
+			return
+		}
+		writtenBytes += n
+		wroteVal = true
+	}
+	_, err = w.Write([]byte("}"))
+	return
+}
+
+func (d *Data) sendTarKV(w http.ResponseWriter, keys []string) (writtenBytes int, err error) {
+	var n int
+	w.Header().Set("Content-type", "application/tar")
+	tw := tar.NewWriter(w)
+	for _, key := range keys {
+		var val []byte
+		var found bool
+		if val, found, err = d.GetData(key); err != nil {
+			return
+		}
+		if !found {
+			val = nil
+		}
+		hdr := &tar.Header{
+			Name: key,
+			Size: int64(len(val)),
+			Mode: 0755,
+		}
+		if err = tw.WriteHeader(hdr); err != nil {
+			return
+		}
+		if n, err = tw.Write(val); err != nil {
+			return
+		}
+		writtenBytes += n
+	}
+	tw.Close()
+	return
+}
+
+func (d *Data) sendProtobufKV(w http.ResponseWriter, keys Keys) (writtenBytes int, err error) {
+	var kvs KeyValues
+	kvs.Kvs = make([]*KeyValue, len(keys.Keys))
+	for i, key := range keys.Keys {
+		var val []byte
+		var found bool
+		if val, found, err = d.GetData(key); err != nil {
+			return
+		}
+		if !found {
+			val = nil
+		}
+		kvs.Kvs[i] = &KeyValue{
+			Key:   key,
+			Value: val,
+		}
+	}
+	var serialization []byte
+	if serialization, err = kvs.Marshal(); err != nil {
+		return
+	}
+	w.Header().Set("Content-type", "application/octet-stream")
+	if writtenBytes, err = w.Write(serialization); err != nil {
+		return
+	}
+	if writtenBytes != len(serialization) {
+		err = fmt.Errorf("unable to write all %d bytes of serialized keyvalues: only %d bytes written", len(serialization), writtenBytes)
+	}
+	return
+}
+
+func (d *Data) handleKeyValues(w http.ResponseWriter, r *http.Request, uuid dvid.UUID) (numKeys, writtenBytes int, err error) {
+	tarOut := (r.URL.Query().Get("jsontar") == "true") || (r.URL.Query().Get("tar") == "true")
+	jsonOut := r.URL.Query().Get("json") == "true"
+	checkVal := r.URL.Query().Get("check") == "true"
+	if tarOut && jsonOut {
+		err = fmt.Errorf("can only specify tar or json output, not both")
+		return
+	}
+	var data []byte
+	data, err = ioutil.ReadAll(r.Body)
+	if err != nil {
+		return
+	}
+	switch {
+	case tarOut:
+		var keys []string
+		if err = json.Unmarshal(data, &keys); err != nil {
+			return
+		}
+		numKeys = len(keys)
+		writtenBytes, err = d.sendTarKV(w, keys)
+	case jsonOut:
+		var keys []string
+		if err = json.Unmarshal(data, &keys); err != nil {
+			return
+		}
+		numKeys = len(keys)
+		writtenBytes, err = d.sendJSONKV(w, keys, checkVal)
+	default:
+		var keys Keys
+		if err = keys.Unmarshal(data); err != nil {
+			return
+		}
+		numKeys = len(keys.Keys)
+		writtenBytes, err = d.sendProtobufKV(w, keys)
+	}
+	return
+}
+
+func (d *Data) handleIngest(r *http.Request, uuid dvid.UUID) error {
+	data, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		return err
+	}
+	var kvs KeyValues
+	if err := kvs.Unmarshal(data); err != nil {
+		return err
+	}
+	for _, kv := range kvs.Kvs {
+		err = d.PutData(kv.Key, kv.Value)
+		if err != nil {
+			return err
+		}
+
+		msginfo := map[string]interface{}{
+			"Action":    "postkv",
+			"Key":       kv.Key,
+			"Bytes":     len(kv.Value),
+			"UUID":      string(uuid),
+			"Timestamp": time.Now().String(),
+		}
+		jsonmsg, _ := json.Marshal(msginfo)
+		if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+			dvid.Errorf("Error on sending neuronjson POST op to kafka: %v\n", err)
+		}
+	}
+	return nil
+}
+
 // --- DataService interface ---
 
 func (d *Data) Help() string {
@@ -1128,293 +1417,4 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 	timedLog.Infof(comment)
 	return
-}
-
-func (d *Data) sendJSONValuesInRange(w http.ResponseWriter, r *http.Request, keyBeg, keyEnd string) (numKeys int, err error) {
-	if len(keyBeg) == 0 || len(keyEnd) == 0 {
-		return 0, fmt.Errorf("must specify non-empty beginning and ending key")
-	}
-	tarOut := (r.URL.Query().Get("jsontar") == "true") || (r.URL.Query().Get("tar") == "true")
-	jsonOut := r.URL.Query().Get("json") == "true"
-	checkVal := r.URL.Query().Get("check") == "true"
-	if tarOut && jsonOut {
-		err = fmt.Errorf("can only specify tar or json output, not both")
-		return
-	}
-
-	var tw *tar.Writer
-	switch {
-	case tarOut:
-		w.Header().Set("Content-type", "application/tar")
-		tw = tar.NewWriter(w)
-	case jsonOut:
-		w.Header().Set("Content-type", "application/json")
-		if _, err = w.Write([]byte("{")); err != nil {
-			return
-		}
-	default:
-	}
-
-	// Accept arbitrary strings for first and last key for range
-	bodyidBeg, err := parseKeyStr(keyBeg)
-	if err != nil {
-		return 0, err
-	}
-	bodyidEnd, err := parseKeyStr(keyEnd)
-	if err != nil {
-		return 0, err
-	}
-	begI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] >= bodyidBeg })
-	endI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] > bodyidEnd })
-
-	// Collect JSON values in range
-	var kvs KeyValues
-	var wroteVal bool
-	for i := begI; i < endI; i++ {
-		bodyid := d.ids[i]
-		jsonData, ok := d.db[bodyid]
-		if !ok {
-			dvid.Errorf("inconsistent neuronjson DB: bodyid %d at pos %d is not in db cache... skipping", bodyid, i)
-			continue
-		}
-		key := strconv.FormatUint(bodyid, 10)
-		var jsonBytes []byte
-		jsonBytes, err = json.Marshal(jsonData)
-		if err != nil {
-			return 0, err
-		}
-		switch {
-		case tarOut:
-			hdr := &tar.Header{
-				Name: key,
-				Size: int64(len(jsonBytes)),
-				Mode: 0755,
-			}
-			if err = tw.WriteHeader(hdr); err != nil {
-				return
-			}
-			if _, err = tw.Write(jsonBytes); err != nil {
-				return
-			}
-		case jsonOut:
-			if wroteVal {
-				if _, err = w.Write([]byte(",")); err != nil {
-					return
-				}
-			}
-			if len(jsonBytes) == 0 {
-				jsonBytes = []byte("{}")
-			} else if checkVal && !json.Valid(jsonBytes) {
-				return 0, fmt.Errorf("bad JSON for key %q", key)
-			}
-			out := fmt.Sprintf(`"%s":`, key)
-			if _, err = w.Write([]byte(out)); err != nil {
-				return
-			}
-			if _, err = w.Write(jsonBytes); err != nil {
-				return
-			}
-			wroteVal = true
-		default:
-			kv := &KeyValue{
-				Key:   key,
-				Value: jsonBytes,
-			}
-			kvs.Kvs = append(kvs.Kvs, kv)
-		}
-	}
-
-	switch {
-	case tarOut:
-		tw.Close()
-	case jsonOut:
-		if _, err = w.Write([]byte("}")); err != nil {
-			return
-		}
-	default:
-		numKeys = len(kvs.Kvs)
-		var serialization []byte
-		if serialization, err = kvs.Marshal(); err != nil {
-			return
-		}
-		w.Header().Set("Content-type", "application/octet-stream")
-		if _, err = w.Write(serialization); err != nil {
-			return
-		}
-	}
-	return
-}
-
-func (d *Data) sendJSONKV(w http.ResponseWriter, keys []string, checkVal bool) (writtenBytes int, err error) {
-	w.Header().Set("Content-type", "application/json")
-	if writtenBytes, err = w.Write([]byte("{")); err != nil {
-		return
-	}
-	var n int
-	var wroteVal bool
-	for _, key := range keys {
-		if wroteVal {
-			if n, err = w.Write([]byte(",")); err != nil {
-				return
-			}
-			writtenBytes += n
-		}
-		var val []byte
-		var found bool
-		if val, found, err = d.GetData(key); err != nil {
-			return
-		}
-		if !found {
-			wroteVal = false
-			continue
-		}
-		if len(val) == 0 {
-			val = []byte("{}")
-		} else if checkVal && !json.Valid(val) {
-			err = fmt.Errorf("bad JSON for key %q", key)
-			return
-		}
-		out := fmt.Sprintf(`"%s":`, key)
-		if n, err = w.Write([]byte(out)); err != nil {
-			return
-		}
-		writtenBytes += n
-		if n, err = w.Write(val); err != nil {
-			return
-		}
-		writtenBytes += n
-		wroteVal = true
-	}
-	_, err = w.Write([]byte("}"))
-	return
-}
-
-func (d *Data) sendTarKV(w http.ResponseWriter, keys []string) (writtenBytes int, err error) {
-	var n int
-	w.Header().Set("Content-type", "application/tar")
-	tw := tar.NewWriter(w)
-	for _, key := range keys {
-		var val []byte
-		var found bool
-		if val, found, err = d.GetData(key); err != nil {
-			return
-		}
-		if !found {
-			val = nil
-		}
-		hdr := &tar.Header{
-			Name: key,
-			Size: int64(len(val)),
-			Mode: 0755,
-		}
-		if err = tw.WriteHeader(hdr); err != nil {
-			return
-		}
-		if n, err = tw.Write(val); err != nil {
-			return
-		}
-		writtenBytes += n
-	}
-	tw.Close()
-	return
-}
-
-func (d *Data) sendProtobufKV(w http.ResponseWriter, keys Keys) (writtenBytes int, err error) {
-	var kvs KeyValues
-	kvs.Kvs = make([]*KeyValue, len(keys.Keys))
-	for i, key := range keys.Keys {
-		var val []byte
-		var found bool
-		if val, found, err = d.GetData(key); err != nil {
-			return
-		}
-		if !found {
-			val = nil
-		}
-		kvs.Kvs[i] = &KeyValue{
-			Key:   key,
-			Value: val,
-		}
-	}
-	var serialization []byte
-	if serialization, err = kvs.Marshal(); err != nil {
-		return
-	}
-	w.Header().Set("Content-type", "application/octet-stream")
-	if writtenBytes, err = w.Write(serialization); err != nil {
-		return
-	}
-	if writtenBytes != len(serialization) {
-		err = fmt.Errorf("unable to write all %d bytes of serialized keyvalues: only %d bytes written", len(serialization), writtenBytes)
-	}
-	return
-}
-
-func (d *Data) handleKeyValues(w http.ResponseWriter, r *http.Request, uuid dvid.UUID) (numKeys, writtenBytes int, err error) {
-	tarOut := (r.URL.Query().Get("jsontar") == "true") || (r.URL.Query().Get("tar") == "true")
-	jsonOut := r.URL.Query().Get("json") == "true"
-	checkVal := r.URL.Query().Get("check") == "true"
-	if tarOut && jsonOut {
-		err = fmt.Errorf("can only specify tar or json output, not both")
-		return
-	}
-	var data []byte
-	data, err = ioutil.ReadAll(r.Body)
-	if err != nil {
-		return
-	}
-	switch {
-	case tarOut:
-		var keys []string
-		if err = json.Unmarshal(data, &keys); err != nil {
-			return
-		}
-		numKeys = len(keys)
-		writtenBytes, err = d.sendTarKV(w, keys)
-	case jsonOut:
-		var keys []string
-		if err = json.Unmarshal(data, &keys); err != nil {
-			return
-		}
-		numKeys = len(keys)
-		writtenBytes, err = d.sendJSONKV(w, keys, checkVal)
-	default:
-		var keys Keys
-		if err = keys.Unmarshal(data); err != nil {
-			return
-		}
-		numKeys = len(keys.Keys)
-		writtenBytes, err = d.sendProtobufKV(w, keys)
-	}
-	return
-}
-
-func (d *Data) handleIngest(r *http.Request, uuid dvid.UUID) error {
-	data, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		return err
-	}
-	var kvs KeyValues
-	if err := kvs.Unmarshal(data); err != nil {
-		return err
-	}
-	for _, kv := range kvs.Kvs {
-		err = d.PutData(kv.Key, kv.Value)
-		if err != nil {
-			return err
-		}
-
-		msginfo := map[string]interface{}{
-			"Action":    "postkv",
-			"Key":       kv.Key,
-			"Bytes":     len(kv.Value),
-			"UUID":      string(uuid),
-			"Timestamp": time.Now().String(),
-		}
-		jsonmsg, _ := json.Marshal(msginfo)
-		if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
-			dvid.Errorf("Error on sending neuronjson POST op to kafka: %v\n", err)
-		}
-	}
-	return nil
 }
