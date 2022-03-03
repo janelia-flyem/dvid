@@ -2,11 +2,9 @@ package storage
 
 import (
 	"encoding/json"
-	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -20,21 +18,14 @@ var (
 )
 
 var (
-	// kafkaServers
-	kafkaServers []string
-
 	// producer
-	kafkaProducer sarama.SyncProducer
+	kafkaProducer sarama.AsyncProducer
 
 	// the kafka topic for activity logging
 	kafkaActivityTopicName string
 
 	// topic suffixes per data UUID for mutation logging
 	kafkaTopicSuffixes map[dvid.UUID]string
-
-	// topics per data UUID for mutation logging
-	kafkaTopics   map[string]bool
-	kafkaTopicsMu sync.RWMutex
 )
 
 // KafkaMaxMessageSize is the max message size in bytes for a Kafka message.
@@ -68,8 +59,6 @@ func (kc KafkaConfig) Initialize(hostID string) error {
 		return nil
 	}
 	dvid.Infof("Trying to initialize kafka...")
-	kafkaServers = kc.Servers
-	kafkaTopics = make(map[string]bool)
 	kafkaTopicSuffixes = make(map[dvid.UUID]string)
 	for _, spec := range kc.TopicSuffixes {
 		parts := strings.Split(spec, ":")
@@ -95,9 +84,21 @@ func (kc KafkaConfig) Initialize(hostID string) error {
 	}
 	kafkaActivityTopicName = reg.ReplaceAllString(kafkaActivityTopicName, "-")
 
-	if kafkaProducer, err = sarama.NewSyncProducer(kc.Servers, nil); err != nil {
+	config := sarama.NewConfig()
+	config.Producer.MaxMessageBytes = KafkaMaxMessageSize
+	if kafkaProducer, err = sarama.NewAsyncProducer(kc.Servers, config); err != nil {
 		return err
 	}
+
+	go func() {
+		for err := range kafkaProducer.Errors() {
+			dvid.Errorf("error on kafka send: %v\n", err)
+			if err.Msg.Topic != kafkaActivityTopicName {
+				value, _ := err.Msg.Value.Encode()
+				storeFailedMsg(err.Msg.Topic, value)
+			}
+		}
+	}()
 	dvid.Infof("Finished with initial Kafka setup")
 	return nil
 }
@@ -135,12 +136,7 @@ func KafkaProduceMsg(value []byte, topicName string) (err error) {
 	}
 	timeKey := sarama.StringEncoder(strconv.FormatInt(time.Now().UnixNano(), 10))
 	msg := &sarama.ProducerMessage{Topic: topicName, Value: sarama.ByteEncoder(value), Key: timeKey}
-	if _, _, err = kafkaProducer.SendMessage(msg); err != nil {
-		if topicName != kafkaActivityTopicName {
-			storeFailedMsg(topicName, value)
-		}
-		return fmt.Errorf("error on sending to kafka topic %q: %v", topicName, err)
-	}
+	kafkaProducer.Input() <- msg
 	return nil
 }
 
