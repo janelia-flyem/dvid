@@ -1,17 +1,17 @@
 package storage
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 
-	"gocloud.dev/pubsub"
-	"gocloud.dev/pubsub/kafkapubsub"
+	"github.com/Shopify/sarama"
 )
 
 var (
@@ -23,8 +23,8 @@ var (
 	// kafkaServers
 	kafkaServers []string
 
-	// activity pubsub
-	kafkaActivityTopic *pubsub.Topic
+	// producer
+	kafkaProducer sarama.SyncProducer
 
 	// the kafka topic for activity logging
 	kafkaActivityTopicName string
@@ -33,7 +33,7 @@ var (
 	kafkaTopicSuffixes map[dvid.UUID]string
 
 	// topics per data UUID for mutation logging
-	kafkaTopics   map[string]*pubsub.Topic
+	kafkaTopics   map[string]bool
 	kafkaTopicsMu sync.RWMutex
 )
 
@@ -69,7 +69,7 @@ func (kc KafkaConfig) Initialize(hostID string) error {
 	}
 	dvid.Infof("Trying to initialize kafka...")
 	kafkaServers = kc.Servers
-	kafkaTopics = make(map[string]*pubsub.Topic)
+	kafkaTopics = make(map[string]bool)
 	kafkaTopicSuffixes = make(map[dvid.UUID]string)
 	for _, spec := range kc.TopicSuffixes {
 		parts := strings.Split(spec, ":")
@@ -95,8 +95,7 @@ func (kc KafkaConfig) Initialize(hostID string) error {
 	}
 	kafkaActivityTopicName = reg.ReplaceAllString(kafkaActivityTopicName, "-")
 
-	config := kafkapubsub.MinimalConfig()
-	if kafkaActivityTopic, err = kafkapubsub.OpenTopic(kc.Servers, config, kafkaActivityTopicName, nil); err != nil {
+	if kafkaProducer, err = sarama.NewSyncProducer(kc.Servers, nil); err != nil {
 		return err
 	}
 	dvid.Infof("Finished with initial Kafka setup")
@@ -105,31 +104,25 @@ func (kc KafkaConfig) Initialize(hostID string) error {
 
 // KafkaShutdown makes sure that the kafka queue is flushed before stopping.
 func KafkaShutdown() {
-	if kafkaServers != nil {
-		if kafkaActivityTopic != nil {
-			dvid.Infof("Shutting down kafka activity topic %q...\n", kafkaActivityTopicName)
-			ctx := context.Background()
-			kafkaActivityTopic.Shutdown(ctx)
-		}
-		for name, kafkaTopic := range kafkaTopics {
-			dvid.Infof("Shutting down kafka mutation topic %q...\n", name)
-			ctx := context.Background()
-			kafkaTopic.Shutdown(ctx)
+	if kafkaProducer != nil {
+		if err := kafkaProducer.Close(); err != nil {
+			dvid.Errorf("Kafka producer had error on close: %v\n", err)
+		} else {
+			dvid.Infof("Successfully shut down kafka producer.\n")
 		}
 	}
 }
 
 // LogActivityToKafka publishes activity
 func LogActivityToKafka(activity map[string]interface{}) {
-	if kafkaActivityTopic != nil {
+	if kafkaProducer != nil {
 		go func() {
 			jsonmsg, err := json.Marshal(activity)
 			if err != nil {
 				dvid.Errorf("unable to marshal activity for kafka logging: %v\n", err)
 			}
-			ctx := context.Background()
-			if err := kafkaActivityTopic.Send(ctx, &pubsub.Message{Body: jsonmsg}); err != nil {
-				dvid.Errorf("unable to publish activity to kafka topic %q: %v\n", kafkaActivityTopicName, err)
+			if err := KafkaProduceMsg(jsonmsg, kafkaActivityTopicName); err != nil {
+				dvid.Errorf("unable to publish activity: %v\n", err)
 			}
 		}()
 	}
@@ -137,34 +130,16 @@ func LogActivityToKafka(activity map[string]interface{}) {
 
 // KafkaProduceMsg sends a message to kafka
 func KafkaProduceMsg(value []byte, topicName string) (err error) {
-	if kafkaTopics == nil {
+	if kafkaProducer == nil {
 		return nil
 	}
-	kafkaTopicsMu.RLock()
-	topic, found := kafkaTopics[topicName]
-	kafkaTopicsMu.RUnlock()
-	if !found {
-		kafkaTopicsMu.Lock()
-		defer kafkaTopicsMu.Unlock()
-
-		config := kafkapubsub.MinimalConfig()
-		if topic, err = kafkapubsub.OpenTopic(kafkaServers, config, topicName, nil); err != nil {
-			return err
+	timeKey := sarama.StringEncoder(strconv.FormatInt(time.Now().UnixNano(), 10))
+	msg := &sarama.ProducerMessage{Topic: topicName, Value: sarama.ByteEncoder(value), Key: timeKey}
+	if _, _, err = kafkaProducer.SendMessage(msg); err != nil {
+		if topicName != kafkaActivityTopicName {
+			storeFailedMsg(topicName, value)
 		}
-		kafkaTopics[topicName] = topic
-	}
-	ctx := context.Background()
-	if err := topic.Send(ctx, &pubsub.Message{Body: value}); err != nil {
-		dvid.Errorf("unable to publish data to kafka topic %q: %v\n", topicName, err)
-
-		// Store data in append-only log
-		storeFailedMsg("failed-kafka-"+topicName, value)
-
-		// Notify via email at least once per 10 minutes
-		notification := fmt.Sprintf("Error in kafka messaging to topic %q, partition id %d: %v\n", topicName, err)
-		if err := dvid.SendEmail("Kafka Error", notification, nil, "kakfa"); err != nil {
-			dvid.Errorf("couldn't send email about kafka error: %v\n", err)
-		}
+		return fmt.Errorf("error on sending to kafka topic %q: %v", topicName, err)
 	}
 	return nil
 }
