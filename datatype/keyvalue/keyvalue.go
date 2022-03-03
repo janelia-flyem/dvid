@@ -787,7 +787,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					"Timestamp": time.Now().String(),
 				}
 				jsonmsg, _ := json.Marshal(msginfo)
-				if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+				if err = d.PublishKafkaMsg(jsonmsg); err != nil {
 					dvid.Errorf("Error on sending keyvalue POST op to kafka: %v\n", err)
 				}
 			}()
@@ -1098,7 +1098,7 @@ func (d *Data) handleIngest(r *http.Request, uuid dvid.UUID, ctx *datastore.Vers
 			"Timestamp": time.Now().String(),
 		}
 		jsonmsg, _ := json.Marshal(msginfo)
-		if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+		if err = d.PublishKafkaMsg(jsonmsg); err != nil {
 			dvid.Errorf("Error on sending keyvalue POST op to kafka: %v\n", err)
 		}
 	}

@@ -84,7 +84,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 		"Timestamp":  time.Now().String(),
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
-	if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
+	if err := d.PublishKafkaMsg(jsonmsg); err != nil {
 		dvid.Errorf("can't send merge op for %q to kafka: %v\n", d.DataName(), err)
 	}
 
@@ -182,7 +182,7 @@ func (d *Data) processMerge(v dvid.VersionID, mutID uint64, delta labels.DeltaMe
 		"Timestamp":  time.Now().String(),
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
-	return d.ProduceKafkaMsg(jsonmsg)
+	return d.PublishKafkaMsg(jsonmsg)
 }
 
 // SplitLabels splits a portion of a label's voxels into a given split label or, if the given split
@@ -251,7 +251,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 		"Timestamp":  time.Now().String(),
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
-	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+	if err = d.PublishKafkaMsg(jsonmsg); err != nil {
 		dvid.Errorf("error on sending split op to kafka: %v", err)
 	}
 
@@ -312,7 +312,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 		"Timestamp":  time.Now().String(),
 	}
 	jsonmsg, _ = json.Marshal(msginfo)
-	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+	if err = d.PublishKafkaMsg(jsonmsg); err != nil {
 		dvid.Errorf("error on sending split complete op to kafka: %v", err)
 	}
 
@@ -383,7 +383,7 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 		"Timestamp":  time.Now().String(),
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
-	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+	if err = d.PublishKafkaMsg(jsonmsg); err != nil {
 		dvid.Errorf("error on sending coarse split op to kafka: %v", err)
 	}
 
@@ -442,7 +442,7 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 		"Timestamp":  time.Now().String(),
 	}
 	jsonmsg, _ = json.Marshal(msginfo)
-	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+	if err = d.PublishKafkaMsg(jsonmsg); err != nil {
 		dvid.Errorf("error on sending coarse split complete op to kafka: %v", err)
 	}
 

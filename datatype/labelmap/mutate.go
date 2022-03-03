@@ -92,7 +92,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		msginfo["App"] = info.App
 	}
 	jsonBytes, _ := json.Marshal(msginfo)
-	if err := d.ProduceKafkaMsg(jsonBytes); err != nil {
+	if err := d.PublishKafkaMsg(jsonBytes); err != nil {
 		dvid.Errorf("can't send merge op for %q to kafka: %v\n", d.DataName(), err)
 	}
 
@@ -162,7 +162,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		"Timestamp":  time.Now().String(),
 	}
 	jsonBytes, _ = json.Marshal(msginfo)
-	err = d.ProduceKafkaMsg(jsonBytes)
+	err = d.PublishKafkaMsg(jsonBytes)
 	return
 }
 
@@ -229,7 +229,7 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 		msginfo["DataRef"] = postRef
 		jsonBytes, _ = json.Marshal(msginfo)
 	}
-	if err = d.ProduceKafkaMsg(jsonBytes); err != nil {
+	if err = d.PublishKafkaMsg(jsonBytes); err != nil {
 		dvid.Errorf("error on sending cleave op to kafka: %v\n", err)
 	}
 
@@ -272,7 +272,7 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 		"Timestamp":  time.Now().String(),
 	}
 	jsonBytes, _ = json.Marshal(msginfo)
-	if err = d.ProduceKafkaMsg(jsonBytes); err != nil {
+	if err = d.PublishKafkaMsg(jsonBytes); err != nil {
 		dvid.Errorf("error on sending cleave complete op to kafka: %v\n", err)
 	}
 	return
@@ -643,7 +643,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 		msginfo["App"] = info.App
 	}
 	jsonBytes, _ := json.Marshal(msginfo)
-	if err = d.ProduceKafkaMsg(jsonBytes); err != nil {
+	if err = d.PublishKafkaMsg(jsonBytes); err != nil {
 		dvid.Errorf("error on sending split op to kafka: %v\n", err)
 	}
 
@@ -704,7 +704,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 		"Timestamp":  time.Now().String(),
 	}
 	jsonBytes, _ = json.Marshal(msginfo)
-	if err = d.ProduceKafkaMsg(jsonBytes); err != nil {
+	if err = d.PublishKafkaMsg(jsonBytes); err != nil {
 		dvid.Errorf("error on sending split complete op to kafka: %v\n", err)
 	}
 	return
@@ -819,7 +819,7 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 		msginfo["App"] = info.App
 	}
 	jsonBytes, _ := json.Marshal(msginfo)
-	if err = d.ProduceKafkaMsg(jsonBytes); err != nil {
+	if err = d.PublishKafkaMsg(jsonBytes); err != nil {
 		dvid.Errorf("error on sending split op to kafka: %v", err)
 	}
 
@@ -941,7 +941,7 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 		"Timestamp":  time.Now().String(),
 	}
 	jsonBytes, _ = json.Marshal(msginfo)
-	if err = d.ProduceKafkaMsg(jsonBytes); err != nil {
+	if err = d.PublishKafkaMsg(jsonBytes); err != nil {
 		dvid.Errorf("error on sending split complete op to kafka: %v", err)
 	}
 	return

@@ -2156,7 +2156,7 @@ func (d *Data) StoreBlocks(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff bo
 		jsonmsg, err := json.Marshal(msginfo)
 		if err != nil {
 			dvid.Errorf("error marshaling JSON for annotations %q blocks post: %v\n", d.DataName(), err)
-		} else if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+		} else if err = d.PublishKafkaMsg(jsonmsg); err != nil {
 			dvid.Errorf("error on sending block post op to kafka: %v\n", err)
 		}
 	}
@@ -2256,7 +2256,7 @@ func (d *Data) StoreElements(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff 
 		jsonmsg, err := json.Marshal(msginfo)
 		if err != nil {
 			dvid.Errorf("error marshaling JSON for annotations %q element post: %v\n", d.DataName(), err)
-		} else if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+		} else if err = d.PublishKafkaMsg(jsonmsg); err != nil {
 			dvid.Errorf("error on sending move element op to kafka: %v\n", err)
 		}
 	}
@@ -2329,7 +2329,7 @@ func (d *Data) DeleteElement(ctx *datastore.VersionedCtx, pt dvid.Point3d, kafka
 		jsonmsg, err := json.Marshal(msginfo)
 		if err != nil {
 			dvid.Errorf("error marshaling JSON for annotations %q element delete: %v\n", d.DataName(), err)
-		} else if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+		} else if err = d.PublishKafkaMsg(jsonmsg); err != nil {
 			dvid.Errorf("error on sending delete element op to kafka: %v\n", err)
 		}
 	}
@@ -2409,7 +2409,7 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d, k
 		jsonmsg, err := json.Marshal(msginfo)
 		if err != nil {
 			dvid.Errorf("error marshaling JSON for annotations %q element move: %v\n", d.DataName(), err)
-		} else if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+		} else if err = d.PublishKafkaMsg(jsonmsg); err != nil {
 			dvid.Errorf("error on sending move element op to kafka: %v\n", err)
 		}
 	}

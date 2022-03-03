@@ -5014,7 +5014,7 @@ func (d *Data) handleMaxlabel(ctx *datastore.VersionedCtx, w http.ResponseWriter
 				"Timestamp": time.Now().String(),
 			}
 			jsonmsg, _ := json.Marshal(msginfo)
-			if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+			if err = d.PublishKafkaMsg(jsonmsg); err != nil {
 				dvid.Errorf("error on sending split op to kafka: %v", err)
 			}
 		}
@@ -5063,7 +5063,7 @@ func (d *Data) handleNextlabel(ctx *datastore.VersionedCtx, w http.ResponseWrite
 			"Timestamp":   time.Now().String(),
 		}
 		jsonmsg, _ := json.Marshal(msginfo)
-		if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+		if err = d.PublishKafkaMsg(jsonmsg); err != nil {
 			dvid.Errorf("error on sending split op to kafka: %v", err)
 		}
 		return
