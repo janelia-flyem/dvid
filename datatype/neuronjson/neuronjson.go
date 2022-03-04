@@ -141,6 +141,12 @@ GET  <api URL>/node/<UUID>/<data name>/keys
 
 	[key1, key2, ...]
 
+GET  <api URL>/node/<UUID>/<data name>/fields
+
+	Returns all field names in annotations for the most recent version:
+
+	["field1", "field2", ...]
+
 GET  <api URL>/node/<UUID>/<data name>/keyrange/<key1>/<key2>
 
 	Returns all keys between 'key1' and 'key2' for this data instance in JSON format:
@@ -426,7 +432,8 @@ type Data struct {
 
 	// The in-memory dataset.
 	db      map[uint64]map[string]interface{}
-	ids     []uint64 // sorted list of body ids
+	ids     []uint64            // sorted list of body ids
+	fields  map[string]struct{} // list of all fields among the annotations
 	dbReady bool
 	dbMu    sync.RWMutex
 }
@@ -562,7 +569,7 @@ func (d *Data) loadFirestoreDB() {
 	it := client.Collection("clio_annotations_global").Doc("neurons").Collection(d.DatasetID).Where("_head", "==", true).Documents(ctx)
 
 	d.dbMu.Lock() // Note that the mutex is NOT unlocked if firestore DB doesn't load.
-
+	d.fields = make(map[string]struct{})
 	for {
 		doc, err := it.Next()
 		if err == iterator.Done {
@@ -573,6 +580,9 @@ func (d *Data) loadFirestoreDB() {
 			return
 		}
 		annotation := doc.Data()
+		for field := range annotation {
+			d.fields[field] = struct{}{}
+		}
 		bodyid, err := getBodyID(annotation)
 		if err != nil {
 			dvid.Errorf("error getting bodyID from annotation: %v\n", annotation)
@@ -688,6 +698,16 @@ func (d *Data) GetKeys() ([]string, error) {
 	}
 	d.dbMu.RUnlock()
 	return keyStrings, nil
+}
+
+func (d *Data) GetFields() ([]string, error) {
+	fields := make([]string, len(d.fields))
+	i := 0
+	for field := range d.fields {
+		fields[i] = field
+		i++
+	}
+	return fields, nil
 }
 
 // GetData gets a value using a key
@@ -1268,6 +1288,21 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, string(jsonBytes))
 		comment = "HTTP GET keys"
+
+	case "fields":
+		fieldList, err := d.GetFields()
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		jsonBytes, err := json.Marshal(fieldList)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, string(jsonBytes))
+		comment = "HTTP GET fields"
 
 	case "keyrange":
 		if len(parts) < 6 {
