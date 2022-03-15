@@ -12,6 +12,7 @@ import (
 	"io"
 	"io/ioutil"
 	"math"
+	"strings"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -21,6 +22,7 @@ import (
 	"gocloud.dev/blob"
 	"gocloud.dev/blob/gcsblob"
 	_ "gocloud.dev/blob/gcsblob"
+	_ "gocloud.dev/blob/s3blob"
 	"gocloud.dev/gcerrors"
 	"gocloud.dev/gcp"
 )
@@ -146,36 +148,57 @@ func (e Engine) newStore(config dvid.StoreConfig) (*ngStore, bool, error) {
 	dvid.Infof("Trying to open NG-Precomputed store @ %q ...\n", ref)
 	ctx := context.Background()
 
-	// See https://cloud.google.com/docs/authentication/production
-	// for more info on alternatives.
-	creds, err := gcp.DefaultCredentials(ctx)
-	if err != nil {
-		return nil, false, err
-	}
+	if strings.HasPrefix(ref, "s3://") {
+		// This relies on the non-GCS-specific blob API
+		// and requires that the user:
+		// A: Have set up AWS credentials in ways gocloud can find them (see the "aws config" command)
+		// B: Have set the AWS_REGION environment variable (usually to us-east-2)
+		bucket, err := blob.OpenBucket(ctx, ref)
+		if err != nil {
+			fmt.Printf("Can't open NG precomputed @ %q: %v\n", ref, err)
+			return nil, false, err
+		}
+	} else	{
+		// In this case default to Google Store authentication as DVID did before
+		// See https://cloud.google.com/docs/authentication/production
+		// for more info on alternatives.
+		creds, err := gcp.DefaultCredentials(ctx)
+		if err != nil {
+			return nil, false, err
+		}
 
-	// Create an HTTP client.
-	// This example uses the default HTTP transport and the credentials
-	// created above.
-	client, err := gcp.NewHTTPClient(
-		gcp.DefaultTransport(),
-		gcp.CredentialsTokenSource(creds))
-	if err != nil {
-		return nil, false, err
-	}
+		// Create an HTTP client.
+		// This example uses the default HTTP transport and the credentials
+		// created above.
+		client, err := gcp.NewHTTPClient(
+			gcp.DefaultTransport(),
+			gcp.CredentialsTokenSource(creds))
+		if err != nil {
+			return nil, false, err
+		}
 
-	// Create a *blob.Bucket.
-	bucket, err := gcsblob.OpenBucket(ctx, client, ref, nil)
-	if err != nil {
-		fmt.Printf("Can't open NG precomputed @ %q: %v\n", ref, err)
-		return nil, false, err
+		// Create a *blob.Bucket.
+		bucket, err := gcsblob.OpenBucket(ctx, client, ref, nil)
+		if err != nil {
+			fmt.Printf("Can't open NG precomputed @ %q: %v\n", ref, err)
+			return nil, false, err
+		}
 	}
 
 	data, err := bucket.ReadAll(ctx, "info")
 	if err != nil {
 		return nil, false, err
 	}
+
+	// Remove URI protocol if present so path-parsing logic won't need to deal with it
+	if strings.HasPrefix(ref, "s3://") {
+		ngref = strings.TrimPrefix(ref, "s3://")
+	} else {
+		ngref := ref
+	}
+
 	ng := &ngStore{
-		ref:        ref,
+		ref:        ngref,
 		bucket:     bucket,
 		instance:   instance,
 		uuid:       uuid,
