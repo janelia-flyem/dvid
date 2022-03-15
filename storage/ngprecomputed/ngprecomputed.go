@@ -192,7 +192,7 @@ func (e Engine) newStore(config dvid.StoreConfig) (*ngStore, bool, error) {
 
 	// Remove URI protocol if present so path-parsing logic won't need to deal with it
 	if strings.HasPrefix(ref, "s3://") {
-		ngref = strings.TrimPrefix(ref, "s3://")
+		ngref := strings.TrimPrefix(ref, "s3://")
 	} else {
 		ngref := ref
 	}
