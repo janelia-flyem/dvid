@@ -147,13 +147,15 @@ func (e Engine) newStore(config dvid.StoreConfig) (*ngStore, bool, error) {
 
 	dvid.Infof("Trying to open NG-Precomputed store @ %q ...\n", ref)
 	ctx := context.Background()
+	var bucket *blob.Bucket
 
 	if strings.HasPrefix(ref, "s3://") {
 		// This relies on the non-GCS-specific blob API
 		// and requires that the user:
 		// A: Have set up AWS credentials in ways gocloud can find them (see the "aws config" command)
 		// B: Have set the AWS_REGION environment variable (usually to us-east-2)
-		bucket, err := blob.OpenBucket(ctx, ref)
+		var err error
+		bucket, err = blob.OpenBucket(ctx, ref)
 		if err != nil {
 			fmt.Printf("Can't open NG precomputed @ %q: %v\n", ref, err)
 			return nil, false, err
@@ -162,6 +164,7 @@ func (e Engine) newStore(config dvid.StoreConfig) (*ngStore, bool, error) {
 		// In this case default to Google Store authentication as DVID did before
 		// See https://cloud.google.com/docs/authentication/production
 		// for more info on alternatives.
+		var err error
 		creds, err := gcp.DefaultCredentials(ctx)
 		if err != nil {
 			return nil, false, err
@@ -178,7 +181,7 @@ func (e Engine) newStore(config dvid.StoreConfig) (*ngStore, bool, error) {
 		}
 
 		// Create a *blob.Bucket.
-		bucket, err := gcsblob.OpenBucket(ctx, client, ref, nil)
+		bucket, err = gcsblob.OpenBucket(ctx, client, ref, nil)
 		if err != nil {
 			fmt.Printf("Can't open NG precomputed @ %q: %v\n", ref, err)
 			return nil, false, err
@@ -191,10 +194,11 @@ func (e Engine) newStore(config dvid.StoreConfig) (*ngStore, bool, error) {
 	}
 
 	// Remove URI protocol if present so path-parsing logic won't need to deal with it
+	var ngref string
 	if strings.HasPrefix(ref, "s3://") {
-		ngref := strings.TrimPrefix(ref, "s3://")
+		ngref = strings.TrimPrefix(ref, "s3://")
 	} else {
-		ngref := ref
+		ngref = ref
 	}
 
 	ng := &ngStore{
