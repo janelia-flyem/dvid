@@ -160,6 +160,9 @@ func (e Engine) newStore(config dvid.StoreConfig) (*ngStore, bool, error) {
 			fmt.Printf("Can't open NG precomputed @ %q: %v\n", ref, err)
 			return nil, false, err
 		}
+		pathpart := strings.TrimPrefix(ref, "s3://")
+		pathpart = strings.SplitN(pathpart, "/", 2)[1] // Remove the bucket name
+		bucket = blob.PrefixedBucket(bucket, pathpart)
 	} else	{
 		// In this case default to Google Store authentication as DVID did before
 		// See https://cloud.google.com/docs/authentication/production
