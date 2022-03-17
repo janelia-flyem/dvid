@@ -382,9 +382,9 @@ func log2(value int32) uint8 {
 }
 
 func (ng *ngStore) initialize() error {
-	if ng.vol.StoreType != "neuroglancer_multiscale_volume" {
-		return fmt.Errorf("NG Store volume type %q != neuroglancer_multiscale_volume", ng.vol.StoreType)
-	}
+	//if ng.vol.StoreType != "neuroglancer_multiscale_volume" {
+	//	return fmt.Errorf("NG Store volume type %q != neuroglancer_multiscale_volume", ng.vol.StoreType)
+	//}
 	if ng.vol.VolumeType != "image" {
 		return fmt.Errorf("NG Store volume type %q, DVID driver can only handle 'image' type", ng.vol.VolumeType)
 	}
