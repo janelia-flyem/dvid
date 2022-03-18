@@ -146,12 +146,7 @@ func TestParseConfig(t *testing.T) {
 	}
 
 	kafkaCfg := tc.Kafka
-	if len(kafkaCfg.Servers) != 2 || kafkaCfg.Servers[0] != "foo.bar.com:1234" ||
-		kafkaCfg.Servers[1] != "foo2.bar.com:1234" ||
-		kafkaCfg.SASLUsername != "KEY-TAKEN-FROM-CONFLUENT-CLOUD" ||
-		kafkaCfg.SASLPassword != "SECRET-TAKEN-FROM-CONFLUENT-CLOUD" ||
-		kafkaCfg.SecProtocol != "SASL_SSL" ||
-		kafkaCfg.SASLMechanisms != "PLAIN" {
+	if len(kafkaCfg.Servers) != 2 || kafkaCfg.Servers[0] != "foo.bar.com:1234" || kafkaCfg.Servers[1] != "foo2.bar.com:1234" {
 		t.Errorf("Bad Kafka config: %v\n", kafkaCfg)
 	}
 
