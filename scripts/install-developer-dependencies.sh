@@ -20,14 +20,12 @@ cd ${THIS_SCRIPT_DIR}
 GO_VERSION=1.16
 
 if [[ $(uname) == "Darwin" ]]; then
-    COMPILER_PACKAGE=clangxx_linux-64
+    COMPILER_PACKAGE=clangxx_osx-64
 else
     COMPILER_PACKAGE=gxx_linux-64
 fi
 
-
-
-CMD="conda install -y -c flyem-forge -c conda-forge clangxx_osx-64 snappy basholeveldb lz4-c 'librdkafka=1.3.0' go-cgo=${GO_VERSION} pkg-config ${COMPILER_PACKAGE}"
+CMD="conda install -y -c flyem-forge -c conda-forge snappy basholeveldb lz4-c go-cgo=${GO_VERSION} pkg-config ${COMPILER_PACKAGE}"
 echo ${CMD}
 ${CMD}
 
