@@ -1331,6 +1331,163 @@ func TestMultiscaleIngest(t *testing.T) {
 	expected2a.testGetBlocks(t, "downres #2 block check", uuid, "labels", "gzip", 2)
 }
 
+// TestMultiscaleIngest2 tests ingesting using the /ingest-supervoxels endpoint.
+func TestMultiscaleIngest2(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	config.Set("MaxDownresLevel", "2")
+	server.CreateTestInstance(t, uuid, "labelmap", "labels", config)
+
+	// Create an easily interpreted label volume with a couple of labels.
+	volume := newTestVolume(128, 128, 128)
+	volume.addSubvol(dvid.Point3d{40, 40, 40}, dvid.Point3d{40, 40, 40}, 1)
+	volume.addSubvol(dvid.Point3d{40, 40, 80}, dvid.Point3d{40, 40, 40}, 2)
+	volume.addSubvol(dvid.Point3d{80, 40, 40}, dvid.Point3d{40, 40, 40}, 13)
+	volume.addSubvol(dvid.Point3d{40, 80, 40}, dvid.Point3d{40, 40, 40}, 209)
+	volume.addSubvol(dvid.Point3d{80, 80, 40}, dvid.Point3d{40, 40, 40}, 311)
+	volume.put(t, uuid, "labels")
+
+	// Verify initial ingest for hi-res
+	if err := downres.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on update for labels: %v\n", err)
+	}
+
+	hires := newTestVolume(128, 128, 128)
+	hires.get(t, uuid, "labels", false)
+	hires.verifyLabel(t, 1, 45, 45, 45)
+	hires.verifyLabel(t, 2, 50, 50, 100)
+	hires.verifyLabel(t, 13, 100, 60, 60)
+	hires.verifyLabel(t, 209, 55, 100, 55)
+	hires.verifyLabel(t, 311, 81, 81, 41)
+
+	expectedLabels := []uint64{1, 2, 13, 209, 311}
+	expectedSize := uint64(40 * 40 * 40)
+
+	// Verify our label index voxel counts are correct.
+	for _, label := range expectedLabels {
+		reqStr := fmt.Sprintf("%snode/%s/labels/size/%d", server.WebAPIPath, uuid, label)
+		r := server.TestHTTP(t, "GET", reqStr, nil)
+		var jsonVal struct {
+			Voxels uint64 `json:"voxels"`
+		}
+		if err := json.Unmarshal(r, &jsonVal); err != nil {
+			t.Fatalf("unable to get size for label %d: %v", label, err)
+		}
+		if jsonVal.Voxels != expectedSize {
+			t.Errorf("thought label %d would have %d voxels, got %d\n", label, expectedSize, jsonVal.Voxels)
+		}
+	}
+	reqStr := fmt.Sprintf("%snode/%s/labels/size/3", server.WebAPIPath, uuid)
+	server.TestBadHTTP(t, "GET", reqStr, nil)
+
+	reqStr = fmt.Sprintf("%snode/%s/labels/sizes", server.WebAPIPath, uuid)
+	bodystr := "[1, 2, 3, 13, 209, 311]"
+	r := server.TestHTTP(t, "GET", reqStr, bytes.NewBufferString(bodystr))
+	if string(r) != "[64000,64000,0,64000,64000,64000]" {
+		t.Errorf("bad batch sizes result.  got: %s\n", string(r))
+	}
+
+	// Verify the label streaming endpoint.
+	reqStr = fmt.Sprintf("%snode/%s/labels/listlabels", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(r) != len(expectedLabels)*8 {
+		t.Errorf("expected %d labels from /listlabels but got %d bytes\n", len(expectedLabels), len(r))
+	}
+	for i, label := range expectedLabels {
+		gotLabel := binary.LittleEndian.Uint64(r[i*8 : i*8+8])
+		if label != gotLabel {
+			t.Errorf("expected label %d but got %d in /listlabels pos %d\n", label, gotLabel, i)
+		}
+	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/listlabels?start=4&number=2", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(r) != 2*8 {
+		t.Fatalf("expected %d labels from /listlabels but got %d bytes\n", 2, len(r))
+	}
+	for i, label := range expectedLabels[2:4] {
+		gotLabel := binary.LittleEndian.Uint64(r[i*8 : i*8+8])
+		if label != gotLabel {
+			t.Errorf("expected label %d but got %d in /listlabels pos %d\n", label, gotLabel, i)
+		}
+	}
+
+	// Verify the label + voxel count streaming endpoint.
+	reqStr = fmt.Sprintf("%snode/%s/labels/listlabels?sizes=true", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(r) != len(expectedLabels)*16 {
+		t.Errorf("expected %d labels and sizes from /listlabels but got %d bytes\n", len(expectedLabels), len(r))
+	}
+	for i, label := range expectedLabels {
+		gotLabel := binary.LittleEndian.Uint64(r[i*16 : i*16+8])
+		if label != gotLabel {
+			t.Errorf("expected label %d but got %d in /listlabels pos %d\n", label, gotLabel, i)
+		}
+		gotSize := binary.LittleEndian.Uint64(r[i*16+8 : i*16+16])
+		if expectedSize != gotSize {
+			t.Errorf("expected size %d for label %d but got %d in /listlabels pos %d\n", expectedSize, label, gotSize, i)
+		}
+	}
+
+	// Check the first downres: 64^3
+	downres1 := newTestVolume(64, 64, 64)
+	downres1.getScale(t, uuid, "labels", 1, false)
+	downres1.verifyLabel(t, 1, 30, 30, 30)
+	downres1.verifyLabel(t, 2, 21, 21, 45)
+	downres1.verifyLabel(t, 13, 45, 21, 36)
+	downres1.verifyLabel(t, 209, 21, 50, 35)
+	downres1.verifyLabel(t, 311, 45, 55, 35)
+	expected1 := newTestVolume(64, 64, 64)
+	expected1.addSubvol(dvid.Point3d{20, 20, 20}, dvid.Point3d{20, 20, 20}, 1)
+	expected1.addSubvol(dvid.Point3d{20, 20, 40}, dvid.Point3d{20, 20, 20}, 2)
+	expected1.addSubvol(dvid.Point3d{40, 20, 20}, dvid.Point3d{20, 20, 20}, 13)
+	expected1.addSubvol(dvid.Point3d{20, 40, 20}, dvid.Point3d{20, 20, 20}, 209)
+	expected1.addSubvol(dvid.Point3d{40, 40, 20}, dvid.Point3d{20, 20, 20}, 311)
+	if err := downres1.equals(expected1); err != nil {
+		t.Errorf("1st downres 'labels' isn't what is expected: %v\n", err)
+	}
+
+	// Check the second downres to voxel: 32^3
+	expected2 := newTestVolume(32, 32, 32)
+	expected2.addSubvol(dvid.Point3d{10, 10, 10}, dvid.Point3d{10, 10, 10}, 1)
+	expected2.addSubvol(dvid.Point3d{10, 10, 20}, dvid.Point3d{10, 10, 10}, 2)
+	expected2.addSubvol(dvid.Point3d{20, 10, 10}, dvid.Point3d{10, 10, 10}, 13)
+	expected2.addSubvol(dvid.Point3d{10, 20, 10}, dvid.Point3d{10, 10, 10}, 209)
+	expected2.addSubvol(dvid.Point3d{20, 20, 10}, dvid.Point3d{10, 10, 10}, 311)
+	downres2 := newTestVolume(32, 32, 32)
+	downres2.getScale(t, uuid, "labels", 2, false)
+	if err := downres2.equals(expected2); err != nil {
+		t.Errorf("2nd downres 'labels' isn't what is expected: %v\n", err)
+	}
+
+	// // Check blocks endpoint for different scales.
+	volume.testGetBlocks(t, "hi-res block check", uuid, "labels", "", 0)
+	volume.testGetBlocks(t, "hi-res block check", uuid, "labels", "uncompressed", 0)
+	volume.testGetBlocks(t, "hi-res block check", uuid, "labels", "blocks", 0)
+	volume.testGetBlocks(t, "hi-res block check", uuid, "labels", "gzip", 0)
+
+	expected1.testGetBlocks(t, "downres #1 block check", uuid, "labels", "", 1)
+	expected1.testGetBlocks(t, "downres #1 block check", uuid, "labels", "uncompressed", 1)
+	expected1.testGetBlocks(t, "downres #1 block check", uuid, "labels", "blocks", 1)
+	expected1.testGetBlocks(t, "downres #1 block check", uuid, "labels", "gzip", 1)
+
+	expected2a := newTestVolume(64, 64, 64) // can only get block-aligned subvolumes
+	expected2a.addSubvol(dvid.Point3d{10, 10, 10}, dvid.Point3d{10, 10, 10}, 1)
+	expected2a.addSubvol(dvid.Point3d{10, 10, 20}, dvid.Point3d{10, 10, 10}, 2)
+	expected2a.addSubvol(dvid.Point3d{20, 10, 10}, dvid.Point3d{10, 10, 10}, 13)
+	expected2a.addSubvol(dvid.Point3d{10, 20, 10}, dvid.Point3d{10, 10, 10}, 209)
+	expected2a.addSubvol(dvid.Point3d{20, 20, 10}, dvid.Point3d{10, 10, 10}, 311)
+	expected2a.testGetBlocks(t, "downres #2 block check", uuid, "labels", "", 2)
+	expected2a.testGetBlocks(t, "downres #2 block check", uuid, "labels", "uncompressed", 2)
+	expected2a.testGetBlocks(t, "downres #2 block check", uuid, "labels", "blocks", 2)
+	expected2a.testGetBlocks(t, "downres #2 block check", uuid, "labels", "gzip", 2)
+}
+
 func readGzipFile(filename string) ([]byte, error) {
 	f, err := os.Open(filename)
 	if err != nil {
@@ -1770,6 +1927,138 @@ func testExtents(t *testing.T, name string, uuid dvid.UUID, min, max dvid.Point3
 	}
 	if z != float64(max[2]) {
 		t.Errorf("Bad MaxPoint Z: expected %.0f, got %d\n", z, max[2])
+	}
+}
+
+func TestIngestBlocks(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := datastore.NewTestRepo()
+	if len(uuid) < 5 {
+		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
+	}
+	server.CreateTestInstance(t, uuid, "labelmap", "labels", dvid.Config{})
+
+	blockCoords := []dvid.Point3d{
+		{1, 2, 3},
+		{2, 2, 3},
+		{1, 3, 4},
+		{2, 3, 4},
+	}
+	var data [4]testData
+	var buf bytes.Buffer
+	for i, fname := range testFiles {
+		writeTestInt32(t, &buf, blockCoords[i][0])
+		writeTestInt32(t, &buf, blockCoords[i][1])
+		writeTestInt32(t, &buf, blockCoords[i][2])
+		data[i] = loadTestData(t, fname)
+		gzipped, err := data[i].b.CompressGZIP()
+		if err != nil {
+			t.Fatalf("unable to gzip compress block: %v\n", err)
+		}
+		writeTestInt32(t, &buf, int32(len(gzipped)))
+		n, err := buf.Write(gzipped)
+		if err != nil {
+			t.Fatalf("unable to write gzip block: %v\n", err)
+		}
+		if n != len(gzipped) {
+			t.Fatalf("unable to write %d bytes to buffer, only wrote %d bytes\n", len(gzipped), n)
+		}
+	}
+
+	apiStr := fmt.Sprintf("%snode/%s/labels/ingest-supervoxels", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, &buf)
+
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on update of labels: %v\n", err)
+	}
+
+	// test volume GET
+	vol := labelVol{
+		size:      dvid.Point3d{2, 2, 2}, // in blocks
+		nx:        128,
+		ny:        128,
+		nz:        128,
+		blockSize: dvid.Point3d{64, 64, 64},
+		offset:    dvid.Point3d{64, 128, 192},
+		name:      "labels",
+	}
+	got := vol.getLabelVolume(t, uuid, "", "")
+	gotLabels, err := dvid.AliasByteToUint64(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bcoordStr string
+	for i := 0; i < 4; i++ {
+		x0 := (blockCoords[i][0] - 1) * 64
+		y0 := (blockCoords[i][1] - 2) * 64
+		z0 := (blockCoords[i][2] - 3) * 64
+		bcoordStr += fmt.Sprintf("%d,%d,%d", blockCoords[i][0], blockCoords[i][1], blockCoords[i][2])
+		if i != 3 {
+			bcoordStr += ","
+		}
+		var x, y, z int32
+		for z = 0; z < 64; z++ {
+			for y = 0; y < 64; y++ {
+				for x = 0; x < 64; x++ {
+					di := z*64*64 + y*64 + x
+					gi := (z+z0)*128*128 + (y+y0)*128 + x + x0
+					if data[i].u[di] != gotLabels[gi] {
+						t.Fatalf("Error in block %s dvid coord (%d,%d,%d): expected %d, got %d\n", blockCoords[i], x+x0, y+y0, z+z0, data[i].u[di], gotLabels[gi])
+					}
+				}
+			}
+		}
+	}
+	runtime.KeepAlive(&got)
+
+	// test GET /blocks
+	for i, td := range data {
+		testGetBlock(t, uuid, "labels", blockCoords[i], td)
+	}
+
+	// test GET /specificblocks
+	pblocks := testGetSpecificBlocks(t, uuid, "labels", true, bcoordStr)
+	for i, td := range data {
+		izyx := dvid.IndexZYX{blockCoords[i][0], blockCoords[i][1], blockCoords[i][2]}
+		izyxStr := izyx.ToIZYXString()
+		var j int
+		for _, pb := range pblocks {
+			if izyxStr == pb.BCoord {
+				break
+			}
+			j++
+		}
+		if j == 4 {
+			t.Fatalf("Didn't find block %s in retrieved blocks\n", izyxStr)
+		}
+		checkBlock(t, pblocks[j], td)
+	}
+	bcoordStr2 := "100,23,89,"
+	for i := 0; i < 2; i++ {
+		bcoordStr2 += fmt.Sprintf("%d,%d,%d,", blockCoords[i][0], blockCoords[i][1], blockCoords[i][2])
+	}
+	bcoordStr2 += "0,50,40"
+	pblocks = testGetSpecificBlocks(t, uuid, "labels", true, bcoordStr2)
+	if len(pblocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d blocks instead\n", len(pblocks))
+	}
+	var gotBlocks int
+	for _, pb := range pblocks {
+		for i, td := range data {
+			izyx := dvid.IndexZYX{blockCoords[i][0], blockCoords[i][1], blockCoords[i][2]}
+			izyxStr := izyx.ToIZYXString()
+			if izyxStr == pb.BCoord {
+				gotBlocks++
+				checkBlock(t, pb, td)
+			}
+		}
+	}
+	if gotBlocks != 2 {
+		t.Fatalf("expected to receive 2 blocks, got %d instead\n", gotBlocks)
 	}
 }
 

@@ -663,9 +663,13 @@ GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
 POST <api URL>/node/<UUID>/<data name>/blocks[?queryopts]
 
     Puts properly-sized supervoxel block data.  This is the most server-efficient way of
-    storing labelmap data, where data read from the HTTP stream is written directly to the 
-	underlying storage.  The default (and currently only supported) compression is gzip on compressed 
-	DVID label Block serialization.
+    storing labelmap data if you want DVID to also handle indexing and downres computation.
+	If you are calculating indices and downres supervoxel blocks offline for ingestiong into
+	DVID, use the "POST /ingest-supervoxels" endpoint, since it is even faster.
+	Because this endpoint must consider parallel requests using overlapping blocks, a mutex
+	is employed the limits the overal throughput.  Still data read from the HTTP stream is written 
+	directly to the underlying storage.  The default (and currently only supported) compression 
+	is gzip on compressed DVID label Block serialization.
 
 	Note that maximum label and extents are automatically handled during these calls.
 	If the optional "scale" query is greater than 0, these ingestions will not trigger
@@ -743,6 +747,88 @@ POST <api URL>/node/<UUID>/<data name>/blocks[?queryopts]
     throttle      If "true", makes sure only N compute-intense operation (all API calls that can be 
 	                throttled) are handled.  If the server can't initiate the API call right away, a 503 
                     (Service Unavailable) status code is returned.
+
+
+POST <api URL>/node/<UUID>/<data name>/ingest-supervoxels[?queryopts]
+
+    Ingests properly-sized supervoxel block data under the assumption that parallel calls to this 
+	endpoint do not use overlapping blocks.  This is the most server-efficient way of storing labelmap data, 
+	where data read from the HTTP stream is written directly to the underlying storage.  The default 
+	(and currently only supported) compression is gzip on compressed DVID label Block serialization.
+	Unlike the "POST /blocks" endpoint, this endpoint assumes that the following operations will be done separately:
+	    * label indexing
+		* syncing to other instances (e.g., annotations)
+		* calculation and POST /maxlabel
+		* calculation and POST /extents
+		* downres calculations of different scales and the POST of the downres supervoxel block data.
+
+	This endpoint maximizes write throughput and assumes parallel POST requests will not use overlapping blocks.
+	No goroutines are spawned so the number of write goroutines is directly related to the number of parallel
+	calls to this endpoint.
+
+    Example: 
+
+    POST <api URL>/node/3f8c/segmentation/ingest-supervoxels?scale=1
+
+    The posted data format should be in the following format where int32 is in little endian and 
+	the bytes of block data have been compressed in the desired output format.
+
+        int32  Block 1 coordinate X (Note that this may not be starting block coordinate if it is unset.)
+        int32  Block 1 coordinate Y
+        int32  Block 1 coordinate Z
+        int32  # bytes for first block (N1)
+        byte0  Block N1 serialization using chosen compression format (see "compression" option below)
+        byte1
+        ...
+        byteN1
+
+        int32  Block 2 coordinate X
+        int32  Block 2 coordinate Y
+        int32  Block 2 coordinate Z
+        int32  # bytes for second block (N2)
+        byte0  Block N2 serialization using chosen compression format (see "compression" option below)
+        byte1
+        ...
+        byteN2
+
+        ...
+
+	The Block serialization format is as follows:
+
+      3 * uint32      values of gx, gy, and gz
+      uint32          # of labels (N), cannot exceed uint32.
+      N * uint64      packed labels in little-endian format.  Label 0 can be used to represent
+                          deleted labels, e.g., after a merge operation to avoid changing all
+                          sub-block indices.
+
+      ----- Data below is only included if N > 1, otherwise it is a solid block.
+            Nsb = # sub-blocks = gx * gy * gz
+
+      Nsb * uint16        # of labels for sub-blocks.  Each uint16 Ns[i] = # labels for sub-block i.
+                              If Ns[i] == 0, the sub-block has no data (uninitialized), which
+                              is useful for constructing Blocks with sparse data.
+
+      Nsb * Ns * uint32   label indices for sub-blocks where Ns = sum of Ns[i] over all sub-blocks.
+                              For each sub-block i, we have Ns[i] label indices of lBits.
+
+      Nsb * values        sub-block indices for each voxel.
+                              Data encompasses 512 * ceil(log2(Ns[i])) bits, padded so no two
+                              sub-blocks have indices in the same byte.
+                              At most we use 9 bits per voxel for up to the 512 labels in sub-block.
+                              A value gives the sub-block index which points to the index into
+                              the N labels.  If Ns[i] <= 1, there are no values.  If Ns[i] = 0,
+                              the 8x8x8 voxels are set to label 0.  If Ns[i] = 1, all voxels
+                              are the given label index.
+
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+
+    Query-string Options:
+
+    scale         A number from 0 up to MaxDownresLevel where each level beyond 0 has 1/2 resolution
+	                of previous level.  Level 0 (default) is the highest resolution.
 
 
 GET <api URL>/node/<UUID>/<data name>/maxlabel
@@ -2932,6 +3018,51 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 	return nil
 }
 
+// Writes supervoxel blocks without worrying about overlap or computation of indices, syncs, maxlabel, or extents.
+// Additional goroutines are not spawned so caller can set concurrency through parallel evocations.
+func (d *Data) ingestBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale uint8) error {
+	if r == nil {
+		return fmt.Errorf("no data blocks POSTed")
+	}
+
+	timedLog := dvid.NewTimeLog()
+	store, err := datastore.GetKeyValueDB(d)
+	if err != nil {
+		return fmt.Errorf("Data type labelmap had error initializing store: %v", err)
+	}
+
+	if d.Compression().Format() != dvid.Gzip {
+		return fmt.Errorf("labelmap %q cannot accept GZIP /blocks POST since it internally uses %s", d.DataName(), d.Compression().Format())
+	}
+
+	d.StartUpdate()
+	defer d.StopUpdate()
+
+	var numBlocks int
+	for {
+		_, compressed, bx, by, bz, err := readStreamedBlock(r, scale)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		bcoord := dvid.ChunkPoint3d{bx, by, bz}.ToIZYXString()
+		tk := NewBlockTKeyByCoord(scale, bcoord)
+		serialization, err := dvid.SerializePrecompressedData(compressed, d.Compression(), d.Checksum())
+		if err != nil {
+			return fmt.Errorf("can't serialize received block %s data: %v", bcoord, err)
+		}
+		if err := store.Put(ctx, tk, serialization); err != nil {
+			return fmt.Errorf("unable to PUT voxel data for block %s: %v", bcoord, err)
+		}
+		numBlocks++
+	}
+
+	timedLog.Infof("Received and stored %d blocks for labelmap %q", numBlocks, d.DataName())
+	return nil
+}
+
 // --- datastore.DataService interface ---------
 
 // PushData pushes labelmap data to a remote DVID.
@@ -3545,6 +3676,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "blocks":
 		d.handleBlocks(ctx, w, r, parts)
 
+	case "ingest-supervoxels":
+		d.handleIngest(ctx, w, r)
+
 	case "pseudocolor":
 		d.handlePseudocolor(ctx, w, r, parts)
 
@@ -3847,6 +3981,22 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 		}
 		timedLog.Infof("HTTP POST blocks, indexing = %t, downscale = %t (%s)", indexing, downscale, r.URL)
 	}
+}
+
+func (d *Data) handleIngest(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+	// POST <api URL>/node/<UUID>/<data name>/ingest-supervoxels[?scale=...]
+	timedLog := dvid.NewTimeLog()
+
+	queryStrings := r.URL.Query()
+	scale, err := getScale(queryStrings)
+	if err != nil {
+		server.BadRequest(w, r, "bad scale specified: %v", err)
+		return
+	}
+	if err := d.ingestBlocks(ctx, r.Body, scale); err != nil {
+		server.BadRequest(w, r, err)
+	}
+	timedLog.Infof("HTTP POST ingest-supervoxels %q, scale = %d", d.DataName(), scale)
 }
 
 func (d *Data) handleIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
