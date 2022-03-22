@@ -31,7 +31,7 @@ max_log_age = 30   # days
 
 [backend]
     [backend.default]
-    store = "raid6"
+    store = "instancedata"
     log = "mutationlog"  # required if you have a labelmap instance.
 
 # List the different storage systems available for metadata, data instances, etc.
@@ -40,10 +40,10 @@ max_log_age = 30   # days
 # like "engine" and "path" should be lower-case by convention.
 
 [store]
-    [store.raid6]
+    [store.instancedata]
     engine = "basholeveldb"
     path = "/tmp/basholeveldb"
 
     [store.mutationlog]
     engine = "filelog"
-    path = "/tmp/data/mutationlog"  # directory that holds mutation log per instance-UUID.
+    path = "/tmp/mutationlog"  # directory that holds mutation log per instance-UUID.

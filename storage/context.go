@@ -85,7 +85,7 @@ type VersionedCtx interface {
 	// TombstoneKeyVersion implement TombstoneKey but for the specified version
 	TombstoneKeyVersion(TKey, dvid.VersionID) Key
 
-	// Head checks whether this the open head of the master branch
+	// Head checks whether this is the open head of the master branch
 	Head() bool
 
 	// MasterVersion checks whether current version is on master branch

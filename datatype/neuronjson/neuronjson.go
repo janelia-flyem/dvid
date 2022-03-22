@@ -353,6 +353,7 @@ func init() {
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Type{})
 	gob.Register(&Data{})
+	gob.Register(map[string]interface{}{})
 }
 
 // Type embeds the datastore's Type to create a unique type for neuronjson functions.
@@ -382,21 +383,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	if err != nil {
 		return nil, err
 	}
-	projectID, found, err := c.GetString("ProjectID")
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return nil, fmt.Errorf("neuronjson instances must have ProjectID set in the configuration")
-	}
-	datasetID, found, err := c.GetString("DatasetID")
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return nil, fmt.Errorf("neuronjson instances must have DatasetID set in the configuration")
-	}
-	return &Data{Data: basedata, ProjectID: projectID, DatasetID: datasetID}, nil
+	return &Data{Data: basedata}, nil
 }
 
 func (dtype *Type) Help() string {
@@ -416,41 +403,137 @@ func GetByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	return data, nil
 }
 
+///// Persistence of neuronjson data
+
+// getData gets a map value using a key
+func (d *Data) getData(ctx storage.Context, keyStr string) (value map[string]interface{}, found bool, err error) {
+	var db storage.OrderedKeyValueDB
+	db, err = datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return
+	}
+	tk, err := NewTKey(keyStr)
+	if err != nil {
+		return
+	}
+	data, err := db.Get(ctx, tk)
+	if err != nil {
+		return nil, false, fmt.Errorf("error in retrieving key '%s': %v", keyStr, err)
+	}
+	if data == nil {
+		return
+	}
+	if err = json.Unmarshal(data, &value); err != nil {
+		return
+	}
+	return value, true, nil
+}
+
+// putData puts a key / map value at a given uuid
+func (d *Data) putData(ctx storage.Context, keyStr string, value map[string]interface{}) error {
+	db, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	tk, err := NewTKey(keyStr)
+	if err != nil {
+		return err
+	}
+	return db.Put(ctx, tk, data)
+}
+
+// deleteData deletes a key-value pair
+func (d *Data) deleteData(ctx storage.Context, keyStr string) error {
+	db, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return err
+	}
+	tk, err := NewTKey(keyStr)
+	if err != nil {
+		return err
+	}
+	return db.Delete(ctx, tk)
+}
+
+// process a range of keys using supplied function.
+func (d *Data) processAllKeys(ctx storage.Context, f func(key string)) error {
+	minTKey := storage.MinTKey(keyAnnotation)
+	maxTKey := storage.MaxTKey(keyAnnotation)
+	return d.processKeysInRange(ctx, minTKey, maxTKey, f)
+}
+
+// process a range of keys using supplied function.
+func (d *Data) processKeysInRange(ctx storage.Context, minTKey, maxTKey storage.TKey, f func(key string)) error {
+	db, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return err
+	}
+	tkeys, err := db.KeysInRange(ctx, minTKey, maxTKey)
+	if err != nil {
+		return err
+	}
+	for _, tkey := range tkeys {
+		key, err := DecodeTKey(tkey)
+		if err != nil {
+			return err
+		}
+		f(key)
+	}
+	return nil
+}
+
+// process a range of key-value pairs using supplied function.
+func (d *Data) processRange(ctx storage.Context, f func(key string, value map[string]interface{})) error {
+	db, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return err
+	}
+	first := storage.MinTKey(keyAnnotation)
+	last := storage.MaxTKey(keyAnnotation)
+	err = db.ProcessRange(ctx, first, last, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+		if c == nil || c.TKeyValue == nil {
+			return nil
+		}
+		kv := c.TKeyValue
+		if kv.V == nil {
+			return nil
+		}
+		key, err := DecodeTKey(kv.K)
+		if err != nil {
+			return err
+		}
+		uncompress := true
+		data, _, err := dvid.DeserializeData(kv.V, uncompress)
+		if err != nil {
+			return fmt.Errorf("unable to deserialize data for key %q: %v", key, err)
+		}
+		buf := bytes.NewBuffer(data)
+		dec := gob.NewDecoder(buf)
+		var value map[string]interface{}
+		if err = dec.Decode(&value); err != nil {
+			return err
+		}
+		f(key, value)
+		return nil
+	})
+	return err
+}
+
+////////////
+
 // Data embeds the datastore's Data and extends it with neuronjson properties.
 type Data struct {
 	*datastore.Data
 
-	// Firestore ProjectID
-	ProjectID string
-
-	// Dataset to keep in-memory
-	DatasetID string
-
-	// Persistence for schema and schema_batch necessary for neuTu/neu3 clients.
-	Schema      string
-	SchemaBatch string
-
 	// The in-memory dataset.
-	db      map[uint64]map[string]interface{}
-	ids     []uint64            // sorted list of body ids
-	fields  map[string]struct{} // list of all fields among the annotations
-	dbReady bool
-	dbMu    sync.RWMutex
-}
-
-// CopyPropertiesFrom copies the data instance-specific properties from a given
-// data instance into the receiver's properties. Fulfills the datastore.PropertyCopier interface.
-func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSpec) error {
-	d2, ok := src.(*Data)
-	if !ok {
-		return fmt.Errorf("unable to copy properties from non-neuronjson data %q", src.DataName())
-	}
-
-	d.ProjectID = d2.ProjectID
-	d.DatasetID = d2.DatasetID
-	d.Schema = d2.Schema
-	d.SchemaBatch = d2.SchemaBatch
-	return nil
+	db     map[uint64]map[string]interface{}
+	ids    []uint64            // sorted list of body ids
+	fields map[string]struct{} // list of all fields among the annotations
+	dbMu   sync.RWMutex
 }
 
 func (d *Data) Equals(d2 *Data) bool {
@@ -460,19 +543,10 @@ func (d *Data) Equals(d2 *Data) bool {
 func (d *Data) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Base     *datastore.Data
-		Extended struct {
-			ProjectID, DatasetID, Schema, SchemaBatch string
-		}
+		Extended struct{}
 	}{
 		d.Data,
-		struct {
-			ProjectID, DatasetID, Schema, SchemaBatch string
-		}{
-			ProjectID:   d.ProjectID,
-			DatasetID:   d.DatasetID,
-			Schema:      d.Schema,
-			SchemaBatch: d.SchemaBatch,
-		},
+		struct{}{},
 	})
 }
 
@@ -482,18 +556,6 @@ func (d *Data) GobDecode(b []byte) error {
 	if err := dec.Decode(&(d.Data)); err != nil {
 		return err
 	}
-	if err := dec.Decode(&(d.ProjectID)); err != nil {
-		return fmt.Errorf("decoding neuronjson %q: no ProjectID", d.DataName())
-	}
-	if err := dec.Decode(&(d.DatasetID)); err != nil {
-		return fmt.Errorf("decoding neuronjson %q: no DatasetID", d.DataName())
-	}
-	if err := dec.Decode(&(d.Schema)); err != nil {
-		return fmt.Errorf("decoding neuronjson %q: no Schema", d.DataName())
-	}
-	if err := dec.Decode(&(d.SchemaBatch)); err != nil {
-		return fmt.Errorf("decoding neuronjson %q: no SchemaBatch", d.DataName())
-	}
 	return nil
 }
 
@@ -501,18 +563,6 @@ func (d *Data) GobEncode() ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(d.Data); err != nil {
-		return nil, err
-	}
-	if err := enc.Encode(d.ProjectID); err != nil {
-		return nil, err
-	}
-	if err := enc.Encode(d.DatasetID); err != nil {
-		return nil, err
-	}
-	if err := enc.Encode(d.Schema); err != nil {
-		return nil, err
-	}
-	if err := enc.Encode(d.SchemaBatch); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -555,20 +605,43 @@ func getBodyID(data map[string]interface{}) (uint64, error) {
 
 // --- DataInitializer interface ---
 
-func (d *Data) loadFirestoreDB() {
+// InitDataHandlers initializes ephemeral data for this instance, which is
+// the in-memory keyvalue store where the values are neuron annotation JSON.
+func (d *Data) InitDataHandlers() error {
+	d.db = make(map[uint64]map[string]interface{})
+	return nil
+}
+
+func (d *Data) loadFirestoreDB(request datastore.Request, reply *datastore.Response) error {
+	if len(request.Command) < 6 {
+		return fmt.Errorf("ProjectID and DatasetID must be specified after %q", "ingest")
+	}
+	var uuidStr, dataName, cmdStr, projectID, datasetID string
+	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &projectID, &datasetID)
+
+	db, err := datastore.GetKeyValueDB(d)
+	if err != nil {
+		return fmt.Errorf("unable to get keyvalue database: %v", err)
+	}
+	_, versionID, err := datastore.MatchingUUID(uuidStr)
+	if err != nil {
+		return err
+	}
+	vctx := datastore.NewVersionedCtx(d, versionID)
+
 	tlog := dvid.NewTimeLog()
 	numdocs := 0
 
 	ctx := context.Background()
-	client, err := firestore.NewClient(ctx, d.ProjectID)
+	client, err := firestore.NewClient(ctx, projectID)
 	if err != nil {
-		dvid.Errorf("Could not connect to Firestore for project %q: %v\n", d.ProjectID, err)
-		return
+		return fmt.Errorf("could not connect to Firestore for project %q: %v", projectID, err)
 	}
 	defer client.Close()
-	it := client.Collection("clio_annotations_global").Doc("neurons").Collection(d.DatasetID).Where("_head", "==", true).Documents(ctx)
+	it := client.Collection("clio_annotations_global").Doc("neurons").Collection(datasetID).Where("_head", "==", true).Documents(ctx)
 
 	d.dbMu.Lock() // Note that the mutex is NOT unlocked if firestore DB doesn't load.
+	d.db = make(map[uint64]map[string]interface{})
 	d.fields = make(map[string]struct{})
 	for {
 		doc, err := it.Next()
@@ -576,8 +649,7 @@ func (d *Data) loadFirestoreDB() {
 			break
 		}
 		if err != nil {
-			dvid.Errorf("documents iterator error -- can't load Firebase for project %q, dataset %q: %v", d.ProjectID, d.DatasetID, err)
-			return
+			return fmt.Errorf("documents iterator error -- can't load Firebase for project %q, dataset %q: %v", projectID, datasetID, err)
 		}
 		annotation := doc.Data()
 		for field := range annotation {
@@ -585,11 +657,24 @@ func (d *Data) loadFirestoreDB() {
 		}
 		bodyid, err := getBodyID(annotation)
 		if err != nil {
-			dvid.Errorf("error getting bodyID from annotation: %v\n", annotation)
-			return
+			return fmt.Errorf("error getting bodyID from annotation: %v", annotation)
 		}
 		d.db[bodyid] = annotation
 		d.ids = append(d.ids, bodyid) // assumes there are no duplicate bodyid among HEAD annotations
+
+		data, err := json.Marshal(annotation)
+		if err != nil {
+			return err
+		}
+		keyStr := strconv.FormatUint(bodyid, 10)
+		tk, err := NewTKey(keyStr)
+		if err != nil {
+			return err
+		}
+		if err := db.Put(vctx, tk, data); err != nil {
+			return err
+		}
+
 		numdocs++
 		if numdocs%1000 == 0 {
 			tlog.Infof("Loaded %d HEAD annotations", numdocs)
@@ -599,17 +684,78 @@ func (d *Data) loadFirestoreDB() {
 
 	tlog.Infof("Completed loading of %d HEAD annotations", numdocs)
 	d.dbMu.Unlock()
-	d.dbReady = true
-}
 
-// InitDataHandlers initializes ephemeral data for this instance, which is
-// the in-memory keyvalue store where the values are neuron annotation JSON.
-func (d *Data) InitDataHandlers() error {
-	d.db = make(map[uint64]map[string]interface{})
-	go d.loadFirestoreDB()
+	reply.Output = []byte(fmt.Sprintf("Ingested Firestore annotations from project %q, dataset %q into neuronjson instance %q, uuid %s\n",
+		projectID, datasetID, d.DataName(), uuidStr))
 	return nil
 }
 
+func getSchemaKey(batch bool) (tkey storage.TKey, err error) {
+	if batch {
+		if tkey, err = NewSchemaBatchTKey(); err != nil {
+			return
+		}
+	} else {
+		if tkey, err = NewSchemaTKey(); err != nil {
+			return
+		}
+	}
+	return tkey, nil
+}
+
+func (d *Data) getSchema(ctx storage.VersionedCtx, batch bool) (val []byte, err error) {
+	var tkey storage.TKey
+	if tkey, err = getSchemaKey(batch); err != nil {
+		return
+	}
+	var db storage.KeyValueDB
+	if db, err = datastore.GetKeyValueDB(d); err != nil {
+		return
+	}
+	var byteVal []byte
+	if byteVal, err = db.Get(ctx, tkey); err != nil {
+		return
+	}
+	return byteVal, nil
+}
+
+func (d *Data) putSchema(ctx storage.VersionedCtx, val []byte, batch bool) (err error) {
+	var tkey storage.TKey
+	if tkey, err = getSchemaKey(batch); err != nil {
+		return
+	}
+	var db storage.KeyValueDB
+	if db, err = datastore.GetKeyValueDB(d); err != nil {
+		return
+	}
+	return db.Put(ctx, tkey, val)
+}
+
+func (d *Data) schemaExists(ctx storage.VersionedCtx, batch bool) (exists bool, err error) {
+	var tkey storage.TKey
+	if tkey, err = getSchemaKey(batch); err != nil {
+		return
+	}
+	var db storage.KeyValueDB
+	if db, err = datastore.GetKeyValueDB(d); err != nil {
+		return
+	}
+	return db.Exists(ctx, tkey)
+}
+
+func (d *Data) deleteSchema(ctx storage.VersionedCtx, batch bool) (err error) {
+	var tkey storage.TKey
+	if tkey, err = getSchemaKey(batch); err != nil {
+		return
+	}
+	var db storage.KeyValueDB
+	if db, err = datastore.GetKeyValueDB(d); err != nil {
+		return
+	}
+	return db.Delete(ctx, tkey)
+}
+
+// add bodyid to in-memory list of bodyids
 func (d *Data) addBodyID(bodyid uint64) {
 	i := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] >= bodyid })
 	if i < len(d.ids) && d.ids[i] == bodyid {
@@ -620,6 +766,7 @@ func (d *Data) addBodyID(bodyid uint64) {
 	d.ids[i] = bodyid
 }
 
+// delete bodyid from in-memory list of bodyids
 func (d *Data) deleteBodyID(bodyid uint64) {
 	i := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] == bodyid })
 	if i == len(d.ids) {
@@ -628,31 +775,35 @@ func (d *Data) deleteBodyID(bodyid uint64) {
 	d.ids = append(d.ids[:i], d.ids[i+1:]...)
 }
 
-func (d *Data) addRecord(data map[string]interface{}) error {
-	bodyid, err := getBodyID(data)
-	if err != nil {
-		return err
-	}
-	d.dbMu.Lock()
-	d.db[bodyid] = data
-	d.addBodyID(bodyid)
-	d.dbMu.Unlock()
-	return nil
-}
-
 // KeyExists returns true if a key is found.
-func (d *Data) KeyExists(keyStr string) (bool, error) {
-	bodyid, err := strconv.ParseUint(keyStr, 10, 64)
+func (d *Data) KeyExists(ctx storage.VersionedCtx, keyStr string) (found bool, err error) {
+	if ctx.Head() {
+		d.dbMu.RLock()
+		defer d.dbMu.RUnlock()
+		var bodyid uint64
+		bodyid, err = strconv.ParseUint(keyStr, 10, 64)
+		if err != nil {
+			return false, err
+		}
+		d.dbMu.RLock()
+		defer d.dbMu.RUnlock()
+		_, found = d.db[bodyid]
+		return found, nil
+	}
+	db, err := datastore.GetKeyValueDB(d)
 	if err != nil {
 		return false, err
 	}
-	d.dbMu.RLock()
-	defer d.dbMu.RUnlock()
-	_, found := d.db[bodyid]
-	return found, nil
+	tk, err := NewTKey(keyStr)
+	if err != nil {
+		return false, err
+	}
+	return db.Exists(ctx, tk)
 }
 
-func (d *Data) GetKeysInRange(keyBeg, keyEnd string) (keys []string, err error) {
+// GetKeysInRange returns all keys in the range [keyBeg, keyEnd].  Results on HEAD are ordered
+// by integer key, while results on other branches are ordered lexicographically.
+func (d *Data) GetKeysInRange(ctx storage.VersionedCtx, keyBeg, keyEnd string) (keys []string, err error) {
 	var bodyidBeg, bodyidEnd uint64
 	if bodyidBeg, err = parseKeyStr(keyBeg); err != nil {
 		return
@@ -660,44 +811,84 @@ func (d *Data) GetKeysInRange(keyBeg, keyEnd string) (keys []string, err error) 
 	if bodyidEnd, err = parseKeyStr(keyEnd); err != nil {
 		return
 	}
-	begI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] >= bodyidBeg })
-	endI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] > bodyidEnd })
-	size := endI - begI
-	if size <= 0 {
-		keys = []string{}
-		return
-	}
-	keys = make([]string, size)
-	pos := 0
-	for i := begI; i < endI; i++ {
-		bodyid := d.ids[i]
-		keys[pos] = strconv.FormatUint(bodyid, 10)
-		pos++
+	if ctx.Head() {
+		d.dbMu.RLock()
+		defer d.dbMu.RUnlock()
+		begI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] >= bodyidBeg })
+		endI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] > bodyidEnd })
+		size := endI - begI
+		if size <= 0 {
+			keys = []string{}
+			return
+		}
+		keys = make([]string, size)
+		pos := 0
+		for i := begI; i < endI; i++ {
+			bodyid := d.ids[i]
+			keys[pos] = strconv.FormatUint(bodyid, 10)
+			pos++
+		}
+	} else {
+		var begTKey, endTKey storage.TKey
+		begTKey, err = NewTKey(keyBeg)
+		if err != nil {
+			return nil, err
+		}
+		endTKey, err = NewTKey(keyEnd)
+		if err != nil {
+			return nil, err
+		}
+		process_func := func(key string) {
+			bodyid, err := parseKeyStr(key)
+			if err == nil && bodyid >= bodyidBeg && bodyid <= bodyidEnd {
+				keys = append(keys, key)
+			}
+		}
+		err = d.processKeysInRange(ctx, begTKey, endTKey, process_func)
 	}
 	return
 }
 
-func (d *Data) GetAll() ([]map[string]interface{}, error) {
-	d.dbMu.RLock()
-	out := make([]map[string]interface{}, len(d.db))
-	i := 0
-	for _, data := range d.db {
-		removeReservedFields(data)
-		out[i] = data
-		i++
+func (d *Data) GetAll(ctx storage.VersionedCtx) ([]map[string]interface{}, error) {
+	var out []map[string]interface{}
+	if ctx.Head() {
+		d.dbMu.RLock()
+		out = make([]map[string]interface{}, len(d.db)) // use cur size as starting size
+		i := 0
+		for _, value := range d.db {
+			removeReservedFields(value)
+			out[i] = value
+			i++
+		}
+		d.dbMu.RUnlock()
+	} else {
+		process_func := func(key string, value map[string]interface{}) {
+			out = append(out, value)
+		}
+		if err := d.processRange(ctx, process_func); err != nil {
+			return nil, err
+		}
 	}
-	d.dbMu.RUnlock()
 	return out, nil
 }
 
-func (d *Data) GetKeys() ([]string, error) {
-	keyStrings := make([]string, len(d.ids))
-	d.dbMu.RLock()
-	for i, bodyid := range d.ids {
-		keyStrings[i] = strconv.FormatUint(bodyid, 10)
+func (d *Data) GetKeys(ctx storage.VersionedCtx) (out []string, err error) {
+	if ctx.Head() {
+		out = make([]string, len(d.ids))
+		d.dbMu.RLock()
+		for i, bodyid := range d.ids {
+			out[i] = strconv.FormatUint(bodyid, 10)
+		}
+		d.dbMu.RUnlock()
+	} else {
+		process_func := func(key string) {
+			out = append(out, key)
+		}
+		if err := d.processAllKeys(ctx, process_func); err != nil {
+			return nil, err
+		}
 	}
-	d.dbMu.RUnlock()
-	return keyStrings, nil
+	return out, nil
 }
 
 func (d *Data) GetFields() ([]string, error) {
@@ -710,54 +901,67 @@ func (d *Data) GetFields() ([]string, error) {
 	return fields, nil
 }
 
-// GetData gets a value using a key
-func (d *Data) GetData(keyStr string) ([]byte, bool, error) {
+// GetData gets a byte value using a key
+func (d *Data) GetData(ctx storage.VersionedCtx, keyStr string) ([]byte, bool, error) {
 	bodyid, err := strconv.ParseUint(keyStr, 10, 64)
 	if err != nil {
 		return nil, false, err
 	}
-	d.dbMu.RLock()
-	defer d.dbMu.RUnlock()
-	value, found := d.db[bodyid]
-	if !found {
-		return nil, false, nil
+	var value map[string]interface{}
+	var found bool
+	if ctx.Head() {
+		d.dbMu.RLock()
+		defer d.dbMu.RUnlock()
+		value, found = d.db[bodyid]
+		if !found {
+			return nil, false, nil
+		}
+	} else {
+		value, found, err = d.getData(ctx, keyStr)
+		if !found || err != nil {
+			return nil, false, err
+		}
 	}
 	removeReservedFields(value)
 	data, err := json.Marshal(value)
 	return data, true, err
 }
 
-// PutData puts a key-value at a given uuid
-func (d *Data) PutData(keyStr string, value []byte) error {
+// PutData puts a byte value into key at a given uuid
+func (d *Data) PutData(ctx storage.VersionedCtx, keyStr string, value []byte) error {
 	bodyid, err := strconv.ParseUint(keyStr, 10, 64)
 	if err != nil {
 		return err
 	}
-	d.dbMu.Lock()
-	defer d.dbMu.Unlock()
 	var jsonData map[string]interface{}
 	if err := json.Unmarshal(value, &jsonData); err != nil {
 		return err
 	}
-	d.db[bodyid] = jsonData
-	d.addBodyID(bodyid)
-	return nil
+	if ctx.Head() {
+		d.dbMu.Lock()
+		defer d.dbMu.Unlock()
+		d.db[bodyid] = jsonData
+		d.addBodyID(bodyid)
+	}
+	return d.putData(ctx, keyStr, jsonData)
 }
 
 // DeleteData deletes a key-value pair
-func (d *Data) DeleteData(keyStr string) error {
+func (d *Data) DeleteData(ctx storage.VersionedCtx, keyStr string) error {
 	bodyid, err := strconv.ParseUint(keyStr, 10, 64)
 	if err != nil {
 		return err
 	}
-	d.dbMu.Lock()
-	defer d.dbMu.Unlock()
-	_, found := d.db[bodyid]
-	if found {
-		delete(d.db, bodyid)
-		d.deleteBodyID(bodyid)
+	if ctx.Head() {
+		d.dbMu.Lock()
+		defer d.dbMu.Unlock()
+		_, found := d.db[bodyid]
+		if found {
+			delete(d.db, bodyid)
+			d.deleteBodyID(bodyid)
+		}
 	}
-	return nil
+	return d.deleteData(ctx, keyStr)
 }
 
 // put handles a PUT command-line request.
@@ -784,7 +988,8 @@ func (d *Data) put(cmd datastore.Request, reply *datastore.Response) error {
 			return err
 		}
 	}
-	if err = d.PutData(keyStr, cmd.Input); err != nil {
+	ctx := datastore.NewVersionedCtx(d, versionID)
+	if err = d.PutData(ctx, keyStr, cmd.Input); err != nil {
 		return fmt.Errorf("error on put to key %q for neuronjson %q: %v", keyStr, d.DataName(), err)
 	}
 
@@ -802,7 +1007,10 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 	return string(m), nil
 }
 
-func (d *Data) sendJSONValuesInRange(w http.ResponseWriter, r *http.Request, keyBeg, keyEnd string) (numKeys int, err error) {
+func (d *Data) sendJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWriter, r *http.Request, keyBeg, keyEnd string) (numKeys int, err error) {
+	if !ctx.Head() {
+		return 0, fmt.Errorf("cannot use range query on non-head version at this time")
+	}
 	if len(keyBeg) == 0 || len(keyEnd) == 0 {
 		return 0, fmt.Errorf("must specify non-empty beginning and ending key")
 	}
@@ -917,7 +1125,7 @@ func (d *Data) sendJSONValuesInRange(w http.ResponseWriter, r *http.Request, key
 	return
 }
 
-func (d *Data) sendJSONKV(w http.ResponseWriter, keys []string, checkVal bool) (writtenBytes int, err error) {
+func (d *Data) sendJSONKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys []string, checkVal bool) (writtenBytes int, err error) {
 	w.Header().Set("Content-type", "application/json")
 	if writtenBytes, err = w.Write([]byte("{")); err != nil {
 		return
@@ -933,7 +1141,7 @@ func (d *Data) sendJSONKV(w http.ResponseWriter, keys []string, checkVal bool) (
 		}
 		var val []byte
 		var found bool
-		if val, found, err = d.GetData(key); err != nil {
+		if val, found, err = d.GetData(ctx, key); err != nil {
 			return
 		}
 		if !found {
@@ -961,14 +1169,14 @@ func (d *Data) sendJSONKV(w http.ResponseWriter, keys []string, checkVal bool) (
 	return
 }
 
-func (d *Data) sendTarKV(w http.ResponseWriter, keys []string) (writtenBytes int, err error) {
+func (d *Data) sendTarKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys []string) (writtenBytes int, err error) {
 	var n int
 	w.Header().Set("Content-type", "application/tar")
 	tw := tar.NewWriter(w)
 	for _, key := range keys {
 		var val []byte
 		var found bool
-		if val, found, err = d.GetData(key); err != nil {
+		if val, found, err = d.GetData(ctx, key); err != nil {
 			return
 		}
 		if !found {
@@ -991,13 +1199,13 @@ func (d *Data) sendTarKV(w http.ResponseWriter, keys []string) (writtenBytes int
 	return
 }
 
-func (d *Data) sendProtobufKV(w http.ResponseWriter, keys Keys) (writtenBytes int, err error) {
+func (d *Data) sendProtobufKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys Keys) (writtenBytes int, err error) {
 	var kvs KeyValues
 	kvs.Kvs = make([]*KeyValue, len(keys.Keys))
 	for i, key := range keys.Keys {
 		var val []byte
 		var found bool
-		if val, found, err = d.GetData(key); err != nil {
+		if val, found, err = d.GetData(ctx, key); err != nil {
 			return
 		}
 		if !found {
@@ -1022,7 +1230,7 @@ func (d *Data) sendProtobufKV(w http.ResponseWriter, keys Keys) (writtenBytes in
 	return
 }
 
-func (d *Data) handleKeyValues(w http.ResponseWriter, r *http.Request, uuid dvid.UUID) (numKeys, writtenBytes int, err error) {
+func (d *Data) handleKeyValues(ctx storage.VersionedCtx, w http.ResponseWriter, r *http.Request, uuid dvid.UUID) (numKeys, writtenBytes int, err error) {
 	tarOut := (r.URL.Query().Get("jsontar") == "true") || (r.URL.Query().Get("tar") == "true")
 	jsonOut := r.URL.Query().Get("json") == "true"
 	checkVal := r.URL.Query().Get("check") == "true"
@@ -1042,26 +1250,26 @@ func (d *Data) handleKeyValues(w http.ResponseWriter, r *http.Request, uuid dvid
 			return
 		}
 		numKeys = len(keys)
-		writtenBytes, err = d.sendTarKV(w, keys)
+		writtenBytes, err = d.sendTarKV(ctx, w, keys)
 	case jsonOut:
 		var keys []string
 		if err = json.Unmarshal(data, &keys); err != nil {
 			return
 		}
 		numKeys = len(keys)
-		writtenBytes, err = d.sendJSONKV(w, keys, checkVal)
+		writtenBytes, err = d.sendJSONKV(ctx, w, keys, checkVal)
 	default:
 		var keys Keys
 		if err = keys.Unmarshal(data); err != nil {
 			return
 		}
 		numKeys = len(keys.Keys)
-		writtenBytes, err = d.sendProtobufKV(w, keys)
+		writtenBytes, err = d.sendProtobufKV(ctx, w, keys)
 	}
 	return
 }
 
-func (d *Data) handleIngest(r *http.Request, uuid dvid.UUID) error {
+func (d *Data) handleIngest(ctx storage.VersionedCtx, r *http.Request, uuid dvid.UUID) error {
 	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return err
@@ -1071,7 +1279,7 @@ func (d *Data) handleIngest(r *http.Request, uuid dvid.UUID) error {
 		return err
 	}
 	for _, kv := range kvs.Kvs {
-		err = d.PutData(kv.Key, kv.Value)
+		err = d.PutData(ctx, kv.Key, kv.Value)
 		if err != nil {
 			return err
 		}
@@ -1102,10 +1310,54 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	switch request.TypeCommand() {
 	case "put":
 		return d.put(request, reply)
+	case "ingest":
+		return d.loadFirestoreDB(request, reply)
 	default:
 		return fmt.Errorf("unknown command.  Data '%s' [%s] does not support '%s' command",
 			d.DataName(), d.TypeName(), request.TypeCommand())
 	}
+}
+
+func (d *Data) handleSchema(ctx storage.VersionedCtx, w http.ResponseWriter, r *http.Request, uuid dvid.UUID, action string, batch bool) error {
+	switch action {
+	case "head":
+		found, err := d.schemaExists(ctx, batch)
+		if err != nil {
+			return err
+		}
+		if found {
+			w.WriteHeader(http.StatusOK)
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+
+	case "get":
+		value, err := d.getSchema(ctx, batch)
+		if err != nil {
+			return err
+		} else if _, err := w.Write(value); err != nil {
+			return err
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+	case "delete":
+		if err := d.deleteSchema(ctx, batch); err != nil {
+			return err
+		}
+
+	case "post":
+		data, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			return err
+		}
+		if err := d.putSchema(ctx, data, batch); err != nil {
+			return err
+		}
+
+	default:
+		return fmt.Errorf("key endpoint does not support %q HTTP verb", action)
+	}
+	return nil
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.
@@ -1122,17 +1374,6 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	if len(parts) < 4 {
 		server.BadRequest(w, r, "incomplete API specification")
 		return
-	}
-
-	// abort requests if database wasn't able to be initialized.
-	switch parts[3] {
-	case "help", "info", "tags":
-		// can operate without database
-	default:
-		if !d.dbReady {
-			server.BadRequest(w, r, "firestore not available, see logs")
-			return
-		}
 	}
 
 	var comment string
@@ -1172,95 +1413,19 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 
 	case "schema":
-		switch action {
-		case "head":
-			if d.Schema != "" {
-				w.WriteHeader(http.StatusOK)
-			} else {
-				w.WriteHeader(http.StatusNotFound)
-			}
-			return
-
-		case "get":
-			value := []byte(d.Schema)
-			if _, err := w.Write(value); err != nil {
-				server.BadRequest(w, r, err)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			comment = fmt.Sprintf("HTTP GET schema of neuronjson %q: %d bytes (%s)", d.DataName(), len(value), url)
-
-		case "delete":
-			d.Schema = ""
-			if err := datastore.SaveDataByUUID(uuid, d); err != nil {
-				server.BadRequest(w, r, err)
-				return
-			}
-			comment = fmt.Sprintf("HTTP DELETE schema of neuronjson %q (%s)", d.DataName(), url)
-
-		case "post":
-			data, err := ioutil.ReadAll(r.Body)
-			if err != nil {
-				server.BadRequest(w, r, err)
-				return
-			}
-			d.Schema = string(data)
-			if err := datastore.SaveDataByUUID(uuid, d); err != nil {
-				server.BadRequest(w, r, err)
-				return
-			}
-			comment = fmt.Sprintf("HTTP POST schema neuronjson '%s': %d bytes (%s)", d.DataName(), len(data), url)
-		default:
-			server.BadRequest(w, r, "key endpoint does not support %q HTTP verb", action)
+		if err := d.handleSchema(ctx, w, r, uuid, action, false); err != nil {
+			server.BadRequest(w, r, err)
 			return
 		}
 
 	case "schema_batch":
-		switch action {
-		case "head":
-			if d.SchemaBatch != "" {
-				w.WriteHeader(http.StatusOK)
-			} else {
-				w.WriteHeader(http.StatusNotFound)
-			}
-			return
-
-		case "get":
-			value := []byte(d.SchemaBatch)
-			if _, err := w.Write(value); err != nil {
-				server.BadRequest(w, r, err)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			comment = fmt.Sprintf("HTTP GET schema_batch of neuronjson %q: %d bytes (%s)", d.DataName(), len(value), url)
-
-		case "delete":
-			d.SchemaBatch = ""
-			if err := datastore.SaveDataByUUID(uuid, d); err != nil {
-				server.BadRequest(w, r, err)
-				return
-			}
-			comment = fmt.Sprintf("HTTP DELETE schema_batch of neuronjson %q (%s)", d.DataName(), url)
-
-		case "post":
-			data, err := ioutil.ReadAll(r.Body)
-			if err != nil {
-				server.BadRequest(w, r, err)
-				return
-			}
-			d.SchemaBatch = string(data)
-			if err := datastore.SaveDataByUUID(uuid, d); err != nil {
-				server.BadRequest(w, r, err)
-				return
-			}
-			comment = fmt.Sprintf("HTTP POST schema_batch neuronjson '%s': %d bytes (%s)", d.DataName(), len(data), url)
-		default:
-			server.BadRequest(w, r, "key endpoint does not support %q HTTP verb", action)
+		if err := d.handleSchema(ctx, w, r, uuid, action, true); err != nil {
+			server.BadRequest(w, r, err)
 			return
 		}
 
 	case "all":
-		kvList, err := d.GetAll()
+		kvList, err := d.GetAll(ctx)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -1275,7 +1440,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		comment = "HTTP GET all"
 
 	case "keys":
-		keyList, err := d.GetKeys()
+		keyList, err := d.GetKeys(ctx)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -1313,7 +1478,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		// Return JSON list of keys
 		keyBeg := parts[4]
 		keyEnd := parts[5]
-		keyList, err := d.GetKeysInRange(keyBeg, keyEnd)
+		keyList, err := d.GetKeysInRange(ctx, keyBeg, keyEnd)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -1337,7 +1502,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		keyBeg := parts[4]
 		keyEnd := parts[5]
 		w.Header().Set("Content-Type", "application/json")
-		numKeys, err := d.sendJSONValuesInRange(w, r, keyBeg, keyEnd)
+		numKeys, err := d.sendJSONValuesInRange(ctx, w, r, keyBeg, keyEnd)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -1347,14 +1512,14 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "keyvalues":
 		switch action {
 		case "get":
-			numKeys, writtenBytes, err := d.handleKeyValues(w, r, uuid)
+			numKeys, writtenBytes, err := d.handleKeyValues(ctx, w, r, uuid)
 			if err != nil {
 				server.BadRequest(w, r, "GET /keyvalues on %d keys, data %q: %v", numKeys, d.DataName(), err)
 				return
 			}
 			comment = fmt.Sprintf("HTTP GET keyvalues on %d keys, %d bytes, data %q", numKeys, writtenBytes, d.DataName())
 		case "post":
-			if err := d.handleIngest(r, uuid); err != nil {
+			if err := d.handleIngest(ctx, r, uuid); err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
@@ -1373,7 +1538,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 		switch action {
 		case "head":
-			found, err := d.KeyExists(keyStr)
+			found, err := d.KeyExists(ctx, keyStr)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
@@ -1387,7 +1552,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 		case "get":
 			// Return value of single key
-			value, found, err := d.GetData(keyStr)
+			value, found, err := d.GetData(ctx, keyStr)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
@@ -1407,7 +1572,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			comment = fmt.Sprintf("HTTP GET key %q of neuronjson %q: %d bytes (%s)", keyStr, d.DataName(), len(value), url)
 
 		case "delete":
-			if err := d.DeleteData(keyStr); err != nil {
+			if err := d.DeleteData(ctx, keyStr); err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
@@ -1434,7 +1599,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				}
 			}()
 
-			err = d.PutData(keyStr, data)
+			err = d.PutData(ctx, keyStr, data)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
