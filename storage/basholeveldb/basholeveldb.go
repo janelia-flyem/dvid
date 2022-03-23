@@ -457,9 +457,7 @@ func (db *LevelDB) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 	} else {
 		key := ctx.ConstructKey(tk)
 		ro := db.options.ReadOptions
-		dvid.StartCgo()
 		v, err := db.ldb.Get(ro, key)
-		dvid.StopCgo()
 		storage.StoreValueBytesRead <- len(v)
 		return v, err
 	}

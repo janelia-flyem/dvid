@@ -6,47 +6,14 @@ package dvid
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-type cgoStatus int
-
-const (
-	MaxNumberConcurrentCgo = 10000
-
-	cgoStarted cgoStatus = 1
-	cgoStopped cgoStatus = -1
-)
-
 var (
-	// CgoActive is a buffered channel for signaling cgo routines that are active.
-	cgoActive    chan cgoStatus
-	cgoActive_mu sync.RWMutex
-
-	cgoNumActive int
+	cgoNumActive uint64
 	startCgo     sync.Mutex
 )
-
-func init() {
-	// Create CgoActive channel to keep tract of the # of active cgo routines.
-	// This is useful for graceful shutdown of DVID when there are outstanding
-	// goroutines using cgo.
-	cgoActive = make(chan cgoStatus, MaxNumberConcurrentCgo)
-	go func() {
-		for {
-			switch <-cgoActive {
-			case cgoStarted:
-				cgoActive_mu.Lock()
-				cgoNumActive++
-				cgoActive_mu.Unlock()
-			case cgoStopped:
-				cgoActive_mu.Lock()
-				cgoNumActive--
-				cgoActive_mu.Unlock()
-			}
-		}
-	}()
-}
 
 // BlockOnActiveCgo will block until all active writing cgo routines have been finished.
 // This requires cgo routines to be bracketed by:
@@ -60,11 +27,10 @@ func BlockOnActiveCgo() {
 	Infof("Checking for any active cgo routines...\n")
 	waits := 0
 	for {
-		if (cgoNumActive == 0 && len(cgoActive) == 0) || waits >= 10 {
+		if cgoNumActive == 0 || waits >= 10 {
 			return
 		}
-		Infof("Waited %d seconds for %d active cgo routines (%d messages to be processed)...\n",
-			waits, cgoNumActive, len(cgoActive))
+		Infof("Waited %d seconds for %d active cgo routines ...\n", waits, cgoNumActive)
 		waits++
 		time.Sleep(1 * time.Second)
 	}
@@ -74,18 +40,15 @@ func BlockOnActiveCgo() {
 // a BlockOnActiveCgo().  This is used for graceful shutdowns and monitoring.
 func StartCgo() {
 	startCgo.Lock()
-	cgoActive <- cgoStarted
+	atomic.AddUint64(&cgoNumActive, 1)
 	startCgo.Unlock()
 }
 
 func StopCgo() {
-	cgoActive <- cgoStopped
+	atomic.AddUint64(&cgoNumActive, ^uint64(0)) // decrements by 1
 }
 
 // NumberActiveCGo returns the number of active CGo routines, typically involved with database operations.
-func NumberActiveCGo() int {
-	cgoActive_mu.RLock()
-	defer cgoActive_mu.RUnlock()
-
+func NumberActiveCGo() uint64 {
 	return cgoNumActive
 }

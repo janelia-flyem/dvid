@@ -1427,7 +1427,7 @@ func loadHandler(w http.ResponseWriter, r *http.Request) {
 		"PUT requests":         storage.PutsPerSec,
 		"handlers active":      int(100 * ActiveHandlers / MaxChunkHandlers),
 		"goroutines":           runtime.NumGoroutine(),
-		"active CGo writes":    dvid.NumberActiveCGo(),
+		"active CGo writes":    int(dvid.NumberActiveCGo()),
 		"pending log messages": dvid.PendingLogMessages(),
 	})
 	if err != nil {
