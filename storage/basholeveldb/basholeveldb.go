@@ -214,9 +214,6 @@ func (e Engine) newLevelDB(config dvid.StoreConfig) (*LevelDB, bool, error) {
 // Repair tries to repair a damaged leveldb.  Requires "path" string.  Implements
 // the RepairableEngine interface.
 func (e Engine) Repair(path string) error {
-	dvid.StartCgo()
-	defer dvid.StopCgo()
-
 	opt, err := getOptions(dvid.Config{})
 	if err != nil {
 		return err
@@ -406,13 +403,9 @@ func (db *LevelDB) Equal(config dvid.StoreConfig) bool {
 func (db *LevelDB) metadataExists() (bool, error) {
 	var ctx storage.MetadataContext
 	keyBeg, keyEnd := ctx.KeyRange()
-	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
 	it := db.ldb.NewIterator(ro)
-	defer func() {
-		it.Close()
-		dvid.StopCgo()
-	}()
+	defer it.Close()
 
 	it.Seek(keyBeg)
 	for {
@@ -483,12 +476,10 @@ func (db *LevelDB) Exists(ctx storage.Context, tk storage.TKey) (found bool, err
 	if ctx == nil {
 		return false, fmt.Errorf("Received nil context in Exists()")
 	}
-	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
 	it := db.ldb.NewIterator(ro)
 	defer func() {
 		it.Close()
-		dvid.StopCgo()
 	}()
 
 	var key storage.Key
@@ -522,13 +513,9 @@ func (db *LevelDB) Exists(ctx storage.Context, tk storage.TKey) (found bool, err
 // getSingleKeyVersions returns all versions of a key.  These key-value pairs will be sorted
 // in ascending key order and could include a tombstone key.
 func (db *LevelDB) getSingleKeyVersions(vctx storage.VersionedCtx, tk []byte) ([]*storage.KeyValue, error) {
-	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
 	it := db.ldb.NewIterator(ro)
-	defer func() {
-		it.Close()
-		dvid.StopCgo()
-	}()
+	defer it.Close()
 
 	values := []*storage.KeyValue{}
 	begKey, err := vctx.MinVersionKey(tk)
@@ -582,13 +569,9 @@ func sendKV(vctx storage.VersionedCtx, values []*storage.KeyValue, ch chan error
 
 // versionedRange sends a range of key-value pairs for a particular version down a channel.
 func (db *LevelDB) versionedRange(vctx storage.VersionedCtx, begTKey, endTKey storage.TKey, ch chan errorableKV, done <-chan struct{}, keysOnly bool) {
-	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
 	it := db.ldb.NewIterator(ro)
-	defer func() {
-		it.Close()
-		dvid.StopCgo()
-	}()
+	defer it.Close()
 
 	minKey, err := vctx.MinVersionKey(begTKey)
 	if err != nil {
@@ -888,13 +871,9 @@ func (db *LevelDB) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out ch
 	if db == nil {
 		return fmt.Errorf("Can't call RawRangeQuery on nil LevelDB")
 	}
-	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
 	it := db.ldb.NewIterator(ro)
-	defer func() {
-		it.Close()
-		dvid.StopCgo()
-	}()
+	defer it.Close()
 
 	var itValue []byte
 	it.Seek(kStart)
@@ -1219,9 +1198,6 @@ func (db *LevelDB) NewBatch(ctx storage.Context) storage.Batch {
 		dvid.Criticalf("Received nil context in NewBatch()")
 		return nil
 	}
-	dvid.StartCgo()
-	defer dvid.StopCgo()
-
 	var vctx storage.VersionedCtx
 	var ok bool
 	vctx, ok = ctx.(storage.VersionedCtx)
@@ -1352,9 +1328,7 @@ func (db *LevelDB) GetBlob(ref string) (v []byte, err error) {
 	}
 	key := storage.ConstructBlobKey(contentHash)
 	ro := db.options.ReadOptions
-	dvid.StartCgo()
 	v, err = db.ldb.Get(ro, key)
-	dvid.StopCgo()
 	storage.StoreValueBytesRead <- len(v)
 	return
 }

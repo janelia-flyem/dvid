@@ -1427,7 +1427,7 @@ func loadHandler(w http.ResponseWriter, r *http.Request) {
 		"PUT requests":         storage.PutsPerSec,
 		"handlers active":      int(100 * ActiveHandlers / MaxChunkHandlers),
 		"goroutines":           runtime.NumGoroutine(),
-		"active CGo routines":  dvid.NumberActiveCGo(),
+		"active CGo writes":    dvid.NumberActiveCGo(),
 		"pending log messages": dvid.PendingLogMessages(),
 	})
 	if err != nil {
@@ -1435,7 +1435,7 @@ func loadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, string(m))
+	fmt.Fprint(w, string(m))
 }
 
 func heartbeatHandler(w http.ResponseWriter, r *http.Request) {

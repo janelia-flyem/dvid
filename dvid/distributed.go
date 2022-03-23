@@ -48,10 +48,10 @@ func init() {
 	}()
 }
 
-// BlockOnActiveCgo will block until all active cgo routines have been finished or
-// queued for starting.  This requires cgo routines to be bracketed by:
+// BlockOnActiveCgo will block until all active writing cgo routines have been finished.
+// This requires cgo routines to be bracketed by:
 //    dvid.StartCgo()
-//    /* Some cgo code */
+//    /* Some cgo code that's writing */
 //    dvid.StopCgo()
 func BlockOnActiveCgo() {
 	startCgo.Lock()
