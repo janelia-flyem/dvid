@@ -2565,7 +2565,7 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 		}
 
 		if len(value) > 0 {
-			go func(bcoord dvid.ChunkPoint3d) {
+			go func(bcoord dvid.ChunkPoint3d, value []byte) {
 				b := blockData{
 					bcoord:      bcoord,
 					v:           ctx.VersionID(),
@@ -2577,7 +2577,7 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 				out, err := d.transcodeBlock(b)
 				timing.transcodeDone(t0)
 				ch <- blockSend{bcoord: bcoord, value: out, err: err}
-			}(bcoord)
+			}(bcoord, value)
 		} else {
 			ch <- blockSend{value: nil}
 		}
