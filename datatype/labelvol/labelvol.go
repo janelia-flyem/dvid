@@ -21,14 +21,14 @@ import (
 	"sync"
 	"time"
 
+	humanize "github.com/dustin/go-humanize"
+
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/labelblk"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
-
-	humanize "github.com/janelia-flyem/go/go-humanize"
 
 	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )

@@ -153,7 +153,7 @@ func TestParseConfig(t *testing.T) {
 	if len(tc.Mirror) != 2 {
 		t.Errorf("Bad mirror config: %v\n", tc.Mirror)
 	}
-	spec := dvid.DataSpecifier(`"bc95398cb3ae40fcab2529c7bca1ad0d:99ef22cd85f143f58a623bd22aad0ef7"`)
+	spec := dvid.DataSpecifier("bc95398cb3ae40fcab2529c7bca1ad0d:99ef22cd85f143f58a623bd22aad0ef7")
 	mirrorCfg, found := tc.Mirror[spec]
 	if !found {
 		t.Fatalf("did not find expected mirror configuration for %s: %v\n", spec, tc.Mirror)

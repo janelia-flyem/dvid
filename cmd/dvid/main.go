@@ -21,7 +21,8 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
-	"github.com/janelia-flyem/go/profiler"
+
+	"github.com/wblakecaldwell/profiler"
 
 	// Declare the data types this DVID executable will support
 	_ "github.com/janelia-flyem/dvid/datatype/annotation"

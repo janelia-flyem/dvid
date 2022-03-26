@@ -8,7 +8,8 @@ import (
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
-	"github.com/janelia-flyem/go/toml"
+
+	"github.com/BurntSushi/toml"
 )
 
 const testConfig = `

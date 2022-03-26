@@ -19,8 +19,8 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 
-	"github.com/janelia-flyem/go/semver"
-	"github.com/janelia-flyem/go/uuid"
+	"github.com/blang/semver"
+	"github.com/twinj/uuid"
 )
 
 func init() {
@@ -199,16 +199,16 @@ func (fs *fileStore) filepathFromTKey(ctx storage.Context, tk storage.TKey) (dir
 	}
 	dirpath = filepath.Join(fs.path, hexHash[0:2], hexHash[2:4], hexHash[4:5])
 
-    /*
-	v := ctx.VersionID()
-	filename = fmt.Sprintf("v%d", v)
+	/*
+		v := ctx.VersionID()
+		filename = fmt.Sprintf("v%d", v)
 
-	igetter, ok := ctx.(instanceGetter)
-	if ok {
-		filename += fmt.Sprintf("-i%d", igetter.InstanceID())
-	}
-    */
-    filename = "v1-i34"
+		igetter, ok := ctx.(instanceGetter)
+		if ok {
+			filename += fmt.Sprintf("-i%d", igetter.InstanceID())
+		}
+	*/
+	filename = "v1-i34"
 	filename += "-" + string(namebytes)
 	return
 }

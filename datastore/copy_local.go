@@ -19,9 +19,10 @@ import (
 	"sync"
 	"time"
 
+	humanize "github.com/dustin/go-humanize"
+
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
-	humanize "github.com/janelia-flyem/go/go-humanize"
 )
 
 type txStats struct {
