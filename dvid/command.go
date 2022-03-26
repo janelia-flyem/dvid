@@ -105,6 +105,18 @@ func (c Config) GetInt(key string) (i int, found bool, err error) {
 	return
 }
 
+// GetInt64 returns an int value of the given key with string value.  Returns an
+// error if the key's value is not parsable as int.
+func (c Config) GetInt64(key string) (i int64, found bool, err error) {
+	var s string
+	s, found, err = c.GetString(key)
+	if err != nil || !found {
+		return
+	}
+	i, err = strconv.ParseInt(s, 10, 64)
+	return
+}
+
 // GetBool returns a bool value of the given key with string value.  If setting of key is not
 // parseable as a bool ("false", "true", "0", or "1"), returns an error.  If the key
 // is not found, it will also return a false bool (the Go zero value for bool).
