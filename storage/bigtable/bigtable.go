@@ -12,7 +12,7 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 
-	"github.com/janelia-flyem/go/semver"
+	"github.com/blang/semver"
 
 	api "cloud.google.com/go/bigtable"
 	"cloud.google.com/go/bigtable/bttest"

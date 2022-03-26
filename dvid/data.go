@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/janelia-flyem/go/uuid"
+	"github.com/twinj/uuid"
 )
 
 // LocalID is a unique id for some data in a DVID instance.  This unique id is a much
@@ -58,18 +58,16 @@ func LocalID32FromBytes(b []byte) (id LocalID32, length int) {
 
 // ---- Base identifiers of data within DVID -----
 
-// UUID is a 32 character hexidecimal string ("" if invalid) that uniquely identifies
+// UUID is a 32 character hexidecimal string (a RFC4122 version 4 UUID) that uniquely identifies
 // nodes in a datastore's DAG.  We need universally unique identifiers to prevent collisions
 // during creation of child nodes by distributed DVIDs:
 // http://en.wikipedia.org/wiki/Universally_unique_identifier
+// An empty string is an invalid (NilUUID).
 type UUID string
 
 // NewUUID returns a UUID
 func NewUUID() UUID {
 	u := uuid.NewV4()
-	if u == nil {
-		return UUID("")
-	}
 	return UUID(fmt.Sprintf("%032x", u.Bytes()))
 }
 

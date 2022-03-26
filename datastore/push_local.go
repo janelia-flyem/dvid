@@ -18,12 +18,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dustin/go-humanize"
+	"github.com/valyala/gorpc"
+
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/rpc"
 	"github.com/janelia-flyem/dvid/storage"
-	"github.com/janelia-flyem/go/go-humanize"
-
-	"github.com/valyala/gorpc"
 )
 
 // PushRepo pushes a Repo to a remote DVID server at the target address.
@@ -44,7 +44,7 @@ func PushRepo(uuid dvid.UUID, target string, config dvid.Config) error {
 	}
 
 	// Get any filter
-	filter, found, err := config.GetString("filter")
+	filter, _, err := config.GetString("filter")
 	if err != nil {
 		return err
 	}
@@ -63,7 +63,7 @@ func PushRepo(uuid dvid.UUID, target string, config dvid.Config) error {
 	// Establish session with target, which may be itself
 	s, err := rpc.NewSession(target, pushMessageID)
 	if err != nil {
-		return fmt.Errorf("Unable to connect (%s) for push: %s", target, err.Error())
+		return fmt.Errorf("unable to connect (%s) for push: %s", target, err.Error())
 	}
 	defer s.Close() // TODO -- check if can hang if error occurs during job
 

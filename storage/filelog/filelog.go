@@ -9,10 +9,11 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/blang/semver"
+	"github.com/twinj/uuid"
+
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
-	"github.com/janelia-flyem/go/semver"
-	"github.com/janelia-flyem/go/uuid"
 )
 
 func init() {

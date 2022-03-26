@@ -10,12 +10,13 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/blang/semver"
+	humanize "github.com/dustin/go-humanize"
+	levigo "github.com/janelia-flyem/go/basholeveldb"
+	"github.com/twinj/uuid"
+
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
-	levigo "github.com/janelia-flyem/go/basholeveldb"
-	humanize "github.com/janelia-flyem/go/go-humanize"
-	"github.com/janelia-flyem/go/semver"
-	"github.com/janelia-flyem/go/uuid"
 )
 
 // These constants were guided by Basho documentation and their tuning of leveldb:
