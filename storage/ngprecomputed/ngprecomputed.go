@@ -15,16 +15,16 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/storage"
-	"github.com/janelia-flyem/go/semver"
-
+	"github.com/blang/semver"
 	"gocloud.dev/blob"
 	"gocloud.dev/blob/gcsblob"
 	_ "gocloud.dev/blob/gcsblob"
 	_ "gocloud.dev/blob/s3blob"
 	"gocloud.dev/gcerrors"
 	"gocloud.dev/gcp"
+
+	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 func init() {

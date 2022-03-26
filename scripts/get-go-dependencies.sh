@@ -44,7 +44,7 @@ fi
 echo "Fetching third-party go sources..."
 
 export CGO_ENABLED=1
-export GO111MODULE=off
+#export GO111MODULE=auto
 
 echo $(type go)
 echo $(go version)
@@ -69,7 +69,9 @@ ensure_checkout() {
 }
 
 # gopackages
-go get github.com/janelia-flyem/go
+cd ${GOPATH}/src/github.com/janelia-flyem
+#go get github.com/janelia-flyem/go
+git clone https://github.com/janelia-flyem/go
 cd ${GOPATH}/src/github.com/janelia-flyem/go
 git submodule init
 git submodule update
@@ -135,6 +137,26 @@ go get github.com/gogo/protobuf/proto
 go get github.com/gogo/protobuf/gogoproto
 go get github.com/gogo/protobuf/protoc-gen-gogoslick
 
+# freecache
+go get github.com/coocood/freecache
+
+# Openstack Swift
+#go get github.com/ncw/swift
+SWIFT_REPO=https://github.com/ncw/swift
+SWIFT_DIR=${GOPATH}/src/github.com/ncw/swift
+SWIFT_TAG=master
+SWIFT_SHA=753d2090bb62619675997bd87a8e3af423a00f2d
+ensure_checkout ${SWIFT_REPO} ${SWIFT_DIR} ${SWIFT_TAG} ${SWIFT_SHA}
+
+# Sarama for kafka support
+go get github.com/Shopify/sarama
+
+# Go Cloud Development Kit
+go get gocloud.dev
+go get github.com/google/wire
+go get golang.org/x/xerrors
+go get golang.org/x/sync/errgroup
+
 # gofuse
 # go get bazil.org/fuse
 
@@ -151,10 +173,10 @@ go get github.com/gogo/protobuf/protoc-gen-gogoslick
 # (See badger notes below. Same reason.)
 #go install -i github.com/dgraph-io/ristretto
 #go get github.com/dgraph-io/ristretto
-RISTRETTO_REPO=https://github.com/dgraph-io/ristretto
-RISTRETTO_DIR=${GOPATH}/src/github.com/dgraph-io/ristretto
-RISTRETTO_TAG=v0.0.1 # Don't change this without also changing it in meta.yaml!!
-ensure_checkout ${RISTRETTO_REPO} ${RISTRETTO_DIR} ${RISTRETTO_TAG}
+#RISTRETTO_REPO=https://github.com/dgraph-io/ristretto
+#RISTRETTO_DIR=${GOPATH}/src/github.com/dgraph-io/ristretto
+#RISTRETTO_TAG=v0.0.1 # Don't change this without also changing it in meta.yaml!!
+#ensure_checkout ${RISTRETTO_REPO} ${RISTRETTO_DIR} ${RISTRETTO_TAG}
 
 # badger
 #
@@ -163,21 +185,21 @@ ensure_checkout ${RISTRETTO_REPO} ${RISTRETTO_DIR} ${RISTRETTO_TAG}
 #   https://golang.org/cmd/go/#hdr-Modules__module_versions__and_more
 #   ...in which case we'll be able to refer to a specific tag of the main badger repo.
 #go install -i github.com/dgraph-io/badger
-BADGER_REPO=https://github.com/dgraph-io/badger
-BADGER_DIR=${GOPATH}/src/github.com/dgraph-io/badger
-BADGER_TAG=v2.0.0 # Don't change this without also changing it in meta.yaml!!
-ensure_checkout ${BADGER_REPO} ${BADGER_DIR} ${BADGER_TAG}
+#BADGER_REPO=https://github.com/dgraph-io/badger
+#BADGER_DIR=${GOPATH}/src/github.com/dgraph-io/badger
+#BADGER_TAG=v2.0.0 # Don't change this without also changing it in meta.yaml!!
+#ensure_checkout ${BADGER_REPO} ${BADGER_DIR} ${BADGER_TAG}
 
 # badger dependencies
-go get github.com/DataDog/zstd
+#go get github.com/DataDog/zstd
 
-go get github.com/AndreasBriese/bbloom
-go get github.com/dgryski/go-farm
-go get github.com/pkg/errors
-go get golang.org/x/sys/unix
-go get github.com/dustin/go-humanize
+#go get github.com/AndreasBriese/bbloom
+#go get github.com/dgryski/go-farm
+#go get github.com/pkg/errors
+#go get golang.org/x/sys/unix
+#go get github.com/dustin/go-humanize
 
-go get github.com/cespare/xxhash
+#go get github.com/cespare/xxhash
 
 # freecache
 go get github.com/coocood/freecache
@@ -201,5 +223,8 @@ go get github.com/jmespath/go-jmespath
 
 # Sarama for kafka support
 go get github.com/Shopify/sarama
+# badger recent build
+go env -w GO111MODULE=on
+go get github.com/dgraph-io/badger/v3@v3.2103.2
 
 echo "Done fetching third-party go sources."

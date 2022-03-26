@@ -12,10 +12,10 @@ import (
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
-	"github.com/janelia-flyem/go/semver"
-	"github.com/janelia-flyem/go/uuid"
 
+	"github.com/blang/semver"
 	"github.com/dgraph-io/badger"
+	"github.com/twinj/uuid"
 )
 
 const (

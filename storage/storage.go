@@ -5,9 +5,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/blang/semver"
 
-	"github.com/janelia-flyem/go/semver"
+	"github.com/janelia-flyem/dvid/dvid"
 )
 
 // Alias is a nickname for a storage configuration, e.g., "raid6" for
