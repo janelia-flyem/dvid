@@ -36,6 +36,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"net/http"
 	"os"
 	"runtime"
 	"sort"
@@ -44,16 +45,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/storage"
-	"github.com/janelia-flyem/go/semver"
+	"github.com/blang/semver"
 	"google.golang.org/api/iterator"
-
-	"net/http"
 
 	api "cloud.google.com/go/storage"
 	"golang.org/x/net/context"
 	"google.golang.org/api/option"
+
+	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 func init() {

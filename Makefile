@@ -94,7 +94,7 @@ $(info HEADERPATH is $(HEADERATH))
 bin/dvid: export SDKROOT=$(HEADERPATH)
 bin/dvid: cmd/dvid/main.go server/version.go .last-build-git-description ${DVID_SOURCES}
 	go env -w CGO_ENABLED=1
-	go env -w GO111MODULE=off
+	go env -w GO111MODULE=auto
 	go build -o bin/dvid -v -tags "${DVID_TAGS}" cmd/dvid/main.go
 
 bin/dvid-backup: cmd/backup/main.go

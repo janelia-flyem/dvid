@@ -5,8 +5,9 @@ package swift
 import (
 	"fmt"
 
+	"github.com/blang/semver"
+
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/go/semver"
 )
 
 // Engine implements storage.Engine for the Openstack Swift backend.

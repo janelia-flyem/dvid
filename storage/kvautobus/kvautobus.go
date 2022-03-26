@@ -14,11 +14,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blang/semver"
+	"github.com/tinylib/msgp/msgp"
+
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
-	"github.com/janelia-flyem/go/semver"
-
-	"github.com/tinylib/msgp/msgp"
 )
 
 func init() {
