@@ -3,7 +3,7 @@
 package badger
 
 import (
-	"github.com/dgraph-io/badger"
+	"github.com/dgraph-io/badger/v3"
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
@@ -18,14 +18,12 @@ func getOptions(path string, config dvid.Config) (*badger.Options, error) {
 		opts.ReadOnly = readOnly
 	}
 
-	valueSizeThresh, found, err := config.GetInt("ValueThreshold")
+	valueSizeThresh, found, err := config.GetInt64("ValueThreshold")
 	if err != nil {
 		return nil, err
 	}
 	if found {
 		opts = opts.WithValueThreshold(valueSizeThresh)
-	} else {
-		opts = opts.WithValueThreshold(DefaultValueThreshold)
 	}
 
 	vlogSize, found, err := config.GetInt("ValueLogFileSize")
