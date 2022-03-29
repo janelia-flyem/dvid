@@ -7,10 +7,10 @@ it has credentials and configuration to access those buckets (through environmen
 
 Before you start
 ====
-# Ensure you have access to the bucket using the commandline tools (gcloud or awscli). If you are using AWS S3, you will additionally need to set the "AWS_REGION" environment variable (usually to us-east-2).
-# For the key and secret key, it is good security practice to limit the IAM permissions to readonly credentials locked to the bucket you are serving. Avoid overbroad permissions
-# Test access using the commandline tools before you start with DVID
-# Ensure that the precomputed volume is complete and consistent. All described scales of the data from the info file must be present in the bucket; any missing scales will create problems. If the bucket has not finished being populated, wait for that before you start configuring DVID.
+1. Ensure you have access to the bucket using the commandline tools (gcloud or awscli). If you are using AWS S3, you will additionally need to set the "AWS_REGION" environment variable (usually to us-east-2).
+2. For the key and secret key, it is good security practice to limit the IAM permissions to readonly credentials locked to the bucket you are serving. Avoid overbroad permissions
+3. Test access using the commandline tools before you start with DVID
+4. Ensure that the precomputed volume is complete and consistent. All described scales of the data from the info file must be present in the bucket; any missing scales will create problems. If the bucket has not finished being populated, wait for that before you start configuring DVID.
 
 Getting started
 ====
