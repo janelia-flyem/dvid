@@ -1975,25 +1975,28 @@ func (d *Data) GobEncode() ([]byte, error) {
 func (d *Data) updateMaxLabel(v dvid.VersionID, label uint64) (changed bool, err error) {
 	d.mlMu.RLock()
 	curMax, found := d.MaxLabel[v]
-	d.mlMu.RUnlock()
 	if !found || curMax < label {
 		changed = true
 	}
-	if changed {
-		d.mlMu.Lock()
-		d.MaxLabel[v] = label
-		if err = d.persistMaxLabel(v); err != nil {
+	d.mlMu.RUnlock()
+	if !changed {
+		return
+	}
+
+	d.mlMu.Lock()
+	defer d.mlMu.Unlock()
+
+	d.MaxLabel[v] = label
+	if err = d.persistMaxLabel(v); err != nil {
+		err = fmt.Errorf("updateMaxLabel of data %q: %v", d.DataName(), err)
+		return
+	}
+	if label > d.MaxRepoLabel {
+		d.MaxRepoLabel = label
+		if err = d.persistMaxRepoLabel(); err != nil {
 			err = fmt.Errorf("updateMaxLabel of data %q: %v", d.DataName(), err)
 			return
 		}
-		if label > d.MaxRepoLabel {
-			d.MaxRepoLabel = label
-			if err = d.persistMaxRepoLabel(); err != nil {
-				err = fmt.Errorf("updateMaxLabel of data %q: %v", d.DataName(), err)
-				return
-			}
-		}
-		d.mlMu.Unlock()
 	}
 	return
 }
@@ -4211,73 +4214,17 @@ func (d *Data) handleIndices(ctx *datastore.VersionedCtx, w http.ResponseWriter,
 	if err != nil {
 		server.BadRequest(w, r, err)
 	}
-	var numLabels int
 	if method == "post" {
-		indices := new(proto.LabelIndices)
-		if err := indices.Unmarshal(dataIn); err != nil {
-			server.BadRequest(w, r, err)
-			return
-		}
-		numLabels = len(indices.Indices)
-		var numDeleted int
-		for i, protoIdx := range indices.Indices {
-			if protoIdx == nil {
-				server.BadRequest(w, r, "indices included a nil index in position %d", i)
-				return
-			}
-			if protoIdx.Label == 0 {
-				server.BadRequest(w, r, "index %d had label 0, which is a reserved label", i)
-				return
-			}
-			if len(protoIdx.Blocks) == 0 {
-				if err := deleteLabelIndex(ctx, protoIdx.Label); err != nil {
-					server.BadRequest(w, r, err)
-					return
-				}
-				numDeleted++
-				continue
-			}
-			idx := labels.Index{LabelIndex: *protoIdx}
-			if err := putCachedLabelIndex(d, ctx.VersionID(), &idx); err != nil {
-				server.BadRequest(w, r, err)
-				return
-			}
-		}
-		if numDeleted > 0 {
-			timedLog.Infof("HTTP POST indices for %d labels, %d deleted (%s)", len(indices.Indices), numDeleted, r.URL)
-			return
-		}
-	} else { // GET
-		var labelList []uint64
-		if err := json.Unmarshal(dataIn, &labelList); err != nil {
-			server.BadRequest(w, r, "expected JSON label list for GET /indices: %v", err)
-			return
-		}
-		numLabels = len(labelList)
-		if numLabels > 50000 {
-			server.BadRequest(w, r, "only 50,000 label indices can be returned at a time, %d given", len(labelList))
-			return
-		}
-		var indices proto.LabelIndices
-		indices.Indices = make([]*proto.LabelIndex, len(labelList))
-		for i, label := range labelList {
-			idx, err := getLabelIndex(ctx, label)
-			if err != nil {
-				server.BadRequest(w, r, "could not get label %d index in position %d: %v", label, i, err)
-				return
-			}
-			if idx != nil {
-				indices.Indices[i] = &(idx.LabelIndex)
-			} else {
-				index := proto.LabelIndex{
-					Label: label,
-				}
-				indices.Indices[i] = &index
-			}
-		}
-		dataOut, err := indices.Marshal()
+		numAdded, numDeleted, err := putProtoLabelIndices(ctx, dataIn)
 		if err != nil {
-			server.BadRequest(w, r, "could not serialize %d label indices: %v", len(labelList), err)
+			server.BadRequest(w, r, "error putting protobuf label indices: %v", err)
+			return
+		}
+		timedLog.Infof("HTTP %s indices - %d added, %d deleted (%s)", method, numAdded, numDeleted, r.URL)
+	} else { // GET
+		numLabels, dataOut, err := getProtoLabelIndices(ctx, dataIn)
+		if err != nil {
+			server.BadRequest(w, r, "error getting protobuf label indices: %v", err)
 			return
 		}
 		requestSize := int64(len(dataOut))
@@ -4296,8 +4243,8 @@ func (d *Data) handleIndices(ctx *datastore.VersionedCtx, w http.ResponseWriter,
 			server.BadRequest(w, r, "unable to write all %d bytes of serialized label indices: only %d bytes written", len(dataOut), n)
 			return
 		}
+		timedLog.Infof("HTTP %s indices for %d labels (%s)", method, numLabels, r.URL)
 	}
-	timedLog.Infof("HTTP %s indices for %d labels (%s)", method, numLabels, r.URL)
 }
 
 func (d *Data) handleIndicesCompressed(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {

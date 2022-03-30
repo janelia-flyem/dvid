@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -132,8 +133,110 @@ func getLabelIndexCompressed(store storage.KeyValueGetter, ctx *datastore.Versio
 	return compressed, nil
 }
 
-// should only call putCachedLabelIndex external to this file.
-func putLabelIndex(ctx *datastore.VersionedCtx, idx *labels.Index) error {
+func getProtoLabelIndices(ctx *datastore.VersionedCtx, dataIn []byte) (numLabels int, dataOut []byte, err error) {
+	var labelList []uint64
+	if err = json.Unmarshal(dataIn, &labelList); err != nil {
+		err = fmt.Errorf("expected JSON label list: %v", err)
+		return
+	}
+	numLabels = len(labelList)
+	if numLabels > 50000 {
+		err = fmt.Errorf("only 50,000 label indices can be returned at a time, %d given", len(labelList))
+		return
+	}
+	var indices proto.LabelIndices
+	indices.Indices = make([]*proto.LabelIndex, len(labelList))
+	for i, label := range labelList {
+		var idx *labels.Index
+		if idx, err = getLabelIndex(ctx, label); err != nil {
+			err = fmt.Errorf("could not get label %d index in position %d: %v", label, i, err)
+			return
+		}
+		if idx != nil {
+			indices.Indices[i] = &(idx.LabelIndex)
+		} else {
+			index := proto.LabelIndex{
+				Label: label,
+			}
+			indices.Indices[i] = &index
+		}
+	}
+	if dataOut, err = indices.Marshal(); err != nil {
+		err = fmt.Errorf("could not serialize %d label indices: %v", len(labelList), err)
+	}
+	return
+}
+
+// batch mode put/delete using protobuf indices without caching
+func putProtoLabelIndices(ctx *datastore.VersionedCtx, dataIn []byte) (numAdded, numDeleted int, err error) {
+	data := ctx.Data()
+	var store storage.KeyValueDB
+	if store, err = datastore.GetKeyValueDB(data); err != nil {
+		err = fmt.Errorf("data %q had error getting KeyValue store: %v", data.DataName(), err)
+		return
+	}
+	indices := new(proto.LabelIndices)
+	if err = indices.Unmarshal(dataIn); err != nil {
+		return
+	}
+	var maxLabel uint64
+	for i, protoIdx := range indices.Indices {
+		if protoIdx == nil {
+			err = fmt.Errorf("indices included a nil index in position %d", i)
+			return
+		}
+		if protoIdx.Label == 0 {
+			err = fmt.Errorf("index %d had label 0, which is a reserved label", i)
+			return
+		}
+		if len(protoIdx.Blocks) == 0 {
+			if err = deleteLabelIndex(ctx, protoIdx.Label); err != nil {
+				return
+			}
+			numDeleted++
+			continue
+		}
+		numAdded++
+		idx := labels.Index{LabelIndex: *protoIdx}
+		if err = putLabelIndex(store, ctx, data, &idx); err != nil {
+			return
+		}
+		if idx.Label > maxLabel {
+			maxLabel = idx.Label
+		}
+	}
+	// handle updating the max label
+	d, ok := data.(*Data)
+	if !ok {
+		err = fmt.Errorf("unable to update max label during PUT label index due to bad data ptr for %q", data.DataName())
+		return
+	}
+	_, err = d.updateMaxLabel(ctx.VersionID(), maxLabel)
+	return
+}
+
+// puts label index and doesn't calc max label
+// Note: should only call putCachedLabelIndex external to this file so recent changes get cached.
+func putLabelIndex(store storage.KeyValueDB, ctx *datastore.VersionedCtx, data dvid.Data, idx *labels.Index) error {
+	tk := NewLabelIndexTKey(idx.Label)
+	serialization, err := idx.Marshal()
+	if err != nil {
+		return fmt.Errorf("error trying to serialize index for label set %d, data %q: %v", idx.Label, data.DataName(), err)
+	}
+	compressFormat, _ := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
+	compressed, err := dvid.SerializeData(serialization, compressFormat, dvid.NoChecksum)
+	if err != nil {
+		return fmt.Errorf("error trying to LZ4 compress label %d indexing in data %q", idx.Label, data.DataName())
+	}
+	if err := store.Put(ctx, tk, compressed); err != nil {
+		return fmt.Errorf("unable to store indices for label %d, data %s: %v", idx.Label, data.DataName(), err)
+	}
+	return err
+}
+
+// puts label index and stores max label.
+// Note: should only call putCachedLabelIndex external to this file so recent changes get cached.
+func putLabelIndexAndMax(ctx *datastore.VersionedCtx, idx *labels.Index) error {
 	// timedLog := dvid.NewTimeLog()
 	store, err := datastore.GetOrderedKeyValueDB(ctx.Data())
 	if err != nil {
@@ -234,7 +337,7 @@ func getCachedLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.I
 // only returns error if we can't persist index, not if we can't cache
 func putCachedLabelIndex(d dvid.Data, v dvid.VersionID, idx *labels.Index) error {
 	ctx := datastore.NewVersionedCtx(d, v)
-	if err := putLabelIndex(ctx, idx); err != nil {
+	if err := putLabelIndexAndMax(ctx, idx); err != nil {
 		return err
 	}
 	if indexCache != nil {
