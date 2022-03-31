@@ -10,6 +10,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	io "io"
 	"io/ioutil"
 	"math"
 	"net/http"
@@ -345,6 +346,27 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 
 	check		If json=true, setting check=false will tell server to trust that the
 					values will be valid JSON instead of parsing it as a check.
+
+POST <api URL>/node/<UUID>/<data name>/query
+
+	The JSON query format uses field names as the keys, and desired values.
+	Example:
+	{ "bodyid": 23, "hemilineage": "0B", ... }
+	Each field value must be true, i.e., the conditions or ANDed together.
+
+	If a list of queries (JSON object per query) is POSTed, the results for each query are ORed
+	together with duplicate annotations removed.
+
+	A JSON list of objects that matches the query is returned.
+
+	Arguments:
+
+	UUID 		Hexadecimal string with enough characters to uniquely identify a version node.
+	data name	Name of neuronjson data instance.
+
+	GET Query-string Options:
+
+	onlyid		If true (false by default), will only return a list of body ids that match.
 `
 
 func init() {
@@ -773,6 +795,74 @@ func (d *Data) deleteBodyID(bodyid uint64) {
 		return
 	}
 	d.ids = append(d.ids[:i], d.ids[i+1:]...)
+}
+
+func fieldMatch(queryField, fieldValue interface{}) bool {
+	if queryField == nil {
+		return true
+	}
+	if fieldValue == nil {
+		return false
+	}
+	return queryField == fieldValue
+}
+
+func queryMatch(query map[string]interface{}, value map[string]interface{}) bool {
+	for queryKey, queryValue := range query {
+		if recordValue, ok := value[queryKey]; ok {
+			if !fieldMatch(queryValue, recordValue) {
+				return false
+			}
+		}
+		return false
+	}
+	return true
+}
+
+// SetTagsByJSON takes a JSON object of tags and either appends or replaces the current
+// data's tags depending on the replace parameter.
+func (d *Data) Query(ctx storage.VersionedCtx, w http.ResponseWriter, uuid dvid.UUID, onlyid bool, in io.ReadCloser) (err error) {
+	query := make(map[string]interface{})
+	decoder := json.NewDecoder(in)
+	if err = decoder.Decode(&query); err != nil && err != io.EOF {
+		err = fmt.Errorf("malformed JSON request in query: %v", err)
+		return
+	}
+	var jsonBytes []byte
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprint(w, "[")
+	if ctx.Head() {
+		d.dbMu.RLock()
+		i := 0
+		for _, value := range d.db {
+			if queryMatch(query, value) {
+				removeReservedFields(value)
+				if jsonBytes, err = json.Marshal(value); err != nil {
+					break
+				}
+				fmt.Fprint(w, string(jsonBytes))
+			}
+			i++
+		}
+		d.dbMu.RUnlock()
+	} else {
+		process_func := func(key string, value map[string]interface{}) {
+			if !queryMatch(query, value) {
+				return
+			}
+			removeReservedFields(value)
+			if jsonBytes, err = json.Marshal(value); err != nil {
+				dvid.Errorf("error in JSON encoding: %v\n", err)
+				return
+			}
+			fmt.Fprint(w, string(jsonBytes))
+		}
+		if err = d.processRange(ctx, process_func); err != nil {
+			return err
+		}
+	}
+	fmt.Fprint(w, "]")
+	return
 }
 
 // KeyExists returns true if a key is found.
@@ -1468,6 +1558,18 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, string(jsonBytes))
 		comment = "HTTP GET fields"
+
+	case "query":
+		if action != "post" {
+			server.BadRequest(w, r, fmt.Errorf("only POST verb allowed for /query endpoint"))
+			return
+		}
+		onlyid := r.URL.Query().Get("onlyid") == "true"
+		err := d.Query(ctx, w, uuid, onlyid, r.Body)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
 
 	case "keyrange":
 		if len(parts) < 6 {
