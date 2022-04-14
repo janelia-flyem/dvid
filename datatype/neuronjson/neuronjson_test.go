@@ -16,12 +16,61 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
+	"google.golang.org/api/iterator"
 )
 
 var (
 	jsontype datastore.TypeService
 	testMu   sync.Mutex
 )
+
+var sampleData = map[uint64]string{
+	1000: `"bodyid": 1000, "position": [100, 101, 102], "avg_location": "103, 104, 105", "_user": "nobody@gmail.com", "_timestamp": 1619751219.934025, "class": "Interneuron (TBD)", "tags": ["group1"]`,
+	1001: `"bodyid": 1001, "position": [110, 111, 112], "avg_location": "113, 114, 115", "_user": "nobody@gmail.com", "_timestamp": 1619751219.934025, "class": "Interneuron (TBD)", "tags": ["group1"]`,
+	1002: `"bodyid": 1002, "position": [100, 101, 102], "avg_location": "103, 104, 105", "_user": "nobody@gmail.com", "_timestamp": 1619751219.934025, "class": "Interneuron (TBD)", "tags": ["group1"]`,
+	1003: `"bodyid": 1003, "position": [102, 101, 102], "avg_location": "103, 104, 105", "_user": "nobody@gmail.com", "_timestamp": 1619751219.934025, "class": "Interneuron (TBD)", "tags": ["group1"]`,
+	2000: `"bodyid": 2000, "position": [200, 201, 202], "avg_location": "203, 204, 205", "_user": "another@gmail.com", "_timestamp": 1619751219.934025, "class": "9A", "tags": ["group2"]`,
+	2001: `"bodyid": 2001, "position": [200, 111, 112], "avg_location": "213, 214, 215", "_user": "another@gmail.com", "_timestamp": 1619751219.934025, "class": "9A", "tags": ["group2"]`,
+	2002: `"bodyid": 2002, "position": [200, 201, 202], "avg_location": "203, 204, 205", "_user": "another@gmail.com", "_timestamp": 1619751219.934025, "class": "9A", "tags": ["group2"]`,
+	2003: `"bodyid": 2003, "position": [202, 201, 202], "avg_location": "203, 204, 205", "_user": "another@gmail.com", "_timestamp": 1619751219.934025, "class": "9A", "tags": ["group2"]`,
+	3000: `"bodyid": 3000, "position": [300, 301, 303], "avg_location": "303, 304, 305", "_user": "third@gmail.com", "_timestamp": 1619751219.934025, "class": "9B", "tags": ["group3"]`,
+	3001: `"bodyid": 3001, "position": [300, 111, 113], "avg_location": "313, 314, 315", "_user": "third@gmail.com", "_timestamp": 1619751219.934025, "class": "9B", "tags": ["group3"]`,
+	3002: `"bodyid": 3002, "position": [302, 301, 303], "avg_location": "303, 304, 305", "_user": "third@gmail.com", "_timestamp": 1619751219.934025, "class": "9B", "tags": ["group3"]`,
+	3003: `"bodyid": 3003, "position": [303, 301, 303], "avg_location": "303, 304, 305", "_user": "third@gmail.com", "_timestamp": 1619751219.934025, "class": "9B", "tags": ["group3"]`,
+}
+
+// ---- Test stub for DocGetter and DocIterator instead of firestore Client
+
+type testDocGetter struct {
+	index int
+}
+
+func (dg *testDocGetter) Data() (value map[string]interface{}) {
+	if dg.index < 0 || dg.index >= len(sampleData) {
+		return
+	}
+	data := sampleData[uint64(dg.index)]
+	if err := json.Unmarshal([]byte(data), &value); err != nil {
+		dvid.Errorf("unable to unmarshal JSON data: %s (error = %q)\n", data, err)
+		return nil
+	}
+	return
+}
+
+type testIterator struct {
+	index int
+}
+
+func (ti *testIterator) Next() (DocGetter, error) {
+	if ti.index >= len(sampleData) {
+		return nil, iterator.Done
+	}
+	doc := &testDocGetter{index: ti.index}
+	ti.index++
+	return doc, nil
+}
+
+func (ti *testIterator) Close() {}
 
 // Sets package-level testRepo and TestVersionID
 func initTestRepo() (dvid.UUID, dvid.VersionID) {
