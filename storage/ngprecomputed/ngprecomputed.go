@@ -761,11 +761,14 @@ func (ng *ngStore) GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) (val []
 			blockCoord, minPt, scale.Size)
 	}
 	clippedSize := chunkSize.Duplicate().(dvid.Point3d)
+	maxPtRestricted := maxPt.Duplicate().(dvid.Point3d) // A possibly clipped version of MaxPt, for filename construction
 	for i := 0; i < 3; i++ {
 		if maxPt[i] <= scale.Size[i] {
 			clippedSize[i] = chunkSize[i]
+			maxPtRestricted[i] = maxPt[i]
 		} else {
 			clippedSize[i] = scale.Size[i] - minPt[i]
+			maxPtRestricted[i] = scale.Size[i]
 		}
 	}
 	if clippedSize.Prod() != chunkSize.Prod() {
@@ -774,7 +777,7 @@ func (ng *ngStore) GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) (val []
 
 	switch scale.Sharding.FormatType {
 	case "":
-		key := fmt.Sprintf("%s/%d-%d_%d-%d_%d-%d", scale.Key, minPt[0], maxPt[0], minPt[1], maxPt[1], minPt[2], maxPt[2])
+		key := fmt.Sprintf("%s/%d-%d_%d-%d_%d-%d", scale.Key, minPt[0], maxPtRestricted[0], minPt[1], maxPtRestricted[1], minPt[2], maxPtRestricted[2])
 		val, err = ng.read(key)
 
 	case "neuroglancer_uint64_sharded_v1":
