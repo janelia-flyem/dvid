@@ -195,6 +195,9 @@ go get gocloud.dev
 go get github.com/google/wire
 go get golang.org/x/xerrors
 go get golang.org/x/sync/errgroup
+go get github.com/aws/aws-sdk-go/aws
+go get github.com/aws/aws-sdk-go-v2/aws
+go get github.com/jmespath/go-jmespath
 
 # Sarama for kafka support
 go get github.com/Shopify/sarama
