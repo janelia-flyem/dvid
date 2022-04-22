@@ -4214,6 +4214,7 @@ func (d *Data) handleIndices(ctx *datastore.VersionedCtx, w http.ResponseWriter,
 	if err != nil {
 		server.BadRequest(w, r, err)
 	}
+	timedLog.Infof("Received %d byte payload for %s /indices", len(dataIn), method)
 	if method == "post" {
 		numAdded, numDeleted, err := putProtoLabelIndices(ctx, dataIn)
 		if err != nil {

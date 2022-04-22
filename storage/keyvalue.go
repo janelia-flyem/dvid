@@ -183,6 +183,24 @@ type Chunk struct {
 	*TKeyValue
 }
 
+func (c *Chunk) String() string {
+	if c == nil {
+		return "nil chunk"
+	}
+	var chunkOp, kv string
+	if c.ChunkOp == nil {
+		chunkOp = "nil op"
+	} else {
+		chunkOp = fmt.Sprintf("op %v", c.ChunkOp.Op)
+	}
+	if c.TKeyValue == nil {
+		kv = "nil kv"
+	} else {
+		kv = fmt.Sprintf("key %x, val %d bytes", c.TKeyValue.K, len(c.TKeyValue.V))
+	}
+	return chunkOp + ", " + kv
+}
+
 // ChunkFunc is a function that accepts a Chunk.
 type ChunkFunc func(*Chunk) error
 

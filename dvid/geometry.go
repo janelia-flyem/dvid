@@ -473,6 +473,11 @@ func NewSubvolumeFromStrings(offsetStr, sizeStr, sep string) (*Subvolume, error)
 	if size.NumDims() != 3 {
 		return nil, fmt.Errorf("Size must be 3 (not %d) dimensions", size.NumDims())
 	}
+	for i := uint8(0); i < 3; i++ {
+		if size.Value(i) <= 0 {
+			return nil, fmt.Errorf("size must be greater than 0 in every dimension: %s", size)
+		}
+	}
 	return NewSubvolume(offset, size), nil
 }
 
