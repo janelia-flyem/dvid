@@ -494,7 +494,7 @@ func GetBoundedIndex(d dvid.Data, v dvid.VersionID, label uint64, bounds dvid.Bo
 	return idx, nil
 }
 
-// GetMultiLabelIndex gets index data for all labels is a set with possible bounds.
+// GetMultiLabelIndex gets index data for all labels in a set with possible bounds.
 func GetMultiLabelIndex(d dvid.Data, v dvid.VersionID, lbls labels.Set, bounds dvid.Bounds) (*labels.Index, error) {
 	if len(lbls) == 0 {
 		return nil, nil
@@ -543,17 +543,18 @@ func PutLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, idx *labels.Inde
 
 // CleaveIndex modifies the label index to remove specified supervoxels and create another
 // label index for this cleaved body.
-func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp, info dvid.ModInfo) error {
+func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp, info dvid.ModInfo) (cleavedSize, remainSize uint64, err error) {
 	shard := op.Target % numIndexShards
 	indexMu[shard].Lock()
 	defer indexMu[shard].Unlock()
 
-	idx, err := getCachedLabelIndex(d, v, op.Target)
-	if err != nil {
-		return err
+	var idx *labels.Index
+	if idx, err = getCachedLabelIndex(d, v, op.Target); err != nil {
+		return
 	}
 	if idx == nil {
-		return fmt.Errorf("cannot cleave non-existent label %d", op.Target)
+		err = fmt.Errorf("cannot cleave non-existent label %d", op.Target)
+		return
 	}
 	idx.LastMutId = op.MutID
 	idx.LastModUser = info.User
@@ -563,21 +564,25 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp, info dvid.Mo
 	supervoxels := idx.GetSupervoxels()
 	for _, supervoxel := range op.CleavedSupervoxels {
 		if _, found := supervoxels[supervoxel]; !found {
-			return fmt.Errorf("cannot cleave supervoxel %d, which does not exist in label %d", supervoxel, op.Target)
+			err = fmt.Errorf("cannot cleave supervoxel %d, which does not exist in label %d", supervoxel, op.Target)
+			return
 		}
 		delete(supervoxels, supervoxel)
 	}
 	if len(supervoxels) == 0 {
-		return fmt.Errorf("cannot cleave all supervoxels from the label %d", op.Target)
+		err = fmt.Errorf("cannot cleave all supervoxels from the label %d", op.Target)
+		return
 	}
 
 	// create a new label index to contain the cleaved supervoxels.
 	// we don't have to worry about mutex here because it's a new index.
-	cidx := idx.Cleave(op.CleavedLabel, op.CleavedSupervoxels)
-	if err := putCachedLabelIndex(d, v, cidx); err != nil {
-		return err
+	var cidx *labels.Index
+	cleavedSize, remainSize, cidx = idx.Cleave(op.CleavedLabel, op.CleavedSupervoxels)
+	if err = putCachedLabelIndex(d, v, cidx); err != nil {
+		return
 	}
-	return putCachedLabelIndex(d, v, idx)
+	err = putCachedLabelIndex(d, v, idx)
+	return
 }
 
 // ChangeLabelIndex applies changes to a label's index and then stores the result.

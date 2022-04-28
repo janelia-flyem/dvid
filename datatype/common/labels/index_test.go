@@ -92,7 +92,7 @@ func TestIndexOps(t *testing.T) {
 		t.Errorf("after cleave, remain index has incorrect counts:\nExpected %v\nGot %v\n", limitCounts, sidx.GetSupervoxelCounts())
 	}
 	if len(sidx.Blocks) != 1 {
-		t.Errorf("expected supervoxel limites count to be 1, got %d\n", len(sidx.Blocks))
+		t.Errorf("expected supervoxel limits count to be 1, got %d\n", len(sidx.Blocks))
 	}
 	_, found := sidx.Blocks[block3]
 	if !found {
@@ -100,8 +100,22 @@ func TestIndexOps(t *testing.T) {
 	}
 
 	origCounts := idx.GetSupervoxelCounts()
+	var totalVoxels uint64
+	for _, count := range origCounts {
+		totalVoxels += count
+	}
+	if totalVoxels != 635228 {
+		t.Errorf("expected 635228 total voxels, got %d voxels in index supervoxel counts\n", totalVoxels)
+	}
 
-	cleaveIdx := idx.Cleave(200, []uint64{1001, 26029, 3829})
+	cleavedSize, remainSize, cleaveIdx := idx.Cleave(200, []uint64{1001, 26029, 3829})
+	expectedCleavedSize := uint64(6899 + 63560 + 10000)
+	if cleavedSize != expectedCleavedSize {
+		t.Errorf("expected cleaved size to be %d, got %d\n", expectedCleavedSize, cleavedSize)
+	}
+	if remainSize != totalVoxels-cleavedSize {
+		t.Errorf("expected remaining size to be %d, got %d\n", totalVoxels-cleavedSize, remainSize)
+	}
 	supervoxels = idx.GetSupervoxels()
 	mainBodySupervoxels := Set{
 		23:      struct{}{},
@@ -283,7 +297,14 @@ func TestCleaveIndex(t *testing.T) {
 	}
 	idx.Blocks[block4] = svc
 
-	cleaveIdx := idx.Cleave(200, []uint64{87, 382, 1001, 3829, 673, 8763})
+	cleavedSize, remainSize, cleaveIdx := idx.Cleave(200, []uint64{87, 382, 1001, 3829, 673, 8763})
+	expectedTotalSize := uint64(73396)
+	if cleavedSize+remainSize != expectedTotalSize {
+		t.Errorf("cleaved %d + remain %d voxels != %d total voxels\n", cleavedSize, remainSize, expectedTotalSize)
+	}
+	if cleavedSize != 45440 {
+		t.Errorf("cleaved voxels %d != 45440\n", cleavedSize)
+	}
 	supervoxels := idx.GetSupervoxels()
 	mainBodySupervoxels := Set{
 		23:      struct{}{},

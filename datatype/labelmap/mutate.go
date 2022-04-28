@@ -46,6 +46,9 @@ type sizeChange struct {
 //
 func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInfo) (mutID uint64, err error) {
 	dvid.Debugf("Merging %s into label %d ...\n", op.Merged, op.Target)
+	if len(op.Merged) == 0 {
+		return 0, nil
+	}
 
 	d.StartUpdate()
 	defer d.StopUpdate()
@@ -157,6 +160,8 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 	// send kafka merge complete event to instance-uuid topic
 	msginfo = map[string]interface{}{
 		"Action":     "merge-complete",
+		"Target":     op.Target,
+		"Labels":     lbls,
 		"MutationID": mutID,
 		"UUID":       string(versionuuid),
 		"Timestamp":  time.Now().String(),
@@ -242,7 +247,8 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 		CleavedLabel:       cleaveLabel,
 		CleavedSupervoxels: cleaveSupervoxels,
 	}
-	if err = CleaveIndex(d, v, op, info); err != nil {
+	var cleavedSize, remainSize uint64
+	if cleavedSize, remainSize, err = CleaveIndex(d, v, op, info); err != nil {
 		return
 	}
 	if err = addCleaveToMapping(d, v, op); err != nil {
@@ -266,10 +272,15 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 	}
 
 	msginfo = map[string]interface{}{
-		"Action":     "cleave-complete",
-		"MutationID": mutID,
-		"UUID":       string(versionuuid),
-		"Timestamp":  time.Now().String(),
+		"Action":             "cleave-complete",
+		"OrigLabel":          label,
+		"CleavedLabel":       cleaveLabel,
+		"CleavedSupervoxels": cleaveSupervoxels,
+		"CleavedSize":        cleavedSize,
+		"RemainSize":         remainSize,
+		"MutationID":         mutID,
+		"UUID":               string(versionuuid),
+		"Timestamp":          time.Now().String(),
 	}
 	jsonBytes, _ = json.Marshal(msginfo)
 	if err = d.PublishKafkaMsg(jsonBytes); err != nil {
@@ -458,6 +469,9 @@ func (d *Data) splitPass2(ctx *datastore.VersionedCtx, downresMut *downres.Mutat
 	getLog := dvid.NewTimeLog()
 	for _, izyxStr := range affectedBlocks {
 		zyx, err := labels.IZYXStringToBlockIndex(izyxStr)
+		if err != nil {
+			return fmt.Errorf("unable to convert %s to block index: %v", izyxStr, err)
+		}
 		isvc, found := idx.Blocks[zyx]
 		if !found {
 			return fmt.Errorf("split affected block %s was not found in index", izyxStr)
@@ -699,6 +713,10 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 
 	msginfo = map[string]interface{}{
 		"Action":     "split-complete",
+		"Target":     fromLabel,
+		"NewLabel":   toLabel,
+		"Split":      splitRef,
+		"SVSplits":   svsplit.Splits,
 		"MutationID": mutID,
 		"UUID":       string(versionuuid),
 		"Timestamp":  time.Now().String(),
@@ -781,7 +799,8 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 		err = fmt.Errorf("split volume of %d > %d of supervoxel %d", splitSize, svSize, svlabel)
 		return
 	}
-	if splitSize == svSize {
+	remainSize := svSize - splitSize
+	if remainSize == 0 {
 		dvid.Infof("split on supervoxel %d -> %d was given split size %d, which is entire supervoxel\n", svlabel, splitlabel, splitSize)
 	}
 
@@ -805,6 +824,7 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 	msginfo := map[string]interface{}{
 		"Action":           "split-supervoxel",
 		"Supervoxel":       svlabel,
+		"Body":             label,
 		"SplitSupervoxel":  splitSupervoxel,
 		"RemainSupervoxel": remainSupervoxel,
 		"Split":            splitRef,
@@ -923,8 +943,8 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 
 	timedLog.Debugf("labelmap supervoxel %d split complete (%d blocks split)", op.Supervoxel, len(op.Split))
 
-	evt := datastore.SyncEvent{d.DataUUID(), labels.SupervoxelSplitEvent}
-	msg := datastore.SyncMessage{labels.SupervoxelSplitEvent, v, op}
+	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: labels.SupervoxelSplitEvent}
+	msg := datastore.SyncMessage{Event: labels.SupervoxelSplitEvent, Version: v, Delta: op}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		dvid.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
 	}
@@ -935,10 +955,17 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 	}
 
 	msginfo = map[string]interface{}{
-		"Action":     "split-supervoxel-complete",
-		"MutationID": mutID,
-		"UUID":       string(versionuuid),
-		"Timestamp":  time.Now().String(),
+		"Action":           "split-supervoxel-complete",
+		"Supervoxel":       svlabel,
+		"Body":             label,
+		"SplitSupervoxel":  splitSupervoxel,
+		"RemainSupervoxel": remainSupervoxel,
+		"Split":            splitRef,
+		"SplitSize":        splitSize,
+		"RemainSize":       remainSize,
+		"MutationID":       mutID,
+		"UUID":             string(versionuuid),
+		"Timestamp":        time.Now().String(),
 	}
 	jsonBytes, _ = json.Marshal(msginfo)
 	if err = d.PublishKafkaMsg(jsonBytes); err != nil {
