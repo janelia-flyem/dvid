@@ -258,8 +258,8 @@ func (idx *Index) GetSupervoxelCounts() (counts map[uint64]uint64) {
 	}
 	for _, svc := range idx.Blocks {
 		if svc != nil && svc.Counts != nil {
-			for sv, count := range svc.Counts {
-				counts[sv] += uint64(count)
+			for supervoxel, sz := range svc.Counts {
+				counts[supervoxel] += uint64(sz)
 			}
 		}
 	}
@@ -415,9 +415,9 @@ func (idx *Index) Add(idx2 *Index) error {
 
 // Cleave the given supervoxels from an index and returns a new index, modifying both receiver
 // and creating new cleaved index.
-func (idx *Index) Cleave(cleaveLabel uint64, toCleave []uint64) *Index {
+func (idx *Index) Cleave(cleaveLabel uint64, toCleave []uint64) (cleavedSize, remainSize uint64, cidx *Index) {
 	cleaveSet := NewSet(toCleave...)
-	cidx := new(Index)
+	cidx = new(Index)
 	cidx.Label = cleaveLabel
 	cidx.Blocks = make(map[uint64]*proto.SVCount)
 
@@ -427,8 +427,11 @@ func (idx *Index) Cleave(cleaveLabel uint64, toCleave []uint64) *Index {
 			for supervoxel, sz := range svc.Counts {
 				_, inCleave := cleaveSet[supervoxel]
 				if inCleave {
+					cleavedSize += uint64(sz)
 					cleavedCounts[supervoxel] = sz
 					delete(svc.Counts, supervoxel)
+				} else {
+					remainSize += uint64(sz)
 				}
 			}
 			if len(cleavedCounts) > 0 {
@@ -441,7 +444,7 @@ func (idx *Index) Cleave(cleaveLabel uint64, toCleave []uint64) *Index {
 			delete(idx.Blocks, zyx)
 		}
 	}
-	return cidx
+	return
 }
 
 // SupervoxelChanges tabulates changes in voxels among supervoxels across blocks.

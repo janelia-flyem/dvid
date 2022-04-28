@@ -1169,14 +1169,18 @@ POST <api URL>/node/<UUID>/<data name>/merge
 			"Target": <to label>,
 			"Labels": [<to merge label 1>, <to merge label2>, ...],
 			"UUID": <UUID on which merge was done>,
-			"MutationID": <unique id for mutation>
+			"MutationID": <unique id for mutation>,
+			"Timestamp": <time at start of operation>
 		}
 
 	After completion of the split op, the following JSON message is published:
 		{ 
 			"Action": "merge-complete",
-			"MutationID": <unique id for mutation>
+			"Target": <to label>,
+			"Labels": [<to merge label 1>, <to merge label2>, ...],
 			"UUID": <UUID on which split was done>
+			"MutationID": <unique id for mutation>,
+			"Timestamp": <time at end of operation>
 		}
 
 POST <api URL>/node/<UUID>/<data name>/cleave/<label>
@@ -1210,14 +1214,21 @@ POST <api URL>/node/<UUID>/<data name>/cleave/<label>
 			"CleavedLabel": <cleaved label>,
 			"CleavedSupervoxels": [<supervoxel 1>, <supervoxel 2>, ...],
 			"UUID": <UUID on which cleave was done>,
-			"MutationID": <unique id for mutation>
+			"MutationID": <unique id for mutation>,
+			"Timestamp": <time at start of operation>
 		}
 
 	After the cleave is successfully completed, the following JSON message is logged with Kafka:
 	{ 
 		"Action": "cleave-complete",
+		"OrigLabel": <original label>,  
+		"CleavedLabel": <cleaved label>,
+		"CleavedSupervoxels": [<supervoxel 1>, <supervoxel 2>, ...],
+		"CleavedSize": <number of voxels cleaved>,
+		"RemainSize": <number of voxels remaining>,
 		"UUID": <UUID on which cleave was done>,
-		"MutationID": <unique id for mutation>
+		"MutationID": <unique id for mutation>,
+		"Timestamp": <time at end of operation>
 	}
 
 
@@ -1259,10 +1270,13 @@ POST <api URL>/node/<UUID>/<data name>/split-supervoxel/<supervoxel>?<options>
 		{ 
 			"Action": "split-supervoxel",
 			"Supervoxel": <supervoxel label>,
+			"Body": <label of body containing the split supervoxel>,
 			"SplitSupervoxel": <new label of split portion>,
 			"RemainSupervoxel": <new label of remainder> 
 			"Split": <string for reference to split data in serialized RLE format>,
-			"UUID": <UUID on which split was done>
+			"UUID": <UUID on which split was done>,
+			"MutationID": <unique mutation ID corresponding to this operation>,
+			"Timestamp": <time at start of operation>
 		}
 	
 	The split reference above can be used to download the split binary data by calling
@@ -1274,8 +1288,16 @@ POST <api URL>/node/<UUID>/<data name>/split-supervoxel/<supervoxel>?<options>
 	the following JSON message is published:
 		{ 
 			"Action": "split-supervoxel-complete",
-			"MutationID": <unique id for mutation>
-			"UUID": <UUID on which split was done>
+			"Supervoxel": <supervoxel label>,
+			"Body": <label of body containing the split supervoxel>,
+			"SplitSupervoxel": <new label of split portion>,
+			"RemainSupervoxel": <new label of remainder> 
+			"Split": <string for reference to split data in serialized RLE format>,
+			"SplitSize": <size in voxels of the split supervoxel>,
+			"RemainSize": <size in voxels of the remaining supervoxel>,
+			"MutationID": <unique id for mutation>,
+			"UUID": <UUID on which split was done>,
+			"Timestamp": <time at end of operation>
 		}
 
 	
@@ -1326,9 +1348,10 @@ POST <api URL>/node/<UUID>/<data name>/split/<label>
 			"Target": <from label>,
 			"NewLabel": <to label>,
 			"Split": <string for reference to split data in serialized RLE format>,
-			"MutationID": <unique id for mutation>
-			"UUID": <UUID on which split was done>
-			"SVSplit": {23918: {"Remain": 481273, "Split": 481274}, 1839109: {"Remain":...}}
+			"MutationID": <unique id for mutation>,
+			"UUID": <UUID on which split was done>,
+			"SVSplit": {23918: {"Remain": 481273, "Split": 481274}, 1839109: {"Remain":...}},
+			"Timestamp": <time at start of operation>
 		}
 	
 	The SVSplit field above gives the new remain and split labels for any given split supervoxel.
@@ -1340,8 +1363,13 @@ POST <api URL>/node/<UUID>/<data name>/split/<label>
 	After completion of the split op, the following JSON message is published:
 		{ 
 			"Action": "split-complete",
-			"MutationID": <unique id for mutation>
-			"UUID": <UUID on which split was done>
+			"Target": <from label>,
+			"NewLabel": <to label>,
+			"Split": <string for reference to split data in serialized RLE format>,
+			"MutationID": <unique id for mutation>,
+			"UUID": <UUID on which split was done>,
+			"SVSplit": {23918: {"Remain": 481273, "Split": 481274}, 1839109: {"Remain":...}},
+			"Timestamp": <time at end of operation>
 		}
 
 
