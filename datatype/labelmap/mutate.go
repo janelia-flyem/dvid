@@ -152,12 +152,6 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 
 	timedLog.Infof("Merged %s -> %d, data %q, resulting in %d blocks", delta.Merged, delta.Target, d.DataName(), len(delta.Blocks))
 
-	// send merge information to separate mutation log file
-	if err := server.LogJSONMutation(versionuuid, d.DataUUID(), jsonBytes); err != nil {
-		dvid.Criticalf("can't log merge to data %q, version %s: %s\n", d.DataName(), versionuuid, jsonBytes)
-	}
-
-	// send kafka merge complete event to instance-uuid topic
 	msginfo = map[string]interface{}{
 		"Action":     "merge-complete",
 		"Target":     op.Target,
@@ -167,7 +161,13 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		"Timestamp":  time.Now().String(),
 	}
 	jsonBytes, _ = json.Marshal(msginfo)
-	err = d.PublishKafkaMsg(jsonBytes)
+
+	if err := server.LogJSONMutation(versionuuid, d.DataUUID(), jsonBytes); err != nil {
+		dvid.Criticalf("can't log merge to data %q, version %s: %s\n", d.DataName(), versionuuid, jsonBytes)
+	}
+	if err := d.PublishKafkaMsg(jsonBytes); err != nil {
+		dvid.Criticalf("error on sending merge-complete op to kafka: %v\n", err)
+	}
 	return
 }
 
@@ -266,11 +266,6 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 		return
 	}
 
-	// send cleave information to separate mutation log file
-	if err := server.LogJSONMutation(versionuuid, d.DataUUID(), jsonBytes); err != nil {
-		dvid.Criticalf("can't log cleave to data %q, version %s: %s\n", d.DataName(), versionuuid, jsonBytes)
-	}
-
 	msginfo = map[string]interface{}{
 		"Action":             "cleave-complete",
 		"OrigLabel":          label,
@@ -283,8 +278,12 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 		"Timestamp":          time.Now().String(),
 	}
 	jsonBytes, _ = json.Marshal(msginfo)
-	if err = d.PublishKafkaMsg(jsonBytes); err != nil {
-		dvid.Errorf("error on sending cleave complete op to kafka: %v\n", err)
+
+	if err := server.LogJSONMutation(versionuuid, d.DataUUID(), jsonBytes); err != nil {
+		dvid.Criticalf("can't log cleave to data %q, version %s: %s\n", d.DataName(), versionuuid, jsonBytes)
+	}
+	if err := d.PublishKafkaMsg(jsonBytes); err != nil {
+		dvid.Criticalf("error on sending cleave complete op to kafka: %v\n", err)
 	}
 	return
 }
@@ -706,11 +705,6 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 		dvid.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
 	}
 
-	// send split information to separate mutation log file
-	if err := server.LogJSONMutation(versionuuid, d.DataUUID(), jsonBytes); err != nil {
-		dvid.Criticalf("can't log split label to data %q, version %s: %s\n", d.DataName(), versionuuid, jsonBytes)
-	}
-
 	msginfo = map[string]interface{}{
 		"Action":     "split-complete",
 		"Target":     fromLabel,
@@ -722,8 +716,12 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 		"Timestamp":  time.Now().String(),
 	}
 	jsonBytes, _ = json.Marshal(msginfo)
-	if err = d.PublishKafkaMsg(jsonBytes); err != nil {
-		dvid.Errorf("error on sending split complete op to kafka: %v\n", err)
+
+	if err := server.LogJSONMutation(versionuuid, d.DataUUID(), jsonBytes); err != nil {
+		dvid.Criticalf("can't log split label to data %q, version %s: %s\n", d.DataName(), versionuuid, jsonBytes)
+	}
+	if err := d.PublishKafkaMsg(jsonBytes); err != nil {
+		dvid.Criticalf("error on sending split complete op to kafka: %v\n", err)
 	}
 	return
 }
@@ -949,11 +947,6 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 		dvid.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
 	}
 
-	// send split sv information to separate mutation log file
-	if err := server.LogJSONMutation(versionuuid, d.DataUUID(), jsonBytes); err != nil {
-		dvid.Criticalf("can't log split supervoxel to data %q, version %s: %s\n", d.DataName(), versionuuid, jsonBytes)
-	}
-
 	msginfo = map[string]interface{}{
 		"Action":           "split-supervoxel-complete",
 		"Supervoxel":       svlabel,
@@ -968,8 +961,12 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 		"Timestamp":        time.Now().String(),
 	}
 	jsonBytes, _ = json.Marshal(msginfo)
-	if err = d.PublishKafkaMsg(jsonBytes); err != nil {
-		dvid.Errorf("error on sending split complete op to kafka: %v", err)
+
+	if err := server.LogJSONMutation(versionuuid, d.DataUUID(), jsonBytes); err != nil {
+		dvid.Criticalf("can't log split supervoxel to data %q, version %s: %s\n", d.DataName(), versionuuid, jsonBytes)
+	}
+	if err := d.PublishKafkaMsg(jsonBytes); err != nil {
+		dvid.Criticalf("error on sending split complete op to kafka: %v", err)
 	}
 	return
 }
