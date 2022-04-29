@@ -2382,8 +2382,8 @@ func TestBlocksWithRenumber(t *testing.T) {
 			t.Fatalf("problem reading block %d from stream: %v\n", bnum, err)
 		}
 		for _, label := range gotBlock.Labels {
-			if label != 3 {
-				t.Errorf("got bad block with label %d when only 1 should have been present\n", label)
+			if label != 3 && label != 4 {
+				t.Errorf("got bad block with label %d when only 3 or 4 should have been present\n", label)
 			}
 		}
 		bcoord := dvid.ChunkPoint3d{bx, by, bz}
@@ -2392,11 +2392,11 @@ func TestBlocksWithRenumber(t *testing.T) {
 			if bcoord == testBlockData[i].bcoord {
 				var first, second uint64
 				if i == 0 {
-					first = 3;
-					second = 4;
-				} else {
 					first = 4;
 					second = 3;
+				} else {
+					first = 3;
+					second = 4;
 				}
 				found = true
 				labelBytes, _ := gotBlock.MakeLabelVolume()
