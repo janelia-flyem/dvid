@@ -102,7 +102,6 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 	} else {
 		msginfo["Target"] = op.Target
 		msginfo["Labels"] = lbls
-		delta.TargetVoxels = targetIdx.NumVoxels()
 		if targetIdx, err = GetLabelIndex(d, v, op.Target, false); err != nil {
 			err = fmt.Errorf("can't get block indices of to merge target label %d: %v", op.Target, err)
 			return
@@ -111,6 +110,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 			err = fmt.Errorf("can't merge into a non-existent label %d", op.Target)
 			return
 		}
+		delta.TargetVoxels = targetIdx.NumVoxels()
 		if mergeIdx, err = GetMultiLabelIndex(d, v, op.Merged, dvid.Bounds{}); err != nil {
 			err = fmt.Errorf("can't get block indices of merge labels %s: %v", op.Merged, err)
 			return
@@ -141,8 +141,13 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 	}
 
 	if mergeIdx != nil && len(mergeIdx.Blocks) != 0 {
-		if err = targetIdx.Add(mergeIdx); err != nil {
-			return
+		if renumber {
+			targetIdx = mergeIdx
+		} else {
+			err = targetIdx.Add(mergeIdx)
+			if err != nil {
+				return
+			}
 		}
 		targetIdx.LastMutId = mutID
 		targetIdx.LastModUser = info.User
