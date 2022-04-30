@@ -172,7 +172,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		return
 	}
 
-	dvid.Infof("%s label %d: supervoxels %v, %d blocks\n", optype, op.Target, mergeIdx.GetSupervoxels(), len(mergeIdx.Blocks))
+	dvid.Infof("%s label %d: %d supervoxels, %d blocks\n", optype, op.Target, len(mergeIdx.GetSupervoxels()), len(mergeIdx.Blocks))
 
 	delta.Blocks = targetIdx.GetBlockIndices()
 	evt = datastore.SyncEvent{d.DataUUID(), labels.MergeBlockEvent}
