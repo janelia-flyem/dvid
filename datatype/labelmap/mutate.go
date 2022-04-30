@@ -99,6 +99,10 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 			err = fmt.Errorf("can't get block indices of to renumbered label %d: %v", origLabel, err)
 			return
 		}
+		if mergeIdx == nil {
+			err = fmt.Errorf("can't renumber non-existant body with label %d", origLabel)
+			return
+		}
 	} else {
 		msginfo["Target"] = op.Target
 		msginfo["Labels"] = lbls
@@ -113,6 +117,10 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		delta.TargetVoxels = targetIdx.NumVoxels()
 		if mergeIdx, err = GetMultiLabelIndex(d, v, op.Merged, dvid.Bounds{}); err != nil {
 			err = fmt.Errorf("can't get block indices of merge labels %s: %v", op.Merged, err)
+			return
+		}
+		if mergeIdx == nil {
+			err = fmt.Errorf("can't renumber non-existant merge bodies with labels: %s", op.Merged)
 			return
 		}
 	}
