@@ -91,12 +91,20 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 
 	// Get all the affected blocks in the merge.
 	var targetIdx, mergeIdx *labels.Index
+	if targetIdx, err = GetLabelIndex(d, v, op.Target, false); err != nil {
+		err = fmt.Errorf("error accessing index of %s target label %d: %v", optype, op.Target, err)
+		return
+	}
 	if renumber {
+		if targetIdx != nil {
+			err = fmt.Errorf("can't renumber into an existing label %d", op.Target)
+			return
+		}
 		msginfo["NewLabel"] = op.Target
 		msginfo["OrigLabel"] = origLabel
 		delta.TargetVoxels = 0
 		if mergeIdx, err = GetLabelIndex(d, v, origLabel, false); err != nil {
-			err = fmt.Errorf("can't get block indices of to renumbered label %d: %v", origLabel, err)
+			err = fmt.Errorf("can't get block indices of renumbered label %d: %v", origLabel, err)
 			return
 		}
 		if mergeIdx == nil {
@@ -104,16 +112,12 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 			return
 		}
 	} else {
-		msginfo["Target"] = op.Target
-		msginfo["Labels"] = lbls
-		if targetIdx, err = GetLabelIndex(d, v, op.Target, false); err != nil {
-			err = fmt.Errorf("can't get block indices of to merge target label %d: %v", op.Target, err)
-			return
-		}
 		if targetIdx == nil {
 			err = fmt.Errorf("can't merge into a non-existent label %d", op.Target)
 			return
 		}
+		msginfo["Target"] = op.Target
+		msginfo["Labels"] = lbls
 		delta.TargetVoxels = targetIdx.NumVoxels()
 		if mergeIdx, err = GetMultiLabelIndex(d, v, op.Merged, dvid.Bounds{}); err != nil {
 			err = fmt.Errorf("can't get block indices of merge labels %s: %v", op.Merged, err)
