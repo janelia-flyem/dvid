@@ -1584,6 +1584,10 @@ POST <api URL>/node/<UUID>/<data name>/mappings
 	message MappingOps {
 		repeated MappingOp mappings = 1;
 	}
+
+GET  <api URL>/node/<UUID>/<data name>/map-stats
+	
+	Returns JSON describing in-memory mapping stats.
 `
 
 var (
@@ -3675,6 +3679,19 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, err)
 			return
 		}
+
+	case "map-stats":
+		if action != "get" {
+			server.BadRequest(w, r, "only GET available for endpoint /map-stats")
+			return
+		}
+		jsonBytes, err := d.GetMapStats(ctx)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, string(jsonBytes))
 
 	case "info":
 		if action == "post" {

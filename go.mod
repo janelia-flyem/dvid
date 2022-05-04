@@ -7,6 +7,7 @@ require (
 	cloud.google.com/go/firestore v1.6.1
 	cloud.google.com/go/storage v1.21.0
 	github.com/BurntSushi/toml v1.0.0
+	github.com/DmitriyVTitov/size v1.5.0
 	github.com/Shopify/sarama v1.32.0
 	github.com/blang/semver v3.5.1+incompatible
 	github.com/coocood/freecache v1.2.1

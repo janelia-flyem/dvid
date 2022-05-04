@@ -4,10 +4,14 @@ package labelmap
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/DmitriyVTitov/size"
+	"github.com/dustin/go-humanize"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -454,6 +458,19 @@ func (d *Data) GetMappedLabels(v dvid.VersionID, supervoxels []uint64) (mapped [
 		return
 	}
 	return svmap.MappedLabels(v, supervoxels)
+}
+
+// GetMapStats returns JSON describing in-memory mapping stats.
+func (d *Data) GetMapStats(ctx *datastore.VersionedCtx) (jsonBytes []byte, err error) {
+	stats := make(map[string]string)
+	for dataUUID, svm := range iMap.maps {
+		var ds datastore.DataService
+		if ds, err = datastore.GetDataByDataUUID(dataUUID); err != nil {
+			return
+		}
+		stats[string(ds.DataName())] = humanize.Bytes(uint64(size.Of(svm)))
+	}
+	return json.Marshal(stats)
 }
 
 type instanceMaps struct {
