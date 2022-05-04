@@ -460,15 +460,32 @@ func (d *Data) GetMappedLabels(v dvid.VersionID, supervoxels []uint64) (mapped [
 	return svmap.MappedLabels(v, supervoxels)
 }
 
+type mapStats struct {
+	MapSize     string
+	NumVersions int
+	MaxVersion  int
+}
+
 // GetMapStats returns JSON describing in-memory mapping stats.
 func (d *Data) GetMapStats(ctx *datastore.VersionedCtx) (jsonBytes []byte, err error) {
-	stats := make(map[string]string)
+	stats := make(map[string]mapStats)
 	for dataUUID, svm := range iMap.maps {
 		var ds datastore.DataService
 		if ds, err = datastore.GetDataByDataUUID(dataUUID); err != nil {
 			return
 		}
-		stats[string(ds.DataName())] = humanize.Bytes(uint64(size.Of(svm)))
+		maxVersion := 0
+		for _, v := range svm.versions {
+			if int(v) > maxVersion {
+				maxVersion = int(v)
+			}
+		}
+		name := string(ds.DataName())
+		stats[name] = mapStats{
+			MapSize:     humanize.Bytes(uint64(size.Of(svm))),
+			NumVersions: len(svm.versions),
+			MaxVersion:  maxVersion,
+		}
 	}
 	return json.Marshal(stats)
 }
