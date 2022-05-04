@@ -147,6 +147,20 @@ GET  <api URL>/node/<UUID>/<data name>/fields
 
 	["field1", "field2", ...]
 
+GET    <api URL>/node/<UUID>/<data name>/schema
+HEAD   <api URL>/node/<UUID>/<data name>/schema
+POST   <api URL>/node/<UUID>/<data name>/schema
+DELETE <api URL>/node/<UUID>/<data name>/schema
+
+	Handles the schema JSON associated with this neuronjson instance based on the HTTP verb.
+
+GET    <api URL>/node/<UUID>/<data name>/schema_batch
+HEAD   <api URL>/node/<UUID>/<data name>/schema_batch
+POST   <api URL>/node/<UUID>/<data name>/schema_batch
+DELETE <api URL>/node/<UUID>/<data name>/schema_batch
+	
+	Handles the schema batch JSON associated with this neuronjson instance based on the HTTP verb.
+
 GET  <api URL>/node/<UUID>/<data name>/keyrange/<key1>/<key2>
 
 	Returns all keys between 'key1' and 'key2' for this data instance in JSON format:
