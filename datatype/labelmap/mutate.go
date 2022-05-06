@@ -302,17 +302,10 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 		return
 	}
 
-	msginfo = map[string]interface{}{
-		"Action":             "cleave-complete",
-		"OrigLabel":          label,
-		"CleavedLabel":       cleaveLabel,
-		"CleavedSupervoxels": cleaveSupervoxels,
-		"CleavedSize":        cleavedSize,
-		"RemainSize":         remainSize,
-		"MutationID":         mutID,
-		"UUID":               string(versionuuid),
-		"Timestamp":          time.Now().String(),
-	}
+	msginfo["Action"] = "cleave-complete"
+	msginfo["CleavedSize"] = cleavedSize
+	msginfo["RemainSize"] = remainSize
+	msginfo["Timestamp"] = time.Now().String()
 	jsonBytes, _ = json.Marshal(msginfo)
 
 	if err := server.LogJSONMutation(versionuuid, d.DataUUID(), jsonBytes); err != nil {
