@@ -245,10 +245,10 @@ func getEmailFromProxy(r *http.Request) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("unable to get profile from %s: %v", tc.Auth.ProxyAddress, err)
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("unable to get profile from %s (status %d), perhaps not logged in: %v", tc.Auth.ProxyAddress, resp.StatusCode, err)
 	}
-	defer resp.Body.Close()
 	data, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("unable to read /profile response from %s: %v", tc.Auth.ProxyAddress, err)

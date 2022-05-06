@@ -40,6 +40,7 @@ func getLabelMetadata(dstURL string) *LabelMetadata {
 		os.Exit(1)
 	}
 	metadata, err := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
 	if err != nil {
 		fmt.Printf("Could not read metadata from labels (%s): %v\n", infoUrl, err.Error())
 		os.Exit(1)

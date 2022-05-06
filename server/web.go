@@ -1287,6 +1287,7 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 						if err != nil {
 							dvid.Errorf("problem echoing POST (%s): %v\n", url, err)
 						} else {
+							resp.Body.Close()
 							dvid.Infof("echoed POST: %s (status %d)\n", url, resp.StatusCode)
 						}
 					}(url)

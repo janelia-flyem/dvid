@@ -99,6 +99,7 @@ func main() {
 			os.Exit(1)
 		}
 		data, err := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
 		if err != nil {
 			fmt.Printf("error on trying to read sparsevol %d response: %v\n", label, err)
 			os.Exit(1)

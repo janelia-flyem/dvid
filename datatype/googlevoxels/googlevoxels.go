@@ -253,6 +253,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	if err != nil {
 		return nil, fmt.Errorf("Error getting volume metadata from Google: %v", err)
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("Unexpected status code %d returned when getting volume metadata for %q", resp.StatusCode, volumeid)
 	}
@@ -260,7 +261,6 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	if err != nil {
 		return nil, err
 	}
-	resp.Body.Close()
 	var m struct {
 		Geoms Geometries `json:"geometry"`
 	}
@@ -364,6 +364,7 @@ func (dtype *Type) Do(cmd datastore.Request, reply *datastore.Response) error {
 		if err != nil {
 			return fmt.Errorf("Error getting volumes metadata from Google: %v", err)
 		}
+		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("Unexpected status code %d returned when getting volumes for user", resp.StatusCode)
 		}
@@ -371,7 +372,6 @@ func (dtype *Type) Do(cmd datastore.Request, reply *datastore.Response) error {
 		if err != nil {
 			return err
 		}
-		resp.Body.Close()
 		reply.Text = string(metadata)
 		return nil
 
