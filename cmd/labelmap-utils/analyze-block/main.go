@@ -88,6 +88,7 @@ func main() {
 		os.Exit(1)
 	}
 	data, err := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
 	if err != nil {
 		fmt.Printf("couldn't read block data: %v\n", err)
 		os.Exit(1)
