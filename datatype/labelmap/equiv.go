@@ -474,6 +474,7 @@ func (d *Data) GetMapStats(ctx *datastore.VersionedCtx) (jsonBytes []byte, err e
 		if ds, err = datastore.GetDataByDataUUID(dataUUID); err != nil {
 			return
 		}
+		svm.RLock()
 		maxVersion := 0
 		for _, v := range svm.versions {
 			if int(v) > maxVersion {
@@ -486,6 +487,7 @@ func (d *Data) GetMapStats(ctx *datastore.VersionedCtx) (jsonBytes []byte, err e
 			NumVersions: len(svm.versions),
 			MaxVersion:  maxVersion,
 		}
+		svm.RUnlock()
 	}
 	return json.Marshal(stats)
 }

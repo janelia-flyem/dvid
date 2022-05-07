@@ -749,8 +749,25 @@ func TestMergeLabels(t *testing.T) {
 	if err := json.Unmarshal(r, &supervoxels); err != nil {
 		t.Errorf("Unable to parse supervoxels from server.  Got: %v\n", supervoxels)
 	}
-	if len(supervoxels) != 1 && supervoxels[0] != 2 {
+	if len(supervoxels) != 1 || supervoxels[0] != 2 {
 		t.Errorf("expected [2] for supervoxels in body 2, got %v\n", supervoxels)
+	}
+
+	// Check /supervoxel-sizes
+	reqStr = fmt.Sprintf("%snode/%s/labels/supervoxel-sizes/2", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
+	svsizes := struct {
+		Supervoxels []uint64
+		Sizes       []uint64
+	}{}
+	if err := json.Unmarshal(r, &svsizes); err != nil {
+		t.Errorf("Unable to parse supervoxel-sizes from server.  Got: %s\n", string(r))
+	}
+	if len(svsizes.Supervoxels) != 1 || svsizes.Supervoxels[0] != 2 {
+		t.Errorf("expected [2] for supervoxels in body 2, got %v\n", svsizes.Supervoxels)
+	}
+	if len(svsizes.Sizes) != 1 || svsizes.Sizes[0] != 50000 {
+		t.Errorf("expected [2] for supervoxel sizes in body 2, got %v\n", svsizes.Sizes)
 	}
 
 	// Make sure /label and /labels endpoints work.
@@ -811,6 +828,18 @@ func TestMergeLabels(t *testing.T) {
 	}
 	if _, found := sv[3]; !found {
 		t.Errorf("expected supervoxel 3 within body 3 but didn't find it\n")
+	}
+
+	reqStr = fmt.Sprintf("%snode/%s/labels/supervoxel-sizes/2", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
+	if err := json.Unmarshal(r, &svsizes); err != nil {
+		t.Errorf("Unable to parse supervoxel-sizes from server.  Got: %s\n", string(r))
+	}
+	if len(svsizes.Supervoxels) != 2 || svsizes.Supervoxels[0] != 2 || svsizes.Supervoxels[1] != 3 {
+		t.Errorf("expected [2,3] for supervoxels in body 2, got %v\n", svsizes.Supervoxels)
+	}
+	if len(svsizes.Sizes) != 2 || svsizes.Sizes[0] != 50000 || svsizes.Sizes[1] != 12000 {
+		t.Errorf("expected [50000, 12000] for supervoxel sizes in body 2, got %v\n", svsizes.Sizes)
 	}
 
 	// Make sure label changes are correct after completion

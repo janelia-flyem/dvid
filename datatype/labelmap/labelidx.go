@@ -437,28 +437,52 @@ func GetLabelSize(d dvid.Data, v dvid.VersionID, label uint64, isSupervoxel bool
 	return idx.NumVoxels(), nil
 }
 
-// GetLabelSizes returns the # of voxels in the given labels.  If isSupervoxel = true, the given
-// labels are interpreted as supervoxel ids and the sizes are of a supervoxel.  If a label doesn't
-// exist, a zero (not error) is returned.
-func GetLabelSizes(d dvid.Data, v dvid.VersionID, labels []uint64, isSupervoxel bool) ([]uint64, error) {
-	var supervoxels []uint64
-	if isSupervoxel {
-		svmap, err := getMapping(d, v)
-		if err != nil {
-			return nil, fmt.Errorf("couldn't get mapping for data %q, version %d: %v", d.DataName(), v, err)
-		}
-		supervoxels = make([]uint64, len(labels))
-		copy(supervoxels, labels)
+func getSupervoxelSizes(d dvid.Data, v dvid.VersionID, supervoxels []uint64) ([]uint64, error) {
+	svmap, err := getMapping(d, v)
+	if err != nil {
+		return nil, fmt.Errorf("couldn't get mapping for data %q, version %d: %v", d.DataName(), v, err)
+	}
+	labelsets := make(map[uint64][]uint64) // maps labels -> set of supervoxels in it.
+	labels, _, err := svmap.MappedLabels(v, supervoxels)
+	if err != nil {
+		return nil, err
+	}
+	for i, label := range labels {
+		labelsets[label] = append(labelsets[label], supervoxels[i])
+	}
 
-		labels, _, err = svmap.MappedLabels(v, labels)
+	sizemap := make(map[uint64]uint64, len(supervoxels))
+	for label, svlist := range labelsets {
+		idx, err := GetLabelIndex(d, v, label, false)
 		if err != nil {
 			return nil, err
 		}
+		if idx == nil {
+			for _, sv := range svlist {
+				sizemap[sv] = 0
+			}
+		} else {
+			svcounts := idx.GetSupervoxelCounts()
+			for _, sv := range svlist {
+				sizemap[sv] = svcounts[sv]
+			}
+		}
 	}
-	// TODO -- could optimize by doing unique set of labels if supervoxels, since multiple supervoxels
-	// may be in same label.  However, caching might simply remove this optimization issue since label
-	// index will already be cached.
-	sizes := make([]uint64, len(labels))
+	sizes := make([]uint64, len(supervoxels))
+	for i, sv := range supervoxels {
+		sizes[i] = sizemap[sv]
+	}
+	return sizes, nil
+}
+
+// GetLabelSizes returns the # of voxels in the given labels.  If isSupervoxel = true, the given
+// labels are interpreted as supervoxel ids and the sizes are of a supervoxel.  If a label doesn't
+// exist, a zero (not error) is returned.
+func GetLabelSizes(d dvid.Data, v dvid.VersionID, labels []uint64, isSupervoxel bool) (sizes []uint64, err error) {
+	if isSupervoxel {
+		return getSupervoxelSizes(d, v, labels)
+	}
+	sizes = make([]uint64, len(labels))
 	for i, label := range labels {
 		idx, err := GetLabelIndex(d, v, label, false)
 		if err != nil {
@@ -466,10 +490,6 @@ func GetLabelSizes(d dvid.Data, v dvid.VersionID, labels []uint64, isSupervoxel 
 		}
 		if idx == nil {
 			sizes[i] = 0
-			continue
-		}
-		if isSupervoxel {
-			sizes[i] = idx.GetSupervoxelCount(supervoxels[i])
 		} else {
 			sizes[i] = idx.NumVoxels()
 		}

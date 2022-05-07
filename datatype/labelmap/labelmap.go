@@ -951,6 +951,23 @@ GET <api URL>/node/<UUID>/<data name>/sizes[?supervoxels=true]
 	supervoxels   If "true", interprets the given labels as a supervoxel ids.
     hash          MD5 hash of request body content in hexidecimal string format.
 
+GET <api URL>/node/<UUID>/<data name>/supervoxel-sizes/<label>
+
+	Returns the supervoxels and their sizes for the given label in JSON:
+
+	{
+		"supervoxels": [1,2,3,4,...],
+		"sizes": [100,200,300,400,...]
+	}
+
+	Returns a status code 404 (Not Found) if label does not exist.
+	
+    Arguments:
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of labelmap instance.
+    label     	  A 64-bit integer label id
+
+
 GET  <api URL>/node/<UUID>/<data name>/sparsevol-size/<label>[?supervoxels=true]
 
 	Returns JSON giving the number of voxels, number of native blocks and the coarse bounding box in DVID
@@ -3810,6 +3827,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "supervoxels":
 		d.handleSupervoxels(ctx, w, r, parts)
 
+	case "supervoxel-sizes":
+		d.handleSupervoxelSizes(ctx, w, r, parts)
+
 	case "size":
 		d.handleSize(ctx, w, r, parts)
 
@@ -4769,6 +4789,50 @@ func (d *Data) handleSupervoxels(ctx *datastore.VersionedCtx, w http.ResponseWri
 	}
 
 	timedLog.Infof("HTTP GET supervoxels for label %d (%s)", label, r.URL)
+}
+
+func (d *Data) handleSupervoxelSizes(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
+	// GET <api URL>/node/<UUID>/<data name>/supervoxel-sizes/<label>
+	if len(parts) < 5 {
+		server.BadRequest(w, r, "DVID requires label to follow 'supervoxels' command")
+		return
+	}
+	timedLog := dvid.NewTimeLog()
+
+	label, err := strconv.ParseUint(parts[4], 10, 64)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	if label == 0 {
+		server.BadRequest(w, r, "Label 0 is protected background value and cannot be queried as body.\n")
+		return
+	}
+
+	idx, err := GetLabelIndex(d, ctx.VersionID(), label, false)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	if idx == nil || len(idx.Blocks) == 0 {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	counts := idx.GetSupervoxelCounts()
+	var supervoxels_json, sizes_json string
+	for sv, count := range counts {
+		supervoxels_json += strconv.FormatUint(sv, 10) + ","
+		sizes_json += strconv.FormatUint(count, 10) + ","
+	}
+	w.Header().Set("Content-type", "application/json")
+	fmt.Fprintf(w, "{\n  ")
+	fmt.Fprintf(w, `"supervoxels": [%s],`, supervoxels_json[:len(supervoxels_json)-1])
+	fmt.Fprintf(w, "\n  ")
+	fmt.Fprintf(w, `"sizes": [%s]`, sizes_json[:len(sizes_json)-1])
+	fmt.Fprintf(w, "\n}")
+
+	timedLog.Infof("HTTP GET supervoxel-sizes for label %d (%s)", label, r.URL)
 }
 
 func (d *Data) handleLabelmod(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
