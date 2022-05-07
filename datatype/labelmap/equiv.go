@@ -461,6 +461,7 @@ func (d *Data) GetMappedLabels(v dvid.VersionID, supervoxels []uint64) (mapped [
 }
 
 type mapStats struct {
+	MapEntries  int
 	MapSize     string
 	NumVersions int
 	MaxVersion  int
@@ -483,6 +484,7 @@ func (d *Data) GetMapStats(ctx *datastore.VersionedCtx) (jsonBytes []byte, err e
 		}
 		name := string(ds.DataName())
 		stats[name] = mapStats{
+			MapEntries:  len(svm.fm),
 			MapSize:     humanize.Bytes(uint64(size.Of(svm))),
 			NumVersions: len(svm.versions),
 			MaxVersion:  maxVersion,
