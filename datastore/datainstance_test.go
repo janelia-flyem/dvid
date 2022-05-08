@@ -4,6 +4,7 @@ import (
 	"encoding/gob"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -44,6 +45,46 @@ func (d *TestData) ServeHTTP(uuid dvid.UUID, ctx *VersionedCtx, w http.ResponseW
 
 func (d *TestData) Help() string {
 	return "no help here!"
+}
+
+func TestJsonSet(t *testing.T) {
+	testJson := `{"versioned": true}`
+	r := strings.NewReader(testJson)
+	var config dvid.Config
+	if err := config.SetByJSON(r); err != nil {
+		t.Fatalf("couldn't set config by JSON: %v\n", err)
+	}
+	var d Data
+	if err := d.ModifyConfig(config); err != nil {
+		t.Fatalf("couldn't modify Data via config: %v\n", err)
+	}
+	if d.unversioned {
+		t.Fatalf("bad set of Data unversioned via bool in config %v", config)
+	}
+	testJson = `{"versioned": false}`
+	r = strings.NewReader(testJson)
+	var config2 dvid.Config
+	var d2 Data
+	if err := config2.SetByJSON(r); err != nil {
+		t.Fatalf("couldn't set config by JSON: %v\n", err)
+	}
+	if err := d2.ModifyConfig(config2); err != nil {
+		t.Fatalf("couldn't modify Data via config: %v\n", err)
+	}
+	if !d2.unversioned {
+		t.Fatalf("bad set of Data unversioned via bool string in config %v", config)
+	}
+	testJson = `{"versioned": "true"}`
+	r = strings.NewReader(testJson)
+	if err := config2.SetByJSON(r); err != nil {
+		t.Fatalf("couldn't set config by JSON: %v\n", err)
+	}
+	if err := d2.ModifyConfig(config2); err != nil {
+		t.Fatalf("couldn't modify Data via config: %v\n", err)
+	}
+	if d2.unversioned {
+		t.Fatalf("bad set of Data unversioned via bool string in config %v", config)
+	}
 }
 
 func TestDataGobEncoding(t *testing.T) {
