@@ -953,19 +953,25 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 	}
 
 	// Set versioning
-	s, found, err = config.GetString("Versioned")
-	if err != nil {
-		return err
-	}
-	if found {
-		versioned := strings.ToLower(s)
-		switch versioned {
-		case "false", "0":
-			d.unversioned = true
-		case "true", "1":
-			d.unversioned = false
-		default:
-			return fmt.Errorf("Illegal setting for 'versioned' (needs to be 'false', '0', 'true', or '1'): %s", s)
+	i, found := config.Get("Versioned")
+	versioned_bool, ok := i.(bool)
+	if ok {
+		d.unversioned = !versioned_bool
+	} else {
+		s, found, err = config.GetString("Versioned")
+		if err != nil {
+			return err
+		}
+		if found {
+			versioned := strings.ToLower(s)
+			switch versioned {
+			case "false", "0":
+				d.unversioned = true
+			case "true", "1":
+				d.unversioned = false
+			default:
+				return fmt.Errorf("Illegal setting for 'versioned' (needs to be 'false', '0', 'true', or '1'): %s", s)
+			}
 		}
 	}
 
