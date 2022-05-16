@@ -10,9 +10,11 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	io "io"
 	"io/ioutil"
 	"math"
 	"net/http"
+	reflect "reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -146,20 +148,6 @@ GET  <api URL>/node/<UUID>/<data name>/fields
 	Returns all field names in annotations for the most recent version:
 
 	["field1", "field2", ...]
-
-GET    <api URL>/node/<UUID>/<data name>/schema
-HEAD   <api URL>/node/<UUID>/<data name>/schema
-POST   <api URL>/node/<UUID>/<data name>/schema
-DELETE <api URL>/node/<UUID>/<data name>/schema
-
-	Handles the schema JSON associated with this neuronjson instance based on the HTTP verb.
-
-GET    <api URL>/node/<UUID>/<data name>/schema_batch
-HEAD   <api URL>/node/<UUID>/<data name>/schema_batch
-POST   <api URL>/node/<UUID>/<data name>/schema_batch
-DELETE <api URL>/node/<UUID>/<data name>/schema_batch
-	
-	Handles the schema batch JSON associated with this neuronjson instance based on the HTTP verb.
 
 GET  <api URL>/node/<UUID>/<data name>/keyrange/<key1>/<key2>
 
@@ -359,6 +347,27 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 
 	check		If json=true, setting check=false will tell server to trust that the
 					values will be valid JSON instead of parsing it as a check.
+
+POST <api URL>/node/<UUID>/<data name>/query
+
+	The JSON query format uses field names as the keys, and desired values.
+	Example:
+	{ "bodyid": 23, "hemilineage": "0B", ... }
+	Each field value must be true, i.e., the conditions or ANDed together.
+
+	If a list of queries (JSON object per query) is POSTed, the results for each query are ORed
+	together with duplicate annotations removed.
+
+	A JSON list of objects that matches the query is returned.
+
+	Arguments:
+
+	UUID 		Hexadecimal string with enough characters to uniquely identify a version node.
+	data name	Name of neuronjson data instance.
+
+	GET Query-string Options:
+
+	onlyid		If true (false by default), will only return a list of body ids that match.
 `
 
 func init() {
@@ -370,6 +379,55 @@ func init() {
 	gob.Register(map[string]interface{}{})
 }
 
+// ---- Interface for Firestore-like persistence that can be stubbed for tests.
+
+type DocGetter interface {
+	Data() map[string]interface{}
+}
+
+type DocIterator interface {
+	Next() (doc DocGetter, err error) // err must be iterator.Done if finished, see pkg "google.golang.org/api/iterator"
+	Close()
+}
+
+// ---- Firestore implementation of DocGetter and DocIterator.
+
+type firestoreDocGetter struct {
+	doc *firestore.DocumentSnapshot
+}
+
+func (f *firestoreDocGetter) Data() map[string]interface{} {
+	return f.doc.Data()
+}
+
+type firestoreIterator struct {
+	client *firestore.Client
+	it     *firestore.DocumentIterator
+}
+
+func (fi *firestoreIterator) Next() (DocGetter, error) {
+	firestoreDoc, err := fi.it.Next()
+	if err != nil {
+		return nil, err
+	}
+	return &firestoreDocGetter{firestoreDoc}, nil
+}
+
+func (fi *firestoreIterator) Close() {
+	fi.client.Close()
+}
+
+func firestoreOpen(projectID, datasetID string) (DocIterator, error) {
+	ctx := context.Background()
+	fi := &firestoreIterator{}
+	var err error
+	if fi.client, err = firestore.NewClient(ctx, projectID); err != nil {
+		return nil, fmt.Errorf("could not connect to Firestore for project %q: %v", projectID, err)
+	}
+	fi.it = fi.client.Collection("clio_annotations_global").Doc("neurons").Collection(datasetID).Where("_head", "==", true).Documents(ctx)
+	return fi, nil
+}
+
 // Type embeds the datastore's Type to create a unique type for neuronjson functions.
 type Type struct {
 	datastore.Type
@@ -379,12 +437,10 @@ type Type struct {
 func NewType() *Type {
 	dtype := new(Type)
 	dtype.Type = datastore.Type{
-		Name:    TypeName,
-		URL:     RepoURL,
-		Version: Version,
-		Requirements: &storage.Requirements{
-			Batcher: true,
-		},
+		Name:         TypeName,
+		URL:          RepoURL,
+		Version:      Version,
+		Requirements: &storage.Requirements{},
 	}
 	return dtype
 }
@@ -617,55 +673,34 @@ func getBodyID(data map[string]interface{}) (uint64, error) {
 	return uint64(bodyid), nil
 }
 
-// --- DataInitializer interface ---
-
-// InitDataHandlers initializes ephemeral data for this instance, which is
-// the in-memory keyvalue store where the values are neuron annotation JSON.
-func (d *Data) InitDataHandlers() error {
-	d.db = make(map[uint64]map[string]interface{})
-	return nil
-}
-
-func (d *Data) loadFirestoreDB(request datastore.Request, reply *datastore.Response) error {
-	if len(request.Command) < 6 {
-		return fmt.Errorf("ProjectID and DatasetID must be specified after %q", "ingest")
-	}
-	var uuidStr, dataName, cmdStr, projectID, datasetID string
-	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &projectID, &datasetID)
+// Load documents into backing store and in-memory database.
+func (d *Data) loadData(ctx *datastore.VersionedCtx, docStore DocIterator) error {
+	tlog := dvid.NewTimeLog()
 
 	db, err := datastore.GetKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("unable to get keyvalue database: %v", err)
 	}
-	_, versionID, err := datastore.MatchingUUID(uuidStr)
-	if err != nil {
-		return err
-	}
-	vctx := datastore.NewVersionedCtx(d, versionID)
 
-	tlog := dvid.NewTimeLog()
-	numdocs := 0
+	d.dbMu.Lock() // Note that mutex is NOT unlocked if firestore DB doesn't load because we don't want
+	defer d.dbMu.Unlock()
 
-	ctx := context.Background()
-	client, err := firestore.NewClient(ctx, projectID)
-	if err != nil {
-		return fmt.Errorf("could not connect to Firestore for project %q: %v", projectID, err)
-	}
-	defer client.Close()
-	it := client.Collection("clio_annotations_global").Doc("neurons").Collection(datasetID).Where("_head", "==", true).Documents(ctx)
-
-	d.dbMu.Lock() // Note that the mutex is NOT unlocked if firestore DB doesn't load.
 	d.db = make(map[uint64]map[string]interface{})
 	d.fields = make(map[string]struct{})
+	numdocs := 0
 	for {
-		doc, err := it.Next()
+		doc, err := docStore.Next()
 		if err == iterator.Done {
 			break
 		}
-		if err != nil {
-			return fmt.Errorf("documents iterator error -- can't load Firebase for project %q, dataset %q: %v", projectID, datasetID, err)
+		docGetter, ok := doc.(DocGetter)
+		if !ok {
+			return fmt.Errorf("loadData(): DocIterator did not return a DocGetter")
 		}
-		annotation := doc.Data()
+		if err != nil {
+			return fmt.Errorf("documents iterator error: %v", err)
+		}
+		annotation := docGetter.Data()
 		for field := range annotation {
 			d.fields[field] = struct{}{}
 		}
@@ -685,7 +720,7 @@ func (d *Data) loadFirestoreDB(request datastore.Request, reply *datastore.Respo
 		if err != nil {
 			return err
 		}
-		if err := db.Put(vctx, tk, data); err != nil {
+		if err := db.Put(ctx, tk, data); err != nil {
 			return err
 		}
 
@@ -695,9 +730,40 @@ func (d *Data) loadFirestoreDB(request datastore.Request, reply *datastore.Respo
 		}
 	}
 	sort.Slice(d.ids, func(i, j int) bool { return d.ids[i] < d.ids[j] })
-
 	tlog.Infof("Completed loading of %d HEAD annotations", numdocs)
-	d.dbMu.Unlock()
+	return nil
+}
+
+// --- DataInitializer interface ---
+
+// InitDataHandlers initializes ephemeral data for this instance, which is
+// the in-memory keyvalue store where the values are neuron annotation JSON.
+func (d *Data) InitDataHandlers() error {
+	d.db = make(map[uint64]map[string]interface{})
+	return nil
+}
+
+func (d *Data) loadFirestoreDB(request datastore.Request, reply *datastore.Response) error {
+	if len(request.Command) < 6 {
+		return fmt.Errorf("ProjectID and DatasetID must be specified after %q", "ingest")
+	}
+	var uuidStr, dataName, cmdStr, projectID, datasetID string
+	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &projectID, &datasetID)
+
+	_, versionID, err := datastore.MatchingUUID(uuidStr)
+	if err != nil {
+		return err
+	}
+	vctx := datastore.NewVersionedCtx(d, versionID)
+
+	var docIterator DocIterator
+	if docIterator, err = firestoreOpen(projectID, datasetID); err != nil {
+		return err
+	}
+	if err := d.loadData(vctx, docIterator); err != nil {
+		return err
+	}
+	docIterator.Close()
 
 	reply.Output = []byte(fmt.Sprintf("Ingested Firestore annotations from project %q, dataset %q into neuronjson instance %q, uuid %s\n",
 		projectID, datasetID, d.DataName(), uuidStr))
@@ -787,6 +853,176 @@ func (d *Data) deleteBodyID(bodyid uint64) {
 		return
 	}
 	d.ids = append(d.ids[:i], d.ids[i+1:]...)
+}
+
+// ---- Query support ----
+
+type queryObject map[string]interface{}
+type queryList []queryObject
+
+func checkIntMatch(query []int, fieldValue interface{}) (matches bool, err error) {
+	switch v := fieldValue.(type) {
+	case int:
+		for _, queryValue := range query {
+			if v == queryValue {
+				return true, nil
+			}
+		}
+	case []int:
+		for _, queryValue := range query {
+			for _, fval := range v {
+				if fval == queryValue {
+					return true, nil
+				}
+			}
+		}
+	default:
+	}
+	return false, nil
+}
+
+func checkStrMatch(query []string, fieldValue interface{}) (matches bool, err error) {
+	switch v := fieldValue.(type) {
+	case string:
+		for _, queryValue := range query {
+			if v == queryValue {
+				return true, nil
+			}
+		}
+	case []string:
+		for _, queryValue := range query {
+			for _, fval := range v {
+				if fval == queryValue {
+					return true, nil
+				}
+			}
+		}
+	default:
+	}
+	return false, nil
+}
+
+func fieldMatch(queryValue, fieldValue interface{}) (matches bool, err error) {
+	if queryValue == nil {
+		matches = true
+		return
+	}
+	if fieldValue == nil {
+		matches = false
+		return
+	}
+	switch v := queryValue.(type) {
+	case int:
+		return checkIntMatch([]int{v}, fieldValue)
+	case []int:
+		return checkIntMatch(v, fieldValue)
+	case string:
+		return checkStrMatch([]string{v}, fieldValue)
+	case []string:
+		return checkStrMatch(v, fieldValue)
+	default:
+		var t = reflect.TypeOf(v)
+		return false, fmt.Errorf("query value %v has illegal type %v", v, t)
+	}
+}
+
+// returns true if at least one query on the list matches the value.
+func queryMatch(queryL queryList, value map[string]interface{}) (matches bool, err error) {
+	maxSubQuery := len(queryL) - 1
+	if maxSubQuery <= 0 {
+		matches = false
+		return
+	}
+	for num, query := range queryL {
+		for queryKey, queryValue := range query {
+			if recordValue, ok := value[queryKey]; ok {
+				if matches, err = fieldMatch(queryValue, recordValue); err != nil {
+					return
+				}
+				if !matches && (num >= maxSubQuery) {
+					return
+				}
+			}
+			matches = false
+			return
+		}
+	}
+	return
+}
+
+func (d *Data) queryInMemory(w http.ResponseWriter, queryL queryList) (err error) {
+	d.dbMu.RLock()
+	defer d.dbMu.RUnlock()
+
+	i := 0
+	var jsonBytes []byte
+	for _, value := range d.db {
+		var matches bool
+		if matches, err = queryMatch(queryL, value); err != nil {
+			return
+		} else if matches {
+			removeReservedFields(value)
+			if jsonBytes, err = json.Marshal(value); err != nil {
+				break
+			}
+			fmt.Fprint(w, string(jsonBytes))
+		}
+		i++
+	}
+	return
+}
+
+func (d *Data) queryBackingStore(ctx storage.VersionedCtx, w http.ResponseWriter, queryL queryList) (err error) {
+	process_func := func(key string, value map[string]interface{}) {
+		if matches, err := queryMatch(queryL, value); err != nil {
+			dvid.Errorf("error in matching process: %v\n", err) // TODO: alter d.processRange to allow return of err
+			return
+		} else if !matches {
+			return
+		}
+		removeReservedFields(value)
+		jsonBytes, err := json.Marshal(value)
+		if err != nil {
+			dvid.Errorf("error in JSON encoding: %v\n", err)
+			return
+		}
+		fmt.Fprint(w, string(jsonBytes))
+	}
+	return d.processRange(ctx, process_func)
+}
+
+// SetTagsByJSON takes a JSON object of tags and either appends or replaces the current
+// data's tags depending on the replace parameter.
+func (d *Data) Query(ctx storage.VersionedCtx, w http.ResponseWriter, uuid dvid.UUID, onlyid bool, in io.ReadCloser) (err error) {
+	var queryBytes []byte
+	if queryBytes, err = io.ReadAll(in); err != nil {
+		return
+	}
+	// Try to parse as list of queries and if fails, try as object and make it a one-item list.
+	var queryL queryList
+	if err = json.Unmarshal(queryBytes, &queryL); err != nil {
+		queryObj := make(queryObject)
+		if err = json.Unmarshal(queryBytes, &queryObj); err != nil {
+			err = fmt.Errorf("unable to parse JSON query: %s", string(queryBytes))
+			return
+		}
+		queryL = queryList{queryObj}
+	}
+
+	// Perform the query
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprint(w, "[")
+	if ctx.Head() {
+		if err = d.queryInMemory(w, queryL); err != nil {
+			return
+		}
+	} else {
+		if err = d.queryBackingStore(ctx, w, queryL); err != nil {
+			return
+		}
+	}
+	fmt.Fprint(w, "]")
+	return
 }
 
 // KeyExists returns true if a key is found.
@@ -1482,6 +1718,18 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, string(jsonBytes))
 		comment = "HTTP GET fields"
+
+	case "query":
+		if action != "post" {
+			server.BadRequest(w, r, fmt.Errorf("only POST verb allowed for /query endpoint"))
+			return
+		}
+		onlyid := r.URL.Query().Get("onlyid") == "true"
+		err := d.Query(ctx, w, uuid, onlyid, r.Body)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
 
 	case "keyrange":
 		if len(parts) < 6 {
