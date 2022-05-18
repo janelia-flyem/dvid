@@ -87,7 +87,7 @@ go get github.com/janelia-flyem/protolog
 go get github.com/zenazn/goji
 
 # JWT support
-go get github.com/golang-jwt/jwt/v4
+#go get github.com/golang-jwt/jwt/v4
 
 # Google ID OAuth2 support
 go get google.golang.org/api/oauth2/v2
