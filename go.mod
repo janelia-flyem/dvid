@@ -11,8 +11,7 @@ require (
 	github.com/Shopify/sarama v1.32.0
 	github.com/blang/semver v3.5.1+incompatible
 	github.com/coocood/freecache v1.2.1
-	github.com/dgraph-io/badger v1.6.2
-	github.com/dgraph-io/ristretto v0.1.0 // indirect
+	github.com/dgraph-io/badger/v2 v2.0.0
 	github.com/dustin/go-humanize v1.0.0
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang-jwt/jwt/v4 v4.4.1

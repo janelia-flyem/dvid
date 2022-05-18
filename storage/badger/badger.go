@@ -14,14 +14,14 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 
 	"github.com/blang/semver"
-	"github.com/dgraph-io/badger"
+	"github.com/dgraph-io/badger/v2"
 	"github.com/twinj/uuid"
 )
 
 const (
 	// DefaultValueThreshold is the size of values in bytes that if exceeded get stored in
-	// value log instead of the LSM tree.
-	DefaultValueThreshold = 1 * dvid.Kilo
+	// value log instead of the LSM tree.  2022-03-26: Let Badger determine default because they might know better.
+	// DefaultValueThreshold = 1 * dvid.Kilo
 
 	// DefaultVersionsToKeep is the number of versions to keep per key.  Until we work out way
 	// of reusing timestamp versioning for branched versioning, simply use the version-encoded key.
