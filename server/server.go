@@ -33,6 +33,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -287,6 +288,13 @@ func AboutJSON() (jsonStr string, err error) {
 	}
 	if KafkaPrefixTopic() != "" {
 		data["Kafka Topic Prefix"] = KafkaPrefixTopic()
+	}
+
+	var limit syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &limit); err != nil {
+		dvid.Errorf("Unable to get max # files from syscall: %v\n", err)
+	} else {
+		data["Max Open Files"] = strconv.FormatUint(limit.Cur, 10)
 	}
 	m, err := json.Marshal(data)
 	if err != nil {
