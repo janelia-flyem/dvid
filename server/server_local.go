@@ -331,7 +331,7 @@ func KafkaServers() []string {
 }
 
 func KafkaActivityTopic() string {
-	return tc.Kafka.TopicActivity
+	return storage.KafkaActivityTopic()
 }
 
 func KafkaPrefixTopic() string {

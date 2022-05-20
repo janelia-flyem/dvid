@@ -53,6 +53,11 @@ func KafkaTopicSuffix(dataUUID dvid.UUID) string {
 	return suffix
 }
 
+// KafkaActivityTopic returns the topic name used for logging activity for this server.
+func KafkaActivityTopic() string {
+	return kafkaActivityTopicName
+}
+
 // Initialize sets up default activity topic and support for on-the-fly mutation topics
 func (kc KafkaConfig) Initialize(hostID string) error {
 	if len(kc.Servers) == 0 {
