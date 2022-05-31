@@ -1086,6 +1086,20 @@ func TestSplitLabel(t *testing.T) {
 	}
 }
 
+func getSVMapping(t *testing.T, uuid dvid.UUID, name string, supervoxel uint64) (mappedSV uint64) {
+	url := fmt.Sprintf("%snode/%s/%s/mapping", server.WebAPIPath, uuid, name)
+	svlist := fmt.Sprintf("[%d]", supervoxel)
+	r := server.TestHTTP(t, "GET", url, bytes.NewBufferString(svlist))
+	mapResp := []uint64{}
+	if err := json.Unmarshal(r, &mapResp); err != nil {
+		t.Fatalf("Unable to get mapping.  Instead got: %v, err: %v\n", mapResp, err)
+	}
+	if len(mapResp) != 1 {
+		t.Fatalf("Expected 1 uint64 response from /mapping, got: %v\n", mapResp)
+	}
+	return mapResp[0]
+}
+
 func getIndex(t *testing.T, uuid dvid.UUID, name string, label uint64) *labels.Index {
 	url := fmt.Sprintf("http://%snode/%s/%s/index/%d", server.WebAPIPath, uuid, name, label)
 	data := server.TestHTTP(t, "GET", url, nil)
@@ -1928,6 +1942,12 @@ func TestCompleteSplitSupervoxel(t *testing.T) {
 	}
 	buf.Write(rleBytes)
 
+	// Before split, the supervoxel should be mapped to itself.
+	mappedSV := getSVMapping(t, uuid, "labels", 4)
+	if mappedSV != 4 {
+		t.Fatalf("Expected supervoxel 4 to be mapped to itself before split.  Got %d instead.\n", mappedSV)
+	}
+
 	// Submit the split sparsevol for supervoxel 4 using its entire body
 	reqStr = fmt.Sprintf("%snode/%s/labels/split-supervoxel/4", server.WebAPIPath, uuid)
 	r := server.TestHTTP(t, "POST", reqStr, buf)
@@ -1946,6 +1966,12 @@ func TestCompleteSplitSupervoxel(t *testing.T) {
 	}
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	// Make sure the split supervoxel is now mapped to 0.
+	mappedSV = getSVMapping(t, uuid, "labels", 4)
+	if mappedSV != 0 {
+		t.Fatalf("Expected supervoxel 4 to map to 0 after split.  Got %d instead.\n", mappedSV)
 	}
 
 	// Make sure retrieved body voxels are same as original

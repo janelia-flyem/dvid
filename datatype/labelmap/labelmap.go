@@ -551,16 +551,22 @@ GET <api URL>/node/<UUID>/<data name>/history/<label>/<from UUID>/<to UUID>
 
 GET <api URL>/node/<UUID>/<data name>/mapping[?queryopts]
 
-	Returns JSON for mapped labels given a list of supervoxels.  Expects JSON in GET body:
+	Returns JSON for mapped uint64 identifiers (labels). The mapping holds not only the
+	unique IDs of supervoxels but also newly created IDs for renumbered & cleaved bodies
+	that will never overlap with supervoxel IDs. 
+	
+	Expects JSON in GET body:
 
-	[ supervoxel1, supervoxel2, supervoxel3, ...]
+	[ label1, label2, label3, ...]
 
-	Returns for each POSTed supervoxel the corresponding mapped label, which may be 0 if the
-	supervoxel no longer exists, e.g., has been split:
+	Returns for each POSTed label the corresponding mapped label:
 
 	[ 23, 0, 911, ...]
 
-	In the example above, supervoxel2 had been split and no longer exists.
+	The mapped label can be 0 in the following circumstances:
+	* The label was a supervoxel ID that was split into two different unique IDs.
+	* The label is used for a renumbered body ID.
+	* The label is used for a cleaved body ID.
 	
     Arguments:
     UUID          Hexadecimal string with enough characters to uniquely identify a version node.

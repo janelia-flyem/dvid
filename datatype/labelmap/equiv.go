@@ -189,11 +189,10 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 		return err
 	}
 	for _, ancestor := range ancestors {
-		vid, found := svm.versions[ancestor]
-		if found {
+		if _, found := svm.versions[ancestor]; found {
 			return nil // we have already loaded this version and its ancestors
 		}
-		vid, err = svm.createShortVersion(ancestor)
+		vid, err := svm.createShortVersion(ancestor)
 		if err != nil {
 			return fmt.Errorf("problem creating mapping version for id %d: %v", ancestor, err)
 		}
@@ -216,6 +215,7 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 					for _, supervoxel := range op.GetOriginal() {
 						svm.setMapping(vid, supervoxel, mapped)
 					}
+
 				case proto.SplitOpType:
 					var op proto.SplitOp
 					if err := op.Unmarshal(msg.Data); err != nil {
@@ -235,6 +235,7 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 						svm.setMapping(vid, supervoxel, 0)
 					}
 					svm.splits[vid] = splits
+
 				case proto.SupervoxelSplitType:
 					var op proto.SupervoxelSplitOp
 					if err := op.Unmarshal(msg.Data); err != nil {
@@ -250,6 +251,26 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 					}
 					svm.splits[vid] = append(svm.splits[vid], rec)
 					svm.setMapping(vid, op.Supervoxel, 0)
+
+				case proto.CleaveOpType:
+					var op proto.CleaveOp
+					if err := op.Unmarshal(msg.Data); err != nil {
+						dvid.Errorf("unable to unmarshal cleave log message for version %d: %v\n", ancestor, err)
+						wg.Done()
+						continue
+					}
+					svm.setMapping(vid, op.Cleavedlabel, 0)
+
+				// case proto.RenumberOpType:
+				// 	var op proto.RenumberOp
+				// 	if err := op.Unmarshal(msg.Data); err != nil {
+				// 		dvid.Errorf("unable to unmarshal renumber log message for version %d: %v\n", ancestor, err)
+				// 		wg.Done()
+				// 		continue
+				// 	}
+				// 	svm.setMapping(vid, op.Target, 0)
+				// 	svm.setMapping(vid, op.Newlabel, 0)
+
 				default:
 				}
 				wg.Done()
@@ -648,6 +669,7 @@ func addCleaveToMapping(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error
 		supervoxelSet[supervoxel] = struct{}{}
 		m.setMapping(vid, supervoxel, op.CleavedLabel)
 	}
+	m.setMapping(vid, op.CleavedLabel, 0)
 	m.Unlock()
 	mapOp := labels.MappingOp{
 		MutID:    op.MutID,

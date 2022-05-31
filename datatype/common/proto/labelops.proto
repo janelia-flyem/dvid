@@ -1,6 +1,12 @@
 syntax = "proto3";
 package proto;
 
+message RenumberOp {
+	uint64 mutid = 1;
+	uint64 target = 2;
+	uint64 newlabel = 3;
+}
+
 message MergeOp {
 	uint64 mutid = 1;
 	uint64 target = 2;
