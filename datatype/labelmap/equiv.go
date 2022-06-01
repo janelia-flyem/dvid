@@ -13,6 +13,8 @@ import (
 	"github.com/DmitriyVTitov/size"
 	"github.com/dustin/go-humanize"
 
+	pb "google.golang.org/protobuf/proto"
+
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/common/proto"
@@ -206,7 +208,7 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 				switch msg.EntryType {
 				case proto.MappingOpType:
 					var op proto.MappingOp
-					if err := op.Unmarshal(msg.Data); err != nil {
+					if err := pb.Unmarshal(msg.Data, &op); err != nil {
 						dvid.Errorf("unable to unmarshal mapping log message for version %d: %v\n", ancestor, err)
 						wg.Done()
 						continue
@@ -218,7 +220,7 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 
 				case proto.SplitOpType:
 					var op proto.SplitOp
-					if err := op.Unmarshal(msg.Data); err != nil {
+					if err := pb.Unmarshal(msg.Data, &op); err != nil {
 						dvid.Errorf("unable to unmarshal split log message for version %d: %v\n", ancestor, err)
 						wg.Done()
 						continue
@@ -238,7 +240,7 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 
 				case proto.SupervoxelSplitType:
 					var op proto.SupervoxelSplitOp
-					if err := op.Unmarshal(msg.Data); err != nil {
+					if err := pb.Unmarshal(msg.Data, &op); err != nil {
 						dvid.Errorf("unable to unmarshal split log message for version %d: %v\n", ancestor, err)
 						wg.Done()
 						continue
@@ -254,22 +256,22 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 
 				case proto.CleaveOpType:
 					var op proto.CleaveOp
-					if err := op.Unmarshal(msg.Data); err != nil {
+					if err := pb.Unmarshal(msg.Data, &op); err != nil {
 						dvid.Errorf("unable to unmarshal cleave log message for version %d: %v\n", ancestor, err)
 						wg.Done()
 						continue
 					}
 					svm.setMapping(vid, op.Cleavedlabel, 0)
 
-				// case proto.RenumberOpType:
-				// 	var op proto.RenumberOp
-				// 	if err := op.Unmarshal(msg.Data); err != nil {
-				// 		dvid.Errorf("unable to unmarshal renumber log message for version %d: %v\n", ancestor, err)
-				// 		wg.Done()
-				// 		continue
-				// 	}
-				// 	svm.setMapping(vid, op.Target, 0)
-				// 	svm.setMapping(vid, op.Newlabel, 0)
+				case proto.RenumberOpType:
+					var op proto.RenumberOp
+					if err := pb.Unmarshal(msg.Data, &op); err != nil {
+						dvid.Errorf("unable to unmarshal renumber log message for version %d: %v\n", ancestor, err)
+						wg.Done()
+						continue
+					}
+					svm.setMapping(vid, op.Target, 0)
+					svm.setMapping(vid, op.Newlabel, 0)
 
 				default:
 				}

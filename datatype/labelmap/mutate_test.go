@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	pb "google.golang.org/protobuf/proto"
+
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/downres"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -85,7 +87,7 @@ func checkSparsevolAPIs(t *testing.T, uuid dvid.UUID) {
 }
 
 func ingestIndex(t *testing.T, uuid dvid.UUID, idx *labels.Index) {
-	serialization, err := idx.Marshal()
+	serialization, err := pb.Marshal(idx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +242,7 @@ func (b testBody) getIndex(t *testing.T) *labels.Index {
 
 func (b testBody) postIndex(t *testing.T, uuid dvid.UUID) {
 	idx := b.getIndex(t)
-	serialization, err := idx.Marshal()
+	serialization, err := pb.Marshal(idx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1107,7 +1109,7 @@ func getIndex(t *testing.T, uuid dvid.UUID, name string, label uint64) *labels.I
 		t.Fatalf("Read label index %d returned no bytes\n", label)
 	}
 	idx := new(labels.Index)
-	if err := idx.Unmarshal(data); err != nil {
+	if err := pb.Unmarshal(data, idx); err != nil {
 		t.Fatalf("couldn't unmarshal index: %v\n", err)
 	}
 	return idx

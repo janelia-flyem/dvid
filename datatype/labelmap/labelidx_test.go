@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	pb "google.golang.org/protobuf/proto"
+
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/common/proto"
@@ -31,7 +33,7 @@ func checkGetIndices(t *testing.T, uuid dvid.UUID, indices ...*labels.Index) {
 		t.Fatalf("Read indices returned no bytes\n")
 	}
 	indicesRet := new(proto.LabelIndices)
-	if err := indicesRet.Unmarshal(data); err != nil {
+	if err := pb.Unmarshal(data, indicesRet); err != nil {
 		t.Fatalf("couldn't unmarshal indices: %v\n", err)
 	}
 	if len(indicesRet.Indices) != 3 {
@@ -68,7 +70,7 @@ func TestIngest(t *testing.T) {
 		indexURL := fmt.Sprintf("%snode/%s/labels/index/%d", server.WebAPIPath, root, label)
 		serialization := server.TestHTTP(t, "GET", indexURL, nil)
 		idx := new(labels.Index)
-		if err := idx.Unmarshal(serialization); err != nil {
+		if err := pb.Unmarshal(serialization, idx); err != nil {
 			t.Fatalf("Unable to GET index/%d: %v\n", label, err)
 		}
 		if idx.Label != label {
@@ -143,7 +145,7 @@ func TestIngest(t *testing.T) {
 		Mapped:   8,
 		Original: []uint64{3},
 	}
-	serialization, err := m.Marshal()
+	serialization, err := pb.Marshal(&m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +273,7 @@ func TestIngest(t *testing.T) {
 		Mapped:   3,
 		Original: []uint64{3},
 	}
-	serialization, err = m.Marshal()
+	serialization, err = pb.Marshal(&m)
 	if err != nil {
 		t.Fatal(err)
 	}

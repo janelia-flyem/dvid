@@ -27,6 +27,8 @@ import (
 	"sync"
 	"time"
 
+	pb "google.golang.org/protobuf/proto"
+
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/downres"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -4180,7 +4182,7 @@ func (d *Data) handleIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 			return
 		}
 		idx := new(labels.Index)
-		if err := idx.Unmarshal(serialization); err != nil {
+		if err := pb.Unmarshal(serialization, idx); err != nil {
 			server.BadRequest(w, r, err)
 		}
 		if idx.Label != label {
@@ -4210,7 +4212,7 @@ func (d *Data) handleIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		serialization, err := idx.Marshal()
+		serialization, err := pb.Marshal(idx)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -4454,7 +4456,7 @@ func (d *Data) handleMappings(ctx *datastore.VersionedCtx, w http.ResponseWriter
 			server.BadRequest(w, r, err)
 		}
 		var mappings proto.MappingOps
-		if err := mappings.Unmarshal(serialization); err != nil {
+		if err := pb.Unmarshal(serialization, &mappings); err != nil {
 			server.BadRequest(w, r, err)
 		}
 		if err := d.ingestMappings(ctx, mappings); err != nil {

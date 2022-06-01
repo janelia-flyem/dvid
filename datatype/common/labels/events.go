@@ -3,6 +3,8 @@ package labels
 import (
 	"fmt"
 
+	pb "google.golang.org/protobuf/proto"
+
 	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -35,7 +37,7 @@ func (op MappingOp) Marshal() (serialization []byte, err error) {
 		Mapped:   op.Mapped,
 		Original: original,
 	}
-	return pop.Marshal()
+	return pb.Marshal(pop)
 }
 
 // SplitOp represents a split with the sparse volume of the new label.

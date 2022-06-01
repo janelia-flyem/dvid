@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 
+	pb "google.golang.org/protobuf/proto"
+
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
@@ -440,7 +442,7 @@ func TestAnnotationVersioning(t *testing.T) {
 			Value: []byte(testData[i].val),
 		}
 	}
-	serialization, err := kvs.Marshal()
+	serialization, err := pb.Marshal(&kvs)
 	if err != nil {
 		t.Fatalf("couldn't serialize keyvalues: %v\n", err)
 	}
@@ -539,13 +541,13 @@ func TestAnnotationVersioning(t *testing.T) {
 	pbufKeys := Keys{
 		Keys: expectedKeys,
 	}
-	keysSerialization, err := pbufKeys.Marshal()
+	keysSerialization, err := pb.Marshal(&pbufKeys)
 	if err != nil {
 		t.Fatalf("couldn't serialized protobuf keys: %v\n", err)
 	}
 	keyvaluesSerialization := server.TestHTTP(t, "GET", getreq2, bytes.NewBuffer(keysSerialization))
 	var pbKVs KeyValues
-	if err := pbKVs.Unmarshal(keyvaluesSerialization); err != nil {
+	if err := pb.Unmarshal(keyvaluesSerialization, &pbKVs); err != nil {
 		t.Fatalf("couldn't unmarshal keyvalues protobuf: %v\n", err)
 	}
 	if len(pbKVs.Kvs) != 3 {

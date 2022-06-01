@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"sync"
 
+	pb "google.golang.org/protobuf/proto"
+
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/common/proto"
@@ -91,7 +93,7 @@ func processMutationLogStream(w http.ResponseWriter, v dvid.VersionID, ch chan s
 		switch msg.EntryType {
 		case proto.MergeOpType:
 			var op proto.MergeOp
-			if err := op.Unmarshal(msg.Data); err != nil {
+			if err := pb.Unmarshal(msg.Data, &op); err != nil {
 				dvid.Errorf("unable to unmarshal cleave message for version %d: %v\n", v, err)
 				wg.Done()
 				continue
@@ -117,7 +119,7 @@ func processMutationLogStream(w http.ResponseWriter, v dvid.VersionID, ch chan s
 
 		case proto.CleaveOpType:
 			var op proto.CleaveOp
-			if err := op.Unmarshal(msg.Data); err != nil {
+			if err := pb.Unmarshal(msg.Data, &op); err != nil {
 				dvid.Errorf("unable to unmarshal cleave message for version %d: %v\n", v, err)
 				wg.Done()
 				continue
@@ -145,7 +147,7 @@ func processMutationLogStream(w http.ResponseWriter, v dvid.VersionID, ch chan s
 
 		case proto.SplitOpType:
 			var op proto.SplitOp
-			if err := op.Unmarshal(msg.Data); err != nil {
+			if err := pb.Unmarshal(msg.Data, &op); err != nil {
 				dvid.Errorf("unable to unmarshal split log message for version %d: %v\n", v, err)
 				wg.Done()
 				continue
@@ -169,7 +171,7 @@ func processMutationLogStream(w http.ResponseWriter, v dvid.VersionID, ch chan s
 
 		case proto.SupervoxelSplitType:
 			var op proto.SupervoxelSplitOp
-			if err := op.Unmarshal(msg.Data); err != nil {
+			if err := pb.Unmarshal(msg.Data, &op); err != nil {
 				dvid.Errorf("unable to unmarshal split log message for version %d: %v\n", v, err)
 				wg.Done()
 				continue

@@ -132,11 +132,6 @@ go get github.com/golang/protobuf/protoc-gen-go
 # gorpc
 go get github.com/valyala/gorpc
 
-# protobuf
-go get github.com/gogo/protobuf/proto
-go get github.com/gogo/protobuf/gogoproto
-go get github.com/gogo/protobuf/protoc-gen-gogoslick
-
 # freecache
 go get github.com/coocood/freecache
 

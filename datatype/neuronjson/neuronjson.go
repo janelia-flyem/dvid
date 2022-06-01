@@ -24,6 +24,8 @@ import (
 	"cloud.google.com/go/firestore"
 	"google.golang.org/api/iterator"
 
+	pb "google.golang.org/protobuf/proto"
+
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
@@ -1364,7 +1366,7 @@ func (d *Data) sendJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWr
 	default:
 		numKeys = len(kvs.Kvs)
 		var serialization []byte
-		if serialization, err = kvs.Marshal(); err != nil {
+		if serialization, err = pb.Marshal(&kvs); err != nil {
 			return
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
@@ -1467,7 +1469,7 @@ func (d *Data) sendProtobufKV(ctx storage.VersionedCtx, w http.ResponseWriter, k
 		}
 	}
 	var serialization []byte
-	if serialization, err = kvs.Marshal(); err != nil {
+	if serialization, err = pb.Marshal(&kvs); err != nil {
 		return
 	}
 	w.Header().Set("Content-type", "application/octet-stream")
@@ -1510,7 +1512,7 @@ func (d *Data) handleKeyValues(ctx storage.VersionedCtx, w http.ResponseWriter, 
 		writtenBytes, err = d.sendJSONKV(ctx, w, keys, checkVal)
 	default:
 		var keys Keys
-		if err = keys.Unmarshal(data); err != nil {
+		if err = pb.Unmarshal(data, &keys); err != nil {
 			return
 		}
 		numKeys = len(keys.Keys)
@@ -1525,7 +1527,7 @@ func (d *Data) handleIngest(ctx storage.VersionedCtx, r *http.Request, uuid dvid
 		return err
 	}
 	var kvs KeyValues
-	if err := kvs.Unmarshal(data); err != nil {
+	if err := pb.Unmarshal(data, &kvs); err != nil {
 		return err
 	}
 	for _, kv := range kvs.Kvs {

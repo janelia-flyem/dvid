@@ -5,6 +5,8 @@ package labels
 import (
 	"sync"
 
+	pb "google.golang.org/protobuf/proto"
+
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -47,13 +49,14 @@ func LogSupervoxelSplit(d dvid.Data, v dvid.VersionID, op SplitSupervoxelOp) err
 	if log == nil {
 		return nil
 	}
-	pop := proto.SupervoxelSplitOp{
+	pop := &proto.SupervoxelSplitOp{
 		Mutid:       op.MutID,
 		Supervoxel:  op.Supervoxel,
 		Splitlabel:  op.SplitSupervoxel,
 		Remainlabel: op.RemainSupervoxel,
 	}
-	serialization, err := pop.Marshal()
+	serialization, err := pb.Marshal(pop)
+
 	if err != nil {
 		return err
 	}
@@ -143,7 +146,7 @@ func LogMappings(d dvid.Data, v dvid.VersionID, ops proto.MappingOps) error {
 		return nil
 	}
 	for _, op := range ops.Mappings {
-		data, err := op.Marshal()
+		data, err := pb.Marshal(op)
 		if err != nil {
 			return err
 		}
@@ -181,8 +184,9 @@ func ReadMappingLog(d dvid.Data, v dvid.VersionID) ([]MappingOp, error) {
 		if msg.EntryType != proto.MappingOpType {
 			continue
 		}
+
 		var op proto.MappingOp
-		if err := op.Unmarshal(msg.Data); err != nil {
+		if err := pb.Unmarshal(msg.Data, &op); err != nil {
 			return nil, err
 		}
 		mappingOps[i].Mapped = op.GetMapped()
@@ -248,7 +252,7 @@ func serializeSplit(op SplitOp) (serialization []byte, err error) {
 		svsplit.Remainlabel = split.Remain
 		svsplits[supervoxel] = svsplit
 	}
-	pop := proto.SplitOp{
+	pop := &proto.SplitOp{
 		Mutid:    op.MutID,
 		Target:   op.Target,
 		Newlabel: op.NewLabel,
@@ -256,7 +260,7 @@ func serializeSplit(op SplitOp) (serialization []byte, err error) {
 		Rles:     rlesBytes,
 		Svsplits: svsplits,
 	}
-	return pop.Marshal()
+	return pb.Marshal(pop)
 }
 
 func serializeMerge(op MergeOp) (serialization []byte, err error) {
@@ -271,7 +275,7 @@ func serializeMerge(op MergeOp) (serialization []byte, err error) {
 		Target: op.Target,
 		Merged: merged,
 	}
-	return pop.Marshal()
+	return pb.Marshal(pop)
 }
 
 func serializeCleave(op CleaveOp) (serialization []byte, err error) {
@@ -281,7 +285,7 @@ func serializeCleave(op CleaveOp) (serialization []byte, err error) {
 		Cleavedlabel: op.CleavedLabel,
 		Cleaved:      op.CleavedSupervoxels,
 	}
-	return pop.Marshal()
+	return pb.Marshal(pop)
 }
 
 func serializeAffinity(aff Affinity) (serialization []byte, err error) {
@@ -290,5 +294,5 @@ func serializeAffinity(aff Affinity) (serialization []byte, err error) {
 		Label2: aff.Label2,
 		Value:  aff.Value,
 	}
-	return pop.Marshal()
+	return pb.Marshal(pop)
 }

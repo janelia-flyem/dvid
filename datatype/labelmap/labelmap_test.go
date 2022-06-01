@@ -17,6 +17,8 @@ import (
 	"sync"
 	"testing"
 
+	pb "google.golang.org/protobuf/proto"
+
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/downres"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -1821,7 +1823,7 @@ func TestPostBlocks(t *testing.T) {
 	apiStr = fmt.Sprintf("%snode/%s/labels/indices", server.WebAPIPath, uuid)
 	returnData := server.TestHTTP(t, "GET", apiStr, strings.NewReader(`[0, 1, 52011980226]`))
 	var indices proto.LabelIndices
-	if err := indices.Unmarshal(returnData); err != nil {
+	if err := pb.Unmarshal(returnData, &indices); err != nil {
 		t.Fatalf("error unmarshaling label indices: %v\n", err)
 	}
 	if len(indices.Indices) != 3 {
@@ -1892,7 +1894,7 @@ func uncompressIndex(t *testing.T, data []byte) *labels.Index {
 	}
 
 	idx := new(labels.Index)
-	if err := idx.Unmarshal(val); err != nil {
+	if err := pb.Unmarshal(val, idx); err != nil {
 		t.Fatalf("unable to uncompress label index data, %d bytes", len(data))
 	}
 	return idx
@@ -2392,11 +2394,11 @@ func TestBlocksWithRenumber(t *testing.T) {
 			if bcoord == testBlockData[i].bcoord {
 				var first, second uint64
 				if i == 0 {
-					first = 4;
-					second = 3;
+					first = 4
+					second = 3
 				} else {
-					first = 3;
-					second = 4;
+					first = 3
+					second = 4
 				}
 				found = true
 				labelBytes, _ := gotBlock.MakeLabelVolume()

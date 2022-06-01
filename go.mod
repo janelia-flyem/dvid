@@ -13,7 +13,6 @@ require (
 	github.com/coocood/freecache v1.2.1
 	github.com/dgraph-io/badger/v3 v3.2103.2
 	github.com/dustin/go-humanize v1.0.0
-	github.com/gogo/protobuf v1.3.2
 	github.com/golang-jwt/jwt/v4 v4.4.1
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da
 	github.com/golang/snappy v0.0.4
@@ -37,6 +36,7 @@ require (
 	google.golang.org/api v0.73.0
 	google.golang.org/appengine v1.6.7
 	google.golang.org/grpc v1.45.0
+	google.golang.org/protobuf v1.27.1
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
 	gopkg.in/stretchr/testify.v1 v1.2.2 // indirect
 	launchpad.net/gocheck v0.0.0-20140225173054-000000000087 // indirect

@@ -172,8 +172,14 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 	for merged := range delta.Merged {
 		DeleteLabelIndex(d, v, merged)
 	}
-	if err = labels.LogMerge(d, v, op); err != nil {
-		return
+	if renumber {
+		if err = labels.LogMerge(d, v, op); err != nil {
+			return
+		}
+	} else {
+		if err = labels.LogMerge(d, v, op); err != nil {
+			return
+		}
 	}
 
 	dvid.Infof("%s label %d: %d supervoxels, %d blocks\n", optype, op.Target, len(mergeIdx.GetSupervoxels()), len(mergeIdx.Blocks))

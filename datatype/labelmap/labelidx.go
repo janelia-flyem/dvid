@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	pb "google.golang.org/protobuf/proto"
+
 	"github.com/coocood/freecache"
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -111,7 +113,7 @@ func getLabelIndex(ctx *datastore.VersionedCtx, label uint64) (*labels.Index, er
 	}
 
 	idx := new(labels.Index)
-	if err := idx.Unmarshal(val); err != nil {
+	if err := pb.Unmarshal(val, idx); err != nil {
 		return nil, err
 	}
 	if idx.Label == 0 {
@@ -161,7 +163,7 @@ func getProtoLabelIndices(ctx *datastore.VersionedCtx, dataIn []byte) (numLabels
 			indices.Indices[i] = &index
 		}
 	}
-	if dataOut, err = indices.Marshal(); err != nil {
+	if dataOut, err = pb.Marshal(&indices); err != nil {
 		err = fmt.Errorf("could not serialize %d label indices: %v", len(labelList), err)
 	}
 	return
@@ -176,7 +178,7 @@ func putProtoLabelIndices(ctx *datastore.VersionedCtx, dataIn []byte) (numAdded,
 		return
 	}
 	indices := new(proto.LabelIndices)
-	if err = indices.Unmarshal(dataIn); err != nil {
+	if err = pb.Unmarshal(dataIn, indices); err != nil {
 		return
 	}
 	var maxLabel uint64
@@ -219,7 +221,7 @@ func putProtoLabelIndices(ctx *datastore.VersionedCtx, dataIn []byte) (numAdded,
 // Note: should only call putCachedLabelIndex external to this file so recent changes get cached.
 func putLabelIndex(store storage.KeyValueDB, ctx *datastore.VersionedCtx, data dvid.Data, idx *labels.Index) error {
 	tk := NewLabelIndexTKey(idx.Label)
-	serialization, err := idx.Marshal()
+	serialization, err := pb.Marshal(idx)
 	if err != nil {
 		return fmt.Errorf("error trying to serialize index for label set %d, data %q: %v", idx.Label, data.DataName(), err)
 	}
@@ -244,7 +246,7 @@ func putLabelIndexAndMax(ctx *datastore.VersionedCtx, idx *labels.Index) error {
 	}
 
 	tk := NewLabelIndexTKey(idx.Label)
-	serialization, err := idx.Marshal()
+	serialization, err := pb.Marshal(idx)
 	if err != nil {
 		return fmt.Errorf("error trying to serialize index for label set %d, data %q: %v", idx.Label, ctx.Data().DataName(), err)
 	}
@@ -298,7 +300,7 @@ func getCachedLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.I
 	var idx *labels.Index
 	if idxBytes != nil {
 		idx = new(labels.Index)
-		if err = idx.Unmarshal(idxBytes); err != nil {
+		if err = pb.Unmarshal(idxBytes, idx); err != nil {
 			return nil, err
 		}
 		atomic.AddUint64(&metaHits, 1)
@@ -316,7 +318,7 @@ func getCachedLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.I
 		return nil, nil
 	}
 	if indexCache != nil {
-		idxBytes, err := idx.Marshal()
+		idxBytes, err := pb.Marshal(idx)
 		if err != nil {
 			dvid.Errorf("unable to marshal label %d index for %q: %v\n", label, d.DataName(), err)
 		} else if err := indexCache.Set(k.Bytes(), idxBytes, 0); err != nil {
@@ -341,7 +343,7 @@ func putCachedLabelIndex(d dvid.Data, v dvid.VersionID, idx *labels.Index) error
 		return err
 	}
 	if indexCache != nil {
-		idxBytes, err := idx.Marshal()
+		idxBytes, err := pb.Marshal(idx)
 		if err != nil {
 			dvid.Errorf("unable to marshal index for label %d before caching: %v\n", idx.Label, err)
 			return nil
@@ -1439,7 +1441,7 @@ func (d *Data) WriteSparseCoarseVols(ctx *datastore.VersionedCtx, w io.Writer, b
 		}
 		var idx labels.Index
 		if len(val) != 0 {
-			if err := idx.Unmarshal(val); err != nil {
+			if err := pb.Unmarshal(val, &idx); err != nil {
 				return err
 			}
 			blocks, err := idx.GetProcessedBlockIndices(0, bounds)
@@ -1660,7 +1662,7 @@ func (d *Data) listLabels(ctx *datastore.VersionedCtx, start, number uint64, cou
 				return err
 			}
 			idx := new(labels.Index)
-			if err := idx.Unmarshal(data); err != nil {
+			if err := pb.Unmarshal(data, idx); err != nil {
 				return err
 			}
 			var numVoxels uint64
@@ -1702,7 +1704,7 @@ func (d *Data) indexThread(f *os.File, mu *sync.Mutex, wg *sync.WaitGroup, chunk
 			continue
 		}
 		idx := new(labels.Index)
-		if err := idx.Unmarshal(data); err != nil {
+		if err := pb.Unmarshal(data, idx); err != nil {
 			dvid.Errorf("Unable to unmarshal label index %d in data %q: %v\n", label, d.DataName(), err)
 			wg.Done()
 			continue

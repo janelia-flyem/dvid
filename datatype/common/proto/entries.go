@@ -12,4 +12,5 @@ const (
 	MappingOpType
 	SupervoxelSplitType
 	CleaveOpType
+	RenumberOpType
 )
