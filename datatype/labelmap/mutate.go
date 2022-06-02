@@ -44,26 +44,11 @@ type sizeChange struct {
 //
 // labels.MergeEndEvent occurs at end of merge and transmits labels.DeltaMergeEnd struct.
 //
-func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInfo, renumber bool) (mutID uint64, err error) {
-	var origLabel uint64
-	var optype string
-	if renumber {
-		if len(op.Merged) != 1 {
-			err = fmt.Errorf("can only renumber one label into label %d", op.Target)
-			return
-		}
-		for label := range op.Merged {
-			origLabel = label
-		}
-		dvid.Debugf("Renumbering label %d as label %d ...\n", origLabel, op.Target)
-		optype = "renumber"
-	} else {
-		if len(op.Merged) == 0 {
-			return 0, fmt.Errorf("merge requested without any labels to merge")
-		}
-		dvid.Debugf("Merging %s into label %d ...\n", op.Merged, op.Target)
-		optype = "merge"
+func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInfo) (mutID uint64, err error) {
+	if len(op.Merged) == 0 {
+		return 0, fmt.Errorf("merge requested without any labels to merge")
 	}
+	dvid.Debugf("Merging %s into label %d ...\n", op.Merged, op.Target)
 
 	d.StartUpdate()
 	defer d.StopUpdate()
@@ -80,10 +65,18 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 
 	versionuuid, _ := datastore.UUIDFromVersion(v)
 	msginfo := map[string]interface{}{
-		"Action":     optype,
+		"Action":     "merge",
 		"UUID":       string(versionuuid),
 		"MutationID": mutID,
+		"Target":     op.Target,
+		"Labels":     lbls,
 		"Timestamp":  time.Now().String(),
+	}
+	if info.User != "" {
+		msginfo["User"] = info.User
+	}
+	if info.App != "" {
+		msginfo["App"] = info.App
 	}
 	delta := labels.DeltaMerge{
 		MergeOp: op,
@@ -92,53 +85,27 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 	// Get all the affected blocks in the merge.
 	var targetIdx, mergeIdx *labels.Index
 	if targetIdx, err = GetLabelIndex(d, v, op.Target, false); err != nil {
-		err = fmt.Errorf("error accessing index of %s target label %d: %v", optype, op.Target, err)
+		err = fmt.Errorf("error accessing index of merge target label %d: %v", op.Target, err)
 		return
 	}
-	if renumber {
-		if targetIdx != nil {
-			err = fmt.Errorf("can't renumber into an existing label %d", op.Target)
-			return
-		}
-		msginfo["NewLabel"] = op.Target
-		msginfo["OrigLabel"] = origLabel
-		delta.TargetVoxels = 0
-		if mergeIdx, err = GetLabelIndex(d, v, origLabel, false); err != nil {
-			err = fmt.Errorf("can't get block indices of renumbered label %d: %v", origLabel, err)
-			return
-		}
-		if mergeIdx == nil {
-			err = fmt.Errorf("can't renumber non-existant body with label %d", origLabel)
-			return
-		}
-	} else {
-		if targetIdx == nil {
-			err = fmt.Errorf("can't merge into a non-existent label %d", op.Target)
-			return
-		}
-		msginfo["Target"] = op.Target
-		msginfo["Labels"] = lbls
-		delta.TargetVoxels = targetIdx.NumVoxels()
-		if mergeIdx, err = GetMultiLabelIndex(d, v, op.Merged, dvid.Bounds{}); err != nil {
-			err = fmt.Errorf("can't get block indices of merge labels %s: %v", op.Merged, err)
-			return
-		}
-		if mergeIdx == nil {
-			err = fmt.Errorf("can't renumber non-existant merge bodies with labels: %s", op.Merged)
-			return
-		}
+	if targetIdx == nil {
+		err = fmt.Errorf("can't merge into a non-existent label %d", op.Target)
+		return
+	}
+	delta.TargetVoxels = targetIdx.NumVoxels()
+	if mergeIdx, err = GetMultiLabelIndex(d, v, op.Merged, dvid.Bounds{}); err != nil {
+		err = fmt.Errorf("can't get block indices of merge labels %s: %v", op.Merged, err)
+		return
+	}
+	if mergeIdx == nil {
+		err = fmt.Errorf("can't renumber non-existant merge bodies with labels: %s", op.Merged)
+		return
 	}
 	delta.MergedVoxels = mergeIdx.NumVoxels()
 
-	if info.User != "" {
-		msginfo["User"] = info.User
-	}
-	if info.App != "" {
-		msginfo["App"] = info.App
-	}
 	jsonBytes, _ := json.Marshal(msginfo)
 	if err := d.PublishKafkaMsg(jsonBytes); err != nil {
-		dvid.Errorf("can't send %s op for %q to kafka: %v\n", optype, d.DataName(), err)
+		dvid.Errorf("can't send merge op for %q to kafka: %v\n", d.DataName(), err)
 	}
 
 	// Signal that we are starting a merge.
@@ -153,13 +120,9 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 	}
 
 	if mergeIdx != nil && len(mergeIdx.Blocks) != 0 {
-		if renumber {
-			targetIdx = mergeIdx
-		} else {
-			err = targetIdx.Add(mergeIdx)
-			if err != nil {
-				return
-			}
+		err = targetIdx.Add(mergeIdx)
+		if err != nil {
+			return
 		}
 		targetIdx.LastMutId = mutID
 		targetIdx.LastModUser = info.User
@@ -172,17 +135,11 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 	for merged := range delta.Merged {
 		DeleteLabelIndex(d, v, merged)
 	}
-	if renumber {
-		if err = labels.LogMerge(d, v, op); err != nil {
-			return
-		}
-	} else {
-		if err = labels.LogMerge(d, v, op); err != nil {
-			return
-		}
+	if err = labels.LogMerge(d, v, op); err != nil {
+		return
 	}
 
-	dvid.Infof("%s label %d: %d supervoxels, %d blocks\n", optype, op.Target, len(mergeIdx.GetSupervoxels()), len(mergeIdx.Blocks))
+	dvid.Infof("merge label %d: %d supervoxels, %d blocks\n", op.Target, len(mergeIdx.GetSupervoxels()), len(mergeIdx.Blocks))
 
 	delta.Blocks = targetIdx.GetBlockIndices()
 	evt = datastore.SyncEvent{d.DataUUID(), labels.MergeBlockEvent}
@@ -198,17 +155,145 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		dvid.Criticalf("can't notify subscribers for event %v: %v\n", evt, err)
 	}
 
-	timedLog.Infof("%s %s -> %d, data %q, resulting in %d blocks", optype, delta.Merged, delta.Target, d.DataName(), len(delta.Blocks))
+	timedLog.Infof("merge %s -> %d, data %q, resulting in %d blocks", delta.Merged, delta.Target, d.DataName(), len(delta.Blocks))
 
-	msginfo["Action"] = optype + "-complete"
+	msginfo["Action"] = "merge-complete"
 	msginfo["Timestamp"] = time.Now().String()
 	jsonBytes, _ = json.Marshal(msginfo)
 
 	if err := server.LogJSONMutation(versionuuid, d.DataUUID(), jsonBytes); err != nil {
-		dvid.Criticalf("can't log %s to data %q, version %s: %s\n", optype, d.DataName(), versionuuid, jsonBytes)
+		dvid.Criticalf("can't log merge to data %q, version %s: %s\n", d.DataName(), versionuuid, jsonBytes)
 	}
 	if err := d.PublishKafkaMsg(jsonBytes); err != nil {
-		dvid.Criticalf("error on sending %s-complete op to kafka: %v\n", optype, err)
+		dvid.Criticalf("error on sending merge-complete op to kafka: %v\n", err)
+	}
+	return
+}
+
+// RenumberLabels synchronously changes a label to another label, also modifying the
+// mapping of constituent supervoxels appropriately.  For sync purposes, the Merge
+// events are used since renumbering label A->B is same as merging label A->B where
+// B is an empty, new label.  However, from a mapping perspective, a renumbered label
+// can be mapped to zero since it cannot have an underlying supervoxel, but a merged
+// label could have a supervoxel with the same ID.
+//
+// EVENTS
+//
+// labels.MergeStartEvent occurs at very start of merge and transmits labels.DeltaMergeStart struct.
+//
+// labels.MergeBlockEvent occurs for every block of a merged label and transmits labels.DeltaMerge struct.
+//
+// labels.MergeEndEvent occurs at end of merge and transmits labels.DeltaMergeEnd struct.
+//
+func (d *Data) RenumberLabels(v dvid.VersionID, origLabel, newLabel uint64, info dvid.ModInfo) (mutID uint64, err error) {
+	d.StartUpdate()
+	defer d.StopUpdate()
+
+	timedLog := dvid.NewTimeLog()
+	mutID = d.NewMutationID()
+	op := labels.MergeOp{
+		MutID:  mutID,
+		Target: newLabel,
+		Merged: labels.Set{origLabel: struct{}{}},
+	}
+
+	// send kafka merge event to instance-uuid topic
+	versionuuid, _ := datastore.UUIDFromVersion(v)
+	msginfo := map[string]interface{}{
+		"Action":     "renumber",
+		"UUID":       string(versionuuid),
+		"MutationID": mutID,
+		"NewLabel":   newLabel,
+		"OrigLabel":  origLabel,
+		"Timestamp":  time.Now().String(),
+	}
+	if info.User != "" {
+		msginfo["User"] = info.User
+	}
+	if info.App != "" {
+		msginfo["App"] = info.App
+	}
+	delta := labels.DeltaMerge{
+		MergeOp: op,
+	}
+
+	// Get all the affected blocks in the merge.
+	var targetIdx, mergeIdx *labels.Index
+	if targetIdx, err = GetLabelIndex(d, v, newLabel, false); err != nil {
+		err = fmt.Errorf("error accessing index of renumber target label %d: %v", newLabel, err)
+		return
+	}
+	if targetIdx != nil {
+		err = fmt.Errorf("can't renumber into an existing label %d", newLabel)
+		return
+	}
+	delta.TargetVoxels = 0
+	if mergeIdx, err = GetLabelIndex(d, v, origLabel, false); err != nil {
+		err = fmt.Errorf("can't get block indices of renumbered label %d: %v", origLabel, err)
+		return
+	}
+	if mergeIdx == nil {
+		err = fmt.Errorf("can't renumber non-existant body with label %d", origLabel)
+		return
+	}
+	delta.MergedVoxels = mergeIdx.NumVoxels()
+
+	jsonBytes, _ := json.Marshal(msginfo)
+	if err := d.PublishKafkaMsg(jsonBytes); err != nil {
+		dvid.Errorf("can't send renumber op for %q to kafka: %v\n", d.DataName(), err)
+	}
+
+	// Signal that we are starting a merge.
+	evt := datastore.SyncEvent{d.DataUUID(), labels.MergeStartEvent}
+	msg := datastore.SyncMessage{labels.MergeStartEvent, v, labels.DeltaMergeStart{op}}
+	if err = datastore.NotifySubscribers(evt, msg); err != nil {
+		return
+	}
+
+	if err = addRenumberToMapping(d, v, mutID, origLabel, newLabel, mergeIdx); err != nil {
+		return
+	}
+	if mergeIdx != nil && len(mergeIdx.Blocks) != 0 {
+		targetIdx = mergeIdx
+		targetIdx.LastMutId = mutID
+		targetIdx.LastModUser = info.User
+		targetIdx.LastModTime = info.Time
+		targetIdx.LastModApp = info.App
+		if err = PutLabelIndex(d, v, newLabel, targetIdx); err != nil {
+			return
+		}
+	}
+	for merged := range delta.Merged {
+		DeleteLabelIndex(d, v, merged)
+	}
+
+	dvid.Infof("renumber label %d: %d supervoxels, %d blocks\n", newLabel, len(mergeIdx.GetSupervoxels()), len(mergeIdx.Blocks))
+
+	delta.Blocks = targetIdx.GetBlockIndices()
+	evt = datastore.SyncEvent{d.DataUUID(), labels.MergeBlockEvent}
+	msg = datastore.SyncMessage{labels.MergeBlockEvent, v, delta}
+	if err = datastore.NotifySubscribers(evt, msg); err != nil {
+		err = fmt.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
+		return
+	}
+
+	evt = datastore.SyncEvent{d.DataUUID(), labels.MergeEndEvent}
+	msg = datastore.SyncMessage{labels.MergeEndEvent, v, labels.DeltaMergeEnd{delta.MergeOp}}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Criticalf("can't notify subscribers for event %v: %v\n", evt, err)
+	}
+
+	timedLog.Infof("renumber %s -> %d, data %q, resulting in %d blocks", origLabel, newLabel, d.DataName(), len(delta.Blocks))
+
+	msginfo["Action"] = "renumber-complete"
+	msginfo["Timestamp"] = time.Now().String()
+	jsonBytes, _ = json.Marshal(msginfo)
+
+	if err := server.LogJSONMutation(versionuuid, d.DataUUID(), jsonBytes); err != nil {
+		dvid.Criticalf("can't log renumber to data %q, version %s: %s\n", d.DataName(), versionuuid, jsonBytes)
+	}
+	if err := d.PublishKafkaMsg(jsonBytes); err != nil {
+		dvid.Criticalf("error on sending renumber-complete op to kafka: %v\n", err)
 	}
 	return
 }

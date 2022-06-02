@@ -2147,6 +2147,9 @@ type testBlock struct {
 	labels []uint64
 }
 
+// Create two test blocks composed of labels 1 and 2.
+// For 1st block, coord (2,3,4), label 2 if x <= 31, label 1 if x >= 32.
+// For 2nd block, coord (3,3,4), label 1 if x <= 31, label 2 if x >= 32.
 func setupTestBlocks(t *testing.T, uuid dvid.UUID) (testBlockData [2]testBlock) {
 	server.CreateTestInstance(t, uuid, "labelmap", "labels", dvid.Config{})
 

@@ -567,8 +567,8 @@ GET <api URL>/node/<UUID>/<data name>/mapping[?queryopts]
 
 	The mapped label can be 0 in the following circumstances:
 	* The label was a supervoxel ID that was split into two different unique IDs.
-	* The label is used for a renumbered body ID.
-	* The label is used for a cleaved body ID.
+	* The label is used for a newly generated ID that will be a new renumbered label.
+	* The label is used for a newly generated ID that will represent a cleaved body ID.
 	
     Arguments:
     UUID          Hexadecimal string with enough characters to uniquely identify a version node.
@@ -5507,7 +5507,7 @@ func (d *Data) handleMerge(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 		return
 	}
 	info := dvid.GetModInfo(r)
-	mutID, err := d.MergeLabels(ctx.VersionID(), mergeOp, info, false)
+	mutID, err := d.MergeLabels(ctx.VersionID(), mergeOp, info)
 	if err != nil {
 		server.BadRequest(w, r, fmt.Sprintf("Error on merge: %v", err))
 		return
@@ -5543,13 +5543,9 @@ func (d *Data) handleRenumber(ctx *datastore.VersionedCtx, w http.ResponseWriter
 	}
 	info := dvid.GetModInfo(r)
 	for i := 0; i < len(renumberPairs); i += 2 {
-		mergeSet := make(labels.Set, 1)
-		mergeSet[renumberPairs[i+1]] = struct{}{}
-		mergeOp := labels.MergeOp{
-			Target: renumberPairs[i],
-			Merged: mergeSet,
-		}
-		if _, err := d.MergeLabels(ctx.VersionID(), mergeOp, info, true); err != nil {
+		origLabel := renumberPairs[i+1]
+		newLabel := renumberPairs[i]
+		if _, err := d.RenumberLabels(ctx.VersionID(), origLabel, newLabel, info); err != nil {
 			server.BadRequest(w, r, fmt.Sprintf("Error on merge: %v", err))
 			return
 		}

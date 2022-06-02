@@ -270,7 +270,7 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 						wg.Done()
 						continue
 					}
-					svm.setMapping(vid, op.Target, 0)
+					// We don't set op.Target to 0 because it could be the ID of a supervoxel.
 					svm.setMapping(vid, op.Newlabel, 0)
 
 				default:
@@ -583,6 +583,31 @@ func addMergeToMapping(d dvid.Data, v dvid.VersionID, mutID, toLabel uint64, mer
 		Original: supervoxels,
 	}
 	return labels.LogMapping(d, v, op)
+}
+
+// // adds a renumber into the equivalence map for a given instance version and also
+// // records the mappings into the log.
+func addRenumberToMapping(d dvid.Data, v dvid.VersionID, mutID, origLabel, newLabel uint64, mergeIdx *labels.Index) error {
+	m, err := getMapping(d, v)
+	if err != nil {
+		return err
+	}
+	supervoxels := mergeIdx.GetSupervoxels()
+	if len(supervoxels) == 0 {
+		return nil
+	}
+	m.Lock()
+	vid, err := m.createShortVersion(v)
+	if err != nil {
+		m.Unlock()
+		return err
+	}
+	for supervoxel := range supervoxels {
+		m.setMapping(vid, supervoxel, newLabel)
+	}
+	m.setMapping(vid, newLabel, 0)
+	m.Unlock()
+	return labels.LogRenumber(d, v, mutID, origLabel, newLabel)
 }
 
 // adds new arbitrary split into the equivalence map for a given instance version.

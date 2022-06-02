@@ -87,6 +87,34 @@ func LogMerge(d dvid.Data, v dvid.VersionID, op MergeOp) error {
 	return log.Append(d.DataUUID(), uuid, msg)
 }
 
+// LogRenumber logs the merge of supervoxels to a label.
+func LogRenumber(d dvid.Data, v dvid.VersionID, mutID, origLabel, newLabel uint64) error {
+	uuid, err := datastore.UUIDFromVersion(v)
+	if err != nil {
+		return err
+	}
+	logable, ok := d.(storage.LogWritable)
+	if !ok {
+		return nil // skip logging
+	}
+	log := logable.GetWriteLog()
+	if log == nil {
+		return nil
+	}
+	pop := &proto.RenumberOp{
+		Mutid:    mutID,
+		Target:   origLabel,
+		Newlabel: newLabel,
+	}
+	data, err := pb.Marshal(pop)
+	if err != nil {
+		return err
+	}
+
+	msg := storage.LogMessage{EntryType: proto.RenumberOpType, Data: data}
+	return log.Append(d.DataUUID(), uuid, msg)
+}
+
 // LogCleave logs the cleave of supervoxels to a label.
 func LogCleave(d dvid.Data, v dvid.VersionID, op CleaveOp) error {
 	uuid, err := datastore.UUIDFromVersion(v)
