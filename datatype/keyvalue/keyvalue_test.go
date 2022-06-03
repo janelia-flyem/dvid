@@ -16,6 +16,7 @@ import (
 	pb "google.golang.org/protobuf/proto"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 )
@@ -466,8 +467,8 @@ func TestKeyvalueVersioning(t *testing.T) {
 
 	// Use the batch POST
 	payloadSize := 1000
-	var kvs KeyValues
-	kvs.Kvs = make([]*KeyValue, 5)
+	var kvs proto.KeyValues
+	kvs.Kvs = make([]*proto.KeyValue, 5)
 	var payload [5][]byte
 	for i := 0; i < 5; i++ {
 		payload[i] = make([]byte, i*payloadSize+10)
@@ -478,7 +479,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 		if err != nil {
 			t.Fatalf("couldn't create payload %d: %v\n", i, err)
 		}
-		kvs.Kvs[i] = &KeyValue{
+		kvs.Kvs[i] = &proto.KeyValue{
 			Key:   fmt.Sprintf("batchkey-%d", i),
 			Value: payload[i],
 		}
@@ -625,7 +626,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	// Check some values from batch POST using GET /keyvalues (protobuf3)
 	getreq2 := fmt.Sprintf("%snode/%s/%s/keyvalues", server.WebAPIPath, uuid, data.DataName())
 	expectedKeys = []string{"batchkey-1", "batchkey-2", "batchkey-3"}
-	pbufKeys := Keys{
+	pbufKeys := proto.Keys{
 		Keys: expectedKeys,
 	}
 	keysSerialization, err := pb.Marshal(&pbufKeys)
@@ -633,7 +634,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 		t.Fatalf("couldn't serialized protobuf keys: %v\n", err)
 	}
 	keyvaluesSerialization := server.TestHTTP(t, "GET", getreq2, bytes.NewBuffer(keysSerialization))
-	var pbKVs KeyValues
+	var pbKVs proto.KeyValues
 	if err := pb.Unmarshal(keyvaluesSerialization, &pbKVs); err != nil {
 		t.Fatalf("couldn't unmarshal keyvalues protobuf: %v\n", err)
 	}

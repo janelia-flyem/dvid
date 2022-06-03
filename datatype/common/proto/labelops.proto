@@ -1,6 +1,8 @@
 syntax = "proto3";
 package proto;
 
+option go_package = "github.com/janelia-flyem/dvid/datatype/common/proto";
+
 message RenumberOp {
 	uint64 mutid = 1;
 	uint64 target = 2;

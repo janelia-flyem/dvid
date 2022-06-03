@@ -17,6 +17,7 @@ import (
 	pb "google.golang.org/protobuf/proto"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
@@ -827,7 +828,7 @@ func (d *Data) sendJSONValuesInRange(w http.ResponseWriter, r *http.Request, ctx
 		return 0, err
 	}
 
-	var kvs KeyValues
+	var kvs proto.KeyValues
 	var tw *tar.Writer
 
 	switch {
@@ -903,7 +904,7 @@ func (d *Data) sendJSONValuesInRange(w http.ResponseWriter, r *http.Request, ctx
 			}
 			wroteVal = true
 		default:
-			kv := &KeyValue{
+			kv := &proto.KeyValue{
 				Key:   key,
 				Value: val,
 			}
@@ -1007,9 +1008,9 @@ func (d *Data) sendTarKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, key
 	return
 }
 
-func (d *Data) sendProtobufKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, keys Keys) (writtenBytes int, err error) {
-	var kvs KeyValues
-	kvs.Kvs = make([]*KeyValue, len(keys.Keys))
+func (d *Data) sendProtobufKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, keys proto.Keys) (writtenBytes int, err error) {
+	var kvs proto.KeyValues
+	kvs.Kvs = make([]*proto.KeyValue, len(keys.Keys))
 	for i, key := range keys.Keys {
 		var val []byte
 		var found bool
@@ -1019,7 +1020,7 @@ func (d *Data) sendProtobufKV(w http.ResponseWriter, ctx *datastore.VersionedCtx
 		if !found {
 			val = nil
 		}
-		kvs.Kvs[i] = &KeyValue{
+		kvs.Kvs[i] = &proto.KeyValue{
 			Key:   key,
 			Value: val,
 		}
@@ -1067,7 +1068,7 @@ func (d *Data) handleKeyValues(w http.ResponseWriter, r *http.Request, uuid dvid
 		numKeys = len(keys)
 		writtenBytes, err = d.sendJSONKV(w, ctx, keys, checkVal)
 	default:
-		var keys Keys
+		var keys proto.Keys
 		if err = pb.Unmarshal(data, &keys); err != nil {
 			return
 		}
@@ -1082,7 +1083,7 @@ func (d *Data) handleIngest(r *http.Request, uuid dvid.UUID, ctx *datastore.Vers
 	if err != nil {
 		return err
 	}
-	var kvs KeyValues
+	var kvs proto.KeyValues
 	if err := pb.Unmarshal(data, &kvs); err != nil {
 		return err
 	}

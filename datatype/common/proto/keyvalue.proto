@@ -1,5 +1,7 @@
 syntax = "proto3";
-package neuronjson;
+package proto;
+
+option go_package = "github.com/janelia-flyem/dvid/datatype/common/proto";
 
 message KeyValue {
 	string key = 1;

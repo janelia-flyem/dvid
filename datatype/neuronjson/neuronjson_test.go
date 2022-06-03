@@ -16,6 +16,7 @@ import (
 	pb "google.golang.org/protobuf/proto"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"google.golang.org/api/iterator"
@@ -434,10 +435,10 @@ func TestAnnotationVersioning(t *testing.T) {
 	}
 
 	// Use the batch POST for all 4 annotations with key += 10000
-	var kvs KeyValues
-	kvs.Kvs = make([]*KeyValue, 4)
+	var kvs proto.KeyValues
+	kvs.Kvs = make([]*proto.KeyValue, 4)
 	for i := 0; i < 4; i++ {
-		kvs.Kvs[i] = &KeyValue{
+		kvs.Kvs[i] = &proto.KeyValue{
 			Key:   fmt.Sprintf("1%s", testData[i].key),
 			Value: []byte(testData[i].val),
 		}
@@ -538,7 +539,7 @@ func TestAnnotationVersioning(t *testing.T) {
 
 	// Check some values from batch POST using GET /keyvalues (protobuf3)
 	getreq2 := fmt.Sprintf("%snode/%s/%s/keyvalues", server.WebAPIPath, uuid, data.DataName())
-	pbufKeys := Keys{
+	pbufKeys := proto.Keys{
 		Keys: expectedKeys,
 	}
 	keysSerialization, err := pb.Marshal(&pbufKeys)
@@ -546,7 +547,7 @@ func TestAnnotationVersioning(t *testing.T) {
 		t.Fatalf("couldn't serialized protobuf keys: %v\n", err)
 	}
 	keyvaluesSerialization := server.TestHTTP(t, "GET", getreq2, bytes.NewBuffer(keysSerialization))
-	var pbKVs KeyValues
+	var pbKVs proto.KeyValues
 	if err := pb.Unmarshal(keyvaluesSerialization, &pbKVs); err != nil {
 		t.Fatalf("couldn't unmarshal keyvalues protobuf: %v\n", err)
 	}
