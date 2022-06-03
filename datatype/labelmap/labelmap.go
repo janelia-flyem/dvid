@@ -1578,7 +1578,15 @@ GET <api URL>/node/<UUID>/<data name>/mappings[?queryopts]
 		...
 		supervoxelN mappedToN
 	
-	Note that only non-identity mappings are transmitted.
+	Note that only non-identity mappings are presented unless the mapping is 
+	associated with some kind of mutation.  The mapping contains not only the 
+	unique IDs of supervoxels but also newly created IDs for renumbered & 
+	cleaved bodies that will never overlap with supervoxel IDs. 
+	
+	The mapped label can be 0 in the following circumstances:
+	* The label was a supervoxel ID that was split into two different unique IDs.
+	* The label is used for a newly generated ID that will be a new renumbered label.
+	* The label is used for a newly generated ID that will represent a cleaved body ID.
 
 	Query-string Options:
 
@@ -1597,6 +1605,8 @@ POST <api URL>/node/<UUID>/<data name>/mappings
 	index data.  If there are cluster systems capable of computing label
 	blocks, indices, mappings (to represent agglomerations) and affinities directly,
 	though, it's more efficient to simply load them into dvid. 
+
+	See the description of mappings in GET /mapping and /mappings.
 
 	The POST expects a protobuf serialization of a MergeOps message defined by:
 
