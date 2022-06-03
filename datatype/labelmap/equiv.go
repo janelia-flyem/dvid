@@ -89,7 +89,21 @@ func (d *Data) DumpMutations(startUUID, endUUID dvid.UUID, filename string) (com
 	return
 }
 
-func (d *Data) ingestMappings(ctx *datastore.VersionedCtx, mappings proto.MappingOps) error {
+// returns true if the given newLabel does not exist as forward mapping key
+// TODO? Also check if it exists anywhere in mapping, which would probably
+//   full set of ids.
+func (d *Data) verifyIsNewLabel(v dvid.VersionID, newLabel uint64) (bool, error) {
+	m, err := getMapping(d, v)
+	if err != nil {
+		return false, err
+	}
+	m.RLock()
+	_, found := m.fm[newLabel]
+	m.RUnlock()
+	return !found, nil
+}
+
+func (d *Data) ingestMappings(ctx *datastore.VersionedCtx, mappings *proto.MappingOps) error {
 	m, err := getMapping(d, ctx.VersionID())
 	if err != nil {
 		return err

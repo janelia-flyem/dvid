@@ -4459,7 +4459,7 @@ func (d *Data) handleMappings(ctx *datastore.VersionedCtx, w http.ResponseWriter
 		if err := pb.Unmarshal(serialization, &mappings); err != nil {
 			server.BadRequest(w, r, err)
 		}
-		if err := d.ingestMappings(ctx, mappings); err != nil {
+		if err := d.ingestMappings(ctx, &mappings); err != nil {
 			server.BadRequest(w, r, err)
 		}
 		timedLog.Infof("HTTP POST %d mappings (%s)", len(mappings.Mappings), r.URL)
