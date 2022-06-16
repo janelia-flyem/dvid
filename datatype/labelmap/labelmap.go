@@ -2714,21 +2714,21 @@ func (d *Data) getLabelBlock(ctx *datastore.VersionedCtx, scale uint8, bcoord dv
 	return &labels.PositionedBlock{block, bcoord}, nil
 }
 
-func (d *Data) putLabelBlock(ctx *datastore.VersionedCtx, scale uint8, pb *labels.PositionedBlock) error {
+func (d *Data) putLabelBlock(ctx *datastore.VersionedCtx, scale uint8, pblock *labels.PositionedBlock) error {
 	store, err := datastore.GetKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("labelmap putLabelBlock() had error initializing store: %v", err)
 	}
-	tk := NewBlockTKeyByCoord(scale, pb.BCoord)
+	tk := NewBlockTKeyByCoord(scale, pblock.BCoord)
 
-	data, err := pb.MarshalBinary()
+	data, err := pblock.MarshalBinary()
 	if err != nil {
 		return err
 	}
 
 	val, err := dvid.SerializeData(data, d.Compression(), d.Checksum())
 	if err != nil {
-		return fmt.Errorf("Unable to serialize block %s in %q: %v", pb.BCoord, d.DataName(), err)
+		return fmt.Errorf("Unable to serialize block %s in %q: %v", pblock.BCoord, d.DataName(), err)
 	}
 	return store.Put(ctx, tk, val)
 }
