@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	pb "google.golang.org/protobuf/proto"
+
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 )
 
@@ -91,7 +93,7 @@ func main() {
 		os.Exit(1)
 	}
 	idx := new(labels.Index)
-	if err := idx.Unmarshal(data); err != nil {
+	if err := pb.Unmarshal(data, idx); err != nil {
 		fmt.Printf("couldn't unmarshal index: %v\n", err)
 	}
 	fmt.Printf("\nLabel: %d\n", idx.Label)

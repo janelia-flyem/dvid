@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	pb "google.golang.org/protobuf/proto"
+
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
 )
@@ -38,16 +40,7 @@ var (
 )
 
 var usage = func() {
-	fmt.Printf(helpMessage)
-}
-
-func atoi(s string) int32 {
-	i, err := strconv.Atoi(s)
-	if err != nil {
-		fmt.Printf("can't parse coordinate %q: %v\n", s, err)
-		os.Exit(1)
-	}
-	return int32(i)
+	fmt.Print(helpMessage)
 }
 
 func main() {
@@ -84,6 +77,10 @@ func main() {
 
 	url := fmt.Sprintf("http://%s/api/node/%s/%s/index/%d", server, uuid, name, label)
 	resp, err := http.Get(url)
+	if err != nil {
+		fmt.Printf("couldn't do GET on %q: %v\n", url, err)
+		os.Exit(1)
+	}
 	data, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Printf("couldn't read index data: %v\n", err)
@@ -94,7 +91,7 @@ func main() {
 		os.Exit(1)
 	}
 	idx := new(labels.Index)
-	if err := idx.Unmarshal(data); err != nil {
+	if err := pb.Unmarshal(data, idx); err != nil {
 		fmt.Printf("couldn't unmarshal index: %v\n", err)
 	}
 	fmt.Printf("\nLabel: %d\n", idx.Label)
@@ -143,6 +140,10 @@ func writeBlocks(f *os.File, bcoords []dvid.ChunkPoint3d) {
 	bcoordStr := strings.Join(strs, ",")
 	url := fmt.Sprintf("http://%s/api/node/%s/%s/specificblocks?supervoxels=%t&blocks=%s", server, uuid, name, *supervoxels, bcoordStr)
 	resp, err := http.Get(url)
+	if err != nil {
+		fmt.Printf("couldn't do GET on %q: %v\n", url, err)
+		os.Exit(1)
+	}
 	data, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Printf("couldn't read block data: %v\n", err)
