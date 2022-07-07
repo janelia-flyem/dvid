@@ -2023,6 +2023,16 @@ func (r Resolution) Set3dNanometers(pt Point3d) {
 	}
 }
 
+// Set3dNanometers sets a resolution to the given pt with "nanometers" units
+func (r Resolution) Set3dNanometersFloat(res [3]float64) {
+	r.VoxelSize = make(NdFloat32, 3)
+	r.VoxelUnits = make(NdString, 3)
+	for i := 0; i < 3; i++ {
+		r.VoxelSize[i] = float32(res[i])
+		r.VoxelUnits[i] = "nanometers"
+	}
+}
+
 // IsIsotropic returns true if resolution in all dimensions is equal.
 func (r Resolution) IsIsotropic() bool {
 	if len(r.VoxelSize) <= 1 {

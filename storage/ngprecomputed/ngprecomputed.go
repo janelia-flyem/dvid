@@ -323,7 +323,7 @@ type ngScale struct {
 	ChunkSizes []dvid.Point3d `json:"chunk_sizes"`
 	Encoding   string         `json:"encoding"`
 	Key        string         `json:"key"`
-	Resolution dvid.Point3d   `json:"resolution"`
+	Resolution [3]float64     `json:"resolution"`
 	Sharding   ngShard        `json:"sharding"`
 	Size       dvid.Point3d   `json:"size"`
 

@@ -260,8 +260,8 @@ type BlockFunc func(*Block) error
 type GridProps struct {
 	VolumeSize dvid.Point3d
 	ChunkSize  dvid.Point3d
-	Encoding   string       // "raw", "jpeg", or "compressed_segmentation"
-	Resolution dvid.Point3d // resolution in nm for a voxel along dimensions
+	Encoding   string     // "raw", "jpeg", or "compressed_segmentation"
+	Resolution [3]float64 // resolution in nm for a voxel along dimensions
 }
 
 // GridStoreGetter describes nD block getter functions

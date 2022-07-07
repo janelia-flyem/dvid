@@ -543,7 +543,7 @@ func (dtype *Type) NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.Instanc
 		dvid.Infof("Got properties for scale %d of GridStore %q: %v\n", p.ScaleLevel, p.GridStore, gridProps)
 		p.MinPoint = dvid.Point3d{0, 0, 0}
 		p.MaxPoint = gridProps.VolumeSize
-		p.Resolution.Set3dNanometers(gridProps.Resolution)
+		p.Resolution.Set3dNanometersFloat(gridProps.Resolution)
 		p.BlockSize = gridProps.ChunkSize
 	}
 	data := &Data{
