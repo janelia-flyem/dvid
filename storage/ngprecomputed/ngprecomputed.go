@@ -814,8 +814,15 @@ func (ng *ngStore) GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) (val []
 		}
 		val, err = ng.rangeRead(shardFile, loc.pos, loc.size)
 
+		if scale.Sharding.DataEncoding == "gzip" {
+			val, err = gzipUncompress(val)
+			if err != nil {
+				return nil, err
+			}
+		}
+
 	default:
-		return nil, fmt.Errorf("Scale %d has unexpected shard type: %s", scaleLevel, scale.Sharding.FormatType)
+		return nil, fmt.Errorf("scale %d has unexpected shard type: %s", scaleLevel, scale.Sharding.FormatType)
 	}
 
 	if err != nil {
@@ -829,8 +836,7 @@ func (ng *ngStore) GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) (val []
 	var inflated []byte
 	inflated, err = jpegUncompress(chunkSize, clippedSize, val)
 	if err != nil {
-		dvid.Errorf("Error in jpeg uncompression for block %s\n", blockCoord)
-		return
+		return nil, fmt.Errorf("error in jpeg uncompression for block %s", blockCoord)
 	}
 	return jpegCompress(chunkSize, inflated)
 }
