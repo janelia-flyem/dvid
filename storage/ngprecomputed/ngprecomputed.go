@@ -261,7 +261,7 @@ func jpegUncompress(chunkSize, clippedSize dvid.Point3d, in []byte) (out []byte,
 	}
 	apparentY := dy / clippedSize[2]
 	if dy%clippedSize[2] != 0 {
-		err = fmt.Errorf("Unexpected JPEG image size of %d x %d for clipped block size %s", dx, dy, clippedSize)
+		err = fmt.Errorf("unexpected JPEG image size of %d x %d for clipped block size %s", dx, dy, clippedSize)
 		return
 	}
 	clippedBytes := clippedSize.Prod()
@@ -278,7 +278,7 @@ func jpegUncompress(chunkSize, clippedSize dvid.Point3d, in []byte) (out []byte,
 			dvid.Errorf("Panic in JPEG chunk uncompression at (%d,%d,%d) src %d -> dst %d\n", x, y, z, src, dst)
 			dvid.Errorf("JPEG Gray image: Stride %d, Rect %v, Bytes %d\n", grayscale.Stride, grayscale.Rect, len(jpegData))
 			dvid.Errorf("Apparent size of Y in JPEG: %d\n", apparentY)
-			err = fmt.Errorf("Unable to uncompress JPEG and inflate to chunk size %s", chunkSize)
+			err = fmt.Errorf("unable to uncompress JPEG and inflate to chunk size %s", chunkSize)
 		}
 	}()
 	for z = 0; z < clippedSize[2]; z++ {
@@ -390,7 +390,7 @@ func (ng *ngStore) initialize() error {
 	}
 	for n, scale := range ng.vol.Scales {
 		if len(scale.ChunkSizes) > 1 {
-			return fmt.Errorf("Scale %d has more than one chunk size, which is unsupported: %v", n, scale.ChunkSizes)
+			return fmt.Errorf("scale %d has more than one chunk size, which is unsupported: %v", n, scale.ChunkSizes)
 		}
 		chunkSize := scale.ChunkSizes[0]
 

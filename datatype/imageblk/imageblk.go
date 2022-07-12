@@ -9,7 +9,6 @@ import (
 	"encoding/binary"
 	"encoding/gob"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -1432,9 +1431,6 @@ func (d *Data) GetExtents(ctx *datastore.VersionedCtx) (dvidextents dvid.Extents
 	return
 }
 
-// ExtentsUnchanged is an error for patch failure
-var ExtentsUnchanged = errors.New("extents does not change")
-
 // PostExtents updates extents with the new points (always growing)
 func (d *Data) PostExtents(ctx *datastore.VersionedCtx, start dvid.Point, end dvid.Point) error {
 	store, err := datastore.GetOrderedKeyValueDB(d)
@@ -1918,7 +1914,7 @@ func (d *Data) SendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 	timedLog := dvid.NewTimeLog()
 	defer timedLog.Infof("SendBlocks Specific ")
 
-	// extract querey string
+	// extract query string
 	if blockstring == "" {
 		return
 	}
