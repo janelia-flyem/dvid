@@ -151,6 +151,7 @@ func (e Engine) newStore(config dvid.StoreConfig) (*ngStore, bool, error) {
 
 	if strings.HasPrefix(ref, "s3://") {
 		// This relies on the non-GCS-specific blob API
+		// This relies on the non-GCS-specific blob API
 		// and requires that the user:
 		// A: Have set up AWS credentials in ways gocloud can find them (see the "aws config" command)
 		// B: Have set the AWS_REGION environment variable (usually to us-east-2)
@@ -240,7 +241,7 @@ func gzipUncompress(in []byte) (out []byte, err error) {
 
 // chunkSize = expected chunk volume, e.g., 64 x 64 x 64
 // clippedSize = if on edge of image volume, this is actual size of clipped chunk
-func jpegUncompress(chunkSize, clippedSize dvid.Point3d, in []byte) (out []byte, err error) {
+func jpegUncompress(chunkSize, clippedSize dvid.Point3d, in []byte, blockCoord dvid.ChunkPoint3d) (out []byte, err error) {
 	b := bytes.NewBuffer(in)
 	imgdata, err := jpeg.Decode(b)
 	if err != nil {
@@ -259,37 +260,33 @@ func jpegUncompress(chunkSize, clippedSize dvid.Point3d, in []byte) (out []byte,
 	if jpegVoxels == chunkVoxels {
 		return jpegData, nil
 	}
-	apparentY := dy / clippedSize[2]
-	if dy%clippedSize[2] != 0 {
-		err = fmt.Errorf("unexpected JPEG image size of %d x %d for clipped block size %s", dx, dy, clippedSize)
+	if jpegVoxels != clippedSize.Prod() {
+		err = fmt.Errorf("Unexpected JPEG image size of %d x %d (stride %d) for clipped block size %s", dx, dy, grayscale.Stride, clippedSize)
 		return
 	}
-	clippedBytes := clippedSize.Prod()
-	jpegBytes := int64(len(jpegData))
-	if clippedBytes > jpegBytes {
-		err = fmt.Errorf("JPEG data (%d bytes) is less than clipped volume size: %d bytes", jpegBytes, clippedBytes)
-		return
-	}
-	inflated := make([]byte, chunkVoxels)
 
+	dvid.Infof("Processing clipped size: %s, jpeg %d x %d, stride %d\n", clippedSize, dx, dy, grayscale.Stride)
+	inflated := make([]byte, chunkVoxels)
 	var dst, src, x, y, z int32
 	defer func() {
 		if r := recover(); r != nil {
+			jpegBytes := int64(len(jpegData))
 			dvid.Errorf("Panic in JPEG chunk uncompression at (%d,%d,%d) src %d -> dst %d\n", x, y, z, src, dst)
+			dvid.Errorf("jpeg image size: %d x %d pixels, clipped size\n", dx, dy, clippedSize)
+			dvid.Errorf("jpegBytes = %d, chunkVoxels = %d\n", jpegBytes, chunkVoxels)
 			dvid.Errorf("JPEG Gray image: Stride %d, Rect %v, Bytes %d\n", grayscale.Stride, grayscale.Rect, len(jpegData))
-			dvid.Errorf("Apparent size of Y in JPEG: %d\n", apparentY)
-			err = fmt.Errorf("unable to uncompress JPEG and inflate to chunk size %s", chunkSize)
+			out = inflated
+			err = nil
 		}
 	}()
+
 	for z = 0; z < clippedSize[2]; z++ {
+		dst = z * chunkSize[0] * chunkSize[1]
+		src = z * clippedSize[0] * clippedSize[1]
 		for y = 0; y < clippedSize[1]; y++ {
-			dst = z*chunkSize[1]*chunkSize[0] + y*chunkSize[0]
-			src = z*apparentY*int32(grayscale.Stride) + y*dx
-			for x = 0; x < clippedSize[0]; x++ {
-				inflated[dst] = jpegData[src]
-				src++
-				dst++
-			}
+			copy(inflated[dst:], jpegData[src:src+clippedSize[0]])
+			src += clippedSize[0]
+			dst += chunkSize[0]
 		}
 	}
 	return inflated, nil
@@ -449,7 +446,7 @@ func (ng *ngStore) read(key string) (data []byte, err error) {
 
 // returns nil/nil if key does not exist.
 func (ng *ngStore) rangeRead(key string, offset, size uint64) (data []byte, err error) {
-	// timedLog := dvid.NewTimeLog()
+	//timedLog := dvid.NewTimeLog()
 	ctx := context.Background()
 	r, err := ng.bucket.NewRangeReader(ctx, key, int64(offset), int64(size), nil)
 	if err != nil {
@@ -464,7 +461,7 @@ func (ng *ngStore) rangeRead(key string, offset, size uint64) (data []byte, err 
 	if _, err := io.Copy(buf, r); err != nil {
 		return nil, err
 	}
-	// timedLog.Infof("Range read of object %q, offset %d, size %d", key, offset, size)
+	//timedLog.Infof("Range read of object %q, offset %d, size %d", key, offset, size)
 	return buf.Bytes(), nil
 }
 
@@ -572,7 +569,7 @@ func (ng *ngStore) mortonCode(scale *ngScale, blockCoord dvid.ChunkPoint3d) (mor
 			}
 		}
 	}
-	// dvid.Infof("Morton code for chunk %s: %x\n", blockCoord, mortonCode)
+	//dvid.Infof("Morton code for chunk %s: %x\n", blockCoord, mortonCode)
 	return
 }
 
@@ -635,7 +632,7 @@ func (ng *ngStore) getMinishardMap(scale *ngScale, shardFile string, minishard u
 }
 
 func (ng *ngStore) loadShardIndex(scale *ngScale, shardFile string) (shard *shardT, err error) {
-	timedLog := dvid.NewTimeLog()
+	//timedLog := dvid.NewTimeLog()
 
 	var shardData []byte
 	shardData, err = ng.rangeRead(shardFile, 0, scale.shardIndexEnd)
@@ -643,19 +640,19 @@ func (ng *ngStore) loadShardIndex(scale *ngScale, shardFile string) (shard *shar
 		return
 	}
 	if shardData == nil {
-		timedLog.Infof("shard file %q doesn't seem to exist", shardFile)
+		dvid.Errorf("shard file %q doesn't seem to exist", shardFile)
 		return nil, nil
 	}
 	shard = &shardT{
 		index:      shardData,
 		minishards: make(map[uint64]map[uint64]valueLoc),
 	}
-	// timedLog.Infof("loaded shard index from object %q", shardFile)
+	//timedLog.Infof("loaded shard index from object %q", shardFile)
 	return
 }
 
 func (ng *ngStore) loadMinishardMap(scale *ngScale, shardFile string, shard *shardT, minishard uint64) (minishardMap map[uint64]valueLoc, err error) {
-	// timedLog := dvid.NewTimeLog()
+	//timedLog := dvid.NewTimeLog()
 
 	pos := minishard * 16
 	begByte := binary.LittleEndian.Uint64(shard.index[pos:pos+8]) + scale.shardIndexEnd
@@ -723,7 +720,7 @@ func (ng *ngStore) loadMinishardMap(scale *ngScale, shardFile string, shard *sha
 		offsetPos += 8
 		sizePos += 8
 	}
-	// timedLog.Infof("loaded minishard map with %s encoding: %d entries, %d bytes", scale.Sharding.IndexEncoding, n, indexSize)
+	//timedLog.Infof("loaded minishard map with %s encoding: %d entries, %d bytes", scale.Sharding.IndexEncoding, n, indexSize)
 	return
 }
 
@@ -753,9 +750,9 @@ func (ng *ngStore) GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) (val []
 	minPt := blockCoord.MinPoint(chunkSize).(dvid.Point3d)
 	maxPt := minPt.Add(chunkSize).(dvid.Point3d)
 	outsideSize := minPt.Sub(scale.Size).(dvid.Point3d)
-	// dvid.Infof("Block %s with chunk size %s\n", blockCoord, chunkSize)
-	// dvid.Infof("Min pt %s, max pt %s\n", minPt, maxPt)
-	// dvid.Infof("Scale size: %s\n", scale.Size)
+	//dvid.Infof("Block %s with chunk size %s\n", blockCoord, chunkSize)
+	//dvid.Infof("Min pt %s, max pt %s\n", minPt, maxPt)
+	//dvid.Infof("Scale size: %s\n", scale.Size)
 	if outsideSize[0] >= 0 || outsideSize[1] >= 0 || outsideSize[2] >= 0 {
 		timedLog.Infof("Chunk %s with start voxel %s is out of bounding box %s\n",
 			blockCoord, minPt, scale.Size)
@@ -770,9 +767,6 @@ func (ng *ngStore) GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) (val []
 			clippedSize[i] = scale.Size[i] - minPt[i]
 			maxPtRestricted[i] = scale.Size[i]
 		}
-	}
-	if clippedSize.Prod() != chunkSize.Prod() {
-		dvid.Infof("Clipped size: %s\n", clippedSize)
 	}
 
 	switch scale.Sharding.FormatType {
@@ -828,17 +822,29 @@ func (ng *ngStore) GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) (val []
 	if err != nil {
 		return
 	}
-	chunkVoxels := chunkSize.Prod()
-	clippedVoxels := clippedSize.Prod()
-	if chunkVoxels == clippedVoxels {
-		return
+
+	switch scale.Encoding {
+	case "jpeg":
+		defer timedLog.Infof("JPEG compress/uncompress chunkSize %s, clippedSize %s", chunkSize, clippedSize)
+		if chunkSize[0] != clippedSize[0] || chunkSize[1] != clippedSize[1] || chunkSize[2] != clippedSize[2] {
+			var inflated []byte
+			inflated, err = jpegUncompress(chunkSize, clippedSize, val, blockCoord)
+			if err != nil {
+				return nil, fmt.Errorf("error in jpeg uncompression for block %s: %v", blockCoord, err)
+			}
+			return jpegCompress(chunkSize, inflated)
+		}
+		return val, nil
+	case "raw":
+		if chunkSize.Prod() != int64(len(val)) {
+			return nil, fmt.Errorf("raw clipped blocks not supported at this time")
+		}
+		return val, nil
+	case "compressed_segmentation":
+		return nil, fmt.Errorf("ngprecomputed cannot decode segmentation at this time")
+	default:
+		return nil, fmt.Errorf("unknown scale encoding type %q", scale.Encoding)
 	}
-	var inflated []byte
-	inflated, err = jpegUncompress(chunkSize, clippedSize, val)
-	if err != nil {
-		return nil, fmt.Errorf("error in jpeg uncompression for block %s", blockCoord)
-	}
-	return jpegCompress(chunkSize, inflated)
 }
 
 // GridGetVolume calls the given function with the results of retrived block data in an ordered or
@@ -880,13 +886,13 @@ func (ng *ngStore) GridGetVolume(scaleLevel int, minBlock, maxBlock dvid.ChunkPo
 		}()
 	}
 
-	// Calculate all the block coords in ZYX for this subvolume and send down channel.
-	for z := minBlock.Value(0); z <= maxBlock.Value(0); z++ {
-		for y := minBlock.Value(1); y <= maxBlock.Value(1); y++ {
-			for x := minBlock.Value(2); x <= maxBlock.Value(2); x++ {
-				ch <- dvid.ChunkPoint3d{x, y, z}
-			}
-		}
+       // Calculate all the block coords in ZYX for this subvolume and send down channel.
+       for z := minBlock.Value(0); z <= maxBlock.Value(0); z++ {
+               for y := minBlock.Value(1); y <= maxBlock.Value(1); y++ {
+                       for x := minBlock.Value(2); x <= maxBlock.Value(2); x++ {
+                               ch <- dvid.ChunkPoint3d{x, y, z}
+                       }
+                }
 	}
 
 	close(ch)
