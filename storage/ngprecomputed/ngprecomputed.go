@@ -430,7 +430,6 @@ func (ng *ngStore) initialize() error {
 
 // returns nil/nil if key does not exist.
 func (ng *ngStore) read(key string) (data []byte, err error) {
-	// timedLog := dvid.NewTimeLog()
 	ctx := context.Background()
 	r, err := ng.bucket.NewReader(ctx, key, nil)
 	if err != nil {
@@ -446,7 +445,7 @@ func (ng *ngStore) read(key string) (data []byte, err error) {
 
 // returns nil/nil if key does not exist.
 func (ng *ngStore) rangeRead(key string, offset, size uint64) (data []byte, err error) {
-	//timedLog := dvid.NewTimeLog()
+	timedLog := dvid.NewTimeLog()
 	ctx := context.Background()
 	r, err := ng.bucket.NewRangeReader(ctx, key, int64(offset), int64(size), nil)
 	if err != nil {
@@ -461,7 +460,7 @@ func (ng *ngStore) rangeRead(key string, offset, size uint64) (data []byte, err 
 	if _, err := io.Copy(buf, r); err != nil {
 		return nil, err
 	}
-	//timedLog.Infof("Range read of object %q, offset %d, size %d", key, offset, size)
+	timedLog.Infof("Range read of object %q, offset %d, size %d", key, offset, size)
 	return buf.Bytes(), nil
 }
 
@@ -652,7 +651,7 @@ func (ng *ngStore) loadShardIndex(scale *ngScale, shardFile string) (shard *shar
 }
 
 func (ng *ngStore) loadMinishardMap(scale *ngScale, shardFile string, shard *shardT, minishard uint64) (minishardMap map[uint64]valueLoc, err error) {
-	//timedLog := dvid.NewTimeLog()
+	timedLog := dvid.NewTimeLog()
 
 	pos := minishard * 16
 	begByte := binary.LittleEndian.Uint64(shard.index[pos:pos+8]) + scale.shardIndexEnd
@@ -720,7 +719,7 @@ func (ng *ngStore) loadMinishardMap(scale *ngScale, shardFile string, shard *sha
 		offsetPos += 8
 		sizePos += 8
 	}
-	//timedLog.Infof("loaded minishard map with %s encoding: %d entries, %d bytes", scale.Sharding.IndexEncoding, n, indexSize)
+	timedLog.Infof("loaded minishard map with %s encoding: %d entries, %d bytes", scale.Sharding.IndexEncoding, n, indexSize)
 	return
 }
 
@@ -750,9 +749,9 @@ func (ng *ngStore) GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) (val []
 	minPt := blockCoord.MinPoint(chunkSize).(dvid.Point3d)
 	maxPt := minPt.Add(chunkSize).(dvid.Point3d)
 	outsideSize := minPt.Sub(scale.Size).(dvid.Point3d)
-	//dvid.Infof("Block %s with chunk size %s\n", blockCoord, chunkSize)
-	//dvid.Infof("Min pt %s, max pt %s\n", minPt, maxPt)
-	//dvid.Infof("Scale size: %s\n", scale.Size)
+	// dvid.Infof("Block %s with chunk size %s\n", blockCoord, chunkSize)
+	// dvid.Infof("Min pt %s, max pt %s\n", minPt, maxPt)
+	// dvid.Infof("Scale size: %s\n", scale.Size)
 	if outsideSize[0] >= 0 || outsideSize[1] >= 0 || outsideSize[2] >= 0 {
 		timedLog.Infof("Chunk %s with start voxel %s is out of bounding box %s\n",
 			blockCoord, minPt, scale.Size)
@@ -788,8 +787,7 @@ func (ng *ngStore) GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) (val []
 			return
 		}
 		if minishardMap == nil {
-			dvid.Infof("No minishard map found in shard %q for minishard %d\n", shardFile, minishard)
-			return nil, nil
+			return nil, fmt.Errorf("No minishard map found in shard %q for minishard %d\n", shardFile, minishard)
 		}
 
 		loc, found := minishardMap[chunkID]
