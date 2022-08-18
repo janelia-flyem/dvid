@@ -82,7 +82,7 @@ func getJSONLogFile(versionID, dataID dvid.UUID) (lf *logFile, err error) {
 // LogJSONMutation logs a JSON mutation record to the Jsonstore directory in the config.
 func LogJSONMutation(versionID, dataID dvid.UUID, jsondata []byte) error {
 	if tc.Mutations.Jsonstore == "" {
-		dvid.Errorf("Cannot write mutation with non-existant Jsonstore config: %s\n", string(jsondata))
+		dvid.Errorf("Cannot write JSON mutation log with non-existant Jsonstore config: %s\n", string(jsondata))
 		return nil
 	}
 	lf, err := getJSONLogFile(versionID, dataID)

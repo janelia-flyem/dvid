@@ -1071,10 +1071,6 @@ func TestSplitLabel(t *testing.T) {
 	testMerge := mergeJSON(`[4, 5]`)
 	testMerge.send(t, uuid, "labels")
 
-	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
-		t.Fatalf("Error blocking on bodies update: %v\n", err)
-	}
-
 	// Make sure we wind up with original body 4
 	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/4", server.WebAPIPath, uuid)
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
@@ -1780,10 +1776,6 @@ func testSplitSupervoxel(t *testing.T, testEnclosing bool) {
 		testMerge := mergeJSON(`[3, 4]`)
 		testMerge.send(t, uuid, "labels")
 
-		if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
-			t.Fatalf("Error blocking on bodies update: %v\n", err)
-		}
-
 		reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/3", server.WebAPIPath, uuid)
 		encoding = server.TestHTTP(t, "GET", reqStr, nil)
 	}
@@ -2095,11 +2087,6 @@ func TestMergeCleave(t *testing.T) {
 	// Merge of 3 into 4
 	testMerge := mergeJSON(`[4, 3]`)
 	testMerge.send(t, uuid, "labels")
-
-	// Make sure label changes are correct after completion
-	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
-		t.Fatalf("Error blocking on sync of labels: %v\n", err)
-	}
 
 	reqStr = fmt.Sprintf("%snode/%s/labels/lastmod/4", server.WebAPIPath, uuid)
 	r := server.TestHTTP(t, "GET", reqStr, nil)

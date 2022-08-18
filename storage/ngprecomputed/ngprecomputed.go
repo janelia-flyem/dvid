@@ -261,7 +261,7 @@ func jpegUncompress(chunkSize, clippedSize dvid.Point3d, in []byte, blockCoord d
 		return jpegData, nil
 	}
 	if jpegVoxels != clippedSize.Prod() {
-		err = fmt.Errorf("Unexpected JPEG image size of %d x %d (stride %d) for clipped block size %s", dx, dy, grayscale.Stride, clippedSize)
+		err = fmt.Errorf("unexpected JPEG image size of %d x %d (stride %d) for clipped block size %s", dx, dy, grayscale.Stride, clippedSize)
 		return
 	}
 
@@ -272,7 +272,7 @@ func jpegUncompress(chunkSize, clippedSize dvid.Point3d, in []byte, blockCoord d
 		if r := recover(); r != nil {
 			jpegBytes := int64(len(jpegData))
 			dvid.Errorf("Panic in JPEG chunk uncompression at (%d,%d,%d) src %d -> dst %d\n", x, y, z, src, dst)
-			dvid.Errorf("jpeg image size: %d x %d pixels, clipped size\n", dx, dy, clippedSize)
+			dvid.Errorf("jpeg image size: %d x %d pixels, clipped size %s\n", dx, dy, clippedSize)
 			dvid.Errorf("jpegBytes = %d, chunkVoxels = %d\n", jpegBytes, chunkVoxels)
 			dvid.Errorf("JPEG Gray image: Stride %d, Rect %v, Bytes %d\n", grayscale.Stride, grayscale.Rect, len(jpegData))
 			out = inflated
@@ -884,13 +884,13 @@ func (ng *ngStore) GridGetVolume(scaleLevel int, minBlock, maxBlock dvid.ChunkPo
 		}()
 	}
 
-       // Calculate all the block coords in ZYX for this subvolume and send down channel.
-       for z := minBlock.Value(0); z <= maxBlock.Value(0); z++ {
-               for y := minBlock.Value(1); y <= maxBlock.Value(1); y++ {
-                       for x := minBlock.Value(2); x <= maxBlock.Value(2); x++ {
-                               ch <- dvid.ChunkPoint3d{x, y, z}
-                       }
-                }
+	// Calculate all the block coords in ZYX for this subvolume and send down channel.
+	for z := minBlock.Value(0); z <= maxBlock.Value(0); z++ {
+		for y := minBlock.Value(1); y <= maxBlock.Value(1); y++ {
+			for x := minBlock.Value(2); x <= maxBlock.Value(2); x++ {
+				ch <- dvid.ChunkPoint3d{x, y, z}
+			}
+		}
 	}
 
 	close(ch)

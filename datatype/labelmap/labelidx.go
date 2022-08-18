@@ -829,11 +829,7 @@ type blockChange struct {
 // goroutine(s) that aggregates supervoxel changes across blocks for one mutation, then calls
 // mutex-guarded label index mutation routine.
 func (d *Data) aggregateBlockChanges(v dvid.VersionID, svmap *SVMap, ch <-chan blockChange) {
-	ancestry, err := svmap.getAncestry(v)
-	if err != nil {
-		dvid.Criticalf("unable to get ancestry for data %q, version %d: %v\n", d.DataName(), v, err)
-		return
-	}
+	mappedVersions := svmap.getMappedVersionsDist(v)
 	labelset := make(labels.Set)
 	svChanges := make(labels.SupervoxelChanges)
 	var maxLabel uint64
@@ -848,9 +844,9 @@ func (d *Data) aggregateBlockChanges(v dvid.VersionID, svmap *SVMap, ch <-chan b
 			if supervoxel > maxLabel {
 				maxLabel = supervoxel
 			}
-			svmap.RLock()
-			label, _ := svmap.mapLabel(supervoxel, ancestry)
-			svmap.RUnlock()
+			svmap.fmMu.RLock()
+			label, _ := svmap.mapLabel(supervoxel, mappedVersions)
+			svmap.fmMu.RUnlock()
 			labelset[label] = struct{}{}
 		}
 	}
@@ -1574,25 +1570,22 @@ func (d *Data) writeMappings(w io.Writer, v dvid.VersionID, binaryFormat, consis
 	if err != nil {
 		return fmt.Errorf("unable to retrieve mappings for data %q, version %d: %v", d.DataName(), v, err)
 	}
-	ancestry, err := svm.getAncestry(v)
-	if err != nil {
-		return fmt.Errorf("unable to get ancestry for data %q, version %d: %v", d.DataName(), v, err)
-	}
+	mappedVersions := svm.getMappedVersionsDist(v)
 
 	// assume in-memory copy of mappings, especially if large, is much faster than writing
 	// out stream, so do only the copy under read lock to minimize time under read lock.
-	svm.RLock()
+	svm.fmMu.RLock()
 	if len(svm.fm) == 0 {
-		svm.RUnlock()
+		svm.fmMu.RUnlock()
 		dvid.Infof("no mappings found for data %q\n", d.DataName())
 		return nil
 	}
-	svm.RUnlock()
+	svm.fmMu.RUnlock()
 
 	var elemNum, numMappings, numErrors uint64
-	svm.RLock()
+	svm.fmMu.RLock()
 	for supervoxel, vm := range svm.fm {
-		label, present := vm.value(ancestry)
+		label, present := vm.value(mappedVersions)
 		if present {
 			numMappings++
 			if supervoxel != label && label != 0 {
@@ -1610,7 +1603,7 @@ func (d *Data) writeMappings(w io.Writer, v dvid.VersionID, binaryFormat, consis
 				if err != nil {
 					numErrors++
 					if numErrors > 100 {
-						svm.RUnlock()
+						svm.fmMu.RUnlock()
 						return fmt.Errorf("unable to write data for mapping of supervoxel %d -> %d, data %q: %v", supervoxel, label, d.DataName(), err)
 					}
 				}
@@ -1619,13 +1612,13 @@ func (d *Data) writeMappings(w io.Writer, v dvid.VersionID, binaryFormat, consis
 		if !consistent {
 			elemNum++
 			if elemNum%100000 == 0 { // don't hold lock for really long time.  Faster check than actual time compare.
-				svm.RUnlock()
+				svm.fmMu.RUnlock()
 				time.Sleep(1 * time.Millisecond)
-				svm.RLock()
+				svm.fmMu.RLock()
 			}
 		}
 	}
-	svm.RUnlock()
+	svm.fmMu.RUnlock()
 	timedLog.Infof("Finished retrieving %d mappings (%d errors) for data %q, version %d", numMappings, numErrors, d.DataName(), v)
 	return nil
 }

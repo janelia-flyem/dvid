@@ -370,6 +370,10 @@ type mergeJSON string
 func (mjson mergeJSON) send(t *testing.T, uuid dvid.UUID, name string) {
 	apiStr := fmt.Sprintf("%snode/%s/%s/merge", server.WebAPIPath, uuid, name)
 	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(string(mjson)))
+
+	if err := datastore.BlockOnUpdating(uuid, dvid.InstanceName(name)); err != nil {
+		t.Fatalf("Error blocking on bodies update: %v\n", err)
+	}
 }
 
 func (mjson mergeJSON) sendErr(t *testing.T, uuid dvid.UUID, name string) error {

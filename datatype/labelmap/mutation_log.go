@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"sync"
 
 	pb "google.golang.org/protobuf/proto"
@@ -14,6 +15,73 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
+
+// DumpMutations makes a log of all mutations from the start UUID to the end UUID.
+func (d *Data) DumpMutations(startUUID, endUUID dvid.UUID, filename string) (comment string, err error) {
+	rl := d.GetReadLog()
+	if rl == nil {
+		err = fmt.Errorf("no mutation log was available for data %q", d.DataName())
+		return
+	}
+	var startV, endV dvid.VersionID
+	startV, err = datastore.VersionFromUUID(startUUID)
+	if err != nil {
+		return
+	}
+	endV, err = datastore.VersionFromUUID(endUUID)
+	if err != nil {
+		return
+	}
+	var rootToLeaf, leafToRoot []dvid.VersionID
+	leafToRoot, err = datastore.GetAncestry(endV)
+	if err != nil {
+		return
+	}
+	rootToLeaf = make([]dvid.VersionID, len(leafToRoot))
+
+	// reverse it and screen on UUID start/stop
+	startPos := len(leafToRoot) - 1
+	for _, v := range leafToRoot {
+		rootToLeaf[startPos] = v
+		if v == startV {
+			break
+		}
+		startPos--
+	}
+
+	// open up target log
+	var f *os.File
+	f, err = os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0755)
+	if err != nil {
+		return
+	}
+
+	// go through the ancestors from root to leaf, appending data to target log
+	numLogs := 0
+	var uuid dvid.UUID
+	for i, ancestor := range rootToLeaf[startPos:] {
+		if uuid, err = datastore.UUIDFromVersion(ancestor); err != nil {
+			return
+		}
+		timedLog := dvid.NewTimeLog()
+		var data []byte
+		if data, err = rl.ReadBinary(d.DataUUID(), uuid); err != nil {
+			return
+		}
+		if len(data) == 0 {
+			timedLog.Infof("No mappings found for data %q, version %s", d.DataName(), uuid)
+			continue
+		}
+		if _, err = f.Write(data); err != nil {
+			return
+		}
+		timedLog.Infof("Loaded mappings #%d for data %q, version ID %s", i+1, d.DataName(), uuid)
+		numLogs++
+	}
+	err = f.Close()
+	comment = fmt.Sprintf("Completed flattening of %d mutation logs to %s\n", numLogs, filename)
+	return
+}
 
 // GetMutationHistory writes JSON of the mutations that were done to the given label at toUUID version,
 // where we delimit the time range of interest to [fromUUID, toUUID] versions.  The mutations are written

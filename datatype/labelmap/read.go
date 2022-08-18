@@ -310,7 +310,7 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 	}
 
 	// Perform the operation.
-	if op.mapping != nil && op.mapping.exists(op.version) {
+	if op.mapping != nil {
 		err = modifyBlockMapping(op.version, &block, op.mapping)
 		if err != nil {
 			dvid.Errorf("unable to modify block %s mapping: %v\n", indexZYX, err)
@@ -324,18 +324,17 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 // overwrites labels in header with their mapped values, so converts blocks from
 // supervoxels to body labels
 func modifyBlockMapping(v dvid.VersionID, block *labels.Block, m *SVMap) error {
-	ancestry, err := m.getAncestry(v)
-	if err != nil {
-		return fmt.Errorf("unable to get ancestry for version %d: %v", v, err)
-	}
-	m.RLock()
+	mappedVersions := m.getMappedVersionsDist(v)
+	fmt.Printf("modifyBlockMapping: version %d, mappedVersions %v\n", v, mappedVersions)
+	m.fmMu.RLock()
 	for i, label := range block.Labels {
-		mapped, found := m.mapLabel(label, ancestry)
+		mapped, found := m.mapLabel(label, mappedVersions)
 		if found {
 			block.Labels[i] = mapped
 		}
+		fmt.Printf("modifyBlockMapping: label %d, mapped %d, found %t\n", label, mapped, found)
 	}
-	m.RUnlock()
+	m.fmMu.RUnlock()
 	return nil
 }
 

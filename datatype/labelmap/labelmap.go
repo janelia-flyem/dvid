@@ -2792,7 +2792,7 @@ func (d *Data) transcodeBlock(b blockData) (out []byte, err error) {
 		if mapping, err = getMapping(d, b.v); err != nil {
 			return
 		}
-		if mapping != nil && mapping.exists(b.v) {
+		if mapping != nil && mapping.exists() {
 			doMapping = true
 		}
 	}
@@ -2828,7 +2828,7 @@ func (d *Data) transcodeBlock(b blockData) (out []byte, err error) {
 			return
 		}
 
-		if doMapping {
+		if !b.supervoxels {
 			modifyBlockMapping(b.v, &block, mapping)
 		}
 
@@ -2837,7 +2837,6 @@ func (d *Data) transcodeBlock(b blockData) (out []byte, err error) {
 			if err != nil {
 				return nil, err
 			}
-			outsize = uint32(len(out))
 		} else { // we are sending raw block data
 			uint64array, size := block.MakeLabelVolume()
 			expectedSize := d.BlockSize().(dvid.Point3d)
@@ -5609,7 +5608,7 @@ func (d *Data) GetLabelBytesWithScale(v dvid.VersionID, bcoord dvid.ChunkPoint3d
 			return nil, err
 		}
 	}
-	if mapping != nil && mapping.exists(v) {
+	if mapping != nil {
 		err = modifyBlockMapping(v, block, mapping)
 		if err != nil {
 			return nil, fmt.Errorf("unable to modify block %s mapping: %v", bcoord, err)
@@ -5709,13 +5708,13 @@ func (d *Data) GetLabelPoints(v dvid.VersionID, pts []dvid.Point3d, scale uint8,
 
 	// Get mapping.
 	var mapping *SVMap
-	var ancestry []uint8
+	var mappedVersions distFromRoot
 	if !useSupervoxels {
 		if mapping, err = getMapping(d, v); err != nil {
 			return nil, err
 		}
-		if mapping != nil && mapping.exists(v) {
-			ancestry, err = mapping.getAncestry(v)
+		if mapping != nil {
+			mappedVersions = mapping.getMappedVersionsDist(v)
 			if err != nil {
 				err = fmt.Errorf("unable to get ancestry for version %d: %v", v, err)
 				return
@@ -5735,8 +5734,8 @@ func (d *Data) GetLabelPoints(v dvid.VersionID, pts []dvid.Point3d, scale uint8,
 		wg.Add(1)
 		go func() {
 			for bptsI := range ch {
-				if len(ancestry) > 0 {
-					mapping.ApplyMappingToBlock(ancestry, bptsI.Block)
+				if len(mappedVersions) > 0 {
+					mapping.ApplyMappingToBlock(mappedVersions, bptsI.Block)
 				}
 				blockLabels := bptsI.Block.GetPointLabels(bptsI.pts)
 				labelsMu.Lock()
