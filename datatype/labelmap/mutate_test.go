@@ -837,11 +837,26 @@ func TestMergeLabels(t *testing.T) {
 	if err := json.Unmarshal(r, &svsizes); err != nil {
 		t.Errorf("Unable to parse supervoxel-sizes from server.  Got: %s\n", string(r))
 	}
-	if len(svsizes.Supervoxels) != 2 || svsizes.Supervoxels[0] != 2 || svsizes.Supervoxels[1] != 3 {
-		t.Errorf("expected [2,3] for supervoxels in body 2, got %v\n", svsizes.Supervoxels)
+	expectedSizes := map[uint64]uint64{
+		2: 50000,
+		3: 12000,
 	}
-	if len(svsizes.Sizes) != 2 || svsizes.Sizes[0] != 50000 || svsizes.Sizes[1] != 12000 {
-		t.Errorf("expected [50000, 12000] for supervoxel sizes in body 2, got %v\n", svsizes.Sizes)
+	if len(svsizes.Supervoxels) != 2 {
+		t.Fatalf("expected 2 sv return from supervoxel-sizes, got %d\n", len(svsizes.Supervoxels))
+	}
+	if len(svsizes.Sizes) != 2 {
+		t.Fatalf("expected 2 sv size return from supervoxel-sizes, got %d\n", len(svsizes.Sizes))
+	}
+	for i := 0; i < 2; i++ {
+		svlabel := svsizes.Supervoxels[i]
+		expectedSize, found := expectedSizes[svlabel]
+		if !found {
+			t.Fatalf("bad /supervoxel-sizes return. Got unexpected supervoxel %d\n", svlabel)
+		}
+		if expectedSize != svsizes.Sizes[i] {
+			t.Fatalf("bad /supervoxel-sizes return. Got unexpected size %d for supervoxel %d, expected %d\n",
+				svsizes.Sizes[i], svlabel, expectedSize)
+		}
 	}
 
 	// Make sure label changes are correct after completion

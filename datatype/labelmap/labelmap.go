@@ -961,11 +961,12 @@ GET <api URL>/node/<UUID>/<data name>/sizes[?supervoxels=true]
 
 GET <api URL>/node/<UUID>/<data name>/supervoxel-sizes/<label>
 
-	Returns the supervoxels and their sizes for the given label in JSON:
-
+	Returns the supervoxels and their sizes for the given label in JSON.
+	Although the position in the lists will match supervoxel label and size,
+	the supervoxels may not be ordered:
 	{
-		"supervoxels": [1,2,3,4,...],
-		"sizes": [100,200,300,400,...]
+		"supervoxels": [1,2,4,3,...],
+		"sizes": [100,200,400,300,...]
 	}
 
 	Returns a status code 404 (Not Found) if label does not exist.
