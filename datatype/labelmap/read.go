@@ -325,14 +325,12 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 // supervoxels to body labels
 func modifyBlockMapping(v dvid.VersionID, block *labels.Block, m *SVMap) error {
 	mappedVersions := m.getMappedVersionsDist(v)
-	fmt.Printf("modifyBlockMapping: version %d, mappedVersions %v\n", v, mappedVersions)
 	m.fmMu.RLock()
 	for i, label := range block.Labels {
 		mapped, found := m.mapLabel(label, mappedVersions)
 		if found {
 			block.Labels[i] = mapped
 		}
-		fmt.Printf("modifyBlockMapping: label %d, mapped %d, found %t\n", label, mapped, found)
 	}
 	m.fmMu.RUnlock()
 	return nil
