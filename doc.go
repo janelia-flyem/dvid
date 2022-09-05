@@ -1,10 +1,9 @@
 /*
-	DVID is a *distributed, versioned, image-oriented datastore* written in Go that supports different
-	storage backends, a Level 2 REST HTTP API, command-line access, and a FUSE frontend to at least
-	one of its data types.  It has been tested on both MacOS X and Linux (Fedora 16, CentOS 6) but not
-	on Windows.
+	DVID is a ***D**istributed, **V**ersioned, **I**mage-oriented **D**ataservice* written to support
+	neural reconstruction, analysis and visualization efforts at
+	[HHMI Janelia Research Center](http://www.janelia.org) using teravoxel-scale image volumes.
 
-	The starting point for DVID documentation is the README.md file in the DVID repo:
-	https://github.com/janelia-flyem/dvid#dvid-
+	The starting point for DVID documentation is the README.md file in the DVID github repo:
+	https://github.com/janelia-flyem/dvid
 */
 package main

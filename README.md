@@ -6,7 +6,7 @@ DVID       [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github
 
 DVID is a ***D**istributed, **V**ersioned, **I**mage-oriented **D**ataservice* written to support 
 neural reconstruction, analysis and visualization efforts at 
-[HHMI Janelia Research Center](http://www.janelia.org) using teravoxel-scale image volumes.  
+[HHMI Janelia Research Center](http://www.janelia.org) using teravoxel-scale image volumes.
 
 Its goal is to provide:
 
@@ -45,7 +45,7 @@ Users should install DVID from the [releases](https://github.com/janelia-flyem/d
 The main branch of DVID may include breaking changes required by
 our research work. 
 
-Developers should consult our [install README](https://github.com/janelia-flyem/dvid/blob/master/GUIDE.md)
+Developers should consult the [install README](https://github.com/janelia-flyem/dvid/blob/master/GUIDE.md)
 where our conda-based process is described.
 
 DVID has been tested on MacOS X, Linux (Fedora 16, CentOS 6, Ubuntu), and 
