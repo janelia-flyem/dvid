@@ -5,8 +5,10 @@ DVID       [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github
 [![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) 
 
 DVID is a ***D**istributed, **V**ersioned, **I**mage-oriented **D**ataservice* written to support 
-brain image reconstruction, analysis and visualization efforts at 
-[HHMI Janelia Research Center](http://www.janelia.org) .  Its goal is to provide:
+neural reconstruction, analysis and visualization efforts at 
+[HHMI Janelia Research Center](http://www.janelia.org) using teravoxel-scale image volumes.  
+
+Its goal is to provide:
 
 * A framework for thinking of distribution and versioning of large-scale scientific data 
 similar to distributed version control systems like [git](http://git-scm.com).
