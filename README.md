@@ -5,30 +5,29 @@ DVID       [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github
 [![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) 
 
 DVID is a ***D**istributed, **V**ersioned, **I**mage-oriented **D**ataservice* written to support 
-[Janelia Farm Research Center's](http://www.janelia.org) brain imaging, analysis and 
-visualization efforts.  It's goal is to provide:
+brain image reconstruction, analysis and visualization efforts at 
+[HHMI Janelia Research Center](http://www.janelia.org) .  Its goal is to provide:
 
-* A framework for thinking of distribution and versioning of data similar to distributed version 
-control systems like [git](http://git-scm.com).
-* Easily extensible *data types* that allow tailoring of access speeds, storage space, and APIs.
+* A framework for thinking of distribution and versioning of large-scale scientific data 
+similar to distributed version control systems like [git](http://git-scm.com).
+* Easily extensible *data types* that allow tailoring of APIs, access speeds, and storage space.
 * The ability to use a variety of storage systems by either creating a data type for that system 
 or using a storage engine, currently limited to ordered key/value databases.
-* A stable science-driven API that can be implemented either by native DVID data types and storage 
-engines or by proxying to other connectomics services like Google BrainMaps, BOSS, etc.
+* A stable science-driven HTTP API that can be implemented either by native DVID data types or by proxying to other services.
 
 ![High-level architecture of DVID](/images/dvid-highlevel.png)
 
 While much of the effort has been focused on the needs of the 
 [Janelia FlyEM Team](https://www.janelia.org/project-team/flyem), DVID can be used as a general-purpose
-branched versioning system that handles billions of files by creating instances of the **keyvalue** datatype.
-Our team uses the **keyvalue** datatype for storage of JSON, configuration, and other files using the simple
-key-value API that allows branched versioning.
+branched versioning file system that handles billions of files and terabytes of data by creating instances of 
+the **keyvalue** datatype. Our team uses the **keyvalue** datatype for branched versioning of JSON, configuration, 
+and other files using the simple key-value HTTP API.
 
 DVID aspires to be a "github for large-scale scientific data" because a variety of interrelated data
-(like image volume, labels, annotations, skeletons, meshes, and JSON data) can be versioned using 
-a composition of data APIs.  DVID currently handles branched versioning of large-scale data and
-does not provide domain-specific diff tools to compare data from versions, which would be a
-necessary step for user-friendly pull requests and truly collaborative data editing.
+(like image volume, labels, annotations, skeletons, meshes, and JSON data) can be versioned together.
+DVID currently handles branched versioning of large-scale data and does not provide domain-specific diff 
+tools to compare data from versions, which would be a necessary step for user-friendly pull requests and 
+truly collaborative data editing.
 
 ## Table of Contents
 
@@ -36,7 +35,7 @@ necessary step for user-friendly pull requests and truly collaborative data edit
 - [Basic Usage](#basic-usage)
 - [More Information](#more-information)
 - [Monitoring](#monitoring)
-- [DVID CLients](#known-dvid-clients)
+- [DVID Clients](#known-clients-with-dvid-support)
 
 ## Installation
 
@@ -97,11 +96,11 @@ until we understand the desired access patterns and API.  When we outgrow the *k
 GET, POST, and DELETE operations, we create a custom datatype package with a specialized HTTP API.
 
 DVID allows you to assign different storage systems to data instances within a single repo, 
-which allows great flexibility in optimizing storage for particular use cases.  
-For example, easily compressed label data can be store in fast, expensive SSDs while larger, 
+which allows great flexibility in optimizing storage for particular use cases.  For example, easily 
+compressed label data can be store in fast, expensive SSDs while larger, 
 immutable grayscale image data can be stored in petabyte-scale read-optimized systems.
 
-DVID is written in Go and supports different storage backends, a REST HTTP API,
+DVID is written in Go and supports pluggable storage backends, a REST HTTP API,
 and command-line access (likely minimized in near future).  Some components written in 
 C, e.g., storage engines like Leveldb and fast codecs like lz4, are embedded or linked as a library.
 
@@ -117,16 +116,20 @@ Command-line and HTTP API documentation can be
 found in [help constants within packages](https://github.com/janelia-flyem/dvid/blob/master/datatype/labelvol/labelvol.go#L34) or by visiting the **/api/help**
 HTTP endpoint on a running DVID server.
 
+# Known Clients with DVID Support
+
+Programmatic clients:
+* [neuclease](https://github.com/janelia-flyem/neuclease), python library from HHMI Janelia
+* [intern](https://bossdb.org/tools/intern), python library from Johns Hopkins APL 
+* [natverse](https://natverse.org/), R library from Jefferis Lab
+* [libdvid-cpp](https://github.com/janelia-flyem/libdvid-cpp), C++ library from HHMI Janelia FlyEM 
+
+GUI clients:
+* [Google neuroglancer](https://github.com/google/neuroglancer)
+* [neuTu](https://janelia-flyem.gitbook.io/neutu)
+* [Clio](https://github.com/clio-janelia/clio_website)
+
 Screenshot of an early web app prototype pulling neuron data and 2d slices from 3d grayscale data:
 
 ![Web app for 3d inspection being served from and sending requests to DVID](https://raw.githubusercontent.com/janelia-flyem/dvid/master/images/webapp.png)
 
-# Known DVID Clients
-
-Programmatic clients:
-* Python [neuclease](https://github.com/janelia-flyem/neuclease)
-
-Domain-specific GUI clients:
-* [neuTu](https://janelia-flyem.gitbook.io/neutu)
-* neu3
-* [Clio](https://github.com/clio-janelia/clio_website)
