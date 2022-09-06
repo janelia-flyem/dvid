@@ -12,12 +12,20 @@ Its goal is to provide:
 
 * A framework for thinking of distribution and versioning of large-scale scientific data 
 similar to distributed version control systems like [git](http://git-scm.com).
-* Easily extensible *data types* that allow tailoring of APIs, access speeds, and storage space.
-* The ability to use a variety of storage systems by either creating a data type for that system 
-or using a storage engine, currently limited to ordered key/value databases.
+* Easily extensible *data types* that allow tailoring of APIs, access speeds, and storage space for different kinds of data.
+* The ability to use a variety of storage systems via plugin storage engines, currently limited to systems that can be viewed as (preferably ordered) key-value stores.
 * A stable science-driven HTTP API that can be implemented either by native DVID data types or by proxying to other services.
 
 ![High-level architecture of DVID](/images/dvid-highlevel.png)
+
+How it's different from other forms of versioned data systems:
+
+* DVID handles large-scale data as in billions or more discrete units of data. Once you get to this scale, storing so many files can be difficult on a local file system or impose a lot of load even on shared file systems.  Cloud storage is always an option but that adds latency and doesn't reduce transfer time of such large numbers of files or data chunks. Database systems (including embedded ones) handle this by consolidating many bits of data into larger files. This can also be described as a [sharded data approach](https://github.com/google/neuroglancer/blob/master/src/neuroglancer/datasource/precomputed/sharded.md).
+* All versions are available for queries. There is no checkout to read committed data.
+* The high-level science API uses pluggable datatypes.  This allows clients to operate on domain-specific data and operations rather than operations on generic files.
+* Data can be flexibly assigned to difference types of storage, so tera- to peta-scale immutable imaging data can be kept in cloud storage while smaller, frequently mutated label data can be kept on fast local NVMe SSDs.
+* (Work in progress) A newer storage backend will allow "chained storage" such that data published at a particular version, say on AWS Open Data, could be reused for later versions with only new modifications stored locally.  This requires extending storage flexibility to versions of data across storage locations.
+
 
 While much of the effort has been focused on the needs of the 
 [Janelia FlyEM Team](https://www.janelia.org/project-team/flyem), DVID can be used as a general-purpose
