@@ -12,7 +12,7 @@ Its goal is to provide:
 
 * A framework for thinking of distribution and versioning of large-scale scientific data 
 similar to distributed version control systems like [git](http://git-scm.com).
-* Easily extensible *data types* that allow tailoring of APIs, access speeds, and storage space for different kinds of data.
+* Easily extensible *data types* (e.g., *annotation*, *keyvalue*, and *labelmap* in figure below) that allow tailoring of APIs, access speeds, and storage space for different kinds of data.
 * The ability to use a variety of storage systems via plugin storage engines, currently limited to systems that can be viewed as (preferably ordered) key-value stores.
 * A stable science-driven HTTP API that can be implemented either by native DVID data types or by proxying to other services.
 
@@ -58,7 +58,7 @@ where our conda-based process is described.
 
 DVID has been tested on MacOS X, Linux (Fedora 16, CentOS 6, Ubuntu), and 
 [Windows 10+ Bash Shell](https://msdn.microsoft.com/en-us/commandline/wsl/about). 
-It comes out-of-the-box with a several embedded key-value databases (Badger, Basho's leveldb)
+It comes out-of-the-box with several embedded key-value databases (Badger, Basho's leveldb)
 for storage although you can configure other storage backends.
 
 Before launching DVID, you'll have to [create a configuration file](https://github.com/janelia-flyem/dvid/wiki/Configuring-DVID)
@@ -114,6 +114,10 @@ DVID is written in Go and supports pluggable storage backends, a REST HTTP API,
 and command-line access (likely minimized in near future).  Some components written in 
 C, e.g., storage engines like Leveldb and fast codecs like lz4, are embedded or linked as a library.
 
+Command-line and HTTP API documentation can be 
+found in [help constants within packages](https://github.com/janelia-flyem/dvid/blob/master/datatype/labelmap/labelmap.go#L34) or by visiting the **/api/help**
+HTTP endpoint on a running DVID server.
+
 ## Monitoring
 
 Mutations and activity logging can be sent to a Kafka server.  We use kafka activity topics to feed Kibana
@@ -121,10 +125,6 @@ for analyzing DVID performance.
 
 ![Snapshot of Kibana web page for DVID metrics](https://raw.githubusercontent.com/janelia-flyem/dvid/master/images/dvid-kibana-example.png)
 
-
-Command-line and HTTP API documentation can be 
-found in [help constants within packages](https://github.com/janelia-flyem/dvid/blob/master/datatype/labelvol/labelvol.go#L34) or by visiting the **/api/help**
-HTTP endpoint on a running DVID server.
 
 # Known Clients with DVID Support
 
