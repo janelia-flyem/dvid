@@ -466,19 +466,6 @@ func (svm *SVMap) getMappedVersionsDist(v dvid.VersionID) distFromRoot {
 	return dist
 }
 
-func (svm *SVMap) ingestVersionMapping(v dvid.VersionID, fm map[uint64]uint64) {
-	svm.fmMu.Lock()
-	for origLabel, toLabel := range fm {
-		vm, found := svm.fm[origLabel]
-		if found {
-			svm.fm[origLabel] = vm.modify(v, toLabel, false)
-		} else {
-			svm.fm[origLabel] = createEncodedMapping(v, toLabel)
-		}
-	}
-	svm.fmMu.Unlock()
-}
-
 func (svm *SVMap) exists() bool {
 	svm.fmMu.RLock()
 	defer svm.fmMu.RUnlock()
@@ -495,29 +482,35 @@ func (svm *SVMap) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 	timedLog := dvid.NewTimeLog()
 
 	v := ancestors[0]
-	fm := map[uint64]uint64{}
 	var splits []proto.SupervoxelSplitOp
-	numMsgs := 0
+	numMsgs := map[string]uint64{
+		"Mapping":         0,
+		"Split":           0,
+		"SupervoxelSplit": 0,
+		"Cleave":          0,
+		"Renumber":        0,
+	}
+	// svm.fmMu.Lock()
+	// defer svm.fmMu.Unlock()
 	for msg := range ch { // expects channel to be closed on completion
-		numMsgs++
 		switch msg.EntryType {
 		case proto.MappingOpType:
+			numMsgs["Mapping"]++
 			var op proto.MappingOp
 			if err := pb.Unmarshal(msg.Data, &op); err != nil {
 				dvid.Errorf("unable to unmarshal mapping log message for version %d: %v\n", v, err)
-				wg.Done()
 				continue
 			}
 			mapped := op.GetMapped()
 			for _, supervoxel := range op.GetOriginal() {
-				fm[supervoxel] = mapped
+				svm.setMapping(v, supervoxel, mapped)
 			}
 
 		case proto.SplitOpType:
+			numMsgs["Split"]++
 			var op proto.SplitOp
 			if err := pb.Unmarshal(msg.Data, &op); err != nil {
 				dvid.Errorf("unable to unmarshal split log message for version %d: %v\n", v, err)
-				wg.Done()
 				continue
 			}
 			for supervoxel, svsplit := range op.GetSvsplits() {
@@ -528,14 +521,14 @@ func (svm *SVMap) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 					Splitlabel:  svsplit.Splitlabel,
 				}
 				splits = append(splits, rec)
-				fm[supervoxel] = 0
+				svm.setMapping(v, supervoxel, 0)
 			}
 
 		case proto.SupervoxelSplitType:
+			numMsgs["SupervoxelSplit"]++
 			var op proto.SupervoxelSplitOp
 			if err := pb.Unmarshal(msg.Data, &op); err != nil {
 				dvid.Errorf("unable to unmarshal split log message for version %d: %v\n", v, err)
-				wg.Done()
 				continue
 			}
 			rec := proto.SupervoxelSplitOp{
@@ -545,35 +538,37 @@ func (svm *SVMap) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 				Splitlabel:  op.Splitlabel,
 			}
 			splits = append(splits, rec)
-			fm[op.Supervoxel] = 0
+			svm.setMapping(v, op.Supervoxel, 0)
 
 		case proto.CleaveOpType:
+			numMsgs["Cleave"]++
 			var op proto.CleaveOp
 			if err := pb.Unmarshal(msg.Data, &op); err != nil {
 				dvid.Errorf("unable to unmarshal cleave log message for version %d: %v\n", v, err)
-				wg.Done()
 				continue
 			}
-			fm[op.Cleavedlabel] = 0
+			svm.setMapping(v, op.Cleavedlabel, 0)
 
 		case proto.RenumberOpType:
+			numMsgs["Renumber"]++
 			var op proto.RenumberOp
 			if err := pb.Unmarshal(msg.Data, &op); err != nil {
 				dvid.Errorf("unable to unmarshal renumber log message for version %d: %v\n", v, err)
-				wg.Done()
 				continue
 			}
 			// We don't set op.Target to 0 because it could be the ID of a supervoxel.
-			fm[op.Newlabel] = 0
+			svm.setMapping(v, op.Newlabel, 0)
 
 		default:
 		}
-		wg.Done()
 	}
 
-	// Ingest all this versions' mappings into the in-memory mapping
-	svm.ingestVersionMapping(v, fm)
+	svm.splitsMu.Lock()
+	svm.splits[v] = splits
+	svm.splitsMu.Unlock()
 	timedLog.Infof("Loaded mappings for data %q, version %d", dataname, v)
+	dvid.Infof("Mutations for version %d: %v\n", v, numMsgs)
+	wg.Done()
 }
 
 // makes sure that current map has been initialized with all forward mappings up to
@@ -581,6 +576,8 @@ func (svm *SVMap) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 // multiple times and it won't reload formerly visited ancestors because it initializes
 // the mapping from current version -> root.
 func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID, loadMutations bool) error {
+	svm.fmMu.Lock()
+	defer svm.fmMu.Unlock()
 	ancestors, err := datastore.GetAncestry(v)
 	if err != nil {
 		return err
@@ -595,11 +592,11 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID, loadMutations boo
 		svm.mappedVersionsMu.Unlock()
 
 		if loadMutations {
-			ch := make(chan storage.LogMessage, 100)
+			ch := make(chan storage.LogMessage, 1000)
 			wg := new(sync.WaitGroup)
 			go svm.loadVersionMapping(ancestors[pos:], d.DataName(), ch, wg)
 
-			if err = labels.StreamLog(d, ancestor, ch, wg); err != nil {
+			if err = labels.StreamLog(d, ancestor, ch, nil); err != nil {
 				return fmt.Errorf("problem loading mapping logs for data %q, version %d: %v", d.DataName(), ancestor, err)
 			}
 			wg.Wait()
