@@ -97,6 +97,10 @@ type ModInfo struct {
 	Time string
 }
 
+func (info ModInfo) String() string {
+	return fmt.Sprintf("User: '%s', App: '%s', Time: '%s'", info.User, info.App, info.Time)
+}
+
 // GetModInfo sets and returns a ModInfo using "u" query string.
 func GetModInfo(r *http.Request) ModInfo {
 	q := r.URL.Query()

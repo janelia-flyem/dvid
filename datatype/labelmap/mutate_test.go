@@ -859,11 +859,27 @@ func TestMergeLabels(t *testing.T) {
 		}
 	}
 
-	// Make sure label changes are correct after completion
-	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
-		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	// Make sure the index metadata is correct
+	indexURL := fmt.Sprintf("%snode/%s/labels/index/2?metadata-only=true", server.WebAPIPath, uuid)
+	respData := server.TestHTTP(t, "GET", indexURL, nil)
+	respJSON := struct {
+		NumVoxels   uint64 `json:"num_voxels"`
+		LastMutID   uint64 `json:"last_mutid"`
+		LastModTime string `json:"last_mod_time"`
+		LastModUser string `json:"last_mod_user"`
+		LastModApp  string `json:"last_mod_app"`
+	}{}
+	if err := json.Unmarshal(respData, &respJSON); err != nil {
+		t.Errorf("Expected JSON response.  Got %s\n", string(respData))
+	}
+	if respJSON.NumVoxels != 62000 {
+		t.Errorf("Expected num voxels %d, got %d\n", 50000, respJSON.NumVoxels)
+	}
+	if respJSON.LastModUser != "tester" {
+		t.Errorf("Expected LastModUser 'tester', got %v\n", respJSON)
 	}
 
+	// Make sure label changes are correct after completion
 	apiStr = fmt.Sprintf("%snode/%s/%s/labels", server.WebAPIPath, uuid, "labels")
 	jsonResp = server.TestHTTP(t, "GET", apiStr, bytes.NewBufferString(payload))
 	if err := json.Unmarshal(jsonResp, &labels); err != nil {

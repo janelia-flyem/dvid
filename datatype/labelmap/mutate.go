@@ -128,6 +128,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		targetIdx.LastModUser = info.User
 		targetIdx.LastModTime = info.Time
 		targetIdx.LastModApp = info.App
+		dvid.Infof("putting targetIdx with user %s\n", targetIdx.LastModUser)
 		if err = PutLabelIndex(d, v, op.Target, targetIdx); err != nil {
 			return
 		}

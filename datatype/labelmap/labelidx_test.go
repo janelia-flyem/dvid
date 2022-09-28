@@ -84,6 +84,22 @@ func TestIngest(t *testing.T) {
 		if !ok {
 			t.Errorf("Expeced index for label %d to have supervoxel %d, but wasn't present", label, label)
 		}
+
+		indexURL += "?metadata-only=true"
+		respData := server.TestHTTP(t, "GET", indexURL, nil)
+		respJSON := struct {
+			NumVoxels   uint64 `json:"num_voxels"`
+			LastMutID   uint64 `json:"last_mutid"`
+			LastModTime string `json:"last_mod_time"`
+			LastModUser string `json:"last_mod_user"`
+			LastModApp  string `json:"last_mod_app"`
+		}{}
+		if err := json.Unmarshal(respData, &respJSON); err != nil {
+			t.Errorf("Expected JSON response.  Got %s\n", string(respData))
+		}
+		if respJSON.NumVoxels != idx.NumVoxels() {
+			t.Errorf("Expected num voxels %d, got %d\n", idx.NumVoxels(), respJSON.NumVoxels)
+		}
 	}
 
 	checkReq := fmt.Sprintf("%snode/%s/labels/maxlabel", server.WebAPIPath, root)

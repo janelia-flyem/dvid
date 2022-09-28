@@ -1447,12 +1447,18 @@ POST <api URL>/node/<UUID>/<data name>/index/<label>
 	message LabelIndex {
 		map<uint64, SVCount> blocks = 1;  // key is encoded block coord ZYX (packed little-endian 21-bit numbers where MSB is sign flag)
 		uint64 label = 2;
-		uint64 last_mutid = 3;
+		uint64 last_mut_id = 3;
 		string last_mod_time = 4;  // string is time in RFC 3339 format
 		string last_mod_user = 5;
+		string last_mod_app = 6;
 	}
 
 	If the blocks map is empty on a POST, the label index is deleted.
+
+	Query-string options:
+
+		metadata-only: if "true" (default "false"), returns JSON object of num_voxels, last_mutid, last_mod_time, last_mod_user.
+
 	
 GET <api URL>/node/<UUID>/<data name>/listlabels[?queryopts]
 
@@ -4157,6 +4163,12 @@ func (d *Data) handleIngest(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 	timedLog.Infof("HTTP POST ingest-supervoxels %q, scale = %d", d.DataName(), scale)
 }
 
+func writeIndexMetadata(w http.ResponseWriter, idx *labels.Index) {
+	w.Header().Set("Content-type", "application/json")
+	fmt.Fprintf(w, `{"num_voxels":%d,"last_mod_time":%s,"last_mod_user":%s,"last_mod_app":%s}`,
+		idx.NumVoxels(), idx.LastModTime, idx.LastModUser, idx.LastModApp)
+}
+
 func (d *Data) handleIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
 	// GET  <api URL>/node/<UUID>/<data name>/index/<label>
 	// POST <api URL>/node/<UUID>/<data name>/index/<label>
@@ -4169,6 +4181,7 @@ func (d *Data) handleIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 		}
 		defer server.ThrottledOpDone()
 	}
+	metadata := (queryStrings.Get("metadata-only") == "true")
 
 	label, err := strconv.ParseUint(parts[4], 10, 64)
 	if err != nil {
@@ -4222,20 +4235,26 @@ func (d *Data) handleIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		serialization, err := pb.Marshal(idx)
-		if err != nil {
-			server.BadRequest(w, r, err)
-			return
-		}
-		w.Header().Set("Content-type", "application/octet-stream")
-		n, err := w.Write(serialization)
-		if err != nil {
-			server.BadRequest(w, r, err)
-			return
-		}
-		if n != len(serialization) {
-			server.BadRequest(w, r, "unable to write all %d bytes of serialized label %d index: only %d bytes written", len(serialization), label, n)
-			return
+		if metadata {
+			w.Header().Set("Content-type", "application/json")
+			fmt.Fprintf(w, `{"num_voxels":%d,"last_mutid":%d,"last_mod_time":"%s","last_mod_user":"%s","last_mod_app":"%s"}`,
+				idx.NumVoxels(), idx.LastMutId, idx.LastModTime, idx.LastModUser, idx.LastModApp)
+		} else {
+			serialization, err := pb.Marshal(idx)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			w.Header().Set("Content-type", "application/octet-stream")
+			n, err := w.Write(serialization)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			if n != len(serialization) {
+				server.BadRequest(w, r, "unable to write all %d bytes of serialized label %d index: only %d bytes written", len(serialization), label, n)
+				return
+			}
 		}
 
 	default:
