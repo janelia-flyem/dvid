@@ -587,7 +587,7 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID, loadMutations boo
 			svm.mappedVersionsMu.Unlock()
 			return nil // we have already loaded this version and its ancestors
 		}
-		svm.mappedVersions[v] = getDistFromRoot(ancestors[pos:])
+		svm.mappedVersions[ancestor] = getDistFromRoot(ancestors[pos:])
 		svm.mappedVersionsMu.Unlock()
 
 		if loadMutations {
