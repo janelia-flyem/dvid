@@ -2,8 +2,11 @@ package labelmap
 
 import (
 	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
+	"strconv"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -21,6 +24,50 @@ func (svm *SVMap) checkMapping(t *testing.T, mappedVersions distFromRoot, from, 
 	if mappedLabel != to {
 		t.Fatalf("expected mapping of %d -> %d, got %d\n", from, to, mappedLabel)
 	}
+}
+
+func checkMappings(t *testing.T, v dvid.VersionID, in io.Reader, expected map[uint64]uint64) {
+	r := csv.NewReader(in)
+	r.Comma = ' '
+	records, err := r.ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[uint64]uint64{}
+	var from, to uint64
+	for _, line := range records {
+		if len(line) == 2 {
+			if from, err = strconv.ParseUint(line[0], 10, 64); err != nil {
+				t.Fatal(err)
+			}
+			if to, err = strconv.ParseUint(line[1], 10, 64); err != nil {
+				t.Fatal(err)
+			}
+			got[from] = to
+		} else {
+			t.Fatalf("version %d: bad response received for mapping: %v\n", v, records)
+		}
+	}
+	if len(expected) != len(got) {
+		t.Fatalf("version %d: got mapping of size %d != expected %d: %v\n", v, len(got), len(expected), got)
+	}
+	for from, to := range got {
+		expectedTo, found := expected[from]
+		if !found || expectedTo != to {
+			t.Fatalf("version %d: expected %v not same as received mapping %v\n", v, expected, got)
+		}
+	}
+}
+
+func mapUpdate(m0, m1 map[uint64]uint64) map[uint64]uint64 {
+	out := map[uint64]uint64{}
+	for k, v := range m0 {
+		out[k] = v
+	}
+	for k, v := range m1 {
+		out[k] = v
+	}
+	return out
 }
 
 func TestSVMap(t *testing.T) {
@@ -81,6 +128,7 @@ func TestSVMap(t *testing.T) {
 	for from, to := range mapping2 {
 		svm.setMapping(v2, from, to)
 	}
+	expected2 := mapUpdate(mapping, mapping2)
 
 	// Make sure that the mapping is the new one
 	mappedVersions2 := svm.getMappedVersionsDist(v2)
@@ -118,6 +166,7 @@ func TestSVMap(t *testing.T) {
 	for from, to := range mapping3 {
 		svm.setMapping(v3, from, to)
 	}
+	expected3 := mapUpdate(mapping, mapping3)
 
 	// Make sure that the mapping is the new one
 	mappedVersions3 := svm.getMappedVersionsDist(v3)
@@ -136,4 +185,19 @@ func TestSVMap(t *testing.T) {
 		svm.checkMapping(t, mappedVersions, from, to)
 	}
 
+	// check mappings
+	buf := new(bytes.Buffer)
+	if err := d.writeMappings(buf, v, false, true); err != nil {
+		t.Fatal(err)
+	}
+	checkMappings(t, v, buf, mapping)
+	buf.Reset()
+	if err := d.writeMappings(buf, v2, false, true); err != nil {
+		t.Fatal(err)
+	}
+	checkMappings(t, v2, buf, expected2)
+	if err := d.writeMappings(buf, v3, false, true); err != nil {
+		t.Fatal(err)
+	}
+	checkMappings(t, v3, buf, expected3)
 }

@@ -490,8 +490,7 @@ func (svm *SVMap) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 		"Cleave":          0,
 		"Renumber":        0,
 	}
-	// svm.fmMu.Lock()
-	// defer svm.fmMu.Unlock()
+
 	for msg := range ch { // expects channel to be closed on completion
 		switch msg.EntryType {
 		case proto.MappingOpType:
@@ -594,6 +593,7 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID, loadMutations boo
 		if loadMutations {
 			ch := make(chan storage.LogMessage, 1000)
 			wg := new(sync.WaitGroup)
+			wg.Add(1)
 			go svm.loadVersionMapping(ancestors[pos:], d.DataName(), ch, wg)
 
 			if err = labels.StreamLog(d, ancestor, ch, nil); err != nil {

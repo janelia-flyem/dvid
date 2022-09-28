@@ -217,6 +217,7 @@ func (flogs *fileLogs) ReadBinary(dataID, version dvid.UUID) ([]byte, error) {
 }
 
 // StreamAll sends log messages down channel, adding one for each message to wait group if provided.
+// Closes given channel when streaming is done.
 func (flogs *fileLogs) StreamAll(dataID, version dvid.UUID, ch chan storage.LogMessage, wg *sync.WaitGroup) error {
 	k := string(dataID + "-" + version)
 	filename := filepath.Join(flogs.path, k)
@@ -264,10 +265,10 @@ func (flogs *fileLogs) StreamAll(dataID, version dvid.UUID, ch chan storage.LogM
 		}
 		ch <- storage.LogMessage{EntryType: entryType, Data: databuf}
 	}
-	close(ch)
 	f.Close()
 
 restart:
+	close(ch)
 	if found {
 		f2, err2 := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_APPEND|os.O_SYNC, 0755)
 		if err2 != nil {
