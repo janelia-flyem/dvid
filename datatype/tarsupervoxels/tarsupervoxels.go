@@ -1,5 +1,5 @@
 /*
-	Package tarsupervoxels implements DVID support for data blobs associated with supervoxels.
+   Package tarsupervoxels implements DVID support for data blobs associated with supervoxels.
 */
 package tarsupervoxels
 
@@ -49,20 +49,22 @@ Command-line:
 
 $ dvid repo <UUID> new tarsupervoxels <data name> <settings...>
 
-	Adds newly named supervoxels tar support to repo with specified UUID.
+    Adds newly named supervoxels tar support to repo with specified UUID.
 
-	Example:
+    Example:
 
-	$ dvid repo 3f8c new tarsupervoxels stuff
+    $ dvid repo 3f8c new tarsupervoxels stuff
 
-	Arguments:
+    Arguments:
 
-	UUID           Hexadecimal string with enough characters to uniquely identify a version node.
-	data name      Name of data to create, e.g., "supervoxel-meshes"
-	settings       Configuration settings in "key=value" format separated by spaces.
+    UUID           Hexadecimal string with enough characters to uniquely identify a version node.
+    data name      Name of data to create, e.g., "supervoxel-meshes"
+    settings       Configuration settings in "key=value" format separated by spaces.
+                   Example key/value: "Extension" is the expected extension for blobs uploaded.
+                       If no extension is given, it is "dat" by default.
+                       It could be set to "drc" for Google Draco file formats, for example.
 
-	
-	------------------
+    ------------------
 
 HTTP API (Level 2 REST):
 
@@ -72,24 +74,27 @@ to create or modify resources in an idempotent fashion.
 
 GET  <api URL>/node/<UUID>/<data name>/help
 
-	Returns data-specific help message.
+    Returns data-specific help message.
 
 
 GET  <api URL>/node/<UUID>/<data name>/info
 POST <api URL>/node/<UUID>/<data name>/info
 
-	Retrieves or puts data properties.
+    Retrieves or puts data properties.
 
-	Example: 
+    Example: 
 
-	GET <api URL>/node/3f8c/supervoxel-meshes/info
+    GET <api URL>/node/3f8c/supervoxel-meshes/info
 
-	Returns JSON with configuration settings.
+    Returns or posts JSON of configuration settings with the following optional tarsupervoxel-specific field:
 
-	Arguments:
+     "Extension"        Expected extension for blobs uploaded (default: "dat").
+                           Other common uses include "drc" for Google Draco file formats..
 
-	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
-	data name     Name of tarsupervoxels data instance.
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of tarsupervoxels data instance.
 
 
 POST <api URL>/node/<UUID>/<data name>/sync?<options>
@@ -99,122 +104,122 @@ POST <api URL>/node/<UUID>/<data name>/sync?<options>
 
     { "sync": "segmentation" }
 
-	To delete syncs, pass an empty string of names with query string "replace=true":
+    To delete syncs, pass an empty string of names with query string "replace=true":
 
-	{ "sync": "" }
+    { "sync": "" }
 
     The tarsupervoxels data type only accepts syncs to label instances that provide supervoxel info.
 
     GET Query-string Options:
 
     replace    Set to "true" if you want passed syncs to replace and not be appended to current syncs.
-			   Default operation is false.
+               Default operation is false.
 
 GET  <api URL>/node/<UUID>/<data name>/supervoxel/<id>
 POST <api URL>/node/<UUID>/<data name>/supervoxel/<id>
 DEL  <api URL>/node/<UUID>/<data name>/supervoxel/<id> 
 
-	Performs get, put or delete of data on a supervoxel depending on the HTTP verb.  
+    Performs get, put or delete of data on a supervoxel depending on the HTTP verb.  
 
-	Example: 
+    Example: 
 
-	GET <api URL>/node/3f8c/supervoxel-meshes/supervoxel/18473948
+    GET <api URL>/node/3f8c/supervoxel-meshes/supervoxel/18473948
 
-		Returns the data associated with the supervoxel 18473948 of instance "supervoxel-meshes".
+        Returns the data associated with the supervoxel 18473948 of instance "supervoxel-meshes".
 
-	POST <api URL>/node/3f8c/supervoxel-meshes/supervoxel/18473948
+    POST <api URL>/node/3f8c/supervoxel-meshes/supervoxel/18473948
 
-		Stores data associated with supervoxel 18473948 of instance 
-		"supervoxel-meshes".
+        Stores data associated with supervoxel 18473948 of instance 
+        "supervoxel-meshes".
 
-	The "Content-type" of the HTTP GET response and POST payload are "application/octet-stream" for arbitrary binary data.
+    The "Content-type" of the HTTP GET response and POST payload are "application/octet-stream" for arbitrary binary data.
 
-	Arguments:
+    Arguments:
 
-	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
-	data name     Name of tarsupervoxels data instance.
-	label         The supervoxel id.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of tarsupervoxels data instance.
+    label         The supervoxel id.
 
 GET  <api URL>/node/<UUID>/<data name>/tarfile/<label> 
 HEAD <api URL>/node/<UUID>/<data name>/tarfile/<label> 
 
-	GET returns a tarfile of all supervoxel data that has been mapped to the given label.
-	File names within the tarfile will be the supervoxel id and an extension.  HTTP status
-	code 400 (Bad Request) is returned if no such label exists.  If a supervoxel's data does 
-	not exist, a file will be returned named "X.missing" where X is the supervoxel id.
-	Note that HTTP status code 200 (OK) is usually returned if the streaming response
-	has been initiated, and if an error occurs during the return, there will be an ill-formed
-	tar file.  This is a tradeoff to allow streaming response.
+    GET returns a tarfile of all supervoxel data that has been mapped to the given label.
+    File names within the tarfile will be the supervoxel id and an extension.  HTTP status
+    code 400 (Bad Request) is returned if no such label exists.  If a supervoxel's data does 
+    not exist, a file will be returned named "X.missing" where X is the supervoxel id.
+    Note that HTTP status code 200 (OK) is usually returned if the streaming response
+    has been initiated, and if an error occurs during the return, there will be an ill-formed
+    tar file.  This is a tradeoff to allow streaming response.
 
-	HEAD returns 200 if the body exists and all supervoxels have stored data, even if it is
-	a zero length value.  HTTP status code 400 (Bad Request) is returned if no such label 
-	exists, or one of the label's supervoxels has no associated data, or there was an error.
-	NOTE that a HEAD bad request response does not mean the corresponding GET will also 
-	fail since the corresponding GET will include placeholders for missing supervoxel files.
+    HEAD returns 200 if the body exists and all supervoxels have stored data, even if it is
+    a zero length value.  HTTP status code 400 (Bad Request) is returned if no such label 
+    exists, or one of the label's supervoxels has no associated data, or there was an error.
+    NOTE that a HEAD bad request response does not mean the corresponding GET will also 
+    fail since the corresponding GET will include placeholders for missing supervoxel files.
 
-	Example: 
+    Example: 
 
-	GET <api URL>/node/3f8c/supervoxel-meshes/tarfile/18473948
+    GET <api URL>/node/3f8c/supervoxel-meshes/tarfile/18473948
 
-	The "Content-type" of the HTTP response is "application/tar".
+    The "Content-type" of the HTTP response is "application/tar".
 
-	Arguments:
+    Arguments:
 
-	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
-	data name     Name of tarsupervoxels data instance.
-	label         The label (body) id.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of tarsupervoxels data instance.
+    label         The label (body) id.
 
 GET  <api URL>/node/<UUID>/<data name>/missing/<label> 
 
-	Returns a JSON array of all of the label's supervoxels with missing data:
+    Returns a JSON array of all of the label's supervoxels with missing data:
 
-	[181739,3819485677]
+    [181739,3819485677]
 
-	If none of the label's supervoxels are missing, it returns an empty array "[]".
+    If none of the label's supervoxels are missing, it returns an empty array "[]".
 
-	Example: 
+    Example: 
 
-	GET <api URL>/node/3f8c/supervoxel-meshes/missing/18473948
+    GET <api URL>/node/3f8c/supervoxel-meshes/missing/18473948
 
-	The "Content-type" of the HTTP response is "application/json".
+    The "Content-type" of the HTTP response is "application/json".
 
-	Arguments:
+    Arguments:
 
-	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
-	data name     Name of tarsupervoxels data instance.
-	label         The label (body) id.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of tarsupervoxels data instance.
+    label         The label (body) id.
 
 
 
 GET  <api URL>/node/<UUID>/<data name>/exists 
 
-	Returns the existence of data associated with supervoxels.  Expects JSON
-	for the list of supervoxels in the body of the request:
+    Returns the existence of data associated with supervoxels.  Expects JSON
+    for the list of supervoxels in the body of the request:
 
-	[ 1, 2, 3, ... ]
+    [ 1, 2, 3, ... ]
 
-	Returns JSON for the existence of data stored for each of the above supervoxels:
+    Returns JSON for the existence of data stored for each of the above supervoxels:
 
-	[ true, false, true, ... ]
+    [ true, false, true, ... ]
 
-	Arguments:
-	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
-	data name     Name of tarsupervoxels instance.
+    Arguments:
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of tarsupervoxels instance.
 
-	Query-string Options:
+    Query-string Options:
 
-	hash          MD5 hash of request body content in hexidecimal string format.
-	
+    hash          MD5 hash of request body content in hexidecimal string format.
+    
 POST <api URL>/node/<UUID>/<data name>/load
 
-	Allows bulk-loading of tarfile with supervoxels data.  Each tarred file should
-	have the supervoxel id as the filename *minus* the extension, e.g., 18491823.dat
-	would be stored under supervoxel 18491823.
+    Allows bulk-loading of tarfile with supervoxels data.  Each tarred file should
+    have the supervoxel id as the filename *minus* the extension, e.g., 18491823.dat
+    would be stored under supervoxel 18491823.
 
-	Arguments:
+    Arguments:
 
-	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
-	data name     Name of tarsupervoxels data instance.
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of tarsupervoxels data instance.
 
 `
 
@@ -293,6 +298,22 @@ type Data struct {
 	// Extension is the expected extension for blobs uploaded.
 	// If no extension is given, it is "dat" by default.
 	Extension string
+}
+
+// --- Override of DataService interface ---
+
+func (d *Data) modifyConfig(config dvid.Config) error {
+	if err := d.Data.ModifyConfig(config); err != nil {
+		return err
+	}
+	s, found, err := config.GetString("Extension")
+	if err != nil {
+		return err
+	}
+	if found {
+		d.Extension = s
+	}
+	return nil
 }
 
 func (d *Data) getSyncedLabels() mappedLabelType {
@@ -790,14 +811,31 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		return
 
 	case "info":
-		jsonStr, err := d.JSONString()
-		if err != nil {
-			server.BadRequest(w, r, err)
+		if action == "post" {
+			config, err := server.DecodeJSON(r)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			if err := d.modifyConfig(config); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			if err := datastore.SaveDataByUUID(uuid, d); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			fmt.Fprintf(w, "Changed '%s' based on received configuration:\n%s\n", d.DataName(), config)
 			return
+		} else {
+			jsonBytes, err := d.JSONString()
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, string(jsonBytes))
 		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, jsonStr)
-		return
 
 	case "sync":
 		if action != "post" {
