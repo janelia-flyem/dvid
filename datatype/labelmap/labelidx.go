@@ -1588,7 +1588,7 @@ func (d *Data) writeMappings(w io.Writer, v dvid.VersionID, binaryFormat, consis
 		label, present := vm.value(mappedVersions)
 		if present {
 			numMappings++
-			if supervoxel != label && label != 0 {
+			if supervoxel != label {
 				var err error
 				if binaryFormat {
 					err = binary.Write(w, binary.LittleEndian, supervoxel)
