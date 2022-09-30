@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -950,7 +951,7 @@ func (m *repoManager) matchingUUID(str string) (dvid.UUID, dvid.VersionID, error
 		}
 	}
 	m.idMutex.RUnlock()
-	var err error
+
 	if numMatches > 1 {
 		return dvid.NilUUID, 0, fmt.Errorf("more than one UUID matches %s", str)
 	} else if numMatches == 0 {
@@ -958,24 +959,9 @@ func (m *repoManager) matchingUUID(str string) (dvid.UUID, dvid.VersionID, error
 	}
 
 	if len(branch) != 0 {
-		repo, found := m.repos[bestUUID]
-		if !found {
-			return dvid.NilUUID, 0, fmt.Errorf("matched UUID %q not found among repos", bestUUID)
-		}
-		root := string(repo.uuid)
-
-		m.branchMutex.RLock()
-		bestUUID, found = m.branchToUUID[root+branch]
-		m.branchMutex.RUnlock()
-		if found {
-			bestVersion, found = m.uuidToVersion[bestUUID]
-			if !found {
-				err := fmt.Errorf("branch %q had leaf UUID (%s) without a version ID", str, bestUUID)
-				return dvid.NilUUID, 0, err
-			}
-		}
+		return m.getBranchVersion(bestUUID, branch)
 	}
-	return bestUUID, bestVersion, err
+	return bestUUID, bestVersion, nil
 }
 
 // addRepo adds a preallocated repo with valid local instance and version IDs to
@@ -1252,6 +1238,46 @@ func (m *repoManager) getBranchVersions(uuid dvid.UUID, name string) ([]dvid.UUI
 		return nil, err
 	}
 	return r.dag.getAncestryByBranch(name)
+}
+
+// parse implicit HEAD request as well as positional parents via "~X" for the Xth parent of HEAD.
+func (m *repoManager) getBranchVersion(uuid dvid.UUID, name string) (dvid.UUID, dvid.VersionID, error) {
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return dvid.NilUUID, 0, err
+	}
+
+	var branchUUID dvid.UUID
+	splits := strings.Split(name, "~")
+	if len(splits) == 2 {
+		name = splits[0]
+		uuidAncestry, err := r.dag.getAncestryByBranch(name)
+		if err != nil {
+			return dvid.NilUUID, 0, err
+		}
+		parent, err := strconv.Atoi(splits[1])
+		if err != nil {
+			return dvid.NilUUID, 0, fmt.Errorf("can't parse parent %q in branch %q", splits[1], name)
+		}
+		if parent >= len(uuidAncestry) {
+			return dvid.NilUUID, 0, fmt.Errorf("parent %d is out of range for branch %q", parent, name)
+		}
+		branchUUID = uuidAncestry[parent]
+	} else {
+		var found bool
+		m.branchMutex.RLock()
+		branchUUID, found = m.branchToUUID[string(r.uuid)+name]
+		m.branchMutex.RUnlock()
+		if !found {
+			return dvid.NilUUID, 0, fmt.Errorf("branch %q not found in repo %q", name, uuid)
+		}
+	}
+	branchV, found := m.uuidToVersion[branchUUID]
+	if !found {
+		err := fmt.Errorf("branch %q had leaf UUID (%s) without a version ID", name, branchUUID)
+		return dvid.NilUUID, 0, err
+	}
+	return branchUUID, branchV, nil
 }
 
 func (m *repoManager) getRepoAlias(uuid dvid.UUID) (string, error) {
