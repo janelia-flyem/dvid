@@ -22,6 +22,9 @@ const (
 	keyStandard = 177
 )
 
+var MinTKey = storage.MinTKey(keyStandard)
+var MaxTKey = storage.MaxTKey(keyStandard)
+
 // DescribeTKeyClass returns a string explanation of what a particular TKeyClass
 // is used for.  Implements the datastore.TKeyClassDescriber interface.
 func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {

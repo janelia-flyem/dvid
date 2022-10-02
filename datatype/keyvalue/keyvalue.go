@@ -815,6 +815,49 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	return
 }
 
+// StreamKV returns a channel immediately and asynchronously sends all key-value data through
+// the channel, closing it when all the data has been sent.
+func (d *Data) StreamKV(ctx *datastore.VersionedCtx) (chan storage.KeyValue, error) {
+	ch := make(chan storage.KeyValue)
+
+	db, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return nil, err
+	}
+	go func(ch chan storage.KeyValue) {
+		err := db.ProcessRange(ctx, MinTKey, MaxTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+			if c == nil || c.TKeyValue == nil {
+				return nil
+			}
+			kv := c.TKeyValue
+			if kv.V == nil {
+				return nil
+			}
+			key, err := DecodeTKey(kv.K)
+			if err != nil {
+				return err
+			}
+			uncompress := true
+			val, _, err := dvid.DeserializeData(kv.V, uncompress)
+			if err != nil {
+				return fmt.Errorf("unable to deserialize data for key %q: %v", key, err)
+			}
+			ch <- storage.KeyValue{
+				K: storage.Key(key),
+				V: val,
+			}
+
+			return nil
+		})
+		if err != nil {
+			dvid.Errorf("error during streaming of data for keyvalue instance %q: %v\n", d.DataName(), err)
+		}
+		close(ch)
+	}(ch)
+
+	return ch, nil
+}
+
 func (d *Data) sendJSONValuesInRange(w http.ResponseWriter, r *http.Request, ctx *datastore.VersionedCtx, keyBeg, keyEnd string) (numKeys int, err error) {
 	tarOut := (r.URL.Query().Get("jsontar") == "true") || (r.URL.Query().Get("tar") == "true")
 	jsonOut := r.URL.Query().Get("json") == "true"

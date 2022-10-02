@@ -28,6 +28,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/proto"
+	"github.com/janelia-flyem/dvid/datatype/keyvalue"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
@@ -89,6 +90,16 @@ $ dvid -stdin node <UUID> <data name> put <key> < data
 
 	Puts stdin data into the neuronjson data instance under the given key.
 
+$ dvid node <UUID> <dataname> importKV <keyvalue instance name>
+
+	Imports the data from a keyvalue instance within the same repo.
+
+	Example:
+
+	$ dvid repo 3f8c myNeuronJSON importKV myOldKV
+
+	The above imports data from the keyvalue instance "myOldKV" into the neuronjson
+	instance "myNeuronJSON".
 	
 	------------------
 
@@ -743,6 +754,101 @@ func (d *Data) loadData(ctx *datastore.VersionedCtx, docStore DocIterator) error
 // the in-memory keyvalue store where the values are neuron annotation JSON.
 func (d *Data) InitDataHandlers() error {
 	d.db = make(map[uint64]map[string]interface{})
+	return nil
+}
+
+type kvType interface {
+	DataName() dvid.InstanceName
+	StreamKV(ctx *datastore.VersionedCtx) (chan storage.KeyValue, error)
+}
+
+func (d *Data) loadFromKV(ctx *datastore.VersionedCtx, kvData kvType) {
+	tlog := dvid.NewTimeLog()
+
+	db, err := datastore.GetKeyValueDB(d)
+	if err != nil {
+		dvid.Criticalf("unable to get keyvalue database: %v", err)
+		return
+	}
+
+	d.dbMu.Lock() // Note that mutex is NOT unlocked if firestore DB doesn't load because we don't want
+	defer d.dbMu.Unlock()
+
+	d.db = make(map[uint64]map[string]interface{})
+	d.fields = make(map[string]struct{})
+
+	ch, err := kvData.StreamKV(ctx)
+	if err != nil {
+		dvid.Errorf("Error in getting stream of data from keyvalue instance %q: %v\n", kvData.DataName(), err)
+		return
+	}
+	numLoaded := 0
+	numFromKV := 0
+	for kv := range ch {
+		key := string(kv.K)
+		numFromKV++
+		bodyid, err := strconv.ParseUint(key, 10, 64)
+		if err != nil {
+			dvid.Errorf("Received non-integer key %q during neuronjson load from keyvalue: ignored\n", key)
+			continue
+		}
+
+		var annotation map[string]interface{}
+		if err := json.Unmarshal(kv.V, &annotation); err != nil {
+			dvid.Errorf("Unable to decode annotation for bodyid %d, skipping: %v\n", bodyid, err)
+			continue
+		}
+
+		// Persist to the store
+		tk, err := NewTKey(key)
+		if err != nil {
+			dvid.Errorf("Unable to encode neuronjson %q key %q, skipping: %v\n", d.DataName(), key, err)
+			continue
+		}
+		if err := db.Put(ctx, tk, kv.V); err != nil {
+			dvid.Errorf("Unable to persist neuronjson %q body id %d annotation, skipping: %v\n", d.DataName(), bodyid, err)
+			continue
+		}
+
+		// Add to in-memory annotations db
+		d.db[bodyid] = annotation
+		d.ids = append(d.ids, bodyid)
+		for field := range annotation {
+			d.fields[field] = struct{}{}
+		}
+
+		numLoaded++
+		if numLoaded%1000 == 0 {
+			tlog.Infof("Loaded %d annotations into neuronjson instance %q", numLoaded, d.DataName())
+		}
+	}
+	sort.Slice(d.ids, func(i, j int) bool { return d.ids[i] < d.ids[j] })
+	errored := numFromKV - numLoaded
+	tlog.Infof("Completed loading of %d annotations into neuronjson instance %q (%d skipped)",
+		numLoaded, d.DataName(), errored)
+}
+
+func (d *Data) importKV(request datastore.Request, reply *datastore.Response) error {
+	if len(request.Command) < 5 {
+		return fmt.Errorf("keyvalue instance name must be specified after importKV")
+	}
+	var uuidStr, dataName, cmdStr, kvName string
+	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &kvName)
+
+	uuid, versionID, err := datastore.MatchingUUID(uuidStr)
+	if err != nil {
+		return err
+	}
+	vctx := datastore.NewVersionedCtx(d, versionID)
+
+	sourceKV, err := keyvalue.GetByUUIDName(uuid, dvid.InstanceName(kvName))
+	if err != nil {
+		return err
+	}
+	go d.loadFromKV(vctx, sourceKV)
+
+	reply.Output = []byte(fmt.Sprintf("Started loading from keyvalue instance %q into neuronjson instance %q, uuid %s\n",
+		kvName, d.DataName(), uuidStr))
 	return nil
 }
 
@@ -1563,7 +1669,9 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	switch request.TypeCommand() {
 	case "put":
 		return d.put(request, reply)
-	case "ingest":
+	case "importKV":
+		return d.importKV(request, reply)
+	case "importFilestore":
 		return d.loadFirestoreDB(request, reply)
 	default:
 		return fmt.Errorf("unknown command.  Data '%s' [%s] does not support '%s' command",
