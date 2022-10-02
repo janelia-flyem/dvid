@@ -90,13 +90,13 @@ $ dvid -stdin node <UUID> <data name> put <key> < data
 
 	Puts stdin data into the neuronjson data instance under the given key.
 
-$ dvid node <UUID> <dataname> importKV <keyvalue instance name>
+$ dvid node <UUID> <dataname> import-kv <keyvalue instance name>
 
 	Imports the data from a keyvalue instance within the same repo.
 
 	Example:
 
-	$ dvid repo 3f8c myNeuronJSON importKV myOldKV
+	$ dvid repo 3f8c myNeuronJSON import-kv myOldKV
 
 	The above imports data from the keyvalue instance "myOldKV" into the neuronjson
 	instance "myNeuronJSON".
@@ -1669,12 +1669,12 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	switch request.TypeCommand() {
 	case "put":
 		return d.put(request, reply)
-	case "importKV":
+	case "import-kv":
 		return d.importKV(request, reply)
-	case "importFilestore":
+	case "import-filestore":
 		return d.loadFirestoreDB(request, reply)
 	default:
-		return fmt.Errorf("unknown command.  Data '%s' [%s] does not support '%s' command",
+		return fmt.Errorf("unknown command.  Data %q [%s] does not support %q command",
 			d.DataName(), d.TypeName(), request.TypeCommand())
 	}
 }
