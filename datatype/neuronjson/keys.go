@@ -27,6 +27,9 @@ const (
 	keySchemaBatch = 181
 )
 
+var MinAnnotationTKey = storage.MinTKey(keyAnnotation)
+var MaxAnnotationTKey = storage.MaxTKey(keyAnnotation)
+
 // DescribeTKeyClass returns a string explanation of what a particular TKeyClass
 // is used for.  Implements the datastore.TKeyClassDescriber interface.
 func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {

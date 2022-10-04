@@ -687,6 +687,77 @@ func getBodyID(data map[string]interface{}) (uint64, error) {
 	return uint64(bodyid), nil
 }
 
+// Initialize loads mutable properties of the neuronjson data instance,
+// which in this case is the in-memory neuron json map for the HEAD version.
+func (d *Data) Initialize() {
+	tlog := dvid.NewTimeLog()
+
+	leafMain := string(d.RootUUID()) + ":master"
+	leafUUID, leafV, err := datastore.MatchingUUID(leafMain)
+	if err != nil {
+		dvid.Criticalf("Can't find the leaf node of the main/master branch: %v", err)
+		return
+	}
+	dvid.Infof("Loading neuron annotations JSON into memory for neuronjson %q ...\n", d.DataName())
+	ctx := datastore.NewVersionedCtx(d, leafV)
+
+	d.dbMu.Lock()
+	defer d.dbMu.Unlock()
+
+	d.db = make(map[uint64]map[string]interface{})
+	d.fields = make(map[string]struct{})
+	d.ids = []uint64{}
+
+	db, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		dvid.Criticalf("Can't setup ordered keyvalue db for neuronjson %q: %v", d.DataName(), err)
+		return
+	}
+
+	numLoaded := 0
+	err = db.ProcessRange(ctx, MinAnnotationTKey, MaxAnnotationTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+		if c == nil || c.TKeyValue == nil {
+			return nil
+		}
+		kv := c.TKeyValue
+		if kv.V == nil {
+			return nil
+		}
+		key, err := DecodeTKey(kv.K)
+		if err != nil {
+			return err
+		}
+
+		bodyid, err := strconv.ParseUint(key, 10, 64)
+		if err != nil {
+			return fmt.Errorf("received non-integer key %q during neuronjson load from database: %v", key, err)
+		}
+
+		var annotation map[string]interface{}
+		if err := json.Unmarshal(kv.V, &annotation); err != nil {
+			return fmt.Errorf("unable to decode annotation for bodyid %d, skipping: %v", bodyid, err)
+		}
+
+		d.db[bodyid] = annotation
+		d.ids = append(d.ids, bodyid)
+		for field := range annotation {
+			d.fields[field] = struct{}{}
+		}
+
+		numLoaded++
+		if numLoaded%1000 == 0 {
+			tlog.Infof("Loaded %d annotations into neuronjson instance %q", numLoaded, d.DataName())
+		}
+		return nil
+	})
+	if err != nil {
+		dvid.Criticalf("Error on loading neuron annotations from database into neuronjson %q: %v\n", d.DataName(), err)
+	}
+	sort.Slice(d.ids, func(i, j int) bool { return d.ids[i] < d.ids[j] })
+	tlog.Infof("Completed loading of %d annotations into neuronjson instance %q HEAD version %s",
+		numLoaded, d.DataName(), string(leafUUID[:6]))
+}
+
 // Load documents into backing store and in-memory database.
 func (d *Data) loadData(ctx *datastore.VersionedCtx, docStore DocIterator) error {
 	tlog := dvid.NewTimeLog()
