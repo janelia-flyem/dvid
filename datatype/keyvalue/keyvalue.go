@@ -817,13 +817,14 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 // StreamKV returns a channel immediately and asynchronously sends all key-value data through
 // the channel, closing it when all the data has been sent.
-func (d *Data) StreamKV(ctx *datastore.VersionedCtx) (chan storage.KeyValue, error) {
+func (d *Data) StreamKV(v dvid.VersionID) (chan storage.KeyValue, error) {
 	ch := make(chan storage.KeyValue)
 
 	db, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return nil, err
 	}
+	ctx := datastore.NewVersionedCtx(d, v)
 	go func(ch chan storage.KeyValue) {
 		err := db.ProcessRange(ctx, MinTKey, MaxTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
 			if c == nil || c.TKeyValue == nil {
@@ -852,6 +853,7 @@ func (d *Data) StreamKV(ctx *datastore.VersionedCtx) (chan storage.KeyValue, err
 		if err != nil {
 			dvid.Errorf("error during streaming of data for keyvalue instance %q: %v\n", d.DataName(), err)
 		}
+		dvid.Infof("Closing channel for StreamKV on %v\n", ctx)
 		close(ch)
 	}(ch)
 

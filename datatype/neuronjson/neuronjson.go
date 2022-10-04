@@ -759,10 +759,10 @@ func (d *Data) InitDataHandlers() error {
 
 type kvType interface {
 	DataName() dvid.InstanceName
-	StreamKV(ctx *datastore.VersionedCtx) (chan storage.KeyValue, error)
+	StreamKV(v dvid.VersionID) (chan storage.KeyValue, error)
 }
 
-func (d *Data) loadFromKV(ctx *datastore.VersionedCtx, kvData kvType) {
+func (d *Data) loadFromKV(v dvid.VersionID, kvData kvType) {
 	tlog := dvid.NewTimeLog()
 
 	db, err := datastore.GetKeyValueDB(d)
@@ -777,11 +777,12 @@ func (d *Data) loadFromKV(ctx *datastore.VersionedCtx, kvData kvType) {
 	d.db = make(map[uint64]map[string]interface{})
 	d.fields = make(map[string]struct{})
 
-	ch, err := kvData.StreamKV(ctx)
+	ch, err := kvData.StreamKV(v)
 	if err != nil {
 		dvid.Errorf("Error in getting stream of data from keyvalue instance %q: %v\n", kvData.DataName(), err)
 		return
 	}
+	ctx := datastore.NewVersionedCtx(d, v)
 	numLoaded := 0
 	numFromKV := 0
 	for kv := range ch {
@@ -839,13 +840,12 @@ func (d *Data) importKV(request datastore.Request, reply *datastore.Response) er
 	if err != nil {
 		return err
 	}
-	vctx := datastore.NewVersionedCtx(d, versionID)
 
 	sourceKV, err := keyvalue.GetByUUIDName(uuid, dvid.InstanceName(kvName))
 	if err != nil {
 		return err
 	}
-	go d.loadFromKV(vctx, sourceKV)
+	go d.loadFromKV(versionID, sourceKV)
 
 	reply.Output = []byte(fmt.Sprintf("Started loading from keyvalue instance %q into neuronjson instance %q, uuid %s\n",
 		kvName, d.DataName(), uuidStr))
