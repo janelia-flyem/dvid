@@ -19,7 +19,6 @@ import (
 	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
-	"google.golang.org/api/iterator"
 )
 
 var (
@@ -42,39 +41,6 @@ var sampleData = map[uint64]string{
 	3003: `"bodyid": 3003, "position": [303, 301, 303], "avg_location": "303, 304, 305", "_user": "third@gmail.com", "_timestamp": 1619751219.934025, "class": "9B", "tags": ["group3"]`,
 }
 
-// ---- Test stub for DocGetter and DocIterator instead of firestore Client
-
-type testDocGetter struct {
-	index int
-}
-
-func (dg *testDocGetter) Data() (value map[string]interface{}) {
-	if dg.index < 0 || dg.index >= len(sampleData) {
-		return
-	}
-	data := sampleData[uint64(dg.index)]
-	if err := json.Unmarshal([]byte(data), &value); err != nil {
-		dvid.Errorf("unable to unmarshal JSON data: %s (error = %q)\n", data, err)
-		return nil
-	}
-	return
-}
-
-type testIterator struct {
-	index int
-}
-
-func (ti *testIterator) Next() (DocGetter, error) {
-	if ti.index >= len(sampleData) {
-		return nil, iterator.Done
-	}
-	doc := &testDocGetter{index: ti.index}
-	ti.index++
-	return doc, nil
-}
-
-func (ti *testIterator) Close() {}
-
 // Sets package-level testRepo and TestVersionID
 func initTestRepo() (dvid.UUID, dvid.VersionID) {
 	testMu.Lock()
@@ -89,51 +55,6 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 	return datastore.NewTestRepo()
 }
 
-func equalJSON(vx, vy interface{}) bool {
-	if reflect.TypeOf(vx) != reflect.TypeOf(vy) {
-		return false
-	}
-	switch x := vx.(type) {
-	case map[string]interface{}:
-		y := vy.(map[string]interface{})
-		if len(x) != len(y) {
-			return false
-		}
-		for k, v := range x {
-			val2 := y[k]
-			if (v == nil) != (val2 == nil) {
-				return false
-			}
-			if !equalJSON(v, val2) {
-				return false
-			}
-		}
-		return true
-
-	case []interface{}:
-		y := vy.([]interface{})
-		if len(x) != len(y) {
-			return false
-		}
-		var matches int
-		flagged := make([]bool, len(y))
-		for _, v := range x {
-			for i, v2 := range y {
-				if equalJSON(v, v2) && !flagged[i] {
-					matches++
-					flagged[i] = true
-
-					break
-				}
-			}
-		}
-		return matches == len(x)
-
-	default:
-		return vx == vy
-	}
-}
-
 // equalObjectJSON compares two []byte of JSON objects, ignoring ordering.
 func equalObjectJSON(x, y []byte) bool {
 	var vx, vy map[string]interface{}
@@ -143,7 +64,36 @@ func equalObjectJSON(x, y []byte) bool {
 	if err := json.Unmarshal(y, &vy); err != nil {
 		return false
 	}
-	return equalJSON(vx, vy)
+	return reflect.DeepEqual(vx, vy)
+}
+
+// equalListJSON compares two []byte of JSON lists.
+func equalListJSON(x, y []byte) bool {
+	var vx, vy []map[string]interface{}
+	if err := json.Unmarshal(x, &vx); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(y, &vy); err != nil {
+		return false
+	}
+	if len(vx) != len(vy) {
+		return false
+	}
+	if len(vx) == 0 {
+		return true // both have 0 objects.
+	}
+	fmt.Printf("vx: %v\n", vx)
+	fmt.Printf("vy: %v\n", vy)
+	if len(vx) == 1 && reflect.DeepEqual(vx[0], vy[0]) {
+		return true
+	}
+	if len(vx) == 2 {
+		if reflect.DeepEqual(vx[0], vy[0]) && reflect.DeepEqual(vx[1], vy[1]) {
+			return true
+		}
+		return reflect.DeepEqual(vx[0], vy[1]) && reflect.DeepEqual(vx[1], vy[0])
+	}
+	return false
 }
 
 // Make sure new neuronjson data have different IDs.
@@ -347,6 +297,34 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 	if len(retrievedKeys) != 3 || retrievedKeys[0] != key1 && retrievedKeys[1] != key2 && retrievedKeys[2] != key3 {
 		t.Errorf("Bad all key request return.  Expected: [%q,%q,%q].  Got: %s\n",
 			key3, key2, key1, string(returnValue))
+	}
+
+	// Check query
+	query := `{"a string": ["moo", "goo"]}`
+	queryreq := fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
+	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
+
+	expectedValue := []byte("[" + value2 + "," + value3 + "]")
+	if !equalListJSON(returnValue, expectedValue) {
+		t.Errorf("Bad query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+	}
+
+	query = `{"a string": ["moo", "goo"], "a number": 2345}`
+	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
+	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
+
+	expectedValue = []byte("[" + value2 + "]")
+	if !equalListJSON(returnValue, expectedValue) {
+		t.Errorf("Bad query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+	}
+
+	query = `{"a string": ["moo", "goo"], "a number": [2345, 3456]}`
+	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
+	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
+
+	expectedValue = []byte("[" + value2 + "," + value3 + "]")
+	if !equalListJSON(returnValue, expectedValue) {
+		t.Errorf("Bad query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 }
 
