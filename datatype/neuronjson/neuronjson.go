@@ -616,7 +616,7 @@ type Data struct {
 	*datastore.Data
 
 	// The in-memory dataset.
-	db     map[uint64]map[string]interface{}
+	db     map[uint64]NeuronJSON
 	ids    []uint64            // sorted list of body ids
 	fields map[string]struct{} // list of all fields among the annotations
 	dbMu   sync.RWMutex
@@ -706,7 +706,7 @@ func (d *Data) Initialize() {
 	d.dbMu.Lock()
 	defer d.dbMu.Unlock()
 
-	d.db = make(map[uint64]map[string]interface{})
+	d.db = make(map[uint64]NeuronJSON)
 	d.fields = make(map[string]struct{})
 	d.ids = []uint64{}
 
@@ -735,7 +735,7 @@ func (d *Data) Initialize() {
 			return fmt.Errorf("received non-integer key %q during neuronjson load from database: %v", key, err)
 		}
 
-		var annotation map[string]interface{}
+		var annotation NeuronJSON
 		if err := json.Unmarshal(kv.V, &annotation); err != nil {
 			return fmt.Errorf("unable to decode annotation for bodyid %d, skipping: %v", bodyid, err)
 		}
@@ -772,7 +772,7 @@ func (d *Data) loadData(ctx *datastore.VersionedCtx, docStore DocIterator) error
 	d.dbMu.Lock() // Note that mutex is NOT unlocked if firestore DB doesn't load because we don't want
 	defer d.dbMu.Unlock()
 
-	d.db = make(map[uint64]map[string]interface{})
+	d.db = make(map[uint64]NeuronJSON)
 	d.fields = make(map[string]struct{})
 	numdocs := 0
 	for {
@@ -826,7 +826,7 @@ func (d *Data) loadData(ctx *datastore.VersionedCtx, docStore DocIterator) error
 // InitDataHandlers initializes ephemeral data for this instance, which is
 // the in-memory keyvalue store where the values are neuron annotation JSON.
 func (d *Data) InitDataHandlers() error {
-	d.db = make(map[uint64]map[string]interface{})
+	d.db = make(map[uint64]NeuronJSON)
 	return nil
 }
 
@@ -847,7 +847,7 @@ func (d *Data) loadFromKV(v dvid.VersionID, kvData kvType) {
 	d.dbMu.Lock() // Note that mutex is NOT unlocked if firestore DB doesn't load because we don't want
 	defer d.dbMu.Unlock()
 
-	d.db = make(map[uint64]map[string]interface{})
+	d.db = make(map[uint64]NeuronJSON)
 	d.fields = make(map[string]struct{})
 
 	ch, err := kvData.StreamKV(v)
@@ -1091,7 +1091,6 @@ func (nj *NeuronJSON) UnmarshalJSON(jsonText []byte) error {
 // move the following to Generics when upgrading and requiring Go 1.18
 
 func checkIntMatch(query []int64, field []int64) bool {
-	fmt.Printf("check ints: query %v on field %v\n", query, field)
 	for _, queryValue := range query {
 		for _, fieldValue := range field {
 			if fieldValue == queryValue {
@@ -1103,7 +1102,6 @@ func checkIntMatch(query []int64, field []int64) bool {
 }
 
 func checkStrMatch(query []string, field []string) bool {
-	fmt.Printf("check str: query %v on field %v\n", query, field)
 	for _, queryValue := range query {
 		for _, fieldValue := range field {
 			if fieldValue == queryValue {
@@ -1235,15 +1233,12 @@ func queryMatch(queryList ListNeuronJSON, value map[string]interface{}) (matches
 			if recordValue, ok := value[queryKey]; ok {
 				var matched bool
 				if matched = fieldMatch(queryValue, recordValue); !matched {
-					dvid.Debugf("query key %q, value %v: got %v %v (no match)\n", queryKey, queryValue, recordValue, reflect.TypeOf(recordValue))
 					and_match = false
 					break
 				}
-				dvid.Debugf("query key %q, value %v: got %v (matched)\n", queryKey, queryValue, recordValue)
 			}
 		}
 		if and_match {
-			dvid.Debugf("Matched on query %v\n", query)
 			return true, nil
 		}
 	}
@@ -1261,7 +1256,6 @@ func (d *Data) queryInMemory(w http.ResponseWriter, queryList ListNeuronJSON) (e
 		if matches, err = queryMatch(queryList, value); err != nil {
 			return
 		} else if matches {
-			dvid.Infof("got matches: %v\n", value)
 			//removeReservedFields(value)
 			if jsonBytes, err = json.Marshal(value); err != nil {
 				break
@@ -1311,7 +1305,6 @@ func (d *Data) Query(ctx storage.VersionedCtx, w http.ResponseWriter, uuid dvid.
 		}
 		queryList = ListNeuronJSON{queryObj}
 	}
-	dvid.Infof("bytes %s -> queryList: %v\n", string(queryBytes), queryList)
 
 	// Perform the query
 	w.Header().Set("Content-Type", "application/json")
