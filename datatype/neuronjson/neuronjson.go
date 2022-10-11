@@ -1801,7 +1801,14 @@ func (d *Data) handleKeyValues(ctx storage.VersionedCtx, w http.ResponseWriter, 
 		writtenBytes, err = d.sendTarKV(ctx, w, keys)
 	case jsonOut:
 		var keys []string
-		if err = json.Unmarshal(data, &keys); err != nil {
+		var keysInt []uint64
+		if err = json.Unmarshal(data, &keysInt); err == nil {
+			// convert to string keys for compatibility with keyvalue type & downstream code
+			keys = make([]string, len(keysInt))
+			for i, n := range keysInt {
+				keys[i] = strconv.FormatUint(n, 10)
+			}
+		} else if err = json.Unmarshal(data, &keys); err != nil {
 			return
 		}
 		numKeys = len(keys)

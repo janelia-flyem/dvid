@@ -299,12 +299,29 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 			key3, key2, key1, string(returnValue))
 	}
 
+	// Check JSON keyvalues request using both list of ids and strings, latter is for keyvalue datatype compatibility.
+	jsonIds := `[2000, 3000]`
+	kvreq := fmt.Sprintf("%snode/%s/%s/keyvalues?json=true", server.WebAPIPath, uuid, data.DataName())
+	returnValue = server.TestHTTP(t, "GET", kvreq, strings.NewReader(jsonIds))
+
+	expectedValue := []byte(`{"2000":` + value2 + `,"3000":` + value3 + "}")
+	if !equalObjectJSON(returnValue, expectedValue) {
+		t.Errorf("Bad keyvalues request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+	}
+
+	jsonIds = `["2000", "3000"]`
+	returnValue = server.TestHTTP(t, "GET", kvreq, strings.NewReader(jsonIds))
+
+	if !equalObjectJSON(returnValue, expectedValue) {
+		t.Errorf("Bad keyvalues request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+	}
+
 	// Check query
 	query := `{"a string": ["moo", "goo"]}`
 	queryreq := fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
-	expectedValue := []byte("[" + value2 + "," + value3 + "]")
+	expectedValue = []byte("[" + value2 + "," + value3 + "]")
 	if !equalListJSON(returnValue, expectedValue) {
 		t.Errorf("Bad query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
