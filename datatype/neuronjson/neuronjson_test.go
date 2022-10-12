@@ -343,6 +343,15 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 	if !equalListJSON(returnValue, expectedValue) {
 		t.Errorf("Bad query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
+
+	query = `{"unused field": "foo"}`
+	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
+	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
+
+	expectedValue = []byte("[]")
+	if !equalListJSON(returnValue, expectedValue) {
+		t.Errorf("Bad query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+	}
 }
 
 func TestKeyvalueRequests(t *testing.T) {

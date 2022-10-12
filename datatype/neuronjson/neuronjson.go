@@ -1228,9 +1228,11 @@ func queryMatch(queryList ListNeuronJSON, value map[string]interface{}) (matches
 		return
 	}
 	for _, query := range queryList {
+		field_tested := false
 		and_match := true
 		for queryKey, queryValue := range query {
 			if recordValue, ok := value[queryKey]; ok {
+				field_tested = true
 				var matched bool
 				if matched = fieldMatch(queryValue, recordValue); !matched {
 					and_match = false
@@ -1238,7 +1240,7 @@ func queryMatch(queryList ListNeuronJSON, value map[string]interface{}) (matches
 				}
 			}
 		}
-		if and_match {
+		if and_match && field_tested {
 			return true, nil
 		}
 	}
