@@ -146,10 +146,16 @@ POST <api URL>/node/<UUID>/<data name>/tags?<options>
 	replace   Set to "true" if you want passed tags to replace and not be appended to current tags.
 				Default operation is false (append).
 			   	
-GET  <api URL>/node/<UUID>/<data name>/all
+GET  <api URL>/node/<UUID>/<data name>/all[?query-options]
 
 	Returns a list of all JSON annotations
 
+	GET Query-string Options:
+
+	show		If "user", shows *_user fields.
+				If "time", shows *_time fields.
+				If "all", shows both *_user and *_time fields.
+				If unset (default), shows neither *_user or *_time fields.
 			
 GET  <api URL>/node/<UUID>/<data name>/keys
 
@@ -235,13 +241,15 @@ GET  <api URL>/node/<UUID>/<data name>/keyrangevalues/<key1>/<key2>?<options>
 	check		If json=true, setting check=false will tell server to trust that the
 				  values will be valid JSON instead of parsing it as a check.
 
+	show		If "user", shows *_user fields.
+				If "time", shows *_time fields.
+				If "all", shows both *_user and *_time fields.
+				If unset (default), shows neither *_user or *_time fields.
+			  
 
-GET  <api URL>/node/<UUID>/<data name>/key/<key>
-POST <api URL>/node/<UUID>/<data name>/key/<key>
-DEL  <api URL>/node/<UUID>/<data name>/key/<key> 
-HEAD <api URL>/node/<UUID>/<data name>/key/<key> 
+GET  <api URL>/node/<UUID>/<data name>/key/<key>[?query-options]
 
-	Performs operations on a key-value pair depending on the HTTP verb.  
+	Gets a key-value pair depending on the options.  
 
 	Example: 
 
@@ -253,9 +261,32 @@ HEAD <api URL>/node/<UUID>/<data name>/key/<key>
 	The "Content-type" of the HTTP response (and usually the request) are
 	"application/octet-stream" for arbitrary binary data.
 
-	For HEAD returns:
-	200 (OK) if a sparse volume of the given label exists within any optional bounds.
-	404 (File not Found) if there is no sparse volume for the given label within any optional bounds.
+	Arguments:
+
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of neuronjson data instance.
+	key           An alphanumeric key.
+
+	GET Query-string Options:
+
+	show		If "user", shows *_user fields.
+				If "time", shows *_time fields.
+				If "all", shows both *_user and *_time fields.
+				If unset (default), shows neither *_user or *_time fields.
+
+
+
+POST <api URL>/node/<UUID>/<data name>/key/<key>
+
+	Updates a key-value pair, modifying the fields with the POSTed JSON fields.
+	Note that unlike POST /key in keyvalue instances, this operation updates
+	fields by defaults (using old fields not overwritten) rather than replacing
+	the entire annotation. The replace behavior can be explicitly set if desired
+	to match old keyvalue semantics.  
+
+	Example: 
+
+	POST <api URL>/node/3f8c/stuff/key/myfile.dat
 
 	Arguments:
 
@@ -270,6 +301,33 @@ HEAD <api URL>/node/<UUID>/<data name>/key/<key>
 		"Bytes": <number of bytes in data>,
 		"UUID": <UUID on which POST was done>
 	}
+
+	POST Query-string Options:
+
+	conditional	List of fields separated by commas that should not be overwritten if set.
+
+	replace		If "true" will remove any fields not present
+
+	show		If "user", shows *_user fields.
+				If "time", shows *_time fields.
+				If "all", shows both *_user and *_time fields.
+				If unset (default), shows neither *_user or *_time fields.
+
+DEL  <api URL>/node/<UUID>/<data name>/key/<key> 
+HEAD <api URL>/node/<UUID>/<data name>/key/<key> 
+
+	Performs operations on a key-value pair depending on the HTTP verb.  
+
+	For HEAD returns:
+	200 (OK) if a sparse volume of the given label exists within any optional bounds.
+	404 (File not Found) if there is no sparse volume for the given label within any optional bounds.
+
+	Arguments:
+
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of neuronjson data instance.
+	key           An alphanumeric key.
+				
 
 GET <api URL>/node/<UUID>/<data name>/keyvalues[?query-options]
 POST <api URL>/node/<UUID>/<data name>/keyvalues
@@ -312,11 +370,19 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of neuronjson data instance.
 
+	GET Query-string Options:
+
+	show		If "user", shows *_user fields.
+				If "time", shows *_time fields.
+				If "all", shows both *_user and *_time fields.
+				If unset (default), shows neither *_user or *_time fields.
+
 	GET Query-string Options (only one of these allowed):
 
 	json        If true (default false), query body must be JSON array of keys and returns JSON.
 	jsontar		If set to any value for GET, query body must be JSON array of string keys
-				and the returned data will be a tarfile with keys as file names.
+				  and the returned data will be a tarfile with keys as file names.
+	protobuf	If set to "true", the response will be protobuf KeyValues response
 
 	Response types:
 
@@ -347,24 +413,9 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 			repeated KeyValue kvs = 1;
 		}
 
-	Arguments:
 
-	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
-	data name     Name of neuronjson data instance.
-	key1          Lexicographically lowest alphanumeric key in range.
-	key2          Lexicographically highest alphanumeric key in range.
 
-	GET Query-string Options (only one of these allowed):
-
-	json        If set to "true", the response will be JSON as above and the values must
-					be valid JSON or an error will be returned.
-	tar			If set to "true", the response will be a tarfile with keys as file names.
-	protobuf	If set to "true", the response will be protobuf KeyValues response
-
-	check		If json=true, setting check=false will tell server to trust that the
-					values will be valid JSON instead of parsing it as a check.
-
-POST <api URL>/node/<UUID>/<data name>/query
+POST <api URL>/node/<UUID>/<data name>/query[?show=...]
 
 	The JSON query format uses field names as the keys, and desired values.
 	Example:
@@ -384,6 +435,11 @@ POST <api URL>/node/<UUID>/<data name>/query
 	GET Query-string Options:
 
 	onlyid		If true (false by default), will only return a list of body ids that match.
+
+	show		If "user", shows *_user fields.
+				If "time", shows *_time fields.
+				If "all", shows both *_user and *_time fields.
+				If unset (default), shows neither *_user or *_time fields.
 `
 
 func init() {
@@ -489,10 +545,125 @@ func GetByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	return data, nil
 }
 
+////////////
+
+type Fields uint8
+
+const (
+	ShowBasic Fields = iota
+	ShowUsers
+	ShowTime
+	ShowAll
+)
+
+func showFields(r *http.Request) Fields {
+	switch r.URL.Query().Get("show") {
+	case "user":
+		return ShowUsers
+	case "time":
+		return ShowTime
+	case "all":
+		return ShowAll
+	default:
+		return ShowBasic
+	}
+}
+
+// Data embeds the datastore's Data and extends it with neuronjson properties.
+type Data struct {
+	*datastore.Data
+
+	// The in-memory dataset.
+	db     map[uint64]NeuronJSON
+	ids    []uint64            // sorted list of body ids
+	fields map[string]struct{} // list of all fields among the annotations
+	dbMu   sync.RWMutex
+}
+
+func (d *Data) Equals(d2 *Data) bool {
+	return d.Data.Equals(d2.Data)
+}
+
+func (d *Data) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Base     *datastore.Data
+		Extended struct{}
+	}{
+		d.Data,
+		struct{}{},
+	})
+}
+
+func (d *Data) GobDecode(b []byte) error {
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(&(d.Data)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *Data) GobEncode() ([]byte, error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(d.Data); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// Remove any fields that have underscore prefix.
+func removeReservedFields(data NeuronJSON, showFields Fields) NeuronJSON {
+	var showUser, showTime bool
+	switch showFields {
+	case ShowBasic:
+		// don't show either user or time -- default values
+	case ShowUsers:
+		showUser = true
+	case ShowTime:
+		showTime = true
+	case ShowAll:
+		return data
+	}
+	out := data.copy()
+	for field := range data {
+		if (!showUser && strings.HasSuffix(field, "_user")) || (!showTime && strings.HasSuffix(field, "_time")) {
+			delete(out, field)
+		}
+	}
+	return out
+}
+
+// Parses keys as body ids, including things like 'a' that might be used in keyrange/0/a.
+func parseKeyStr(key string) (uint64, error) {
+	if len(key) == 0 {
+		return 0, fmt.Errorf("key string is empty")
+	}
+	if key[0] > '9' {
+		return math.MaxUint64, nil
+	} else if key[0] < '0' {
+		return 0, nil
+	}
+	return strconv.ParseUint(key, 10, 64)
+}
+
+// Get bodyid from a JSON-like map
+func getBodyID(data map[string]interface{}) (uint64, error) {
+	bodyidVal, ok := data["bodyid"]
+	if !ok {
+		return 0, fmt.Errorf("neuronjson record has no 'bodyid' field")
+	}
+	bodyid, ok := bodyidVal.(int64)
+	if !ok {
+		return 0, fmt.Errorf("neuronjson record 'bodyid' is not a uint64 value: %v", bodyidVal)
+	}
+	return uint64(bodyid), nil
+}
+
 ///// Persistence of neuronjson data
 
 // getData gets a map value using a key
-func (d *Data) getData(ctx storage.Context, keyStr string) (value map[string]interface{}, found bool, err error) {
+func (d *Data) getData(ctx storage.Context, keyStr string) (value NeuronJSON, found bool, err error) {
 	var db storage.OrderedKeyValueDB
 	db, err = datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
@@ -516,7 +687,7 @@ func (d *Data) getData(ctx storage.Context, keyStr string) (value map[string]int
 }
 
 // putData puts a key / map value at a given uuid
-func (d *Data) putData(ctx storage.Context, keyStr string, value map[string]interface{}) error {
+func (d *Data) putData(ctx storage.Context, keyStr string, value NeuronJSON) error {
 	db, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return err
@@ -607,86 +778,6 @@ func (d *Data) processRange(ctx storage.Context, f func(key string, value map[st
 		return nil
 	})
 	return err
-}
-
-////////////
-
-// Data embeds the datastore's Data and extends it with neuronjson properties.
-type Data struct {
-	*datastore.Data
-
-	// The in-memory dataset.
-	db     map[uint64]NeuronJSON
-	ids    []uint64            // sorted list of body ids
-	fields map[string]struct{} // list of all fields among the annotations
-	dbMu   sync.RWMutex
-}
-
-func (d *Data) Equals(d2 *Data) bool {
-	return d.Data.Equals(d2.Data)
-}
-
-func (d *Data) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		Base     *datastore.Data
-		Extended struct{}
-	}{
-		d.Data,
-		struct{}{},
-	})
-}
-
-func (d *Data) GobDecode(b []byte) error {
-	buf := bytes.NewBuffer(b)
-	dec := gob.NewDecoder(buf)
-	if err := dec.Decode(&(d.Data)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (d *Data) GobEncode() ([]byte, error) {
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-	if err := enc.Encode(d.Data); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-// Remove any fields that have underscore prefix.
-func removeReservedFields(data map[string]interface{}) {
-	for field := range data {
-		if len(field) > 0 && field[0] == '_' {
-			delete(data, field)
-		}
-	}
-}
-
-// Parses keys as body ids, including things like 'a' that might be used in keyrange/0/a.
-func parseKeyStr(key string) (uint64, error) {
-	if len(key) == 0 {
-		return 0, fmt.Errorf("key string is empty")
-	}
-	if key[0] > '9' {
-		return math.MaxUint64, nil
-	} else if key[0] < '0' {
-		return 0, nil
-	}
-	return strconv.ParseUint(key, 10, 64)
-}
-
-// Get bodyid from a JSON-like map
-func getBodyID(data map[string]interface{}) (uint64, error) {
-	bodyidVal, ok := data["bodyid"]
-	if !ok {
-		return 0, fmt.Errorf("neuronjson record has no 'bodyid' field")
-	}
-	bodyid, ok := bodyidVal.(int64)
-	if !ok {
-		return 0, fmt.Errorf("neuronjson record 'bodyid' is not a uint64 value: %v", bodyidVal)
-	}
-	return uint64(bodyid), nil
 }
 
 // Initialize loads mutable properties of the neuronjson data instance,
@@ -1042,6 +1133,14 @@ func (d *Data) deleteBodyID(bodyid uint64) {
 type NeuronJSON map[string]interface{}
 type ListNeuronJSON []NeuronJSON
 
+func (nj NeuronJSON) copy() NeuronJSON {
+	dup := make(NeuronJSON, len(nj))
+	for k, v := range nj {
+		dup[k] = v
+	}
+	return dup
+}
+
 // UnmarshalJSON parses JSON with numbers preferentially converted to uint64
 // or int64 if negative.
 func (nj *NeuronJSON) UnmarshalJSON(jsonText []byte) error {
@@ -1247,7 +1346,7 @@ func queryMatch(queryList ListNeuronJSON, value map[string]interface{}) (matches
 	return false, nil
 }
 
-func (d *Data) queryInMemory(w http.ResponseWriter, queryList ListNeuronJSON) (err error) {
+func (d *Data) queryInMemory(w http.ResponseWriter, queryList ListNeuronJSON, showFields Fields) (err error) {
 	d.dbMu.RLock()
 	defer d.dbMu.RUnlock()
 
@@ -1258,8 +1357,8 @@ func (d *Data) queryInMemory(w http.ResponseWriter, queryList ListNeuronJSON) (e
 		if matches, err = queryMatch(queryList, value); err != nil {
 			return
 		} else if matches {
-			//removeReservedFields(value)
-			if jsonBytes, err = json.Marshal(value); err != nil {
+			out := removeReservedFields(value, showFields)
+			if jsonBytes, err = json.Marshal(out); err != nil {
 				break
 			}
 			if numMatches > 0 {
@@ -1272,7 +1371,9 @@ func (d *Data) queryInMemory(w http.ResponseWriter, queryList ListNeuronJSON) (e
 	return
 }
 
-func (d *Data) queryBackingStore(ctx storage.VersionedCtx, w http.ResponseWriter, queryL ListNeuronJSON) (err error) {
+func (d *Data) queryBackingStore(ctx storage.VersionedCtx, w http.ResponseWriter,
+	queryL ListNeuronJSON, showFields Fields) (err error) {
+
 	process_func := func(key string, value map[string]interface{}) {
 		if matches, err := queryMatch(queryL, value); err != nil {
 			dvid.Errorf("error in matching process: %v\n", err) // TODO: alter d.processRange to allow return of err
@@ -1280,8 +1381,8 @@ func (d *Data) queryBackingStore(ctx storage.VersionedCtx, w http.ResponseWriter
 		} else if !matches {
 			return
 		}
-		removeReservedFields(value)
-		jsonBytes, err := json.Marshal(value)
+		out := removeReservedFields(value, showFields)
+		jsonBytes, err := json.Marshal(out)
 		if err != nil {
 			dvid.Errorf("error in JSON encoding: %v\n", err)
 			return
@@ -1292,7 +1393,9 @@ func (d *Data) queryBackingStore(ctx storage.VersionedCtx, w http.ResponseWriter
 }
 
 // Query reads POSTed data and returns JSON.
-func (d *Data) Query(ctx storage.VersionedCtx, w http.ResponseWriter, uuid dvid.UUID, onlyid bool, in io.ReadCloser) (err error) {
+func (d *Data) Query(ctx *datastore.VersionedCtx, w http.ResponseWriter, uuid dvid.UUID,
+	onlyid bool, showFields Fields,
+	in io.ReadCloser) (err error) {
 	var queryBytes []byte
 	if queryBytes, err = io.ReadAll(in); err != nil {
 		return
@@ -1312,11 +1415,11 @@ func (d *Data) Query(ctx storage.VersionedCtx, w http.ResponseWriter, uuid dvid.
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, "[")
 	if ctx.Head() {
-		if err = d.queryInMemory(w, queryList); err != nil {
+		if err = d.queryInMemory(w, queryList, showFields); err != nil {
 			return
 		}
 	} else {
-		if err = d.queryBackingStore(ctx, w, queryList); err != nil {
+		if err = d.queryBackingStore(ctx, w, queryList, showFields); err != nil {
 			return
 		}
 	}
@@ -1398,27 +1501,28 @@ func (d *Data) GetKeysInRange(ctx storage.VersionedCtx, keyBeg, keyEnd string) (
 	return
 }
 
-func (d *Data) GetAll(ctx storage.VersionedCtx) ([]map[string]interface{}, error) {
-	var out []map[string]interface{}
+func (d *Data) GetAll(ctx storage.VersionedCtx, showFields Fields) ([]map[string]interface{}, error) {
+	var all []map[string]interface{}
 	if ctx.Head() {
 		d.dbMu.RLock()
-		out = make([]map[string]interface{}, len(d.db)) // use cur size as starting size
+		all = make([]map[string]interface{}, len(d.db)) // use cur size as starting size
 		i := 0
 		for _, value := range d.db {
-			removeReservedFields(value)
-			out[i] = value
+			out := removeReservedFields(value, showFields)
+			all[i] = out
 			i++
 		}
 		d.dbMu.RUnlock()
 	} else {
 		process_func := func(key string, value map[string]interface{}) {
-			out = append(out, value)
+			out := removeReservedFields(value, showFields)
+			all = append(all, out)
 		}
 		if err := d.processRange(ctx, process_func); err != nil {
 			return nil, err
 		}
 	}
-	return out, nil
+	return all, nil
 }
 
 func (d *Data) GetKeys(ctx storage.VersionedCtx) (out []string, err error) {
@@ -1451,7 +1555,7 @@ func (d *Data) GetFields() ([]string, error) {
 }
 
 // GetData gets a byte value using a key
-func (d *Data) GetData(ctx storage.VersionedCtx, keyStr string) ([]byte, bool, error) {
+func (d *Data) GetData(ctx storage.VersionedCtx, keyStr string, showFields Fields) ([]byte, bool, error) {
 	bodyid, err := strconv.ParseUint(keyStr, 10, 64)
 	if err != nil {
 		return nil, false, err
@@ -1471,28 +1575,76 @@ func (d *Data) GetData(ctx storage.VersionedCtx, keyStr string) ([]byte, bool, e
 			return nil, false, err
 		}
 	}
-	removeReservedFields(value)
-	data, err := json.Marshal(value)
+	out := removeReservedFields(value, showFields)
+	data, err := json.Marshal(out)
 	return data, true, err
 }
 
-// PutData puts a byte value into key at a given uuid
-func (d *Data) PutData(ctx storage.VersionedCtx, keyStr string, value []byte) error {
+// update _user and _time fields as well as any fields modified by newData.
+func updateJSON(origData, newData NeuronJSON, user string, conditionals []string, replace bool) {
+	newlySet := make(map[string]struct{}, len(newData))
+	for field, _ := range newData {
+		newlySet[field] = struct{}{}
+	}
+	if origData != nil && !replace {
+		protectedFields := make(map[string]struct{}, len(conditionals))
+		for _, field := range conditionals {
+			protectedFields[field] = struct{}{}
+		}
+		for field, origValue := range origData {
+			if _, found := newData[field]; !found {
+				newData[field] = origValue
+				continue
+			}
+			if _, found := protectedFields[field]; found {
+				newData[field] = origValue
+				delete(newlySet, field)
+			}
+		} // newData will have inherited
+	}
+
+	// add _user and _time fields for newly set and not prevented via conditionals
+	t := time.Now()
+	timeStr := t.Format(time.RFC3339)
+
+	for field := range newlySet {
+		newData[field+"_time"] = timeStr
+		if user != "" {
+			newData[field+"_user"] = user
+		}
+	}
+}
+
+// PutData puts a byte value into key at a given uuid.
+// If replace is true, will use given value instead of updating fields that were given.
+func (d *Data) PutData(ctx *datastore.VersionedCtx, keyStr string, value []byte, conditionals []string, replace bool) error {
 	bodyid, err := strconv.ParseUint(keyStr, 10, 64)
 	if err != nil {
 		return err
 	}
-	var jsonData NeuronJSON
-	if err := json.Unmarshal(value, &jsonData); err != nil {
+	var newData NeuronJSON
+	if err := json.Unmarshal(value, &newData); err != nil {
 		return err
 	}
+
+	// get original data so we can handle default update and tell which values change for _user/_time fields.
+	origData, found, err := d.getData(ctx, keyStr)
+	if err != nil {
+		return err
+	}
+	if !found {
+		origData = nil
+	}
+	updateJSON(origData, newData, ctx.User, conditionals, replace)
+
+	// write result
 	if ctx.Head() {
 		d.dbMu.Lock()
 		defer d.dbMu.Unlock()
-		d.db[bodyid] = jsonData
+		d.db[bodyid] = newData
 		d.addBodyID(bodyid)
 	}
-	return d.putData(ctx, keyStr, jsonData)
+	return d.putData(ctx, keyStr, newData)
 }
 
 // DeleteData deletes a key-value pair
@@ -1538,7 +1690,7 @@ func (d *Data) put(cmd datastore.Request, reply *datastore.Response) error {
 		}
 	}
 	ctx := datastore.NewVersionedCtx(d, versionID)
-	if err = d.PutData(ctx, keyStr, cmd.Input); err != nil {
+	if err = d.PutData(ctx, keyStr, cmd.Input, nil, false); err != nil {
 		return fmt.Errorf("error on put to key %q for neuronjson %q: %v", keyStr, d.DataName(), err)
 	}
 
@@ -1556,7 +1708,9 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 	return string(m), nil
 }
 
-func (d *Data) sendJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWriter, r *http.Request, keyBeg, keyEnd string) (numKeys int, err error) {
+func (d *Data) sendJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWriter,
+	r *http.Request, keyBeg, keyEnd string, showFields Fields) (numKeys int, err error) {
+
 	if !ctx.Head() {
 		return 0, fmt.Errorf("cannot use range query on non-head version at this time")
 	}
@@ -1606,9 +1760,10 @@ func (d *Data) sendJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWr
 			dvid.Errorf("inconsistent neuronjson DB: bodyid %d at pos %d is not in db cache... skipping", bodyid, i)
 			continue
 		}
+		out := removeReservedFields(jsonData, showFields)
 		key := strconv.FormatUint(bodyid, 10)
 		var jsonBytes []byte
-		jsonBytes, err = json.Marshal(jsonData)
+		jsonBytes, err = json.Marshal(out)
 		if err != nil {
 			return 0, err
 		}
@@ -1674,7 +1829,7 @@ func (d *Data) sendJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWr
 	return
 }
 
-func (d *Data) sendJSONKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys []string, checkVal bool) (writtenBytes int, err error) {
+func (d *Data) sendJSONKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys []string, checkVal bool, showFields Fields) (writtenBytes int, err error) {
 	w.Header().Set("Content-type", "application/json")
 	if writtenBytes, err = w.Write([]byte("{")); err != nil {
 		return
@@ -1690,7 +1845,7 @@ func (d *Data) sendJSONKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys 
 		}
 		var val []byte
 		var found bool
-		if val, found, err = d.GetData(ctx, key); err != nil {
+		if val, found, err = d.GetData(ctx, key, showFields); err != nil {
 			return
 		}
 		if !found {
@@ -1718,14 +1873,14 @@ func (d *Data) sendJSONKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys 
 	return
 }
 
-func (d *Data) sendTarKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys []string) (writtenBytes int, err error) {
+func (d *Data) sendTarKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys []string, showFields Fields) (writtenBytes int, err error) {
 	var n int
 	w.Header().Set("Content-type", "application/tar")
 	tw := tar.NewWriter(w)
 	for _, key := range keys {
 		var val []byte
 		var found bool
-		if val, found, err = d.GetData(ctx, key); err != nil {
+		if val, found, err = d.GetData(ctx, key, showFields); err != nil {
 			return
 		}
 		if !found {
@@ -1748,13 +1903,13 @@ func (d *Data) sendTarKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys [
 	return
 }
 
-func (d *Data) sendProtobufKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys proto.Keys) (writtenBytes int, err error) {
+func (d *Data) sendProtobufKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys proto.Keys, showFields Fields) (writtenBytes int, err error) {
 	var kvs proto.KeyValues
 	kvs.Kvs = make([]*proto.KeyValue, len(keys.Keys))
 	for i, key := range keys.Keys {
 		var val []byte
 		var found bool
-		if val, found, err = d.GetData(ctx, key); err != nil {
+		if val, found, err = d.GetData(ctx, key, showFields); err != nil {
 			return
 		}
 		if !found {
@@ -1779,7 +1934,9 @@ func (d *Data) sendProtobufKV(ctx storage.VersionedCtx, w http.ResponseWriter, k
 	return
 }
 
-func (d *Data) handleKeyValues(ctx storage.VersionedCtx, w http.ResponseWriter, r *http.Request, uuid dvid.UUID) (numKeys, writtenBytes int, err error) {
+func (d *Data) handleKeyValues(ctx storage.VersionedCtx, w http.ResponseWriter, r *http.Request,
+	uuid dvid.UUID, showFields Fields) (numKeys, writtenBytes int, err error) {
+
 	tarOut := (r.URL.Query().Get("jsontar") == "true") || (r.URL.Query().Get("tar") == "true")
 	jsonOut := r.URL.Query().Get("json") == "true"
 	checkVal := r.URL.Query().Get("check") == "true"
@@ -1800,7 +1957,7 @@ func (d *Data) handleKeyValues(ctx storage.VersionedCtx, w http.ResponseWriter, 
 			return
 		}
 		numKeys = len(keys)
-		writtenBytes, err = d.sendTarKV(ctx, w, keys)
+		writtenBytes, err = d.sendTarKV(ctx, w, keys, showFields)
 	case jsonOut:
 		var keys []string
 		var keysInt []uint64
@@ -1814,19 +1971,22 @@ func (d *Data) handleKeyValues(ctx storage.VersionedCtx, w http.ResponseWriter, 
 			return
 		}
 		numKeys = len(keys)
-		writtenBytes, err = d.sendJSONKV(ctx, w, keys, checkVal)
+		writtenBytes, err = d.sendJSONKV(ctx, w, keys, checkVal, showFields)
 	default:
 		var keys proto.Keys
 		if err = pb.Unmarshal(data, &keys); err != nil {
 			return
 		}
 		numKeys = len(keys.Keys)
-		writtenBytes, err = d.sendProtobufKV(ctx, w, keys)
+		writtenBytes, err = d.sendProtobufKV(ctx, w, keys, showFields)
 	}
 	return
 }
 
-func (d *Data) handleIngest(ctx storage.VersionedCtx, r *http.Request, uuid dvid.UUID) error {
+func (d *Data) handleIngest(ctx *datastore.VersionedCtx, r *http.Request, uuid dvid.UUID) error {
+	cond_fields := r.URL.Query().Get("conditionals")
+	conditionals := strings.Split(cond_fields, ",")
+	replace := r.URL.Query().Get("replace") == "true"
 	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return err
@@ -1836,7 +1996,7 @@ func (d *Data) handleIngest(ctx storage.VersionedCtx, r *http.Request, uuid dvid
 		return err
 	}
 	for _, kv := range kvs.Kvs {
-		err = d.PutData(ctx, kv.Key, kv.Value)
+		err = d.PutData(ctx, kv.Key, kv.Value, conditionals, replace)
 		if err != nil {
 			return err
 		}
@@ -1984,7 +2144,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 
 	case "all":
-		kvList, err := d.GetAll(ctx)
+		kvList, err := d.GetAll(ctx, showFields(r))
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -2034,7 +2194,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		onlyid := r.URL.Query().Get("onlyid") == "true"
-		err := d.Query(ctx, w, uuid, onlyid, r.Body)
+		err := d.Query(ctx, w, uuid, onlyid, showFields(r), r.Body)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -2073,7 +2233,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		keyBeg := parts[4]
 		keyEnd := parts[5]
 		w.Header().Set("Content-Type", "application/json")
-		numKeys, err := d.sendJSONValuesInRange(ctx, w, r, keyBeg, keyEnd)
+		numKeys, err := d.sendJSONValuesInRange(ctx, w, r, keyBeg, keyEnd, showFields(r))
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -2083,7 +2243,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "keyvalues":
 		switch action {
 		case "get":
-			numKeys, writtenBytes, err := d.handleKeyValues(ctx, w, r, uuid)
+			numKeys, writtenBytes, err := d.handleKeyValues(ctx, w, r, uuid, showFields(r))
 			if err != nil {
 				server.BadRequest(w, r, "GET /keyvalues on %d keys, data %q: %v", numKeys, d.DataName(), err)
 				return
@@ -2123,7 +2283,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 		case "get":
 			// Return value of single key
-			value, found, err := d.GetData(ctx, keyStr)
+			value, found, err := d.GetData(ctx, keyStr, showFields(r))
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
@@ -2170,7 +2330,11 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				}
 			}()
 
-			err = d.PutData(ctx, keyStr, data)
+			cond_fields := r.URL.Query().Get("conditionals")
+			conditionals := strings.Split(cond_fields, ",")
+			replace := r.URL.Query().Get("replace") == "true"
+
+			err = d.PutData(ctx, keyStr, data, conditionals, replace)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return

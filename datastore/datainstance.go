@@ -60,6 +60,7 @@ func (r *Response) Write(w io.Writer) error {
 type VersionedCtx struct {
 	*storage.DataContext
 	User string
+	App  string
 }
 
 // NewVersionedCtx creates a new versioned context that also has ability to

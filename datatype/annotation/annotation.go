@@ -2905,12 +2905,6 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	}
 	d.RUnlock()
 
-	// Add user to context if provided
-	user := r.URL.Query().Get("u")
-	if user != "" {
-		ctx.User = user
-	}
-
 	// Break URL request into arguments
 	url := r.URL.Path[len(server.WebAPIPath):]
 	parts := strings.Split(url, "/")

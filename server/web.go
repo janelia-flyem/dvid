@@ -1252,6 +1252,12 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 		}
 		ctx := datastore.NewVersionedCtx(data, v)
 
+		// Attach user/app to context.
+		user := r.URL.Query().Get("u")
+		app := r.URL.Query().Get("app")
+		ctx.User = user
+		ctx.App = app
+
 		// Also set the web request information in case logging needs it downstream.
 		ctx.SetRequestID(middleware.GetReqID(*c))
 
@@ -1297,8 +1303,6 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 		myw := wrapResponseWriter(w)
 		activity := data.ServeHTTP(uuid, ctx, myw, r)
 		if KafkaAvailable() {
-			user := r.URL.Query().Get("u")
-			app := r.URL.Query().Get("app")
 			t := time.Since(t0)
 			data := map[string]interface{}{
 				"time":        t0.Unix(),
