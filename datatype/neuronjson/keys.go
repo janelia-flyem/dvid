@@ -20,11 +20,14 @@ const (
 	// key = bodyid. value = serialized map[string]interface{} annotation
 	keyAnnotation = 179
 
-	// single key-value for schema JSON
+	// single key-value for neutu/neu3 schema JSON
 	keySchema = 180
 
-	// single key-value for schema-batch JSON
+	// single key-value for neutu/neu3 schema-batch JSON
 	keySchemaBatch = 181
+
+	// single key-value for JSON validation schema
+	keyJSONSchema = 182
 )
 
 var MinAnnotationTKey = storage.MinTKey(keyAnnotation)
@@ -37,9 +40,11 @@ func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
 	case keyAnnotation:
 		return "neuron annotation"
 	case keySchema:
-		return "neuron annotation schema"
+		return "neutu/neu3 schema"
 	case keySchemaBatch:
-		return "neuron annotation schema for batches"
+		return "neutu/neu3 schema for batches"
+	case keyJSONSchema:
+		return "neuron annotation JSON schema for validation"
 	default:
 	}
 	return "unknown neuronjson key"
@@ -66,6 +71,11 @@ func DecodeTKey(tk storage.TKey) (string, error) {
 	return string(ibytes[:sz]), nil
 }
 
+// NewJSONSchemaTKey returns a TKey for JSON validation schema storage.
+func NewJSONSchemaTKey() (storage.TKey, error) {
+	return storage.NewTKey(keyJSONSchema, nil), nil
+}
+
 // NewSchemaTKey returns a TKey for schema storage.
 func NewSchemaTKey() (storage.TKey, error) {
 	return storage.NewTKey(keySchema, nil), nil
@@ -74,4 +84,22 @@ func NewSchemaTKey() (storage.TKey, error) {
 // NewSchemaBatchTKey returns a TKey for batch schema storage.
 func NewSchemaBatchTKey() (storage.TKey, error) {
 	return storage.NewTKey(keySchemaBatch, nil), nil
+}
+
+func getMetadataKey(meta Metadata) (tkey storage.TKey, err error) {
+	switch meta {
+	case JSONSchema:
+		if tkey, err = NewJSONSchemaTKey(); err != nil {
+			return
+		}
+	case NeuSchema:
+		if tkey, err = NewSchemaTKey(); err != nil {
+			return
+		}
+	case NeuSchemaBatch:
+		if tkey, err = NewSchemaBatchTKey(); err != nil {
+			return
+		}
+	}
+	return tkey, nil
 }

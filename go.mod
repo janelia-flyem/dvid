@@ -23,6 +23,7 @@ require (
 	github.com/natefinch/lumberjack v2.0.0+incompatible
 	github.com/ncw/swift v1.0.53
 	github.com/rs/cors v1.8.2
+	github.com/santhosh-tekuri/jsonschema/v5 v5.0.1 // indirect
 	github.com/sigu-399/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415 // indirect
 	github.com/tinylib/msgp v1.1.6
 	github.com/twinj/uuid v1.0.0

@@ -26,6 +26,8 @@ import (
 
 	pb "google.golang.org/protobuf/proto"
 
+	"github.com/santhosh-tekuri/jsonschema/v5"
+
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/datatype/keyvalue"
@@ -145,7 +147,40 @@ POST <api URL>/node/<UUID>/<data name>/tags?<options>
 
 	replace   Set to "true" if you want passed tags to replace and not be appended to current tags.
 				Default operation is false (append).
-			   	
+
+GET  <api URL>/node/<UUID>/<data name>/<schema type>
+POST <api URL>/node/<UUID>/<data name>/<schema type>
+DEL  <api URL>/node/<UUID>/<data name>/<schema type> 
+HEAD <api URL>/node/<UUID>/<data name>/<schema type> 
+
+	Performs operations on metadata schema depending on the HTTP verb.  
+
+	Example: 
+
+	GET <api URL>/node/3f8c/json_schema
+
+	Returns any JSON schema for validation stored for version node 3f8c.
+
+	The "Content-type" of the HTTP response (and usually the request) are "application/json".
+
+	For HEAD returns:
+	200 (OK) if a sparse volume of the given label exists within any optional bounds.
+	404 (File not Found) if there is no sparse volume for the given label within any optional bounds.
+
+	Arguments:
+
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of keyvalue data instance.
+	key           An alphanumeric key.
+	
+	POSTs will be logged as a Kafka JSON message with the following format:
+	{ 
+		"Action": "postkv",
+		"Key": <key>,
+		"Bytes": <number of bytes in data>,
+		"UUID": <UUID on which POST was done>
+	}
+				
 GET  <api URL>/node/<UUID>/<data name>/all[?query-options]
 
 	Returns a list of all JSON annotations
@@ -569,15 +604,46 @@ func showFields(r *http.Request) Fields {
 	}
 }
 
+type Metadata uint8
+
+const (
+	// JSONSchema is validation JSON schema for annotations
+	JSONSchema Metadata = iota
+
+	// NeuSchema is JSON for neutu/neu3 clients
+	NeuSchema
+
+	// NeuSchemaBatch is JSON for neutu/neu3 clients
+	NeuSchemaBatch
+)
+
+func (m Metadata) String() string {
+	switch m {
+	case JSONSchema:
+		return "json_schema"
+	case NeuSchema:
+		return "schema"
+	case NeuSchemaBatch:
+		return "schema_batch"
+	default:
+		return "unknown metadata"
+	}
+}
+
 // Data embeds the datastore's Data and extends it with neuronjson properties.
 type Data struct {
 	*datastore.Data
 
-	// The in-memory dataset.
+	// The in-memory neuron annotations for HEAD version
 	db     map[uint64]NeuronJSON
 	ids    []uint64            // sorted list of body ids
 	fields map[string]struct{} // list of all fields among the annotations
 	dbMu   sync.RWMutex
+
+	// The in-memory metadata for HEAD version
+	compiledSchema *jsonschema.Schema // cached on setting of JSONSchema value for rapid validate
+	metadata       map[Metadata][]byte
+	metadataMu     sync.RWMutex
 }
 
 func (d *Data) Equals(d2 *Data) bool {
@@ -794,12 +860,7 @@ func (d *Data) Initialize() {
 	dvid.Infof("Loading neuron annotations JSON into memory for neuronjson %q ...\n", d.DataName())
 	ctx := datastore.NewVersionedCtx(d, leafV)
 
-	d.dbMu.Lock()
-	defer d.dbMu.Unlock()
-
-	d.db = make(map[uint64]NeuronJSON)
-	d.fields = make(map[string]struct{})
-	d.ids = []uint64{}
+	d.initMemoryDB()
 
 	db, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
@@ -917,13 +978,23 @@ func (d *Data) loadData(ctx *datastore.VersionedCtx, docStore DocIterator) error
 // InitDataHandlers initializes ephemeral data for this instance, which is
 // the in-memory keyvalue store where the values are neuron annotation JSON.
 func (d *Data) InitDataHandlers() error {
-	d.db = make(map[uint64]NeuronJSON)
+	d.initMemoryDB()
 	return nil
 }
 
 type kvType interface {
 	DataName() dvid.InstanceName
 	StreamKV(v dvid.VersionID) (chan storage.KeyValue, error)
+}
+
+func (d *Data) initMemoryDB() {
+	d.dbMu.Lock() // Note that mutex is NOT unlocked if firestore DB doesn't load because we don't want
+	defer d.dbMu.Unlock()
+
+	d.db = make(map[uint64]NeuronJSON)
+	d.fields = make(map[string]struct{})
+	d.metadata = make(map[Metadata][]byte, 3)
+	d.ids = []uint64{}
 }
 
 func (d *Data) loadFromKV(v dvid.VersionID, kvData kvType) {
@@ -935,11 +1006,7 @@ func (d *Data) loadFromKV(v dvid.VersionID, kvData kvType) {
 		return
 	}
 
-	d.dbMu.Lock() // Note that mutex is NOT unlocked if firestore DB doesn't load because we don't want
-	defer d.dbMu.Unlock()
-
-	d.db = make(map[uint64]NeuronJSON)
-	d.fields = make(map[string]struct{})
+	d.initMemoryDB()
 
 	ch, err := kvData.StreamKV(v)
 	if err != nil {
@@ -952,30 +1019,51 @@ func (d *Data) loadFromKV(v dvid.VersionID, kvData kvType) {
 	for kv := range ch {
 		key := string(kv.K)
 		numFromKV++
+
+		// Handle metadata string keys
+		switch key {
+		case JSONSchema.String():
+			if err := d.putMetadata(ctx, kv.V, JSONSchema); err != nil {
+				dvid.Errorf("Unable to handle JSON schema metadata transfer, skipping: %v\n", err)
+			}
+			continue
+		case NeuSchema.String():
+			if err := d.putMetadata(ctx, kv.V, NeuSchema); err != nil {
+				dvid.Errorf("Unable to handle neutu/neu3 schema metadata transfer, skipping: %v\n", err)
+			}
+			continue
+		case NeuSchemaBatch.String():
+			if err := d.putMetadata(ctx, kv.V, NeuSchemaBatch); err != nil {
+				dvid.Errorf("Unable to handle neutu/neu3 batch schema metadata transfer, skipping: %v\n", err)
+			}
+			continue
+		}
+
+		// Handle numeric keys for neuron annotations
 		bodyid, err := strconv.ParseUint(key, 10, 64)
 		if err != nil {
 			dvid.Errorf("Received non-integer key %q during neuronjson load from keyvalue: ignored\n", key)
 			continue
 		}
 
-		var annotation map[string]interface{}
+		// a) Persist to storage first
+		tk, err := NewTKey(key)
+		if err != nil {
+			dvid.Errorf("unable to encode neuronjson %q key %q, skipping: %v\n", d.DataName(), key, err)
+			continue
+		}
+		if err := db.Put(ctx, tk, kv.V); err != nil {
+			dvid.Errorf("unable to persist neuronjson %q key %s annotation, skipping: %v\n", d.DataName(), key, err)
+			continue
+		}
+
+		// b) Add to in-memory annotations db
+		var annotation NeuronJSON
 		if err := json.Unmarshal(kv.V, &annotation); err != nil {
 			dvid.Errorf("Unable to decode annotation for bodyid %d, skipping: %v\n", bodyid, err)
 			continue
 		}
 
-		// Persist to the store
-		tk, err := NewTKey(key)
-		if err != nil {
-			dvid.Errorf("Unable to encode neuronjson %q key %q, skipping: %v\n", d.DataName(), key, err)
-			continue
-		}
-		if err := db.Put(ctx, tk, kv.V); err != nil {
-			dvid.Errorf("Unable to persist neuronjson %q body id %d annotation, skipping: %v\n", d.DataName(), bodyid, err)
-			continue
-		}
-
-		// Add to in-memory annotations db
 		d.db[bodyid] = annotation
 		d.ids = append(d.ids, bodyid)
 		for field := range annotation {
@@ -1043,22 +1131,17 @@ func (d *Data) loadFirestoreDB(request datastore.Request, reply *datastore.Respo
 	return nil
 }
 
-func getSchemaKey(batch bool) (tkey storage.TKey, err error) {
-	if batch {
-		if tkey, err = NewSchemaBatchTKey(); err != nil {
-			return
-		}
-	} else {
-		if tkey, err = NewSchemaTKey(); err != nil {
-			return
-		}
-	}
-	return tkey, nil
-}
+// Metadata key-value support (all non-neuron annotations)
 
-func (d *Data) getSchema(ctx storage.VersionedCtx, batch bool) (val []byte, err error) {
+func (d *Data) getMetadata(ctx storage.VersionedCtx, meta Metadata) (val []byte, err error) {
+	if ctx.Head() {
+		d.metadataMu.RLock()
+		defer d.metadataMu.RUnlock()
+		return d.metadata[meta], nil
+	}
+
 	var tkey storage.TKey
-	if tkey, err = getSchemaKey(batch); err != nil {
+	if tkey, err = getMetadataKey(meta); err != nil {
 		return
 	}
 	var db storage.KeyValueDB
@@ -1072,21 +1155,76 @@ func (d *Data) getSchema(ctx storage.VersionedCtx, batch bool) (val []byte, err 
 	return byteVal, nil
 }
 
-func (d *Data) putSchema(ctx storage.VersionedCtx, val []byte, batch bool) (err error) {
+// get fully compiled JSON schema for use -- TODO
+func (d *Data) getJSONSchema(ctx storage.VersionedCtx) (sch *jsonschema.Schema, err error) {
+	if ctx.Head() {
+		d.metadataMu.RLock()
+		defer d.metadataMu.RUnlock()
+		if d.compiledSchema != nil {
+			return d.compiledSchema, nil
+		}
+	}
+
 	var tkey storage.TKey
-	if tkey, err = getSchemaKey(batch); err != nil {
+	if tkey, err = getMetadataKey(JSONSchema); err != nil {
 		return
 	}
 	var db storage.KeyValueDB
 	if db, err = datastore.GetKeyValueDB(d); err != nil {
 		return
 	}
-	return db.Put(ctx, tkey, val)
+	var byteVal []byte
+	if byteVal, err = db.Get(ctx, tkey); err != nil {
+		return
+	}
+	sch, err = jsonschema.CompileString("schema.json", string(byteVal))
+	if err != nil {
+		return
+	}
+	if sch == nil {
+		return nil, fmt.Errorf("no JSON Schema available")
+	}
+	return
 }
 
-func (d *Data) schemaExists(ctx storage.VersionedCtx, batch bool) (exists bool, err error) {
+func (d *Data) putMetadata(ctx storage.VersionedCtx, val []byte, meta Metadata) (err error) {
 	var tkey storage.TKey
-	if tkey, err = getSchemaKey(batch); err != nil {
+	if tkey, err = getMetadataKey(meta); err != nil {
+		return
+	}
+	var db storage.KeyValueDB
+	if db, err = datastore.GetKeyValueDB(d); err != nil {
+		return
+	}
+	if err = db.Put(ctx, tkey, val); err != nil {
+		return
+	}
+
+	// If we could persist metadata, add it to in-memory db if head.
+	if ctx.Head() {
+		d.metadataMu.Lock()
+		d.metadata[meta] = val
+		if meta == JSONSchema {
+			d.compiledSchema, err = jsonschema.CompileString("schema.json", string(val))
+			if err != nil {
+				d.compiledSchema = nil
+				dvid.Errorf("Unable to compile json schema: %v\n", err)
+			}
+		}
+		d.metadataMu.Unlock()
+	}
+	return nil
+}
+
+func (d *Data) metadataExists(ctx storage.VersionedCtx, meta Metadata) (exists bool, err error) {
+	if ctx.Head() {
+		d.metadataMu.RLock()
+		defer d.metadataMu.RUnlock()
+		_, found := d.metadata[meta]
+		return found, nil
+	}
+	var tkey storage.TKey
+	if tkey, err = getMetadataKey(meta); err != nil {
 		return
 	}
 	var db storage.KeyValueDB
@@ -1096,9 +1234,9 @@ func (d *Data) schemaExists(ctx storage.VersionedCtx, batch bool) (exists bool, 
 	return db.Exists(ctx, tkey)
 }
 
-func (d *Data) deleteSchema(ctx storage.VersionedCtx, batch bool) (err error) {
+func (d *Data) deleteMetadata(ctx storage.VersionedCtx, meta Metadata) (err error) {
 	var tkey storage.TKey
-	if tkey, err = getSchemaKey(batch); err != nil {
+	if tkey, err = getMetadataKey(meta); err != nil {
 		return
 	}
 	var db storage.KeyValueDB
@@ -1107,6 +1245,8 @@ func (d *Data) deleteSchema(ctx storage.VersionedCtx, batch bool) (err error) {
 	}
 	return db.Delete(ctx, tkey)
 }
+
+/////////
 
 // add bodyid to in-memory list of bodyids
 func (d *Data) addBodyID(bodyid uint64) {
@@ -1615,13 +1755,27 @@ func updateJSON(origData, newData NeuronJSON, user string, conditionals []string
 	}
 }
 
-// PutData puts a byte value into key at a given uuid.
+// PutData puts a valid JSON []byte into a neuron key at a given uuid.
 // If replace is true, will use given value instead of updating fields that were given.
 func (d *Data) PutData(ctx *datastore.VersionedCtx, keyStr string, value []byte, conditionals []string, replace bool) error {
 	bodyid, err := strconv.ParseUint(keyStr, 10, 64)
 	if err != nil {
 		return err
 	}
+
+	// validate if we have a JSON schema
+	if sch, err := d.getJSONSchema(ctx); err == nil {
+		var v interface{}
+		if err = json.Unmarshal(value, &v); err != nil {
+			return err
+		}
+		if err = sch.Validate(v); err != nil {
+			return err
+		}
+	} else {
+		dvid.Errorf("unable to get JSON schema to validate neuron annotation: %v\n", err)
+	}
+
 	var newData NeuronJSON
 	if err := json.Unmarshal(value, &newData); err != nil {
 		return err
@@ -2037,10 +2191,10 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	}
 }
 
-func (d *Data) handleSchema(ctx storage.VersionedCtx, w http.ResponseWriter, r *http.Request, uuid dvid.UUID, action string, batch bool) error {
+func (d *Data) handleSchema(ctx storage.VersionedCtx, w http.ResponseWriter, r *http.Request, uuid dvid.UUID, action string, meta Metadata) error {
 	switch action {
 	case "head":
-		found, err := d.schemaExists(ctx, batch)
+		found, err := d.metadataExists(ctx, meta)
 		if err != nil {
 			return err
 		}
@@ -2051,7 +2205,7 @@ func (d *Data) handleSchema(ctx storage.VersionedCtx, w http.ResponseWriter, r *
 		}
 
 	case "get":
-		value, err := d.getSchema(ctx, batch)
+		value, err := d.getMetadata(ctx, meta)
 		if err != nil {
 			return err
 		} else if _, err := w.Write(value); err != nil {
@@ -2060,7 +2214,7 @@ func (d *Data) handleSchema(ctx storage.VersionedCtx, w http.ResponseWriter, r *
 		w.Header().Set("Content-Type", "application/json")
 
 	case "delete":
-		if err := d.deleteSchema(ctx, batch); err != nil {
+		if err := d.deleteMetadata(ctx, meta); err != nil {
 			return err
 		}
 
@@ -2069,7 +2223,7 @@ func (d *Data) handleSchema(ctx storage.VersionedCtx, w http.ResponseWriter, r *
 		if err != nil {
 			return err
 		}
-		if err := d.putSchema(ctx, data, batch); err != nil {
+		if err := d.putMetadata(ctx, data, meta); err != nil {
 			return err
 		}
 
@@ -2131,14 +2285,20 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			fmt.Fprint(w, string(jsonBytes))
 		}
 
-	case "schema":
-		if err := d.handleSchema(ctx, w, r, uuid, action, false); err != nil {
+	case JSONSchema.String():
+		if err := d.handleSchema(ctx, w, r, uuid, action, JSONSchema); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
 
-	case "schema_batch":
-		if err := d.handleSchema(ctx, w, r, uuid, action, true); err != nil {
+	case NeuSchema.String():
+		if err := d.handleSchema(ctx, w, r, uuid, action, NeuSchema); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+
+	case NeuSchemaBatch.String():
+		if err := d.handleSchema(ctx, w, r, uuid, action, NeuSchemaBatch); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}

@@ -41,6 +41,57 @@ var sampleData = map[uint64]string{
 	3003: `"bodyid": 3003, "position": [303, 301, 303], "avg_location": "303, 304, 305", "_user": "third@gmail.com", "_timestamp": 1619751219.934025, "class": "9B", "tags": ["group3"]`,
 }
 
+var testJsonSchema = `
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": true,
+    "default": {},
+    "required": ["bodyid"],
+    "properties": {
+        "bodyid": {
+            "description": "the body id",
+            "type": "integer"
+        },
+        "group": {
+            "description": "a group id",
+            "type": "integer"
+        },
+        "status": {
+            "description": "neuron status",
+            "type": "string"
+        },
+        "position": {
+            "description": "a coordinate somewhere on the body",
+            "type": "array",
+            "items": {"type": "integer"},
+            "minItems": 3,
+            "maxItems": 3
+        },
+        "soma_position": {
+            "description": "a coordinate in the neuron soma",
+            "type": "array",
+            "items": {"type": "integer"},
+            "minItems": 3,
+            "maxItems": 3
+        },
+        "tosoma_position": {
+            "description": "a coordinate on the neuron's cell body fiber, as near to the soma as possible",
+            "type": "array",
+            "items": {"type": "integer"},
+            "minItems": 3,
+            "maxItems": 3
+        },
+        "root_position": {
+            "description": "some 'root' position for the neuron when the soma and 'tosoma' aren't segmented.",
+            "type": "array",
+            "items": {"type": "integer"},
+            "minItems": 3,
+            "maxItems": 3
+        }
+    }
+}`
+
 // Sets package-level testRepo and TestVersionID
 func initTestRepo() (dvid.UUID, dvid.VersionID) {
 	testMu.Lock()
@@ -324,6 +375,110 @@ func TestNeuronjsonRepoPersistence(t *testing.T) {
 	}
 	if !oldData.Equals(kvdata2) {
 		t.Errorf("Expected %v, got %v\n", oldData, *kvdata2)
+	}
+}
+
+func TestValidation(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+
+	name := dvid.InstanceName("neurons")
+	config := dvid.NewConfig()
+	dataservice, err := datastore.NewData(uuid, jsontype, name, config)
+	if err != nil {
+		t.Fatalf("Error creating new neuronjson instance: %v\n", err)
+	}
+	data, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("Returned new data instance is not neuronjson.Data\n")
+	}
+
+	// Before json schema is installed, bad values should be permitted
+	key1 := "1000"
+	key1req := fmt.Sprintf("%snode/%s/%s/key/%s?u=frank", server.WebAPIPath, uuid, data.DataName(), key1)
+	badValue := `
+	{
+		"group": 130911,
+		"status": "Anchor",
+		"root_position": [15, 15, 15],
+		"something_else": "foo"
+	}`
+	resp := server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(badValue))
+	if resp.Code != http.StatusOK {
+		t.Errorf("POST on %s returned %d, not 200: %s\n", key1req, resp.Code, resp.Body.String())
+	}
+	badValue = `
+	{
+		"bodyid": 13087493,
+		"group": 130911,
+		"status": "Anchor",
+		"position": [23,23]
+	}`
+	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(badValue))
+	if resp.Code != http.StatusOK {
+		t.Errorf("POST on %s returned %d, not 200: %s\n", key1req, resp.Code, resp.Body.String())
+	}
+
+	// Store JSON Schema
+	schemaReq := fmt.Sprintf("%snode/%s/%s/json_schema?u=frank", server.WebAPIPath, uuid, data.DataName())
+	resp = server.TestHTTPResponse(t, "POST", schemaReq, strings.NewReader(testJsonSchema))
+	if resp.Code != http.StatusOK {
+		t.Errorf("POST on %s returned %d, not 200: %s\n", schemaReq, resp.Code, resp.Body.String())
+	}
+
+	// PUT a value that should conform to schema set.
+	okValue := `
+	{
+		"bodyid": 13087493,
+		"group": 130911,
+		"status": "Anchor",
+		"position": [23,23,32],
+		"soma_position": [30, 30, 30],
+		"tosoma_position": [14, 1000, 1000],
+		"root_position": [15, 15, 15],
+		"something_else": "foo"
+	}`
+	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(okValue))
+	if resp.Code != http.StatusOK {
+		t.Errorf("POST on %s returned %d, not 200: %s\n", key1req, resp.Code, resp.Body.String())
+	}
+	okValue = `
+	{
+		"bodyid": 13087493,
+		"root_position": [15, 15, 15],
+		"something_else": "foo"
+	}`
+	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(okValue))
+	if resp.Code != http.StatusOK {
+		t.Errorf("POST on %s returned %d, not 200: %s\n", key1req, resp.Code, resp.Body.String())
+	}
+
+	// Test values that should not pass validation
+	badValue = `
+	{
+		"group": 130911,
+		"status": "Anchor",
+		"root_position": [15, 15, 15],
+		"something_else": "foo"
+	}`
+	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(badValue))
+	if resp.Code == http.StatusOK {
+		t.Errorf("POST on %s returned 200 when it shouldn't have been validated\n", key1req)
+	}
+	badValue = `
+	{
+		"bodyid": 13087493,
+		"group": 130911,
+		"status": "Anchor",
+		"position": [23,23]
+	}`
+	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(badValue))
+	if resp.Code == http.StatusOK {
+		t.Errorf("POST on %s returned 200 when it shouldn't have been validated\n", key1req)
 	}
 }
 
