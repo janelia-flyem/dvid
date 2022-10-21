@@ -617,6 +617,15 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 		t.Errorf("Bad query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
+	query = `{"a string": "moo", "unused field": "foo"}`
+	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
+	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
+
+	expectedValue = []byte("[]")
+	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
+		t.Errorf("Bad query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+	}
+
 	// Check if keys are re-POSTed using default or replace=true.
 	value3mod := `{"a string": "goo modified", "a 2nd list": [26]}`
 	key3modreq := fmt.Sprintf("%snode/%s/%s/key/%s?u=bill&show=user", server.WebAPIPath, uuid, data.DataName(), key3)

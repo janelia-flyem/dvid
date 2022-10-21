@@ -154,32 +154,22 @@ DEL  <api URL>/node/<UUID>/<data name>/<schema type>
 HEAD <api URL>/node/<UUID>/<data name>/<schema type> 
 
 	Performs operations on metadata schema depending on the HTTP verb.  
+	If the "json_schema" type is POSTed, it will be used to validate
+	future writes of neuron annotations via POST /key, /keyvalues, etc.
 
 	Example: 
 
-	GET <api URL>/node/3f8c/json_schema
+	GET <api URL>/node/3f8c/neuron_annotations/json_schema
 
 	Returns any JSON schema for validation stored for version node 3f8c.
 
 	The "Content-type" of the HTTP response (and usually the request) are "application/json".
 
-	For HEAD returns:
-	200 (OK) if a sparse volume of the given label exists within any optional bounds.
-	404 (File not Found) if there is no sparse volume for the given label within any optional bounds.
-
 	Arguments:
 
 	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of keyvalue data instance.
-	key           An alphanumeric key.
-	
-	POSTs will be logged as a Kafka JSON message with the following format:
-	{ 
-		"Action": "postkv",
-		"Key": <key>,
-		"Bytes": <number of bytes in data>,
-		"UUID": <UUID on which POST was done>
-	}
+	schema type	  One of "json_schema" (validation), "schema" (neutu/neu3), "schema_batch" (neutu/neu3)
 				
 GET  <api URL>/node/<UUID>/<data name>/all[?query-options]
 
@@ -1467,19 +1457,15 @@ func queryMatch(queryList ListNeuronJSON, value map[string]interface{}) (matches
 		return
 	}
 	for _, query := range queryList {
-		field_tested := false
 		and_match := true
-		for queryKey, queryValue := range query {
-			if recordValue, ok := value[queryKey]; ok {
-				field_tested = true
-				var matched bool
-				if matched = fieldMatch(queryValue, recordValue); !matched {
-					and_match = false
-					break
-				}
+		for queryKey, queryValue := range query { // all query keys must be present and match
+			recordValue, found := value[queryKey]
+			if !found || !fieldMatch(queryValue, recordValue) {
+				and_match = false
+				break
 			}
 		}
-		if and_match && field_tested {
+		if and_match {
 			return true, nil
 		}
 	}
