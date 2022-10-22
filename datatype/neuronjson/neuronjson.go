@@ -15,6 +15,7 @@ import (
 	"math"
 	"net/http"
 	reflect "reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1167,6 +1168,9 @@ func (d *Data) getJSONSchema(ctx storage.VersionedCtx) (sch *jsonschema.Schema, 
 	if byteVal, err = db.Get(ctx, tkey); err != nil {
 		return
 	}
+	if len(byteVal) == 0 {
+		return nil, fmt.Errorf("no JSON Schema available")
+	}
 	sch, err = jsonschema.CompileString("schema.json", string(byteVal))
 	if err != nil {
 		return
@@ -1260,6 +1264,82 @@ func (d *Data) deleteBodyID(bodyid uint64) {
 
 // ---- Query support ----
 
+type QueryJSON map[string]interface{}
+type ListQueryJSON []QueryJSON
+
+// UnmarshalJSON parses JSON with numbers preferentially converted to uint64
+// or int64 if negative, and strings with "re/" as prefix are compiled as
+// a regular expression.
+func (qj *QueryJSON) UnmarshalJSON(jsonText []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(jsonText), &raw); err != nil {
+		return err
+	}
+	*qj = make(QueryJSON, len(raw))
+
+	dvid.Infof("query unmarshal on: %s\n", string(jsonText))
+
+	for key, val := range raw {
+		s := string(val)
+		u, err := strconv.ParseUint(s, 10, 64)
+		if err == nil {
+			(*qj)[key] = u
+			continue
+		}
+		i, err := strconv.ParseInt(s, 10, 64)
+		if err == nil {
+			(*qj)[key] = i
+			continue
+		}
+		f, err := strconv.ParseFloat(s, 64)
+		if err == nil {
+			(*qj)[key] = f
+			continue
+		}
+		var int64list []int64
+		if err = json.Unmarshal(val, &int64list); err == nil {
+			(*qj)[key] = int64list
+			continue
+		}
+		if len(s) > 4 && strings.HasPrefix(s, `"re/`) {
+			re, err := regexp.Compile(s[4 : len(s)-1])
+			if err == nil {
+				(*qj)[key] = re
+				continue
+			}
+		}
+		var strlist []string
+		if err = json.Unmarshal(val, &strlist); err == nil {
+			hasRegex := false
+			iflist := make([]interface{}, len(strlist))
+			for i, s := range strlist {
+				if len(s) > 3 && strings.HasPrefix(s, "re/") {
+					hasRegex = true
+					if re, err := regexp.Compile(s[3:]); err == nil {
+						iflist[i] = re
+					}
+				}
+				if iflist[i] == nil {
+					iflist[i] = s
+				}
+			}
+			if hasRegex {
+				(*qj)[key] = iflist
+			} else {
+				(*qj)[key] = strlist
+			}
+			continue
+		}
+		var listVal interface{}
+		if err = json.Unmarshal(val, &listVal); err == nil {
+			(*qj)[key] = listVal
+			continue
+		}
+		return fmt.Errorf("unable to parse JSON value %q: %v", s, err)
+	}
+	return nil
+}
+
 type NeuronJSON map[string]interface{}
 type ListNeuronJSON []NeuronJSON
 
@@ -1274,11 +1354,6 @@ func (nj NeuronJSON) copy() NeuronJSON {
 // UnmarshalJSON parses JSON with numbers preferentially converted to uint64
 // or int64 if negative.
 func (nj *NeuronJSON) UnmarshalJSON(jsonText []byte) error {
-	// d := json.NewDecoder(bytes.NewReader(jsonText))
-	// d.UseNumber()
-	// if err := d.Decode(nj); err != nil {
-	// 	return fmt.Errorf("couldn't parse neuron JSON %q: %v", jsonText, err)
-	// }
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(jsonText), &raw); err != nil {
 		return err
@@ -1307,6 +1382,11 @@ func (nj *NeuronJSON) UnmarshalJSON(jsonText []byte) error {
 			(*nj)[key] = int64list
 			continue
 		}
+		var strlist []string
+		if err = json.Unmarshal(val, &strlist); err == nil {
+			(*nj)[key] = strlist
+			continue
+		}
 		var listVal interface{}
 		if err = json.Unmarshal(val, &listVal); err == nil {
 			(*nj)[key] = listVal
@@ -1319,23 +1399,37 @@ func (nj *NeuronJSON) UnmarshalJSON(jsonText []byte) error {
 
 // move the following to Generics when upgrading and requiring Go 1.18
 
-func checkIntMatch(query []int64, field []int64) bool {
-	for _, queryValue := range query {
-		for _, fieldValue := range field {
-			if fieldValue == queryValue {
-				return true
-			}
+func checkIntMatch(query int64, field []int64) bool {
+	if len(field) == 0 {
+		return false
+	}
+	for _, fieldValue := range field {
+		if fieldValue == query {
+			return true
 		}
 	}
 	return false
 }
 
-func checkStrMatch(query []string, field []string) bool {
-	for _, queryValue := range query {
-		for _, fieldValue := range field {
-			if fieldValue == queryValue {
-				return true
-			}
+func checkStrMatch(query string, field []string) bool {
+	if len(field) == 0 {
+		return false
+	}
+	for _, fieldValue := range field {
+		if fieldValue == query {
+			return true
+		}
+	}
+	return false
+}
+
+func checkRegexMatch(query *regexp.Regexp, field []string) bool {
+	if len(field) == 0 {
+		return false
+	}
+	for _, fieldValue := range field {
+		if query.Match([]byte(fieldValue)) {
+			return true
 		}
 	}
 	return false
@@ -1367,77 +1461,82 @@ func checkField(queryValue, fieldValue interface{}) bool {
 		fieldStrList = []string{v}
 	case []string:
 		fieldStrList = v
+
 	default:
+		dvid.Errorf("Unknown field value of type %s: %v\n", reflect.TypeOf(v), v)
+		return false
+	}
+	if len(fieldNumList) == 0 && len(fieldStrList) == 0 {
 		return false
 	}
 
 	// convert query value to list of types as above for field value.
 	switch v := queryValue.(type) {
 	case int64:
-		if fieldNumList == nil {
-			return false
+		if checkIntMatch(v, fieldNumList) {
+			return true
 		}
-		return checkIntMatch([]int64{v}, fieldNumList)
 	case []int64:
-		if fieldNumList == nil {
-			return false
+		for _, i := range v {
+			if checkIntMatch(i, fieldNumList) {
+				return true
+			}
 		}
-		return checkIntMatch(v, fieldNumList)
 	case uint64:
-		if fieldNumList == nil {
-			return false
+		if checkIntMatch(int64(v), fieldNumList) {
+			return true
 		}
-		return checkIntMatch([]int64{int64(v)}, fieldNumList)
 	case []uint64:
-		if fieldNumList == nil {
-			return false
+		for _, val := range v {
+			if checkIntMatch(int64(val), fieldNumList) {
+				return true
+			}
 		}
-		queryNumList := make([]int64, len(v))
-		for i, val := range v {
-			queryNumList[i] = int64(val)
-		}
-		return checkIntMatch(queryNumList, fieldNumList)
 	case string:
-		if fieldStrList == nil {
-			return false
+		if checkStrMatch(v, fieldStrList) {
+			return true
 		}
-		return checkStrMatch([]string{v}, fieldStrList)
 	case []string:
-		if fieldStrList == nil {
-			return false
+		for _, s := range v {
+			if checkStrMatch(s, fieldStrList) {
+				return true
+			}
 		}
-		return checkStrMatch(v, fieldStrList)
+	case *regexp.Regexp:
+		if checkRegexMatch(v, fieldStrList) {
+			return true
+		}
 	case []interface{}:
 		elem := v[0]
 		switch e := elem.(type) {
 		case int:
-			if fieldNumList == nil {
-				return false
+			for _, val := range v {
+				if checkIntMatch(int64(val.(int)), fieldNumList) {
+					return true
+				}
 			}
-			queryNumList := make([]int64, len(v))
-			for i, val := range v {
-				queryNumList[i] = int64(val.(int))
+		case string, *regexp.Regexp:
+			for _, val := range v {
+				switch query := val.(type) {
+				case string:
+					if checkStrMatch(query, fieldStrList) {
+						return true
+					}
+				case *regexp.Regexp:
+					if checkRegexMatch(query, fieldStrList) {
+						return true
+					}
+				}
 			}
-			return checkIntMatch(queryNumList, fieldNumList)
-		case string:
-			if fieldStrList == nil {
-				return false
-			}
-			queryStrList := make([]string, len(v))
-			for i, val := range v {
-				queryStrList[i] = val.(string)
-			}
-			return checkStrMatch(queryStrList, fieldStrList)
 		default:
 			var t = reflect.TypeOf(e)
 			dvid.Errorf("neuronjson query value %v has elements of illegal type %v\n", v, t)
-			return false
 		}
 	default:
 		var t = reflect.TypeOf(v)
 		dvid.Errorf("neuronjson query value %v has illegal type %v\n", v, t)
-		return false
 	}
+	return false
 }
 
 func fieldMatch(queryValue, fieldValue interface{}) bool {
@@ -1451,7 +1550,7 @@ func fieldMatch(queryValue, fieldValue interface{}) bool {
 }
 
 // returns true if at least one query on the list matches the value.
-func queryMatch(queryList ListNeuronJSON, value map[string]interface{}) (matches bool, err error) {
+func queryMatch(queryList ListQueryJSON, value map[string]interface{}) (matches bool, err error) {
 	if len(queryList) == 0 {
 		matches = false
 		return
@@ -1472,7 +1571,7 @@ func queryMatch(queryList ListNeuronJSON, value map[string]interface{}) (matches
 	return false, nil
 }
 
-func (d *Data) queryInMemory(w http.ResponseWriter, queryList ListNeuronJSON, showFields Fields) (err error) {
+func (d *Data) queryInMemory(w http.ResponseWriter, queryL ListQueryJSON, showFields Fields) (err error) {
 	d.dbMu.RLock()
 	defer d.dbMu.RUnlock()
 
@@ -1480,7 +1579,7 @@ func (d *Data) queryInMemory(w http.ResponseWriter, queryList ListNeuronJSON, sh
 	var jsonBytes []byte
 	for _, value := range d.db {
 		var matches bool
-		if matches, err = queryMatch(queryList, value); err != nil {
+		if matches, err = queryMatch(queryL, value); err != nil {
 			return
 		} else if matches {
 			out := removeReservedFields(value, showFields)
@@ -1498,7 +1597,7 @@ func (d *Data) queryInMemory(w http.ResponseWriter, queryList ListNeuronJSON, sh
 }
 
 func (d *Data) queryBackingStore(ctx storage.VersionedCtx, w http.ResponseWriter,
-	queryL ListNeuronJSON, showFields Fields) (err error) {
+	queryL ListQueryJSON, showFields Fields) (err error) {
 
 	process_func := func(key string, value map[string]interface{}) {
 		if matches, err := queryMatch(queryL, value); err != nil {
@@ -1519,33 +1618,31 @@ func (d *Data) queryBackingStore(ctx storage.VersionedCtx, w http.ResponseWriter
 }
 
 // Query reads POSTed data and returns JSON.
-func (d *Data) Query(ctx *datastore.VersionedCtx, w http.ResponseWriter, uuid dvid.UUID,
-	onlyid bool, showFields Fields,
-	in io.ReadCloser) (err error) {
+func (d *Data) Query(ctx *datastore.VersionedCtx, w http.ResponseWriter, uuid dvid.UUID, onlyid bool, showFields Fields, in io.ReadCloser) (err error) {
 	var queryBytes []byte
 	if queryBytes, err = io.ReadAll(in); err != nil {
 		return
 	}
 	// Try to parse as list of queries and if fails, try as object and make it a one-item list.
-	var queryList ListNeuronJSON
-	if err = json.Unmarshal(queryBytes, &queryList); err != nil {
-		var queryObj NeuronJSON
+	var queryL ListQueryJSON
+	if err = json.Unmarshal(queryBytes, &queryL); err != nil {
+		var queryObj QueryJSON
 		if err = queryObj.UnmarshalJSON(queryBytes); err != nil {
 			err = fmt.Errorf("unable to parse JSON query: %s", string(queryBytes))
 			return
 		}
-		queryList = ListNeuronJSON{queryObj}
+		queryL = ListQueryJSON{queryObj}
 	}
 
 	// Perform the query
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, "[")
 	if ctx.Head() {
-		if err = d.queryInMemory(w, queryList, showFields); err != nil {
+		if err = d.queryInMemory(w, queryL, showFields); err != nil {
 			return
 		}
 	} else {
-		if err = d.queryBackingStore(ctx, w, queryList, showFields); err != nil {
+		if err = d.queryBackingStore(ctx, w, queryL, showFields); err != nil {
 			return
 		}
 	}
@@ -1759,7 +1856,7 @@ func (d *Data) PutData(ctx *datastore.VersionedCtx, keyStr string, value []byte,
 			return err
 		}
 	} else {
-		dvid.Errorf("unable to get JSON schema to validate neuron annotation: %v\n", err)
+		dvid.Infof("Skipping validation of POST %q neuron annotation: %v\n", d.DataName(), err)
 	}
 
 	var newData NeuronJSON
