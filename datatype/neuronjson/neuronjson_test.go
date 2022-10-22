@@ -654,7 +654,7 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 		t.Errorf("Bad regex query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
-	// Check if keys are re-POSTed using default or replace=true.
+	// Check if keys are re-POSTed using default update or replace=true.
 	value3mod := `{"a string": "goo modified", "a 2nd list": [26]}`
 	key3modreq := fmt.Sprintf("%snode/%s/%s/key/%s?u=bill&show=user", server.WebAPIPath, uuid, data.DataName(), key3)
 	server.TestHTTP(t, "POST", key3modreq, strings.NewReader(value3mod))
@@ -664,7 +664,7 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 	expectedValue = []byte(`{"a string": "goo modified", "a number": 3456, "a list": [23], "a 2nd list": [26]}`)
 	var expectedJSON NeuronJSON
 	if err := json.Unmarshal(expectedValue, &expectedJSON); err != nil {
-		t.Fatalf("Couldn't expected basic JSON: %s\n", expectedJSON)
+		t.Fatalf("Couldn't unmarshal expected basic JSON: %s\n", expectedJSON)
 	}
 	var responseJSON NeuronJSON
 	if err := json.Unmarshal(returnValue, &responseJSON); err != nil {
@@ -692,6 +692,36 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 		t.Fatalf("Bad response (type %s): %v\n", reflect.TypeOf(value), responseJSON)
 	}
 	if value, found := responseJSON["a 2nd list_user"]; !found || value != "bill" {
+		t.Fatalf("Bad response: %v\n", responseJSON)
+	}
+
+	// Check if keys are re-POSTed using replace=true.
+	value3mod = `{"a string": "goo replaced", "only list": [1, 2]}`
+	key3modreq = fmt.Sprintf("%snode/%s/%s/key/%s?u=sandra&show=user&replace=true", server.WebAPIPath, uuid, data.DataName(), key3)
+	server.TestHTTP(t, "POST", key3modreq, strings.NewReader(value3mod))
+
+	returnValue = server.TestHTTP(t, "GET", key3modreq, nil)
+
+	expectedValue = []byte(value3mod)
+	if err := json.Unmarshal(expectedValue, &expectedJSON); err != nil {
+		t.Fatalf("Couldn't unmarshal expected basic JSON: %s\n", expectedJSON)
+	}
+	if err := json.Unmarshal(returnValue, &responseJSON); err != nil {
+		t.Fatalf("Couldn't unmarshal response JSON: %s\n", string(returnValue))
+	}
+	if len(responseJSON) != 4 {
+		t.Fatalf("Expected only 4 fields in response after replace, got: %v\n", responseJSON)
+	}
+	if value, found := responseJSON["a string"]; !found || value != "goo replaced" {
+		t.Fatalf("Bad response: %v\n", responseJSON)
+	}
+	if value, found := responseJSON["only list"]; !found || !reflect.DeepEqual(value, []int64{1, 2}) {
+		t.Fatalf("Bad response (type %s): %v\n", reflect.TypeOf(value), responseJSON)
+	}
+	if value, found := responseJSON["a string_user"]; !found || value != "sandra" {
+		t.Fatalf("Bad response: %v\n", responseJSON)
+	}
+	if value, found := responseJSON["only list_user"]; !found || value != "sandra" {
 		t.Fatalf("Bad response: %v\n", responseJSON)
 	}
 }
