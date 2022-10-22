@@ -1014,16 +1014,22 @@ func (d *Data) loadFromKV(v dvid.VersionID, kvData kvType) {
 		// Handle metadata string keys
 		switch key {
 		case JSONSchema.String():
+			dvid.Infof("Transferring metadata %q from keyvalue instance %q to neuronjson instance %q",
+				key, kvData.DataName(), d.DataName())
 			if err := d.putMetadata(ctx, kv.V, JSONSchema); err != nil {
 				dvid.Errorf("Unable to handle JSON schema metadata transfer, skipping: %v\n", err)
 			}
 			continue
 		case NeuSchema.String():
+			dvid.Infof("Transferring metadata %q from keyvalue instance %q to neuronjson instance %q",
+				key, kvData.DataName(), d.DataName())
 			if err := d.putMetadata(ctx, kv.V, NeuSchema); err != nil {
 				dvid.Errorf("Unable to handle neutu/neu3 schema metadata transfer, skipping: %v\n", err)
 			}
 			continue
 		case NeuSchemaBatch.String():
+			dvid.Infof("Transferring metadata %q from keyvalue instance %q to neuronjson instance %q",
+				key, kvData.DataName(), d.DataName())
 			if err := d.putMetadata(ctx, kv.V, NeuSchemaBatch); err != nil {
 				dvid.Errorf("Unable to handle neutu/neu3 batch schema metadata transfer, skipping: %v\n", err)
 			}
@@ -1128,7 +1134,11 @@ func (d *Data) getMetadata(ctx storage.VersionedCtx, meta Metadata) (val []byte,
 	if ctx.Head() {
 		d.metadataMu.RLock()
 		defer d.metadataMu.RUnlock()
-		return d.metadata[meta], nil
+		if val, found := d.metadata[meta]; found {
+			return val, nil
+		} else {
+			return nil, nil
+		}
 	}
 
 	var tkey storage.TKey
@@ -1237,7 +1247,15 @@ func (d *Data) deleteMetadata(ctx storage.VersionedCtx, meta Metadata) (err erro
 	if db, err = datastore.GetKeyValueDB(d); err != nil {
 		return
 	}
-	return db.Delete(ctx, tkey)
+	if err = db.Delete(ctx, tkey); err != nil {
+		return
+	}
+	if ctx.Head() {
+		d.metadataMu.Lock()
+		defer d.metadataMu.Unlock()
+		delete(d.metadata, meta)
+	}
+	return nil
 }
 
 /////////
@@ -1779,6 +1797,28 @@ func (d *Data) GetFields() ([]string, error) {
 
 // GetData gets a byte value using a key
 func (d *Data) GetData(ctx storage.VersionedCtx, keyStr string, showFields Fields) ([]byte, bool, error) {
+	// Allow "schema" and "schema_batch" on /key endpoint for backwards compatibility with DVID keyvalue instances.
+	fmt.Printf("GetData: %q check against %q\n", keyStr, NeuSchema.String())
+	switch keyStr {
+	case NeuSchema.String():
+		data, err := d.getMetadata(ctx, NeuSchema)
+		if err != nil {
+			return nil, false, fmt.Errorf("unable to retrieve neutu/neu3 JSON schema: %v", err)
+		}
+		if data != nil {
+			return data, true, nil
+		}
+		return nil, false, nil
+	case NeuSchemaBatch.String():
+		data, err := d.getMetadata(ctx, NeuSchemaBatch)
+		if err != nil {
+			return nil, false, fmt.Errorf("unable to retrieve neutu/neu3 JSON batch schema: %v", err)
+		}
+		if data != nil {
+			return data, true, nil
+		}
+		return nil, false, nil
+	}
 	bodyid, err := strconv.ParseUint(keyStr, 10, 64)
 	if err != nil {
 		return nil, false, err
@@ -1841,6 +1881,20 @@ func updateJSON(origData, newData NeuronJSON, user string, conditionals []string
 // PutData puts a valid JSON []byte into a neuron key at a given uuid.
 // If replace is true, will use given value instead of updating fields that were given.
 func (d *Data) PutData(ctx *datastore.VersionedCtx, keyStr string, value []byte, conditionals []string, replace bool) error {
+	// Allow "schema" and "schema_batch" on /key endpoint for backwards compatibility with DVID keyvalue instances.
+	switch keyStr {
+	case NeuSchema.String():
+		if err := d.putMetadata(ctx, value, NeuSchema); err != nil {
+			return fmt.Errorf("unable to handle POST neutu/neu3 schema metadata: %v", err)
+		}
+		return nil
+	case NeuSchemaBatch.String():
+		if err := d.putMetadata(ctx, value, NeuSchemaBatch); err != nil {
+			return fmt.Errorf("unable to handle POST neutu/neu3 batch schema metadata: %v", err)
+		}
+		return nil
+	}
+
 	bodyid, err := strconv.ParseUint(keyStr, 10, 64)
 	if err != nil {
 		return err
@@ -1886,6 +1940,20 @@ func (d *Data) PutData(ctx *datastore.VersionedCtx, keyStr string, value []byte,
 
 // DeleteData deletes a key-value pair
 func (d *Data) DeleteData(ctx storage.VersionedCtx, keyStr string) error {
+	// Allow "schema" and "schema_batch" on /key endpoint for backwards compatibility with DVID keyvalue instances.
+	switch keyStr {
+	case NeuSchema.String():
+		if err := d.deleteMetadata(ctx, NeuSchema); err != nil {
+			return fmt.Errorf("unable to handle DELETE neutu/neu3 schema metadata: %v", err)
+		}
+		return nil
+	case NeuSchemaBatch.String():
+		if err := d.deleteMetadata(ctx, NeuSchemaBatch); err != nil {
+			return fmt.Errorf("unable to handle DELETE neutu/neu3 batch schema metadata: %v", err)
+		}
+		return nil
+	}
+
 	bodyid, err := strconv.ParseUint(keyStr, 10, 64)
 	if err != nil {
 		return err
@@ -2291,7 +2359,11 @@ func (d *Data) handleSchema(ctx storage.VersionedCtx, w http.ResponseWriter, r *
 		value, err := d.getMetadata(ctx, meta)
 		if err != nil {
 			return err
-		} else if _, err := w.Write(value); err != nil {
+		} else if value == nil {
+			w.WriteHeader(http.StatusNotFound)
+			return nil
+		}
+		if _, err := w.Write(value); err != nil {
 			return err
 		}
 		w.Header().Set("Content-Type", "application/json")

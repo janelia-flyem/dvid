@@ -378,6 +378,83 @@ func TestNeuronjsonRepoPersistence(t *testing.T) {
 	}
 }
 
+func TestMetadataSupport(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+	server.CreateTestInstance(t, uuid, "neuronjson", "neurons", dvid.Config{})
+
+	// Test handling of different metadata types.
+	reqJSONSchema := fmt.Sprintf("%snode/%s/neurons/json_schema?u=frank", server.WebAPIPath, uuid)
+	resp := server.TestHTTPResponse(t, "POST", reqJSONSchema, strings.NewReader(testJsonSchema))
+	if resp.Code != http.StatusOK {
+		t.Errorf("POST on %s returned %d, not 200: %s\n", reqJSONSchema, resp.Code, resp.Body.String())
+	}
+	returnValue := server.TestHTTP(t, "GET", reqJSONSchema, nil)
+	if !equalObjectJSON(returnValue, []byte(testJsonSchema), ShowAll) {
+		t.Errorf("Error in getting json schema: got %s\n", string(returnValue))
+	}
+
+	reqSchema1 := fmt.Sprintf("%snode/%s/neurons/schema?u=frank", server.WebAPIPath, uuid)
+	resp = server.TestHTTPResponse(t, "POST", reqSchema1, strings.NewReader(testJsonSchema))
+	if resp.Code != http.StatusOK {
+		t.Errorf("POST on %s returned %d, not 200: %s\n", reqSchema1, resp.Code, resp.Body.String())
+	}
+	returnValue = server.TestHTTP(t, "GET", reqSchema1, nil)
+	if !equalObjectJSON(returnValue, []byte(testJsonSchema), ShowAll) {
+		t.Errorf("Error in getting json schema: got %s\n", string(returnValue))
+	}
+	// -- check legacy /key/schema works for backwards-compatibility
+	reqSchema2 := fmt.Sprintf("%snode/%s/neurons/key/schema?u=frank", server.WebAPIPath, uuid)
+	resp = server.TestHTTPResponse(t, "POST", reqSchema2, strings.NewReader(testJsonSchema))
+	if resp.Code != http.StatusOK {
+		t.Errorf("POST on %s returned %d, not 200: %s\n", reqSchema2, resp.Code, resp.Body.String())
+	}
+	returnValue = server.TestHTTP(t, "GET", reqSchema2, nil)
+	if !equalObjectJSON(returnValue, []byte(testJsonSchema), ShowAll) {
+		t.Errorf("Error in getting json schema: got %s\n", string(returnValue))
+	}
+	resp = server.TestHTTPResponse(t, "DELETE", reqSchema2, nil)
+	if resp.Code != http.StatusOK {
+		t.Errorf("DELETE on %s returned %d, not 200: %s\n", reqSchema2, resp.Code, resp.Body.String())
+	}
+	resp = server.TestHTTPResponse(t, "GET", reqSchema2, nil)
+	if resp.Code != http.StatusNotFound {
+		t.Errorf("GET on %s returned %d, not 404: %s\n", reqSchema2, resp.Code, resp.Body.String())
+	}
+
+	reqSchema1 = fmt.Sprintf("%snode/%s/neurons/schema_batch?u=frank", server.WebAPIPath, uuid)
+	resp = server.TestHTTPResponse(t, "POST", reqSchema1, strings.NewReader(testJsonSchema))
+	if resp.Code != http.StatusOK {
+		t.Errorf("POST on %s returned %d, not 200: %s\n", reqSchema1, resp.Code, resp.Body.String())
+	}
+	returnValue = server.TestHTTP(t, "GET", reqSchema1, nil)
+	if !equalObjectJSON(returnValue, []byte(testJsonSchema), ShowAll) {
+		t.Errorf("Error in getting json schema: got %s\n", string(returnValue))
+	}
+	// -- check legacy /key/schema works for backwards-compatibility
+	reqSchema2 = fmt.Sprintf("%snode/%s/neurons/key/schema_batch?u=frank", server.WebAPIPath, uuid)
+	resp = server.TestHTTPResponse(t, "POST", reqSchema2, strings.NewReader(testJsonSchema))
+	if resp.Code != http.StatusOK {
+		t.Errorf("POST on %s returned %d, not 200: %s\n", reqSchema2, resp.Code, resp.Body.String())
+	}
+	returnValue = server.TestHTTP(t, "GET", reqSchema2, nil)
+	if !equalObjectJSON(returnValue, []byte(testJsonSchema), ShowAll) {
+		t.Errorf("Error in getting json schema: got %s\n", string(returnValue))
+	}
+	resp = server.TestHTTPResponse(t, "DELETE", reqSchema2, nil)
+	if resp.Code != http.StatusOK {
+		t.Errorf("DELETE on %s returned %d, not 200: %s\n", reqSchema2, resp.Code, resp.Body.String())
+	}
+	resp = server.TestHTTPResponse(t, "GET", reqSchema2, nil)
+	if resp.Code != http.StatusNotFound {
+		t.Errorf("GET on %s returned %d, not 404: %s\n", reqSchema2, resp.Code, resp.Body.String())
+	}
+}
+
 func TestValidation(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
