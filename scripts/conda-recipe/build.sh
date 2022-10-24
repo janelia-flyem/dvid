@@ -30,10 +30,6 @@ cd ${DVID_REPO}
 # Setting this variable explicitly overrides some linker warnings.
 export MACOSX_DEPLOYMENT_TARGET=10.10
 
-# In theory, most dependencies were already cloned thanks to the lists in meta.yaml.
-# But the developer is free to add things to get-go-dependencies, too.
-${DVID_REPO}/scripts/get-go-dependencies.sh
-
 # Build
 make dvid
 
@@ -44,6 +40,3 @@ fi
 
 # Install
 make install
-
-# Remove the gcc symlink that was created in get-go-dependenices.sh
-rm -rf ${PREFIX}/bin/gcc

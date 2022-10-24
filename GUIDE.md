@@ -228,10 +228,6 @@ Build Maintenance Notes
   `scripts/conda-recipe/meta.yaml`.  Also add them to the appropriate line of
   `scripts/install-developer-dependencies.sh`.
 
-- New third-party Go dependencies can simply be added to `scripts/get-go-dependencies.sh`,
-  but the conda recipe will build faster if you also add a corresponding entry
-  to the `source` section in `scripts/conda-recipe/meta.yaml`.
-     
 - Of course, new DVID sources should be listed in the `Makefile` as needed.
 
 

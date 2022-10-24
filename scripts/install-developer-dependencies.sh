@@ -44,9 +44,4 @@ else
     conda activate ${CONDA_DEFAULT_ENV}
 fi
 
-##
-## Install go dependencies.
-##
-./get-go-dependencies.sh
-
 echo "DONE."
