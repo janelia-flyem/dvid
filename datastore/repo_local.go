@@ -1411,7 +1411,7 @@ func (m *repoManager) addToRepoLog(uuid dvid.UUID, msgs []string) error {
 // Node-level functions
 
 func (m *repoManager) getNodeByVersion(v dvid.VersionID) (*nodeT, error) {
-	uuid, err := manager.uuidFromVersion(v)
+	uuid, err := m.uuidFromVersion(v)
 	if err != nil {
 		return nil, err
 	}

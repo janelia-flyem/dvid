@@ -852,8 +852,6 @@ func (d *Data) Initialize() {
 	ctx := datastore.NewVersionedCtx(d, leafV)
 
 	d.initMemoryDB()
-	d.dbMu.Lock()
-	defer d.dbMu.Unlock()
 
 	// Load all the data into memory.
 	if sch, err := d.getJSONSchema(ctx); err == nil {
