@@ -1829,7 +1829,6 @@ func (d *Data) GetFields() ([]string, error) {
 // GetData gets a byte value using a key
 func (d *Data) GetData(ctx storage.VersionedCtx, keyStr string, showFields Fields) ([]byte, bool, error) {
 	// Allow "schema" and "schema_batch" on /key endpoint for backwards compatibility with DVID keyvalue instances.
-	fmt.Printf("GetData: %q check against %q\n", keyStr, NeuSchema.String())
 	switch keyStr {
 	case NeuSchema.String():
 		data, err := d.getMetadata(ctx, NeuSchema)

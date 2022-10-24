@@ -220,7 +220,6 @@ func TestExtents(t *testing.T) {
 	if err := json.Unmarshal(result, &parsed); err != nil {
 		t.Fatalf("Error parsing JSON response of new instance metadata: %v\n", err)
 	}
-	fmt.Printf("got: %s\n", string(result))
 	if !parsed.Extended.MinPoint.Equals(dvid.Point3d{68, 127, 210}) {
 		t.Errorf("Bad MinPoint in new uint8blk instance: %s\n", parsed.Extended.MinPoint)
 	}

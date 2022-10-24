@@ -1,7 +1,6 @@
 package labelarray
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -64,7 +63,7 @@ func TestIndexing(t *testing.T) {
 			}
 		}
 	}
-	fmt.Printf("Done with %d changes: %s\n", changes, time.Since(startT))
+	// fmt.Printf("Done with %d changes: %s\n", changes, time.Since(startT))
 
 	// make sure are indexing on disk is correct.
 	startT = time.Now()
@@ -77,5 +76,5 @@ func TestIndexing(t *testing.T) {
 			t.Errorf("label %d had %d blocks: %s\n", label, len(meta.Blocks), meta.Blocks)
 		}
 	}
-	fmt.Printf("Time for verification through GETs: %s\n", time.Since(startT))
+	// fmt.Printf("Time for verification through GETs: %s\n", time.Since(startT))
 }

@@ -59,8 +59,6 @@ func TestRepoGobEncoding(t *testing.T) {
 	}
 	repo.properties = nil
 	received.properties = nil
-	fmt.Printf("repo: created %s, updated %s\n", repo.created, repo.updated)
-	fmt.Printf("recv: created %s, updated %s\n", received.created, received.updated)
 	if !reflect.DeepEqual(*repo, received) {
 		t.Fatalf("Repo Gob messed up:\nOriginal: %v\nReceived: %v\n", *repo, received)
 	}

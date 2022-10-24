@@ -158,7 +158,7 @@ func (e Engine) newStore(config dvid.StoreConfig) (*ngStore, bool, error) {
 		var err error
 		bucket, err = blob.OpenBucket(ctx, ref)
 		if err != nil {
-			fmt.Printf("Can't open NG precomputed @ %q: %v\n", ref, err)
+			dvid.Errorf("Can't open NG precomputed @ %q: %v\n", ref, err)
 			return nil, false, err
 		}
 		pathpart := strings.TrimPrefix(ref, "s3://")

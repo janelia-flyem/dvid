@@ -445,7 +445,6 @@ func (d *Data) GetKeysInRange(ctx storage.Context, keyBeg, keyEnd string) ([]str
 	}
 	keys, err := db.KeysInRange(ctx, first, last)
 	if err != nil {
-		fmt.Printf("Error detected at GetKeysInRange level: %v\n", err)
 		return nil, err
 	}
 	keyList := []string{}

@@ -883,7 +883,6 @@ func (db *BadgerDB) DeleteRange(ctx storage.Context, kStart, kEnd storage.TKey) 
 	for {
 		result := <-ch
 		if result.KeyValue == nil {
-			fmt.Printf("Got delete key nil\n")
 			break
 		}
 		if result.error != nil {
@@ -1060,7 +1059,6 @@ func (batch *goBatch) Put(tk storage.TKey, v []byte) {
 
 func (batch *goBatch) Commit() error {
 	if batch == nil {
-		fmt.Printf("nil batch aborting Commit()\n")
 		return fmt.Errorf("Received nil batch in batch.Commit()\n")
 	}
 	// fmt.Printf("WriteBatch is being flushed in commit...\n")

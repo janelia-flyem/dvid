@@ -1234,7 +1234,6 @@ func TestPostBlocks(t *testing.T) {
 func testExtents(t *testing.T, name string, uuid dvid.UUID, min, max dvid.Point3d) {
 	apiStr := fmt.Sprintf("%snode/%s/%s/metadata", server.WebAPIPath, uuid, name)
 	r := server.TestHTTP(t, "GET", apiStr, nil)
-	fmt.Printf("metadata: %s\n", string(r))
 	jsonVal := make(map[string]interface{})
 	if err := json.Unmarshal(r, &jsonVal); err != nil {
 		t.Errorf("Unable to get metadata in JSON format.  Instead got: %v\n", jsonVal)
@@ -1295,7 +1294,7 @@ func TestBigPostBlock(t *testing.T) {
 	writeInt32(t, &buf, 0)
 	writeInt32(t, &buf, 0)
 	writeInt32(t, &buf, int32(len(data)))
-	fmt.Printf("Writing %d bytes of compressed block\n", len(data))
+	// fmt.Printf("Writing %d bytes of compressed block\n", len(data))
 	n, err := buf.Write(data)
 	if err != nil {
 		t.Fatalf("unable to write gzip block: %v\n", err)
