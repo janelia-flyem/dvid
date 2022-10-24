@@ -138,10 +138,10 @@ func (vctx *VersionedCtx) VersionUUID() dvid.UUID {
 
 // Head checks whether this the open head of the master branch
 func (vctx *VersionedCtx) Head() bool {
-	rootversion, _ := UUIDFromVersion(vctx.VersionID())
-	r, _ := manager.repos[rootversion]
-	node, _ := r.dag.nodes[vctx.VersionID()]
-
+	node, err := manager.getNodeByVersion(vctx.VersionID())
+	if err != nil {
+		return false
+	}
 	if node.locked {
 		return false
 	}
@@ -154,11 +154,10 @@ func (vctx *VersionedCtx) Head() bool {
 
 // Head checks whether specified version is on the  master branch
 func (vctx *VersionedCtx) MasterVersion(version dvid.VersionID) bool {
-
-	rootversion, _ := UUIDFromVersion(version)
-	r, _ := manager.repos[rootversion]
-	node, _ := r.dag.nodes[version]
-
+	node, err := manager.getNodeByVersion(vctx.VersionID())
+	if err != nil {
+		return false
+	}
 	if node.branch != "" {
 		// requires branching info in new DVID
 		return false
@@ -169,7 +168,7 @@ func (vctx *VersionedCtx) MasterVersion(version dvid.VersionID) bool {
 // NumVersions returns the number of versions for a given
 func (vctx *VersionedCtx) NumVersions() int32 {
 	rootversion, _ := UUIDFromVersion(vctx.VersionID())
-	r, _ := manager.repos[rootversion]
+	r := manager.repos[rootversion]
 	return int32(len(r.dag.nodes))
 }
 

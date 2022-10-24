@@ -852,6 +852,31 @@ func (d *Data) Initialize() {
 	ctx := datastore.NewVersionedCtx(d, leafV)
 
 	d.initMemoryDB()
+	d.dbMu.Lock()
+	defer d.dbMu.Unlock()
+
+	// Load all the data into memory.
+	if sch, err := d.getJSONSchema(ctx); err == nil {
+		if sch != nil {
+			d.compiledSchema = sch
+		}
+	} else {
+		dvid.Criticalf("Can't load JSON schema for neuronjson %q: %v", d.DataName(), err)
+	}
+	if value, err := d.getMetadata(ctx, NeuSchema); err == nil {
+		if value != nil {
+			d.metadata[NeuSchema] = value
+		}
+	} else {
+		dvid.Criticalf("Can't load neutu/neu3 schema for neuronjson %q: %v", d.DataName(), err)
+	}
+	if value, err := d.getMetadata(ctx, NeuSchemaBatch); err == nil {
+		if value != nil {
+			d.metadata[NeuSchemaBatch] = value
+		}
+	} else {
+		dvid.Criticalf("Can't load neutu/neu3 batch schema for neuronjson %q: %v", d.DataName(), err)
+	}
 
 	db, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
@@ -1181,6 +1206,12 @@ func (d *Data) getJSONSchema(ctx storage.VersionedCtx) (sch *jsonschema.Schema, 
 	if len(byteVal) == 0 {
 		return nil, fmt.Errorf("no JSON Schema available")
 	}
+	if ctx.Head() {
+		d.metadataMu.RLock()
+		d.metadata[JSONSchema] = byteVal
+		d.metadataMu.RUnlock()
+	}
+
 	sch, err = jsonschema.CompileString("schema.json", string(byteVal))
 	if err != nil {
 		return

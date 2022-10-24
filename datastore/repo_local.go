@@ -1408,6 +1408,26 @@ func (m *repoManager) addToRepoLog(uuid dvid.UUID, msgs []string) error {
 	return r.save()
 }
 
+// Node-level functions
+
+func (m *repoManager) getNodeByVersion(v dvid.VersionID) (*nodeT, error) {
+	uuid, err := manager.uuidFromVersion(v)
+	if err != nil {
+		return nil, err
+	}
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return nil, err
+	}
+	r.RLock()
+	node, found := r.dag.nodes[v]
+	r.RUnlock()
+	if !found {
+		return nil, fmt.Errorf("version %d not found in repo %q", v, uuid)
+	}
+	return node, nil
+}
+
 func (m *repoManager) getNodeNote(uuid dvid.UUID) (string, error) {
 	r, err := m.repoFromUUID(uuid)
 	if err != nil {
