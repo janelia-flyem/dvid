@@ -859,26 +859,28 @@ func (d *Data) Initialize() {
 			d.compiledSchema = sch
 		}
 	} else {
-		dvid.Criticalf("Can't load JSON schema for neuronjson %q: %v", d.DataName(), err)
+		dvid.Criticalf("Can't load JSON schema for neuronjson %q: %v\n", d.DataName(), err)
 	}
-	if value, err := d.getMetadata(ctx, NeuSchema); err == nil {
+	if value, err := d.loadMetadata(ctx, NeuSchema); err == nil {
+		dvid.Infof("Metadata load of neutu/neu3 JSON schema for %s: %d bytes\n", leafUUID[:6], len(value))
 		if value != nil {
 			d.metadata[NeuSchema] = value
 		}
 	} else {
-		dvid.Criticalf("Can't load neutu/neu3 schema for neuronjson %q: %v", d.DataName(), err)
+		dvid.Criticalf("Can't load neutu/neu3 schema for neuronjson %q: %v\n", d.DataName(), err)
 	}
-	if value, err := d.getMetadata(ctx, NeuSchemaBatch); err == nil {
+	if value, err := d.loadMetadata(ctx, NeuSchemaBatch); err == nil {
+		dvid.Infof("Metadata load of neutu/neu3 JSON batch schema for %s: %d bytes\n", leafUUID[:6], len(value))
 		if value != nil {
 			d.metadata[NeuSchemaBatch] = value
 		}
 	} else {
-		dvid.Criticalf("Can't load neutu/neu3 batch schema for neuronjson %q: %v", d.DataName(), err)
+		dvid.Criticalf("Can't load neutu/neu3 batch schema for neuronjson %q: %v\n", d.DataName(), err)
 	}
 
 	db, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
-		dvid.Criticalf("Can't setup ordered keyvalue db for neuronjson %q: %v", d.DataName(), err)
+		dvid.Criticalf("Can't setup ordered keyvalue db for neuronjson %q: %v\n", d.DataName(), err)
 		return
 	}
 
@@ -1153,17 +1155,7 @@ func (d *Data) loadFirestoreDB(request datastore.Request, reply *datastore.Respo
 
 // Metadata key-value support (all non-neuron annotations)
 
-func (d *Data) getMetadata(ctx storage.VersionedCtx, meta Metadata) (val []byte, err error) {
-	if ctx.Head() {
-		d.metadataMu.RLock()
-		defer d.metadataMu.RUnlock()
-		if val, found := d.metadata[meta]; found {
-			return val, nil
-		} else {
-			return nil, nil
-		}
-	}
-
+func (d *Data) loadMetadata(ctx storage.VersionedCtx, meta Metadata) (val []byte, err error) {
 	var tkey storage.TKey
 	if tkey, err = getMetadataKey(meta); err != nil {
 		return
@@ -1179,13 +1171,28 @@ func (d *Data) getMetadata(ctx storage.VersionedCtx, meta Metadata) (val []byte,
 	return byteVal, nil
 }
 
+// gets metadata from either in-memory db if HEAD or from store
+func (d *Data) getMetadata(ctx storage.VersionedCtx, meta Metadata) (val []byte, err error) {
+	if ctx.Head() {
+		d.metadataMu.RLock()
+		defer d.metadataMu.RUnlock()
+		if val, found := d.metadata[meta]; found {
+			return val, nil
+		} else {
+			return nil, nil
+		}
+	}
+	return d.loadMetadata(ctx, meta)
+}
+
 // get fully compiled JSON schema for use -- TODO
 func (d *Data) getJSONSchema(ctx storage.VersionedCtx) (sch *jsonschema.Schema, err error) {
 	if ctx.Head() {
 		d.metadataMu.RLock()
-		defer d.metadataMu.RUnlock()
-		if d.compiledSchema != nil {
-			return d.compiledSchema, nil
+		sch = d.compiledSchema
+		d.metadataMu.RUnlock()
+		if sch != nil {
+			return
 		}
 	}
 
