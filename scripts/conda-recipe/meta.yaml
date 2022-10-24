@@ -69,13 +69,11 @@ requirements:
     - snappy
     - basholeveldb
     - lz4-c {{ lz4_c }}*
-    - librdkafka {{ librdkafka }}*
 
   # The 'run' requirements specify which libraries
   # are required by dvid at run-time.
   run:
     - basholeveldb
-    - librdkafka {{ librdkafka }}*
     - dvid-web-console
 
 source:
