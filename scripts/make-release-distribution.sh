@@ -36,13 +36,15 @@ fi
 # Create the new distro environment and install dvid to it
 conda create -y -n dvid-distro dvid=${DVID_VERSION}
 
-# Install both versions of the dvid-web-console (old and new)
+# Install all versions of the dvid-web-console (old and new, and newest)
+conda install -y -n dvid-distro dvid-web-console=2.1.7
+cp -R ${DVID_DISTRO_ENV}/http/dvid-web-console ${DVID_DISTRO_ENV}/http/dvid-web-console-2
+
 conda install -y -n dvid-distro dvid-web-console=3
 cp -R ${DVID_DISTRO_ENV}/http/dvid-web-console ${DVID_DISTRO_ENV}/http/dvid-web-console-3
 
-# ...leave the old one active by default.
-conda install -y -n dvid-distro dvid-web-console=2.1.7
-cp -R ${DVID_DISTRO_ENV}/http/dvid-web-console ${DVID_DISTRO_ENV}/http/dvid-web-console-2
+conda install -y -n dvid-distro dvid-web-console=4
+cp -R ${DVID_DISTRO_ENV}/http/dvid-web-console ${DVID_DISTRO_ENV}/http/dvid-web-console-4
 
 cp ${THIS_SCRIPT_DIR}/distro-files/* ${DVID_DISTRO_ENV}
 
