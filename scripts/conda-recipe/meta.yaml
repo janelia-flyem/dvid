@@ -52,7 +52,7 @@ requirements:
   # or incorporated into the executable in any way.
   build:
     # Note: Make sure this matches GO_VERSION in scripts/install-developer-dependencies.sh
-    - go-cgo=1.16
+    - go-cgo=1.18
 
     - {{ compiler('c') }}
     - {{ compiler('cxx') }}

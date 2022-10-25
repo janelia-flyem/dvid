@@ -178,23 +178,24 @@ For each platform (Mac and Linux):
    ```
    </details>
 
-   **Note:** For maximum macOS compatibility, make sure you have the SDK for MacOSX 10.10,
+   **Note:** For maximum macOS compatibility, make sure you have the SDK for MacOSX 10.13,
    which can be installed via the [xcodelegacy project](https://github.com/devernay/xcodelegacy).
+   (We use go 1.18, which [requires at least [MacOSX 10.13](https://go.dev/dl).)
 
    <details>
 
-   <summary>Click here for MacOSX 10.10 SDK installation commands</summary>
+   <summary>Click here for MacOSX 10.13 SDK installation commands</summary>
 
    ```
    curl https://raw.githubusercontent.com/devernay/xcodelegacy/master/XcodeLegacy.sh > XcodeLegacy.sh
    chmod +x XcodeLegacy.sh
    
-   ./XcodeLegacy.sh -osx1010 buildpackages
-   sudo ./XcodeLegacy.sh -osx1010 install
+   ./XcodeLegacy.sh -osx1013 buildpackages
+   sudo ./XcodeLegacy.sh -osx1013 install
    ```
 
    **Note:** The XcodeLegacy script will probably tell you that the
-   10.10 SDK can only be built/installed by an old version of Xcode,
+   10.13 SDK can only be built/installed by an old version of Xcode,
    and ask you to download the old version (but not install it).
    
    Follow the download instructions it gives you, and then re-run

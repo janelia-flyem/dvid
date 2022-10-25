@@ -17,7 +17,8 @@ pin_run_as_build:
 
 CONDA_BUILD_SYSROOT:
   # Most conda-forge packages are compatible with MacOSX 10.9,
-  # but golang-1.16 requires at least MacOSX 10.12
+  # but golang-1.16 requires at least MacOSX 10.13.
+  # (See the download page: https://go.dev/dl/)
   #
   # You will have to install this SDK manually, via this project:
   #
@@ -27,10 +28,10 @@ CONDA_BUILD_SYSROOT:
   #
   #   curl https://raw.githubusercontent.com/devernay/xcodelegacy/master/XcodeLegacy.sh > XcodeLegacy.sh
   #   chmod +x XcodeLegacy.sh
-  #   sudo ./XcodeLegacy.sh -osx1012 buildpackages
-  #   sudo ./XcodeLegacy.sh -osx1012 install
+  #   sudo ./XcodeLegacy.sh -osx1013 buildpackages
+  #   sudo ./XcodeLegacy.sh -osx1013 install
   #
-  - /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.12.sdk
+  - /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.13.sdk
 
 MACOSX_DEPLOYMENT_TARGET:
-  - 10.12
+  - 10.13
