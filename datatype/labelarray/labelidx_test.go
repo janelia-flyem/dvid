@@ -2,7 +2,6 @@ package labelarray
 
 import (
 	"testing"
-	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -32,7 +31,6 @@ func TestIndexing(t *testing.T) {
 
 	// pretend we are ingesting bvsize x bvsize x bvsize blocks and for labels are tiled in 5x5x5
 	// block subvolumes.
-	startT := time.Now()
 	var bvsize, bx, by, bz, numVoxels int32
 	bvsize = 10
 	numVoxels = 64 * 64 * 64 / 20
@@ -63,10 +61,8 @@ func TestIndexing(t *testing.T) {
 			}
 		}
 	}
-	// fmt.Printf("Done with %d changes: %s\n", changes, time.Since(startT))
 
 	// make sure are indexing on disk is correct.
-	startT = time.Now()
 	for label = 1; label <= maxLabel*4; label++ {
 		meta, err := GetLabelIndex(d, v, label)
 		if err != nil {
@@ -76,5 +72,4 @@ func TestIndexing(t *testing.T) {
 			t.Errorf("label %d had %d blocks: %s\n", label, len(meta.Blocks), meta.Blocks)
 		}
 	}
-	// fmt.Printf("Time for verification through GETs: %s\n", time.Since(startT))
 }
