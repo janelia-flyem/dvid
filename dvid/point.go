@@ -1145,6 +1145,17 @@ func (c ChunkPoint3d) BoundingVoxels(blockSize Point3d) (minBlockVoxel, maxBlock
 	return
 }
 
+// WithinChunkBoundingBox returns true if the chunk is within the given bounding box using
+// chunk coordinates.
+func (c ChunkPoint3d) WithinChunkBoundingBox(minChunk, maxChunk ChunkPoint3d) bool {
+	for i := 0; i < 3; i++ {
+		if c[i] < minChunk[i] || c[i] > maxChunk[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // --------- ChunkPoint interface -------------
 
 func (c ChunkPoint3d) NumDims() uint8 {

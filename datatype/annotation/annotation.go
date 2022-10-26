@@ -235,6 +235,15 @@ POST <api URL>/node/<UUID>/<data name>/elements[?<options>]
 
 	kafkalog    Set to "off" if you don't want this mutation logged to kafka.
 
+GET <api URL>/node/<UUID>/<data name>/all-elements
+
+	Returns all point annotations in the entire data instance, which could exceed data
+	response sizes (set by server) if too many elements are present.  This should be
+	equivalent to the /blocks endpoint but without the need to determine extents.
+
+	The returned stream of data is the same as /blocks endpoint below.
+
+
 GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>
 
 	Returns all point annotations within all blocks intersecting the subvolume of given size 
@@ -242,11 +251,16 @@ GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>
 	underscore, e.g., "400_300_200" can describe a 400 x 300 x 200 volume or an offset of (400,300,200).
 
 	Unlike the /elements endpoint, the /blocks endpoint is the fastest way to retrieve
-	all point annotations.  It does not screen points based on the specified subvolume but simply
-	streams all elements (including relationships) in the intersecting blocks.
+	all point annotations within a bounding box.  It does not screen points based on the specified 
+	subvolume but simply streams all elements (including relationships) in the intersecting blocks.
+	The fastest way to get all point annotations in entire volume (no bounding box) is via /all-elements.
 
 	The returned stream of data is an object with block coordinate as keys and an array of point
 	annotation elements within that block, meeting the JSON described below.
+
+	If the data instance has Tag "ScanAllForBlocks" is set to "true", it's assumed there are
+	relatively few annotations across blocks so a single range query is used rather than many
+	range queries to span the given X range of the bounding box.
 
 	Returned JSON:
 
@@ -255,15 +269,6 @@ GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>
 		"11,381,28": [ array of point annotation elements ],
 		...
 	}
-
-GET <api URL>/node/<UUID>/<data name>/all-elements
-
-	Returns all point annotations in the entire data instance, which could exceed data
-	response sizes (set by server) if too many elements are present.  This should be
-	equivalent to the /blocks endpoint but without the need to determine extents.
-
-	The returned stream of data is the same as /blocks endpoint.
-
 
 POST <api URL>/node/<UUID>/<data name>/blocks[?<options>]
 
@@ -1959,43 +1964,81 @@ func (d *Data) StreamBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 	// d.RLock()
 	// defer d.RUnlock()
 
+	// Check if we should use single range query based on suggested BlockSize Tag if present
+	var useAllScan bool
+	tags := d.Tags()
+	if scanStr, found := tags["ScanAllForBlocks"]; found {
+		useAllScan = strings.ToLower(scanStr) == "true"
+	}
+
 	if _, err := w.Write([]byte("{")); err != nil {
 		return err
 	}
 	numBlocks := 0
-	for blockZ := begBlockCoord[2]; blockZ <= endBlockCoord[2]; blockZ++ {
-		for blockY := begBlockCoord[1]; blockY <= endBlockCoord[1]; blockY++ {
-			begTKey := NewBlockTKey(dvid.ChunkPoint3d{begBlockCoord[0], blockY, blockZ})
-			endTKey := NewBlockTKey(dvid.ChunkPoint3d{endBlockCoord[0], blockY, blockZ})
-			err = store.ProcessRange(ctx, begTKey, endTKey, nil, func(chunk *storage.Chunk) error {
-				bcoord, err := DecodeBlockTKey(chunk.K)
+	if useAllScan {
+		minTKey, maxTKey := BlockTKeyRange()
+		err = store.ProcessRange(ctx, minTKey, maxTKey, nil, func(chunk *storage.Chunk) error {
+			bcoord, err := DecodeBlockTKey(chunk.K)
+			if err != nil {
+				return err
+			}
+			if !bcoord.WithinChunkBoundingBox(begBlockCoord, endBlockCoord) || len(chunk.V) == 0 {
+				return nil
+			}
+			s := fmt.Sprintf(`"%d,%d,%d":`, bcoord[0], bcoord[1], bcoord[2])
+			if numBlocks > 0 {
+				s = "," + s
+			}
+			if _, err := w.Write([]byte(s)); err != nil {
+				return err
+			}
+			if _, err := w.Write(chunk.V); err != nil {
+				return err
+			}
+			numBlocks++
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		dvid.Infof("Using single range scan\n")
+	} else {
+		for blockZ := begBlockCoord[2]; blockZ <= endBlockCoord[2]; blockZ++ {
+			for blockY := begBlockCoord[1]; blockY <= endBlockCoord[1]; blockY++ {
+				begTKey := NewBlockTKey(dvid.ChunkPoint3d{begBlockCoord[0], blockY, blockZ})
+				endTKey := NewBlockTKey(dvid.ChunkPoint3d{endBlockCoord[0], blockY, blockZ})
+				err = store.ProcessRange(ctx, begTKey, endTKey, nil, func(chunk *storage.Chunk) error {
+					bcoord, err := DecodeBlockTKey(chunk.K)
+					if err != nil {
+						return err
+					}
+					if len(chunk.V) == 0 {
+						return nil
+					}
+					s := fmt.Sprintf(`"%d,%d,%d":`, bcoord[0], bcoord[1], bcoord[2])
+					if numBlocks > 0 {
+						s = "," + s
+					}
+					if _, err := w.Write([]byte(s)); err != nil {
+						return err
+					}
+					if _, err := w.Write(chunk.V); err != nil {
+						return err
+					}
+					numBlocks++
+					return nil
+				})
 				if err != nil {
 					return err
 				}
-				if len(chunk.V) == 0 {
-					return nil
-				}
-				s := fmt.Sprintf(`"%d,%d,%d":`, bcoord[0], bcoord[1], bcoord[2])
-				if numBlocks > 0 {
-					s = "," + s
-				}
-				if _, err := w.Write([]byte(s)); err != nil {
-					return err
-				}
-				if _, err := w.Write(chunk.V); err != nil {
-					return err
-				}
-				numBlocks++
-				return nil
-			})
-			if err != nil {
-				return err
 			}
 		}
 	}
 	if _, err := w.Write([]byte("}")); err != nil {
 		return err
 	}
+	dvid.Infof("Returned %d blocks of elements in a /blocks with bounds %s -> %s\n",
+		numBlocks, begBlockCoord, endBlockCoord)
 	return nil
 }
 

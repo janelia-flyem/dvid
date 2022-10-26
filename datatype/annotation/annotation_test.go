@@ -769,6 +769,18 @@ func TestRequests(t *testing.T) {
 		t.Fatalf("Did not get all synapse elements returned from GET /blocks:\nGot: %s\nExpected: %s\n", string(ret), synapsesByBlocks)
 	}
 
+	// GET /blocks using single range query
+	tags := map[string]string{
+		"ScanAllForBlocks": "true",
+	}
+	data.SetTags(tags)
+	blocksURL = fmt.Sprintf("%snode/%s/%s/blocks/45_23_40/66_10_70", server.WebAPIPath, uuid, data.DataName())
+	ret = server.TestHTTP(t, "GET", blocksURL, nil)
+	expectedResult := `{"1,0,1":[{"Pos":[127,63,99],"Kind":"PreSyn","Tags":["Synapse2"],"Prop":{"I'm not a PSD":"not really","Im a T-Bar":"no","i'm not really special":"at all"},"Rels":[{"Rel":"PreSynTo","To":[88,47,80]},{"Rel":"PreSynTo","To":[120,65,100]},{"Rel":"PreSynTo","To":[126,67,98]}]},{"Pos":[88,47,80],"Kind":"PostSyn","Tags":["Synapse2"],"Prop":{},"Rels":[{"Rel":"GroupedWith","To":[14,25,37]},{"Rel":"PostSynTo","To":[127,63,99]},{"Rel":"GroupedWith","To":[20,30,40]}]}]}`
+	if string(ret) != expectedResult {
+		t.Fatalf("Did not get all synapse elements returned from GET /blocks with ScanAllForBlocks:\nGot: %s\nExpected: %s\n", string(ret), expectedResult)
+	}
+
 	// Test subset GET
 	testResponse(t, expected3, "%snode/%s/%s/elements/5_5_5/126_60_97", server.WebAPIPath, uuid, data.DataName())
 
