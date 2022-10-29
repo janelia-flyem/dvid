@@ -85,9 +85,13 @@ func DecodeLabelTKey(tk storage.TKey) (label uint64, err error) {
 }
 
 func BlockTKeyRange() (min, max storage.TKey) {
-	minIdx := dvid.IndexZYX(dvid.MinChunkPoint3d)
-	maxIdx := dvid.IndexZYX(dvid.MaxChunkPoint3d)
-	return storage.NewTKey(keyBlock, minIdx.Bytes()), storage.NewTKey(keyBlock, maxIdx.Bytes())
+	return NewBlockTKey(dvid.MinChunkPoint3d), NewBlockTKey(dvid.MaxChunkPoint3d)
+}
+
+func BlockTKeyZRange(begBlockCoord, endBlockCoord dvid.ChunkPoint3d) (min, max storage.TKey) {
+	begTKey := NewBlockTKey(dvid.ChunkPoint3d{dvid.MinChunkPoint3d[0], dvid.MinChunkPoint3d[1], begBlockCoord[2]})
+	endTKey := NewBlockTKey(dvid.ChunkPoint3d{dvid.MaxChunkPoint3d[0], dvid.MaxChunkPoint3d[1], endBlockCoord[2]})
+	return begTKey, endTKey
 }
 
 func NewBlockTKey(pt dvid.ChunkPoint3d) storage.TKey {

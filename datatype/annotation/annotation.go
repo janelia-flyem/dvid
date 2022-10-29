@@ -1958,17 +1958,25 @@ func (d *Data) StreamBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 	if err != nil {
 		return err
 	}
-	blockSize := d.blockSize()
-	begBlockCoord, endBlockCoord := ext.BlockRange(blockSize)
 
 	// d.RLock()
 	// defer d.RUnlock()
+
+	blockSize := d.blockSize()
+	begBlockCoord, endBlockCoord := ext.BlockRange(blockSize)
 
 	// Check if we should use single range query based on suggested BlockSize Tag if present
 	var useAllScan bool
 	tags := d.Tags()
 	if scanStr, found := tags["ScanAllForBlocks"]; found {
 		useAllScan = strings.ToLower(scanStr) == "true"
+	} else {
+		// if there would be too many range requests, just get all
+		dz := endBlockCoord[2] - begBlockCoord[2]
+		dy := endBlockCoord[1] - begBlockCoord[1]
+		if dy*dz > 100 {
+			useAllScan = true
+		}
 	}
 
 	if _, err := w.Write([]byte("{")); err != nil {
@@ -1976,7 +1984,7 @@ func (d *Data) StreamBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 	}
 	numBlocks := 0
 	if useAllScan {
-		minTKey, maxTKey := BlockTKeyRange()
+		minTKey, maxTKey := BlockTKeyZRange(begBlockCoord, endBlockCoord)
 		err = store.ProcessRange(ctx, minTKey, maxTKey, nil, func(chunk *storage.Chunk) error {
 			bcoord, err := DecodeBlockTKey(chunk.K)
 			if err != nil {
@@ -2037,8 +2045,8 @@ func (d *Data) StreamBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 	if _, err := w.Write([]byte("}")); err != nil {
 		return err
 	}
-	dvid.Infof("Returned %d blocks of elements in a /blocks with bounds %s -> %s\n",
-		numBlocks, begBlockCoord, endBlockCoord)
+	dvid.Infof("Returned %d blocks of elements in a /blocks with bounds %s -> %s (used single range query: %t)\n",
+		numBlocks, begBlockCoord, endBlockCoord, useAllScan)
 	return nil
 }
 
