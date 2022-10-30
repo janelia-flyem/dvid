@@ -134,6 +134,24 @@ func TestBranching(t *testing.T) {
 		t.Fatalf("Expected master node %s from query %q, got %s\n", root, masterQuery, masterNode)
 	}
 
+	masterQuery = ":master"
+	masterLeaf, _, err = MatchingUUID(masterQuery)
+	if err != nil {
+		t.Fatalf("couldn't get match for query %q: %v\n", masterQuery, err)
+	}
+	if masterLeaf != master3 {
+		t.Fatalf("Expected master leaf %s from query %q, got %s\n", master3, masterQuery, masterLeaf)
+	}
+
+	masterQuery = ":master~2"
+	masterNode, _, err = MatchingUUID(masterQuery)
+	if err != nil {
+		t.Fatalf("couldn't get match for query %q: %v\n", masterQuery, err)
+	}
+	if masterNode != root {
+		t.Fatalf("Expected master node %s from query %q, got %s\n", root, masterQuery, masterNode)
+	}
+
 	otherQuery := string(master2[:5]) + ":other"
 	otherLeaf, _, err := MatchingUUID(otherQuery)
 	if err != nil {

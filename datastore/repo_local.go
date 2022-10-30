@@ -927,13 +927,17 @@ func (m *repoManager) versionFromUUID(uuid dvid.UUID) (dvid.VersionID, error) {
 // If the passed string has a colon, the string after the colon is parsed as a
 // case-sensitive branch name of the repo with the given UUID, and the UUID returned
 // will be the HEAD or uncommitted leaf of that branch.
-// Example "3FA22:master" returns the leaf UUID of branch "master" for the repo containing
+// Example 1: "3FA22:master" returns the leaf UUID of branch "master" for the repo containing
 //  the 3FA22 UUID.
+// Example 2: ":master" returns the leaf UUID of branch "master" if there is only one repo.
 func (m *repoManager) matchingUUID(str string) (dvid.UUID, dvid.VersionID, error) {
 	splits := strings.Split(str, ":")
 	var branch string
 	if len(splits) == 2 {
 		branch = splits[1]
+		if len(splits[0]) == 0 {
+			return m.getBranchVersion(dvid.NilUUID, branch)
+		}
 		str = splits[0]
 	} else if len(splits) > 2 {
 		return dvid.NilUUID, 0, fmt.Errorf("bad UUID specification %q", str)
@@ -1242,9 +1246,20 @@ func (m *repoManager) getBranchVersions(uuid dvid.UUID, name string) ([]dvid.UUI
 
 // parse implicit HEAD request as well as positional parents via "~X" for the Xth parent of HEAD.
 func (m *repoManager) getBranchVersion(uuid dvid.UUID, name string) (dvid.UUID, dvid.VersionID, error) {
-	r, err := m.repoFromUUID(uuid)
-	if err != nil {
-		return dvid.NilUUID, 0, err
+	var r *repoT
+	var err error
+	if uuid == dvid.NilUUID {
+		if len(m.repoToUUID) > 1 {
+			return dvid.NilUUID, 0, fmt.Errorf("UUID must be specified if more than one repo exists")
+		}
+		for _, r = range m.repos {
+			break
+		}
+	} else {
+		r, err = m.repoFromUUID(uuid)
+		if err != nil {
+			return dvid.NilUUID, 0, err
+		}
 	}
 
 	var branchUUID dvid.UUID
