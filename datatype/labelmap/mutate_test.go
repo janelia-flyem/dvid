@@ -208,7 +208,10 @@ func (b testBody) checkSparsevolAPIs(t *testing.T, uuid dvid.UUID, label uint64)
 		bound.SetMaxZ(40)
 		b.checkSparseVol(t, encoding, bound)
 	} else {
-		server.TestBadHTTP(t, "GET", reqStr, nil) // Should be not found
+		encoding = server.TestHTTP(t, "GET", reqStr, nil) // Should be 200 with no bytes
+		if len(encoding) != 0 {
+			t.Fatalf("expected 0 bytes, got %d for %s\n", len(encoding), reqStr)
+		}
 	}
 
 	// Check X restriction
@@ -326,14 +329,17 @@ func (b testBody) checkSparseVol(t *testing.T, encoding []byte, bounds dvid.Opti
 
 // Makes sure the sparse volume encoding matches a downres of actual body voxels.
 func (b testBody) checkScaledSparseVol(t *testing.T, encoding []byte, scale uint8, bounds dvid.OptionalBounds) {
-	if len(encoding) < 12 {
-		t.Fatalf("Bad encoded sparsevol received.  Only %d bytes\n", len(encoding))
-	}
-
 	// Make down-res volume of body
 	vol := newTestVolume(128, 128, 128)
 	vol.addBody(b, 1)
 	vol.downres(scale)
+
+	if len(encoding) < 12 {
+		if vol.containsLabel(1) {
+			t.Fatalf("Bad encoded sparsevol received at scale %d.  Only %d bytes when label 1 found\n", scale, len(encoding))
+		}
+		return
+	}
 
 	// Get to the  # spans and RLE in encoding
 	spansEncoding := encoding[8:]

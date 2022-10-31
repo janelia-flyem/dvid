@@ -1059,46 +1059,65 @@ func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds 
 	return false, nil
 }
 
-// writeBinaryBlocks does a streaming write of an encoded sparse volume given a label.
-// It returns a bool whether the label was found in the given bounds and any error.
-func (d *Data) writeBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, isSupervoxel bool, w io.Writer) (bool, error) {
-	idx, err := GetLabelIndex(d, ctx.VersionID(), label, isSupervoxel)
-	if err != nil {
-		return false, err
+// encapsulates all we need to know about blocks & supervoxels within scaled, bounded labels
+type labelBlockMetadata struct {
+	label        uint64
+	scale        uint8
+	bounds       dvid.Bounds
+	supervoxels  labels.Set
+	sortedBlocks dvid.IZYXSlice
+}
+
+// use label index to return supervoxels and sorted blocks that meet criteria of scale and bounds
+func (d *Data) constrainLabelIndex(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, isSupervoxel bool) (blockMeta *labelBlockMetadata, exists bool, err error) {
+	blockMeta = &labelBlockMetadata{label: label, scale: scale, bounds: bounds}
+	var idx *labels.Index
+	if idx, err = GetLabelIndex(d, ctx.VersionID(), label, isSupervoxel); err != nil {
+		return
 	}
 	if idx == nil || len(idx.Blocks) == 0 {
-		return false, nil
+		exists = false
+		return
 	}
-	supervoxels := idx.GetSupervoxels()
+	blockMeta.supervoxels = idx.GetSupervoxels()
 	if isSupervoxel {
-		if _, found := supervoxels[label]; !found {
-			return false, nil
+		if _, exists = blockMeta.supervoxels[label]; !exists {
+			return
 		}
-		supervoxels = labels.Set{label: struct{}{}}
+		blockMeta.supervoxels = labels.Set{label: struct{}{}}
 	}
 
-	indices, err := idx.GetProcessedBlockIndices(scale, bounds)
-	if err != nil {
-		return false, err
+	if blockMeta.sortedBlocks, err = idx.GetProcessedBlockIndices(scale, bounds); err != nil {
+		return
 	}
-	sort.Sort(indices)
+	if len(blockMeta.sortedBlocks) == 0 { // if no blocks are within bounds, regardless of scale
+		exists = false
+		return
+	}
+	sort.Sort(blockMeta.sortedBlocks)
+	exists = true
+	return
+}
 
+// writeBinaryBlocks does a streaming write of an encoded sparse volume given a label.
+// It returns a bool whether the label exists even if there's no data at the given scale and bounds.
+func (d *Data) writeBinaryBlocks(ctx *datastore.VersionedCtx, blockMeta *labelBlockMetadata, compression string, w io.Writer) error {
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
-		return false, err
+		return err
 	}
 	op := labels.NewOutputOp(w)
-	go labels.WriteBinaryBlocks(label, supervoxels, op, bounds)
+	go labels.WriteBinaryBlocks(blockMeta.label, blockMeta.supervoxels, op, blockMeta.bounds)
 	var preErr error
-	for _, izyx := range indices {
-		tk := NewBlockTKeyByCoord(scale, izyx)
+	for _, izyx := range blockMeta.sortedBlocks {
+		tk := NewBlockTKeyByCoord(blockMeta.scale, izyx)
 		data, err := store.Get(ctx, tk)
 		if err != nil {
 			preErr = err
 			break
 		}
 		if data == nil {
-			preErr = fmt.Errorf("expected block %s @ scale %d to have key-value, but found none", izyx, scale)
+			preErr = fmt.Errorf("expected block %s @ scale %d to have key-value, but found none", izyx, blockMeta.scale)
 			break
 		}
 		blockData, _, err := dvid.DeserializeData(data, true)
@@ -1118,56 +1137,36 @@ func (d *Data) writeBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scal
 		op.Process(&pb)
 	}
 	if err = op.Finish(); err != nil {
-		return false, err
+		return err
 	}
 
-	dvid.Infof("[%s] label %d consisting of %d supervoxels: streamed %d of %d blocks within bounds\n", ctx, label, len(supervoxels), len(indices), len(idx.Blocks))
-	return true, preErr
+	dvid.Infof("labelmap %q label %d consisting of %d supervoxels: streamed %d blocks within bounds\n",
+		d.DataName(), blockMeta.label, len(blockMeta.supervoxels), len(blockMeta.sortedBlocks))
+	return preErr
 }
 
 // writeStreamingRLE does a streaming write of an encoded sparse volume given a label.
 // It returns a bool whether the label was found in the given bounds and any error.
-func (d *Data) writeStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, isSupervoxel bool, w io.Writer) (bool, error) {
-	idx, err := GetLabelIndex(d, ctx.VersionID(), label, isSupervoxel)
-	if err != nil {
-		return false, err
-	}
-	if idx == nil || len(idx.Blocks) == 0 {
-		return false, nil
-	}
-	supervoxels := idx.GetSupervoxels()
-	if isSupervoxel {
-		if _, found := supervoxels[label]; !found {
-			return false, nil
-		}
-		supervoxels = labels.Set{label: struct{}{}}
-	}
-
-	blocks, err := idx.GetProcessedBlockIndices(scale, bounds)
-	if err != nil {
-		return false, err
-	}
-	sort.Sort(blocks)
-
+func (d *Data) writeStreamingRLE(ctx *datastore.VersionedCtx, blockMeta *labelBlockMetadata, compression string, w io.Writer) error {
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
-		return false, err
+		return err
 	}
 	op := labels.NewOutputOp(w)
-	go labels.WriteRLEs(supervoxels, op, bounds)
-	for _, izyx := range blocks {
-		tk := NewBlockTKeyByCoord(scale, izyx)
+	go labels.WriteRLEs(blockMeta.supervoxels, op, blockMeta.bounds)
+	for _, izyx := range blockMeta.sortedBlocks {
+		tk := NewBlockTKeyByCoord(blockMeta.scale, izyx)
 		data, err := store.Get(ctx, tk)
 		if err != nil {
-			return false, err
+			return err
 		}
 		blockData, _, err := dvid.DeserializeData(data, true)
 		if err != nil {
-			return false, err
+			return err
 		}
 		var block labels.Block
 		if err := block.UnmarshalBinary(blockData); err != nil {
-			return false, err
+			return err
 		}
 		pb := labels.PositionedBlock{
 			Block:  block,
@@ -1176,50 +1175,16 @@ func (d *Data) writeStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scal
 		op.Process(&pb)
 	}
 	if err = op.Finish(); err != nil {
-		return false, err
+		return err
 	}
 
-	dvid.Infof("[%s] label %d consisting of %d supervoxels: streamed %d of %d blocks within bounds\n", ctx, label, len(supervoxels), len(blocks), len(idx.Blocks))
-	return true, nil
+	dvid.Infof("labelmap %q label %d consisting of %d supervoxels: streamed %d blocks within bounds\n",
+		d.DataName(), blockMeta.label, len(blockMeta.supervoxels), len(blockMeta.sortedBlocks))
+	return nil
 }
 
-func (d *Data) writeLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, b dvid.Bounds, compression string, isSupervoxel bool, w io.Writer) (found bool, err error) {
-	var data []byte
-	data, err = d.getLegacyRLEs(ctx, label, scale, b, isSupervoxel)
-	if err != nil {
-		return
-	}
-	if len(data) == 0 {
-		found = false
-		return
-	}
-	found = true
-	switch compression {
-	case "":
-		_, err = w.Write(data)
-	case "lz4":
-		compressed := make([]byte, lz4.CompressBound(data))
-		var n, outSize int
-		if outSize, err = lz4.Compress(data, compressed); err != nil {
-			return
-		}
-		compressed = compressed[:outSize]
-		n, err = w.Write(compressed)
-		if n != outSize {
-			err = fmt.Errorf("only able to write %d of %d lz4 compressed bytes", n, outSize)
-		}
-	case "gzip":
-		gw := gzip.NewWriter(w)
-		if _, err = gw.Write(data); err != nil {
-			return
-		}
-		err = gw.Close()
-	default:
-		err = fmt.Errorf("unknown compression type %q", compression)
-	}
-	return
-}
-
+//  Write legacy RLEs to writer. Body can exist but have no data if scale is too low-res.
+//
 //  The encoding has the following format where integers are little endian:
 //
 //    byte     Payload descriptor:
@@ -1239,22 +1204,7 @@ func (d *Data) writeLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale u
 //        int32   Length of run
 //        bytes   Optional payload dependent on first byte descriptor
 //
-func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, isSupervoxel bool) ([]byte, error) {
-	idx, err := GetLabelIndex(d, ctx.VersionID(), label, isSupervoxel)
-	if err != nil {
-		return nil, err
-	}
-	if idx == nil || len(idx.Blocks) == 0 {
-		return nil, nil
-	}
-	supervoxels := idx.GetSupervoxels()
-	if isSupervoxel {
-		if _, found := supervoxels[label]; !found {
-			return nil, nil
-		}
-		supervoxels = labels.Set{label: struct{}{}}
-	}
-
+func (d *Data) writeLegacyRLE(ctx *datastore.VersionedCtx, blockMeta *labelBlockMetadata, compression string, w io.Writer) error {
 	buf := new(bytes.Buffer)
 	buf.WriteByte(dvid.EncodingBinary)
 	binary.Write(buf, binary.LittleEndian, uint8(3))  // # of dimensions
@@ -1263,29 +1213,24 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, label uint64, scale ui
 	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # voxels
 	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # spans
 
-	blocks, err := idx.GetProcessedBlockIndices(scale, bounds)
-	if err != nil {
-		return nil, err
-	}
-	sort.Sort(blocks)
-
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	op := labels.NewOutputOp(buf)
-	go labels.WriteRLEs(supervoxels, op, bounds)
+	go labels.WriteRLEs(blockMeta.supervoxels, op, blockMeta.bounds)
 	var numEmpty int
-	for _, izyx := range blocks {
-		tk := NewBlockTKeyByCoord(scale, izyx)
+	for _, izyx := range blockMeta.sortedBlocks {
+		tk := NewBlockTKeyByCoord(blockMeta.scale, izyx)
 		data, err := store.Get(ctx, tk)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if len(data) == 0 {
 			numEmpty++
 			if numEmpty < 10 {
-				dvid.Errorf("Block %s included in blocks for labels %s but has no data (%d times)... skipping.\n", izyx, supervoxels, numEmpty)
+				dvid.Errorf("Block %s included in blocks for labels %s but has no data (%d times)... skipping.\n",
+					izyx, blockMeta.supervoxels, numEmpty)
 			} else if numEmpty == 10 {
 				dvid.Errorf("Over %d blocks included in blocks with no data.  Halting error stream.\n", numEmpty)
 			}
@@ -1293,11 +1238,11 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, label uint64, scale ui
 		}
 		blockData, _, err := dvid.DeserializeData(data, true)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		var block labels.Block
-		if err := block.UnmarshalBinary(blockData); err != nil {
-			return nil, err
+		if err = block.UnmarshalBinary(blockData); err != nil {
+			return err
 		}
 		pb := labels.PositionedBlock{
 			Block:  block,
@@ -1305,21 +1250,49 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, label uint64, scale ui
 		}
 		op.Process(&pb)
 	}
-	if numEmpty < len(blocks) {
-		if err = op.Finish(); err != nil {
-			return nil, err
+	if numEmpty < len(blockMeta.sortedBlocks) {
+		if err := op.Finish(); err != nil {
+			return err
 		}
 	}
 
 	serialization := buf.Bytes()
+	if len(serialization) == 0 {
+		return nil
+	}
 	numRuns := uint32(len(serialization)-12) >> 4
 	if numRuns == 0 {
-		return nil, nil // Couldn't find this out until we did voxel-level clipping
+		return nil
 	}
 
 	binary.LittleEndian.PutUint32(serialization[8:12], numRuns)
-	dvid.Infof("label %d: sent %d blocks (%d hi-res blocks) within bounds excluding %d empty blocks, %d runs, serialized %d bytes\n", idx.Label, len(blocks), len(idx.Blocks), numEmpty, numRuns, len(serialization))
-	return serialization, nil
+	dvid.Infof("label %d: sending %d blocks within bounds excluding %d empty blocks, %d runs, serialized %d bytes\n",
+		blockMeta.label, len(blockMeta.sortedBlocks), numEmpty, numRuns, len(serialization))
+
+	switch compression {
+	case "":
+		_, err = w.Write(serialization)
+	case "lz4":
+		compressed := make([]byte, lz4.CompressBound(serialization))
+		var n, outSize int
+		if outSize, err = lz4.Compress(serialization, compressed); err != nil {
+			return err
+		}
+		compressed = compressed[:outSize]
+		n, err = w.Write(compressed)
+		if n != outSize {
+			err = fmt.Errorf("only able to write %d of %d lz4 compressed bytes", n, outSize)
+		}
+	case "gzip":
+		gw := gzip.NewWriter(w)
+		if _, err = gw.Write(serialization); err != nil {
+			return err
+		}
+		err = gw.Close()
+	default:
+		err = fmt.Errorf("unknown compression type %q", compression)
+	}
+	return err
 }
 
 // GetSparseCoarseVol returns an encoded sparse volume given a label.  This will return nil slice

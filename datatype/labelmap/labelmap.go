@@ -5094,24 +5094,29 @@ func (d *Data) handleSparsevol(ctx *datastore.VersionedCtx, w http.ResponseWrite
 	timedLog := dvid.NewTimeLog()
 	switch strings.ToLower(r.Method) {
 	case "get":
-		w.Header().Set("Content-type", "application/octet-stream")
-
-		var found bool
-		switch svformatFromQueryString(r) {
-		case FormatLegacyRLE:
-			found, err = d.writeLegacyRLE(ctx, label, scale, b, compression, isSupervoxel, w)
-		case FormatBinaryBlocks:
-			found, err = d.writeBinaryBlocks(ctx, label, scale, b, compression, isSupervoxel, w)
-		case FormatStreamingRLE:
-			found, err = d.writeStreamingRLE(ctx, label, scale, b, compression, isSupervoxel, w)
-		}
+		labelBlockMeta, exists, err := d.constrainLabelIndex(ctx, label, scale, b, isSupervoxel)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
-		if !found {
+		if !exists {
 			dvid.Infof("GET sparsevol on label %d was not found.\n", label)
 			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-type", "application/octet-stream")
+
+		switch svformatFromQueryString(r) {
+		case FormatLegacyRLE:
+			err = d.writeLegacyRLE(ctx, labelBlockMeta, compression, w)
+		case FormatBinaryBlocks:
+			err = d.writeBinaryBlocks(ctx, labelBlockMeta, compression, w)
+		case FormatStreamingRLE:
+			err = d.writeStreamingRLE(ctx, labelBlockMeta, compression, w)
+		}
+		if err != nil {
+			server.BadRequest(w, r, err)
 			return
 		}
 
@@ -5178,23 +5183,30 @@ func (d *Data) handleSparsevolByPoint(ctx *datastore.VersionedCtx, w http.Respon
 
 	w.Header().Set("Content-type", "application/octet-stream")
 
-	format := svformatFromQueryString(r)
-	var found bool
-	switch format {
+	labelBlockMeta, exists, err := d.constrainLabelIndex(ctx, label, scale, b, isSupervoxel)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	if !exists {
+		dvid.Infof("GET sparsevol on label %d was not found.\n", label)
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	switch svformatFromQueryString(r) {
 	case FormatLegacyRLE:
-		found, err = d.writeLegacyRLE(ctx, label, 0, b, compression, isSupervoxel, w)
+		err = d.writeLegacyRLE(ctx, labelBlockMeta, compression, w)
 	case FormatBinaryBlocks:
-		found, err = d.writeBinaryBlocks(ctx, label, 0, b, compression, isSupervoxel, w)
+		err = d.writeBinaryBlocks(ctx, labelBlockMeta, compression, w)
 	case FormatStreamingRLE:
-		found, err = d.writeStreamingRLE(ctx, label, 0, b, compression, isSupervoxel, w)
+		err = d.writeStreamingRLE(ctx, labelBlockMeta, compression, w)
 	}
 	if err != nil {
 		server.BadRequest(w, r, err)
 		return
 	}
-	if !found {
-		w.WriteHeader(http.StatusNotFound)
-	}
+
 	timedLog.Infof("HTTP %s: sparsevol-by-point at %s (%s)", r.Method, parts[4], r.URL)
 }
 

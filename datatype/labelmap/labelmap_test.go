@@ -207,6 +207,23 @@ func (v *testVolume) getScale(t *testing.T, uuid dvid.UUID, name string, scale u
 	v.data = server.TestHTTP(t, "GET", apiStr, nil)
 }
 
+func (v *testVolume) containsLabel(label uint64) bool {
+	var i uint64
+	var x, y, z int32
+	for z = 0; z < v.size[2]; z++ {
+		for y = 0; y < v.size[1]; y++ {
+			for x = 0; x < v.size[0]; x++ {
+				val := binary.LittleEndian.Uint64(v.data[i : i+8])
+				if val == label {
+					return true
+				}
+				i += 8
+			}
+		}
+	}
+	return false
+}
+
 func (v *testVolume) getVoxel(pt dvid.Point3d) uint64 {
 	nx := v.size[0]
 	nxy := nx * v.size[1]
@@ -1499,6 +1516,118 @@ func TestMultiscaleIngest2(t *testing.T) {
 	expected2a.testGetBlocks(t, "downres #2 block check", uuid, "labels", "uncompressed", 2)
 	expected2a.testGetBlocks(t, "downres #2 block check", uuid, "labels", "blocks", 2)
 	expected2a.testGetBlocks(t, "downres #2 block check", uuid, "labels", "gzip", 2)
+}
+
+// tests vanishing labels when they are downres out of existence
+func TestMultiscaleVanish(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	config.Set("MaxDownresLevel", "8")
+	server.CreateTestInstance(t, uuid, "labelmap", "labels", config)
+
+	hires := newTestVolume(128, 128, 128)
+	hires.addSubvol(dvid.Point3d{0, 0, 0}, dvid.Point3d{128, 128, 128}, 1)
+	hires.addSubvol(dvid.Point3d{40, 40, 40}, dvid.Point3d{2, 2, 2}, 2)
+	hires.addSubvol(dvid.Point3d{16, 16, 16}, dvid.Point3d{4, 4, 4}, 3)
+	hires.addSubvol(dvid.Point3d{1, 1, 1}, dvid.Point3d{1, 1, 1}, 4)
+	hires.put(t, uuid, "labels")
+	if err := downres.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on update for labels: %v\n", err)
+	}
+
+	// at hires all spares volumes should exist
+	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/1", server.WebAPIPath, uuid)
+	encoding := server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) == 0 {
+		t.Fatalf("expected non-zero sparsevol return for label 1")
+	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/2", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) == 0 {
+		t.Fatalf("expected non-zero sparsevol return for label 2")
+	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/3", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) == 0 {
+		t.Fatalf("expected non-zero sparsevol return for label 3")
+	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/4", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) == 0 {
+		t.Fatalf("expected non-zero sparsevol return for label 4")
+	}
+
+	// downres 1: 4 should drop out
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/1?scale=1", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) == 0 {
+		t.Fatalf("expected non-zero sparsevol return for label 1")
+	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/2?scale=1", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) == 0 {
+		t.Fatalf("expected non-zero sparsevol return for label 3")
+	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/3?scale=1", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) == 0 {
+		t.Fatalf("expected non-zero sparsevol return for label 3")
+	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/4?scale=1", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) != 0 {
+		t.Fatalf("expected zero sparsevol return for label 4")
+	}
+
+	// downres 2: 2 should drop out
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/1?scale=2", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) == 0 {
+		t.Fatalf("expected non-zero sparsevol return for label 1")
+	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/2?scale=2", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) != 0 {
+		t.Fatalf("expected zero sparsevol return for label 2")
+	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/3?scale=2", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) == 0 {
+		t.Fatalf("expected non-zero sparsevol return for label 3")
+	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/4?scale=2", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) != 0 {
+		t.Fatalf("expected zero sparsevol return for label 4")
+	}
+
+	// downres 3: 3 should drop out
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/1?scale=3", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) == 0 {
+		t.Fatalf("expected non-zero sparsevol return for label 1")
+	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/2?scale=3", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) != 0 {
+		t.Fatalf("expected zero sparsevol return for label 2")
+	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/3?scale=3", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) != 0 {
+		t.Fatalf("expected zero sparsevol return for label 3")
+	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/4?scale=3", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) != 0 {
+		t.Fatalf("expected zero sparsevol return for label 4")
+	}
 }
 
 func readGzipFile(filename string) ([]byte, error) {
