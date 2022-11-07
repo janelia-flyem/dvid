@@ -1878,7 +1878,7 @@ func (d *Data) GetData(ctx storage.VersionedCtx, keyStr string, showFields Field
 	return data, true, err
 }
 
-// update _user and _time fields as well as any fields modified by newData.
+// update _user and _time fields for any fields newly set
 func updateJSON(origData, newData NeuronJSON, user string, conditionals []string, replace bool) {
 	newlySet := make(map[string]struct{}, len(newData))
 	for field, _ := range newData {
@@ -1904,11 +1904,15 @@ func updateJSON(origData, newData NeuronJSON, user string, conditionals []string
 	// add _user and _time fields for newly set and not prevented via conditionals
 	t := time.Now()
 	timeStr := t.Format(time.RFC3339)
-
 	for field := range newlySet {
-		newData[field+"_time"] = timeStr
-		if user != "" {
+		if strings.HasSuffix(field, "_time") || strings.HasSuffix(field, "_user") {
+			continue // we will handle this with main field
+		}
+		if _, foundUser := newlySet[field+"_user"]; !foundUser && user != "" {
 			newData[field+"_user"] = user
+		}
+		if _, foundTime := newlySet[field+"_time"]; !foundTime {
+			newData[field+"_time"] = timeStr
 		}
 	}
 }

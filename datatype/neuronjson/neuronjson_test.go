@@ -733,7 +733,7 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 
 	// Check if keys are re-POSTed using default update or replace=true.
 	value3mod := `{"a string": "goo modified", "a 2nd list": [26]}`
-	key3modreq := fmt.Sprintf("%snode/%s/%s/key/%s?u=bill&show=user", server.WebAPIPath, uuid, data.DataName(), key3)
+	key3modreq := fmt.Sprintf("%snode/%s/%s/key/%s?u=bill&show=all", server.WebAPIPath, uuid, data.DataName(), key3)
 	server.TestHTTP(t, "POST", key3modreq, strings.NewReader(value3mod))
 
 	returnValue = server.TestHTTP(t, "GET", key3modreq, nil)
@@ -769,6 +769,45 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 		t.Fatalf("Bad response (type %s): %v\n", reflect.TypeOf(value), responseJSON)
 	}
 	if value, found := responseJSON["a 2nd list_user"]; !found || value != "bill" {
+		t.Fatalf("Bad response: %v\n", responseJSON)
+	}
+
+	// Check if we can keep old _user and _time while changing value (admin mods)
+	value3modA := fmt.Sprintf(`{"a string": "goo modified", "a string_user": "bill", "a string_time": "%s", "a 2nd list": [26]}`, responseJSON["a string_time"])
+	key3modAreq := fmt.Sprintf("%snode/%s/%s/key/%s?u=frank&show=user", server.WebAPIPath, uuid, data.DataName(), key3)
+	server.TestHTTP(t, "POST", key3modAreq, strings.NewReader(value3modA))
+
+	returnValue = server.TestHTTP(t, "GET", key3modAreq, nil)
+
+	expectedValue = []byte(fmt.Sprintf(`{"a string": "goo modified", "a string_user": "bill", "a string_time": "%s", "a number": 3456, "a list": [23], "a 2nd list": [26]}`, responseJSON["a string_time"]))
+	if err := json.Unmarshal(expectedValue, &expectedJSON); err != nil {
+		t.Fatalf("Couldn't unmarshal expected basic JSON: %s\n", expectedJSON)
+	}
+	if err := json.Unmarshal(returnValue, &responseJSON); err != nil {
+		t.Fatalf("Couldn't unmarshal response JSON: %s\n", string(returnValue))
+	}
+	if value, found := responseJSON["a string"]; !found || value != "goo modified" {
+		t.Fatalf("Bad response: %v\n", responseJSON)
+	}
+	if value, found := responseJSON["a string_user"]; !found || value != "bill" {
+		t.Fatalf("Bad response: %v\n", responseJSON)
+	}
+	if value, found := responseJSON["a number"]; !found || !reflect.DeepEqual(value, uint64(3456)) {
+		t.Fatalf("Bad response for number (type %s): %v\n", reflect.TypeOf(value), responseJSON)
+	}
+	if value, found := responseJSON["a number_user"]; !found || value != "shawna" {
+		t.Fatalf("Bad response: %v\n", responseJSON)
+	}
+	if value, found := responseJSON["a list"]; !found || !reflect.DeepEqual(value, []int64{23}) {
+		t.Fatalf("Bad response (type %s): %v\n", reflect.TypeOf(value), responseJSON)
+	}
+	if value, found := responseJSON["a list_user"]; !found || value != "shawna" {
+		t.Fatalf("Bad response: %v\n", responseJSON)
+	}
+	if value, found := responseJSON["a 2nd list"]; !found || !reflect.DeepEqual(value, []int64{26}) {
+		t.Fatalf("Bad response (type %s): %v\n", reflect.TypeOf(value), responseJSON)
+	}
+	if value, found := responseJSON["a 2nd list_user"]; !found || value != "frank" {
 		t.Fatalf("Bad response: %v\n", responseJSON)
 	}
 

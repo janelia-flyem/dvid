@@ -2940,8 +2940,8 @@ func TestConcurrentMutations(t *testing.T) {
 	wg.Add(3)
 	go func() {
 		var err error
-		for n := 0; n < 250; n++ {
-			if err = mergeCleave(t, wg, uuid, "labels", tbodies[0:4], 1, expectedMapping1); err != nil {
+		for n := 0; n < 50; n++ {
+			if err = mergeCleave(t, uuid, "labels", tbodies[0:4], 1, expectedMapping1); err != nil {
 				break
 			}
 		}
@@ -2952,8 +2952,8 @@ func TestConcurrentMutations(t *testing.T) {
 	}()
 	go func() {
 		var err error
-		for n := 0; n < 250; n++ {
-			if err = mergeCleave(t, wg, uuid, "labels", tbodies[4:8], 2, expectedMapping2); err != nil {
+		for n := 0; n < 50; n++ {
+			if err = mergeCleave(t, uuid, "labels", tbodies[4:8], 2, expectedMapping2); err != nil {
 				break
 			}
 		}
@@ -2964,8 +2964,8 @@ func TestConcurrentMutations(t *testing.T) {
 	}()
 	go func() {
 		var err error
-		for n := 0; n < 250; n++ {
-			if err = mergeCleave(t, wg, uuid, "labels", tbodies[8:12], 3, expectedMapping3); err != nil {
+		for n := 0; n < 50; n++ {
+			if err = mergeCleave(t, uuid, "labels", tbodies[8:12], 3, expectedMapping3); err != nil {
 				break
 			}
 		}
@@ -3048,7 +3048,7 @@ func TestConcurrentMutations(t *testing.T) {
 }
 
 // merge a subset of bodies, then cleave each of them back out.
-func mergeCleave(t *testing.T, wg *sync.WaitGroup, uuid dvid.UUID, name dvid.InstanceName, tbodies []testBody, thread int, mapping map[uint64]uint64) error {
+func mergeCleave(t *testing.T, uuid dvid.UUID, name dvid.InstanceName, tbodies []testBody, thread int, mapping map[uint64]uint64) error {
 	label1 := tbodies[0].label
 	label4 := tbodies[3].label
 	target := label1 + uint64(rand.Int()%4)

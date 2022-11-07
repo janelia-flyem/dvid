@@ -1589,21 +1589,24 @@ func TestConcurrentMutations(t *testing.T) {
 
 	// Run concurrent split/merge ops on each body where split is random location in X.
 	wg := new(sync.WaitGroup)
-	wg.Add(300)
+	wg.Add(3)
 	go func() {
-		for n := 0; n < 100; n++ {
-			tbody1.splitmerge(t, wg, uuid, "labels")
+		for n := 0; n < 30; n++ {
+			tbody1.splitmerge(t, uuid, "labels")
 		}
+		wg.Done()
 	}()
 	go func() {
-		for n := 0; n < 100; n++ {
-			tbody2.splitmerge(t, wg, uuid, "labels")
+		for n := 0; n < 30; n++ {
+			tbody2.splitmerge(t, uuid, "labels")
 		}
+		wg.Done()
 	}()
 	go func() {
-		for n := 0; n < 100; n++ {
-			tbody3.splitmerge(t, wg, uuid, "labels")
+		for n := 0; n < 30; n++ {
+			tbody3.splitmerge(t, uuid, "labels")
 		}
+		wg.Done()
 	}()
 	wg.Wait()
 
@@ -1641,7 +1644,7 @@ func TestConcurrentMutations(t *testing.T) {
 	}
 }
 
-func (b testBody) splitmerge(t *testing.T, wg *sync.WaitGroup, uuid dvid.UUID, name dvid.InstanceName) {
+func (b testBody) splitmerge(t *testing.T, uuid dvid.UUID, name dvid.InstanceName) {
 	var rles dvid.RLEs
 	var y, z, length int32
 	length = 15
@@ -1738,7 +1741,6 @@ func (b testBody) splitmerge(t *testing.T, wg *sync.WaitGroup, uuid dvid.UUID, n
 			t.Fatalf("Error in response to merge, status code %d: %s\n", resp.Code, retstr)
 		}
 	}
-	wg.Done()
 }
 
 var (
