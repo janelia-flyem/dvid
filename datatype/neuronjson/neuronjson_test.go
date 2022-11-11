@@ -557,6 +557,29 @@ func TestValidation(t *testing.T) {
 	if resp.Code == http.StatusOK {
 		t.Errorf("POST on %s returned 200 when it shouldn't have been validated\n", key1req)
 	}
+	badValue = `
+	{
+		"group": 130911,
+		"status": "Anchor",
+		"root_position": [15, 15, 15],
+		"something_else": "foo"
+	}` // missing bodyid
+	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(badValue))
+	if resp.Code == http.StatusOK {
+		t.Errorf("POST on %s returned 200 when it shouldn't have been validated\n", key1req)
+	}
+	badValue = `
+	{
+		"bodyid": 13087493,
+		"group": "130911",
+		"status": "Anchor",
+		"root_position": [15, 15, 15],
+		"something_else": "foo"
+	}` // group is string, not int
+	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(badValue))
+	if resp.Code == http.StatusOK {
+		t.Errorf("POST on %s returned 200 when it shouldn't have been validated\n", key1req)
+	}
 }
 
 func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dvid.InstanceName) {
