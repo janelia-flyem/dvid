@@ -1922,6 +1922,8 @@ func updateJSON(origData, newData NeuronJSON, user string, conditionals []string
 func (d *Data) PutData(ctx *datastore.VersionedCtx, keyStr string, value []byte, conditionals []string, replace bool) error {
 	// Allow "schema" and "schema_batch" on /key endpoint for backwards compatibility with DVID keyvalue instances.
 	switch keyStr {
+	case "0":
+		return fmt.Errorf("body id 0 is reserved and so cannot be stored")
 	case NeuSchema.String():
 		if err := d.putMetadata(ctx, value, NeuSchema); err != nil {
 			return fmt.Errorf("unable to handle POST neutu/neu3 schema metadata: %v", err)

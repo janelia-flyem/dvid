@@ -582,19 +582,23 @@ func TestValidation(t *testing.T) {
 	}
 }
 
-func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dvid.InstanceName) {
+func TestKeyvalueRequests(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+	name := dvid.InstanceName("annotations")
+
 	config := dvid.NewConfig()
-	dataservice, err := datastore.NewData(uuid, jsontype, name, config)
+	_, err := datastore.NewData(uuid, jsontype, name, config)
 	if err != nil {
 		t.Fatalf("Error creating new neuronjson instance: %v\n", err)
 	}
-	data, ok := dataservice.(*Data)
-	if !ok {
-		t.Fatalf("Returned new data instance is not neuronjson.Data\n")
-	}
 
 	key1 := "1000"
-	key1req := fmt.Sprintf("%snode/%s/%s/key/%s?u=frank", server.WebAPIPath, uuid, data.DataName(), key1)
+	key1req := fmt.Sprintf("%snode/%s/%s/key/%s?u=frank", server.WebAPIPath, uuid, name, key1)
 	resp := server.TestHTTPResponse(t, "HEAD", key1req, nil)
 	if resp.Code != http.StatusNotFound {
 		t.Errorf("HEAD on %s did not return 404 (File not found).  Status = %d\n", key1req, resp.Code)
@@ -604,6 +608,11 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 	value1 := `{"a string": "foo", "a number": 1234, "a list": [1, 2, 3]}`
 	server.TestHTTP(t, "POST", key1req, strings.NewReader(value1))
 
+	// Expect error if key 0 is used
+	badrequest := fmt.Sprintf("%snode/%s/%s/key/0", server.WebAPIPath, uuid, name)
+	server.TestBadHTTP(t, "POST", badrequest, strings.NewReader(`{"bodyid": 0, "data": "foo"}`))
+
+	// Check HEAD response
 	resp = server.TestHTTPResponse(t, "HEAD", key1req, nil)
 	if resp.Code != http.StatusOK {
 		t.Errorf("HEAD on %s did not return 200 (OK).  Status = %d\n", key1req, resp.Code)
@@ -616,12 +625,12 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 	}
 
 	// Expect error if no key used.
-	badrequest := fmt.Sprintf("%snode/%s/%s/key/", server.WebAPIPath, uuid, data.DataName())
+	badrequest = fmt.Sprintf("%snode/%s/%s/key/", server.WebAPIPath, uuid, name)
 	server.TestBadHTTP(t, "GET", badrequest, nil)
 
 	// Add 2nd k/v
 	key2 := "2000"
-	key2req := fmt.Sprintf("%snode/%s/%s/key/%s?u=martha", server.WebAPIPath, uuid, data.DataName(), key2)
+	key2req := fmt.Sprintf("%snode/%s/%s/key/%s?u=martha", server.WebAPIPath, uuid, name, key2)
 
 	resp = server.TestHTTPResponse(t, "HEAD", key2req, nil)
 	if resp.Code != http.StatusNotFound {
@@ -639,11 +648,11 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 	// Add 3rd k/v
 	key3 := "3000"
 	value3 := `{"a string": "goo", "a number": 3456, "a list": [23]}`
-	key3req := fmt.Sprintf("%snode/%s/%s/key/%s?u=shawna", server.WebAPIPath, uuid, data.DataName(), key3)
+	key3req := fmt.Sprintf("%snode/%s/%s/key/%s?u=shawna", server.WebAPIPath, uuid, name, key3)
 	server.TestHTTP(t, "POST", key3req, strings.NewReader(value3))
 
 	// Check return of first two keys in range.
-	rangereq := fmt.Sprintf("%snode/%s/%s/keyrange/%s/%s", server.WebAPIPath, uuid, data.DataName(), "0", "2100")
+	rangereq := fmt.Sprintf("%snode/%s/%s/keyrange/%s/%s", server.WebAPIPath, uuid, name, "0", "2100")
 	returnValue = server.TestHTTP(t, "GET", rangereq, nil)
 
 	var retrievedKeys []string
@@ -656,7 +665,7 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 	}
 
 	// Check return of all keys
-	allkeyreq := fmt.Sprintf("%snode/%s/%s/keys", server.WebAPIPath, uuid, data.DataName())
+	allkeyreq := fmt.Sprintf("%snode/%s/%s/keys", server.WebAPIPath, uuid, name)
 	returnValue = server.TestHTTP(t, "GET", allkeyreq, nil)
 
 	if err = json.Unmarshal(returnValue, &retrievedKeys); err != nil {
@@ -669,7 +678,7 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 
 	// Check JSON keyvalues request using both list of ids and strings, latter is for keyvalue datatype compatibility.
 	jsonIds := `[2000, 3000]`
-	kvreq := fmt.Sprintf("%snode/%s/%s/keyvalues?json=true", server.WebAPIPath, uuid, data.DataName())
+	kvreq := fmt.Sprintf("%snode/%s/%s/keyvalues?json=true", server.WebAPIPath, uuid, name)
 	returnValue = server.TestHTTP(t, "GET", kvreq, strings.NewReader(jsonIds))
 
 	expectedValue := []byte(`{"2000":` + value2 + `,"3000":` + value3 + "}")
@@ -686,7 +695,7 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 
 	// Check query
 	query := `{"a string": ["moo", "goo"]}`
-	queryreq := fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
+	queryreq := fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, name)
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte("[" + value2 + "," + value3 + "]")
@@ -695,12 +704,12 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 	}
 
 	query = `{"a string": ["moo", "goo"], "a number": 2345}`
-	queryreq = fmt.Sprintf("%snode/%s/%s/query?show=all", server.WebAPIPath, uuid, data.DataName())
+	queryreq = fmt.Sprintf("%snode/%s/%s/query?show=all", server.WebAPIPath, uuid, name)
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 	checkBasicAndAll(t, value2, returnValue, "martha")
 
 	query = `{"a string": ["moo", "goo"], "a number": [2345, 3456]}`
-	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
+	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, name)
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte("[" + value2 + "," + value3 + "]")
@@ -709,7 +718,7 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 	}
 
 	query = `{"unused field": "foo"}`
-	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
+	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, name)
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte("[]")
@@ -718,7 +727,7 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 	}
 
 	query = `{"a string": "moo", "unused field": "foo"}`
-	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
+	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, name)
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte("[]")
@@ -728,7 +737,7 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 
 	// Check regex query
 	query = `{"a string": "re/^(f|m)oo"}`
-	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
+	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, name)
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte("[" + value1 + "," + value2 + "]")
@@ -737,7 +746,7 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 	}
 
 	query = `{"a string": "re/^(f|m)oo", "a list": "mom"}`
-	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
+	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, name)
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte("[" + value2 + "]")
@@ -746,7 +755,7 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 	}
 
 	query = `{"a string": "re/^(f|m)oo", "a list": ["re/.*x", "re/om"]}`
-	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
+	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, name)
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte("[" + value2 + "]")
@@ -756,7 +765,7 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 
 	// Check if keys are re-POSTed using default update or replace=true.
 	value3mod := `{"a string": "goo modified", "a 2nd list": [26]}`
-	key3modreq := fmt.Sprintf("%snode/%s/%s/key/%s?u=bill&show=all", server.WebAPIPath, uuid, data.DataName(), key3)
+	key3modreq := fmt.Sprintf("%snode/%s/%s/key/%s?u=bill&show=all", server.WebAPIPath, uuid, name, key3)
 	server.TestHTTP(t, "POST", key3modreq, strings.NewReader(value3mod))
 
 	returnValue = server.TestHTTP(t, "GET", key3modreq, nil)
@@ -797,7 +806,7 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 
 	// Check if we can keep old _user and _time while changing value (admin mods)
 	value3modA := fmt.Sprintf(`{"a string": "goo modified", "a string_user": "bill", "a string_time": "%s", "a 2nd list": [26]}`, responseJSON["a string_time"])
-	key3modAreq := fmt.Sprintf("%snode/%s/%s/key/%s?u=frank&show=user", server.WebAPIPath, uuid, data.DataName(), key3)
+	key3modAreq := fmt.Sprintf("%snode/%s/%s/key/%s?u=frank&show=user", server.WebAPIPath, uuid, name, key3)
 	server.TestHTTP(t, "POST", key3modAreq, strings.NewReader(value3modA))
 
 	returnValue = server.TestHTTP(t, "GET", key3modAreq, nil)
@@ -836,7 +845,7 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 
 	// Check if keys are re-POSTed using replace=true.
 	value3mod = `{"a string": "goo replaced", "only list": [1, 2]}`
-	key3modreq = fmt.Sprintf("%snode/%s/%s/key/%s?u=sandra&show=user&replace=true", server.WebAPIPath, uuid, data.DataName(), key3)
+	key3modreq = fmt.Sprintf("%snode/%s/%s/key/%s?u=sandra&show=user&replace=true", server.WebAPIPath, uuid, name, key3)
 	server.TestHTTP(t, "POST", key3modreq, strings.NewReader(value3mod))
 
 	returnValue = server.TestHTTP(t, "GET", key3modreq, nil)
@@ -863,17 +872,6 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 	if value, found := responseJSON["only list_user"]; !found || value != "sandra" {
 		t.Fatalf("Bad response: %v\n", responseJSON)
 	}
-}
-
-func TestKeyvalueRequests(t *testing.T) {
-	if err := server.OpenTest(); err != nil {
-		t.Fatalf("can't open test server: %v\n", err)
-	}
-	defer server.CloseTest()
-
-	uuid, versionID := initTestRepo()
-
-	testRequest(t, uuid, versionID, "annotations")
 }
 
 var testData = []struct {
