@@ -63,7 +63,6 @@ func (kc KafkaConfig) Initialize(hostID string) error {
 	if len(kc.Servers) == 0 {
 		return nil
 	}
-	dvid.Infof("Trying to initialize kafka...")
 	kafkaTopicSuffixes = make(map[dvid.UUID]string)
 	for _, spec := range kc.TopicSuffixes {
 		parts := strings.Split(spec, ":")
@@ -104,7 +103,8 @@ func (kc KafkaConfig) Initialize(hostID string) error {
 			}
 		}
 	}()
-	dvid.Infof("Finished with initial Kafka setup")
+	dvid.Infof("Kafka topic for dvid activity: %s\n", kafkaActivityTopicName)
+	dvid.Infof("Kafka topic prefix for mutations: %s\n", KafkaTopicPrefix)
 	return nil
 }
 
