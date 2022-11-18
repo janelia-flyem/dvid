@@ -455,13 +455,13 @@ func TestKeyvalueVersioning(t *testing.T) {
 
 	// PUT a value
 	key1 := "mykey"
-	value1 := "some stuff"
+	value1 := `"some stuff"`
 	key1req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), key1)
 	server.TestHTTP(t, "POST", key1req, strings.NewReader(value1))
 
 	// Add 2nd k/v
 	key2 := "my2ndkey"
-	value2 := "more good stuff"
+	value2 := `"more good stuff"`
 	key2req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), key2)
 	server.TestHTTP(t, "POST", key2req, strings.NewReader(value2))
 
@@ -535,6 +535,21 @@ func TestKeyvalueVersioning(t *testing.T) {
 			key1, key2, string(returnValue))
 	}
 
+	// Check some values using GET /keyvalues (json)
+	getreq0 := fmt.Sprintf("%snode/%s/%s/keyvalues?json=true", server.WebAPIPath, uuid, data.DataName())
+	expectedKeys := []string{key1, key2, "missing-key"}
+
+	jsonKeys, err := json.Marshal(expectedKeys)
+	if err != nil {
+		t.Fatalf("couldn't parse expectedKeys\n")
+	}
+
+	returnValue = server.TestHTTP(t, "GET", getreq0, bytes.NewBuffer(jsonKeys))
+	expectedJSON := fmt.Sprintf(`{%q:%s,%q:%s,"missing-key":{}}`, key1, value1, key2, value2)
+	if string(returnValue) != expectedJSON {
+		t.Errorf("Error on keyvalues JSON return: got %s, expected %s\n", string(returnValue), expectedJSON)
+	}
+
 	// Check values from batch POST using individual key gets
 	for i := 0; i < 5; i++ {
 		k := fmt.Sprintf("batchkey-%d", i)
@@ -550,10 +565,10 @@ func TestKeyvalueVersioning(t *testing.T) {
 
 	// Check some values from batch POST using GET /keyvalues?jsontar=true
 	getreq1 := fmt.Sprintf("%snode/%s/%s/keyvalues?jsontar=true", server.WebAPIPath, uuid, data.DataName())
-	tardata := server.TestHTTP(t, "GET", getreq1, bytes.NewBufferString(`["batchkey-0","batchkey-1","batchkey-4"]`))
+	tardata := server.TestHTTP(t, "GET", getreq1, bytes.NewBufferString(`["batchkey-0","batchkey-1","batchkey-4","batchkey-1000"]`))
 	tarbuf := bytes.NewBuffer(tardata)
 	tr := tar.NewReader(tarbuf)
-	expectedKeys := []string{"batchkey-0", "batchkey-1", "batchkey-4"}
+	expectedKeys = []string{"batchkey-0", "batchkey-1", "batchkey-4", "batchkey-1000"}
 	keyNum := 0
 	for {
 		hdr, err := tr.Next()
@@ -575,16 +590,22 @@ func TestKeyvalueVersioning(t *testing.T) {
 			t.Fatalf("error reading tar data: %v\n", err)
 		}
 		returnValue := val.Bytes()
-		if len(returnValue) != i*payloadSize+10 {
-			t.Errorf("Expected batch POST key %q to have value with %d bytes, got %d instead\n", hdr.Name, i*payloadSize+10, len(returnValue))
-		}
-		if !bytes.Equal(payload[i], returnValue) {
-			t.Fatalf("bad response for key %q\n", hdr.Name)
+		if i != 1000 {
+			if len(returnValue) != i*payloadSize+10 {
+				t.Errorf("Expected batch POST key %q to have value with %d bytes, got %d instead\n", hdr.Name, i*payloadSize+10, len(returnValue))
+			}
+			if !bytes.Equal(payload[i], returnValue) {
+				t.Fatalf("bad response for key %q\n", hdr.Name)
+			}
+		} else {
+			if len(returnValue) != 0 {
+				t.Fatalf("expected 0 byte response for key %q, got %d bytes\n", hdr.Name, len(returnValue))
+			}
 		}
 		keyNum++
 	}
-	if keyNum != 3 {
-		t.Fatalf("Got %d keys when there should have been 3\n", keyNum)
+	if keyNum != 4 {
+		t.Fatalf("Got %d keys when there should have been 4\n", keyNum)
 	}
 	tardata = server.TestHTTP(t, "GET", getreq1, bytes.NewBufferString(`["batchkey-3"]`))
 	tarbuf = bytes.NewBuffer(tardata)
@@ -625,7 +646,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 
 	// Check some values from batch POST using GET /keyvalues (protobuf3)
 	getreq2 := fmt.Sprintf("%snode/%s/%s/keyvalues", server.WebAPIPath, uuid, data.DataName())
-	expectedKeys = []string{"batchkey-1", "batchkey-2", "batchkey-3"}
+	expectedKeys = []string{"batchkey-1", "batchkey-2", "batchkey-3", "batchkey-1000"}
 	pbufKeys := proto.Keys{
 		Keys: expectedKeys,
 	}
@@ -638,8 +659,8 @@ func TestKeyvalueVersioning(t *testing.T) {
 	if err := pb.Unmarshal(keyvaluesSerialization, &pbKVs); err != nil {
 		t.Fatalf("couldn't unmarshal keyvalues protobuf: %v\n", err)
 	}
-	if len(pbKVs.Kvs) != 3 {
-		t.Fatalf("expected 3 kv pairs returned, got %d\n", len(pbKVs.Kvs))
+	if len(pbKVs.Kvs) != 4 {
+		t.Fatalf("expected 4 kv pairs returned, got %d\n", len(pbKVs.Kvs))
 	}
 	for keyNum, kv := range pbKVs.Kvs {
 		if kv.Key != expectedKeys[keyNum] {
@@ -649,11 +670,17 @@ func TestKeyvalueVersioning(t *testing.T) {
 		if _, err = fmt.Sscanf(kv.Key, "batchkey-%d", &i); err != nil {
 			t.Fatalf("error parsing key %d %q: %v\n", keyNum, kv.Key, err)
 		}
-		if len(kv.Value) != i*payloadSize+10 {
-			t.Errorf("Expected batch POST key %q to have value with %d bytes, got %d instead\n", kv.Key, i*payloadSize+10, len(kv.Value))
-		}
-		if !bytes.Equal(payload[i], kv.Value) {
-			t.Fatalf("bad response for key %q\n", kv.Key)
+		if i != 1000 {
+			if len(kv.Value) != i*payloadSize+10 {
+				t.Errorf("Expected batch POST key %q to have value with %d bytes, got %d instead\n", kv.Key, i*payloadSize+10, len(kv.Value))
+			}
+			if !bytes.Equal(payload[i], kv.Value) {
+				t.Fatalf("bad response for key %q\n", kv.Key)
+			}
+		} else {
+			if len(kv.Value) != 0 {
+				t.Fatalf("expected 0 byte value for key %q but got %d bytes instead\n", kv.Key, len(kv.Value))
+			}
 		}
 	}
 

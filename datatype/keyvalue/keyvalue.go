@@ -252,7 +252,7 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 		}
 	
 	For GET, the query body must include a Keys serialization and a KeyValues serialization is
-	returned.
+	returned.  If a key is not found, it is included in return but with nil value (0 bytes or "{}").
 
 	For POST, the query body must include a KeyValues serialization.
 	
@@ -272,7 +272,7 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 
 	GET Query-string Options (only one of these allowed):
 
-	json        If
+	json        If set true, returns JSON (see below) where values must be valid JSON.
 	jsontar		If set to any value for GET, query body must be JSON array of string keys
 				and the returned data will be a tarfile with keys as file names.
 
@@ -284,7 +284,10 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 			"key1": value1,
 			"key2": value2,
 			...
+			"bad key": {}
 		}
+
+		If key wasn't found, the "{}" value is returned.
 
 	2) tar
 
@@ -998,8 +1001,7 @@ func (d *Data) sendJSONKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, ke
 			return
 		}
 		if !found {
-			wroteVal = false
-			continue
+			val = nil
 		}
 		if len(val) == 0 {
 			val = []byte("{}")
