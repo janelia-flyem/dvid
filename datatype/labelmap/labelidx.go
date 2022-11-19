@@ -590,6 +590,10 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp, info dvid.Mo
 	// we don't have to worry about mutex here because it's a new index.
 	var cidx *labels.Index
 	cleavedSize, remainSize, cidx = idx.Cleave(op.CleavedLabel, op.CleavedSupervoxels)
+	cidx.LastMutId = op.MutID
+	cidx.LastModUser = info.User
+	cidx.LastModTime = info.Time
+	cidx.LastModApp = info.App
 	if err = putCachedLabelIndex(d, v, cidx); err != nil {
 		return
 	}
