@@ -674,10 +674,14 @@ POST <api URL>/node/<UUID>/<data name>/blocks[?queryopts]
     storing labelmap data if you want DVID to also handle indexing and downres computation.
 	If you are calculating indices and downres supervoxel blocks offline for ingestiong into
 	DVID, use the "POST /ingest-supervoxels" endpoint, since it is even faster.
-	Because this endpoint must consider parallel requests using overlapping blocks, a mutex
-	is employed the limits the overal throughput.  Still data read from the HTTP stream is written 
-	directly to the underlying storage.  The default (and currently only supported) compression 
-	is gzip on compressed DVID label Block serialization.
+
+	It's suggested that downres supervoxel blocks should be calculated outside DVID and then
+	ingested for anything larger than small (Gigavoxel) volumes. Currently, the downres computation 
+	is not robust for non-cubic chunk sizes and because this endpoint must consider parallel 
+	requests using overlapping blocks, a mutex is employed the limits the overal throughput.  
+	Still data read from the HTTP stream is written directly to the underlying storage.  The
+	default (and currently only supported) compression is gzip on compressed DVID label Block 
+	serialization.
 
 	Note that maximum label and extents are automatically handled during these calls.
 	If the optional "scale" query is greater than 0, these ingestions will not trigger
