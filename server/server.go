@@ -149,13 +149,13 @@ func init() {
 	}()
 
 	// Monitor the # of interactive requests over last 2 minutes.
+	reqCheckTimer := time.Tick(5 * time.Second)
 	go func() {
-		tick := time.Tick(5 * time.Second)
 		for {
 			select {
 			case <-interactiveOpsCh:
 				interactiveOps[0]++
-			case <-tick:
+			case <-reqCheckTimer:
 				newCount := InteractiveOpsPer2Min - interactiveOps[23] + interactiveOps[0]
 				InteractiveOpsPer2Min = newCount
 				copy(interactiveOps[1:], interactiveOps[:23])
