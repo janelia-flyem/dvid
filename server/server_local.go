@@ -1,3 +1,4 @@
+//go:build !clustered && !gcloud
 // +build !clustered,!gcloud
 
 /*
@@ -12,6 +13,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -43,7 +45,14 @@ var (
 	// DefaultHost is the default most understandable alias for this server.
 	DefaultHost = "localhost"
 
+	// the parsed TOML configuration data
 	tc tomlConfig
+
+	// the TOML config file location
+	tcLocation string
+
+	// the TOML config raw contents
+	tcContent string
 
 	corsDomains map[string]struct{}
 )
@@ -295,6 +304,10 @@ func Host() string {
 	return host
 }
 
+func ConfigLocation() string {
+	return tcLocation
+}
+
 func Note() string {
 	return tc.Server.Note
 }
@@ -450,16 +463,26 @@ type mirrorConfig struct {
 // LoadConfig loads DVID server configuration from a TOML file.
 func LoadConfig(filename string) error {
 	if filename == "" {
-		return fmt.Errorf("No server TOML configuration file provided")
+		return fmt.Errorf("no server TOML configuration file provided")
 	}
 	if _, err := toml.DecodeFile(filename, &tc); err != nil {
 		return fmt.Errorf("could not decode TOML config: %v", err)
 	}
-	dvid.Infof("tomlConfig: %v\n", tc)
-	fmt.Printf("tomlConfig Auth: %v\n", tc.Auth)
-	var err error
-	err = tc.convertPathsToAbsolute(filename)
+	tcLocation = filename
+
+	fp, err := os.Open(filename)
 	if err != nil {
+		return err
+	}
+	defer fp.Close()
+	if byteContents, err := io.ReadAll(fp); err != nil {
+		return err
+	} else {
+		tcContent = string(byteContents)
+	}
+
+	dvid.Infof("tomlConfig: %v\n", tc)
+	if err := tc.convertPathsToAbsolute(filename); err != nil {
 		return fmt.Errorf("could not convert relative paths to absolute paths in TOML config: %v", err)
 	}
 

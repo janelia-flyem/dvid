@@ -126,25 +126,29 @@ GET /api/user-latencies[?u=<username]
 		...
 	]
 
- GET  /api/server/info
+GET  /api/server/info
 
 	Returns JSON for server properties.
 
- GET  /api/server/note 
+GET  /api/server/note 
 
 	Returns any value of [server.note] from the configuration TOML.
 
- GET  /api/server/types
+GET  /api/server/config 
+
+	Returns the raw content of the configuration TOML.
+
+GET  /api/server/types
 
 	Returns JSON with the datatypes of currently stored data instances.  Datatypes are represented
 	by a name and the URL of the reference implementation.  To see all possible datatypes, i.e., the
 	list of compiled datatypes, use the "compiled-types" endpoint.
 
- GET  /api/server/compiled-types
+GET  /api/server/compiled-types
 
  	Returns JSON of all possible datatypes for this server, i.e., the list of compiled datatypes.
 
- GET  /api/server/groupcache
+GET  /api/server/groupcache
 
  	Returns JSON for groupcache statistics for this server.  See github.com/golang/groupcache package
 	Stats and CacheStats for MainCache and HotCache.
@@ -738,6 +742,8 @@ func initRoutes() {
 	serverMux.Get("/api/server/info/", serverInfoHandler)
 	serverMux.Get("/api/server/note", serverNoteHandler)
 	serverMux.Get("/api/server/note/", serverNoteHandler)
+	serverMux.Get("/api/server/config", serverConfigHandler)
+	serverMux.Get("/api/server/config/", serverConfigHandler)
 	serverMux.Get("/api/server/types", serverTypesHandler)
 	serverMux.Get("/api/server/types/", serverTypesHandler)
 	serverMux.Get("/api/server/compiled-types", serverCompiledTypesHandler)
@@ -1354,7 +1360,8 @@ func helpHandler(w http.ResponseWriter, r *http.Request) {
 	html += "</ul>"
 
 	// Return the embedded help page.
-	fmt.Fprintf(w, fmt.Sprintf(webHelp, hostname, html))
+	helpStr := fmt.Sprintf(webHelp, hostname, html)
+	fmt.Fprint(w, helpStr)
 }
 
 func typehelpHandler(c web.C, w http.ResponseWriter, r *http.Request) {
@@ -1365,7 +1372,7 @@ func typehelpHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, err)
 		return
 	}
-	fmt.Fprintf(w, typeservice.Help())
+	fmt.Fprint(w, typeservice.Help())
 }
 
 // Handler for web client and other static content
@@ -1445,7 +1452,7 @@ func loadHandler(w http.ResponseWriter, r *http.Request) {
 
 func heartbeatHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
-	fmt.Fprintf(w, "OK")
+	fmt.Fprint(w, "OK")
 }
 
 func latenciesHandler(w http.ResponseWriter, r *http.Request) {
@@ -1464,7 +1471,7 @@ func latenciesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, string(m))
+	fmt.Fprint(w, string(m))
 }
 
 func serverStorageHandler(w http.ResponseWriter, r *http.Request) {
@@ -1474,7 +1481,7 @@ func serverStorageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, jsonStr)
+	fmt.Fprint(w, jsonStr)
 }
 
 func serverInfoHandler(w http.ResponseWriter, r *http.Request) {
@@ -1484,12 +1491,17 @@ func serverInfoHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, jsonStr)
+	fmt.Fprint(w, jsonStr)
 }
 
 func serverNoteHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	fmt.Fprintf(w, tc.Server.Note)
+}
+
+func serverConfigHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+	fmt.Fprint(w, tcContent)
 }
 
 func serverTypesHandler(w http.ResponseWriter, r *http.Request) {
@@ -1510,7 +1522,7 @@ func serverTypesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, string(m))
+	fmt.Fprint(w, string(m))
 }
 
 func serverCompiledTypesHandler(w http.ResponseWriter, r *http.Request) {
@@ -1525,7 +1537,7 @@ func serverCompiledTypesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, string(m))
+	fmt.Fprint(w, string(m))
 }
 
 func serverGroupcacheHandler(w http.ResponseWriter, r *http.Request) {
@@ -1541,7 +1553,7 @@ func serverGroupcacheHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, string(m))
+	fmt.Fprint(w, string(m))
 }
 
 func serverSettingsHandler(c web.C, w http.ResponseWriter, r *http.Request) {

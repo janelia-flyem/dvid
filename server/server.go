@@ -274,6 +274,7 @@ func AboutJSON() (jsonStr string, err error) {
 		"RPC Address":       RPCAddress(),
 		"Host":              Host(),
 		"Note":              Note(),
+		"TOML location":     ConfigLocation(),
 	}
 	if readonly {
 		data["Mode"] = "read only"
