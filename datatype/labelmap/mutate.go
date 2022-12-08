@@ -836,16 +836,8 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 		dvid.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
 	}
 
-	msginfo = map[string]interface{}{
-		"Action":     "split-complete",
-		"Target":     fromLabel,
-		"NewLabel":   toLabel,
-		"Split":      splitRef,
-		"SVSplits":   svsplit.Splits,
-		"MutationID": mutID,
-		"UUID":       string(versionuuid),
-		"Timestamp":  time.Now().String(),
-	}
+	msginfo["Action"] = "split-complete"
+	msginfo["Timestamp"] = time.Now().String()
 	jsonBytes, _ = json.Marshal(msginfo)
 
 	if err := server.LogJSONMutation(versionuuid, d.DataUUID(), jsonBytes); err != nil {
@@ -1078,19 +1070,10 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 		dvid.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
 	}
 
-	msginfo = map[string]interface{}{
-		"Action":           "split-supervoxel-complete",
-		"Supervoxel":       svlabel,
-		"Body":             label,
-		"SplitSupervoxel":  splitSupervoxel,
-		"RemainSupervoxel": remainSupervoxel,
-		"Split":            splitRef,
-		"SplitSize":        splitSize,
-		"RemainSize":       remainSize,
-		"MutationID":       mutID,
-		"UUID":             string(versionuuid),
-		"Timestamp":        time.Now().String(),
-	}
+	msginfo["Action"] = "split-supervoxel-complete"
+	msginfo["SplitSize"] = splitSize
+	msginfo["RemainSize"] = remainSize
+	msginfo["Timestamp"] = time.Now().String()
 	jsonBytes, _ = json.Marshal(msginfo)
 
 	if err := server.LogJSONMutation(versionuuid, d.DataUUID(), jsonBytes); err != nil {
