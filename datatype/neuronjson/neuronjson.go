@@ -441,8 +441,11 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 
 
 
+GET <api URL>/node/<UUID>/<data name>/query[?show=...]
 POST <api URL>/node/<UUID>/<data name>/query[?show=...]
 
+	Both GET and POST methods are permitted to launch queries, however the
+	POST method is deprecated because it will be blocked for committed versions.
 	The JSON query format uses field names as the keys, and desired values.
 	Example:
 	{ "bodyid": 23, "hemilineage": "0B", ... }
@@ -2545,8 +2548,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		comment = "HTTP GET fields"
 
 	case "query":
-		if action != "post" {
-			server.BadRequest(w, r, fmt.Errorf("only POST verb allowed for /query endpoint"))
+		if action != "post" && action != "get" {
+			server.BadRequest(w, r, fmt.Errorf("only GET or POST methods allowed for /query endpoint"))
 			return
 		}
 		onlyid := r.URL.Query().Get("onlyid") == "true"

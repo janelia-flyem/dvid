@@ -696,11 +696,16 @@ func TestKeyvalueRequests(t *testing.T) {
 	// Check query
 	query := `{"a string": ["moo", "goo"]}`
 	queryreq := fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, name)
-	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
+	returnValue = server.TestHTTP(t, "GET", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte("[" + value2 + "," + value3 + "]")
 	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
-		t.Errorf("Bad query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+		t.Errorf("Bad GET query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+	}
+
+	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
+	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
+		t.Errorf("Bad POST query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	query = `{"a string": ["moo", "goo"], "a number": 2345}`
