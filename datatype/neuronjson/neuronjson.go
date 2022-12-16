@@ -275,7 +275,7 @@ GET  <api URL>/node/<UUID>/<data name>/keyrangevalues/<key1>/<key2>?<options>
 
 GET  <api URL>/node/<UUID>/<data name>/key/<key>[?query-options]
 
-	Gets a key-value pair depending on the options.  
+	For a given neuron id key, returns a value depending on the options.  
 
 	Example: 
 
@@ -291,7 +291,7 @@ GET  <api URL>/node/<UUID>/<data name>/key/<key>[?query-options]
 
 	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of neuronjson data instance.
-	key           An alphanumeric key.
+	key           The uint64 of a neuron identifier
 
 	GET Query-string Options:
 
@@ -312,13 +312,13 @@ POST <api URL>/node/<UUID>/<data name>/key/<key>
 
 	Example: 
 
-	POST <api URL>/node/3f8c/stuff/key/myfile.dat
+	POST <api URL>/node/3f8c/stuff/key/15319
 
 	Arguments:
 
 	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of neuronjson data instance.
-	key           An alphanumeric key.
+	key           The uint64 of a neuron identifier
 	
 	POSTs will be logged as a Kafka JSON message with the following format:
 	{ 
@@ -334,10 +334,6 @@ POST <api URL>/node/<UUID>/<data name>/key/<key>
 
 	replace		If "true" will remove any fields not present
 
-	show		If "user", shows *_user fields.
-				If "time", shows *_time fields.
-				If "all", shows both *_user and *_time fields.
-				If unset (default), shows neither *_user or *_time fields.
 
 DEL  <api URL>/node/<UUID>/<data name>/key/<key> 
 HEAD <api URL>/node/<UUID>/<data name>/key/<key> 
@@ -352,7 +348,7 @@ HEAD <api URL>/node/<UUID>/<data name>/key/<key>
 
 	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of neuronjson data instance.
-	key           An alphanumeric key.
+	key           The uint64 of a neuron identifier
 				
 
 GET <api URL>/node/<UUID>/<data name>/keyvalues[?query-options]
