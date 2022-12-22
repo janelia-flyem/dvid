@@ -998,6 +998,23 @@ func TestAnnotationVersioning(t *testing.T) {
 	if !equalObjectJSON(returnValue, expected2val, ShowBasic) {
 		t.Errorf("Error on second version, key %q: expected %s, got %s\n", testData[1].key, uuid2val, string(returnValue))
 	}
+
+	// // Get first version
+	// allvalue := `[{"a number":3456,"bodyid":1000,"position":[150,250,380]},{"a number":3456,"bodyid":1000,"position":[150,250,380]},{"bar":"another string","baz":[1,2,3],"bodyid":2000},{"a list":[23],"a number":3456,"bodyid":3000},{"bodyid":4000,"position":[151,251,301],"soma_side":"LHS"},{"bar":"another string","baz":[1,2,3],"bodyid":2000},{"a list":[23],"a number":3456,"bodyid":3000},{"bodyid":4000,"position":[151,251,301],"soma_side":"LHS"}]`
+	// allreq := fmt.Sprintf("%snode/%s/%s/all", server.WebAPIPath, uuid, data.DataName())
+	// returnValue = server.TestHTTP(t, "GET", allreq, nil)
+	// if !equalListJSON(returnValue, []byte(allvalue), ShowBasic) {
+	// 	t.Errorf("Error on first version, GET all:\nexp: %s\ngot: %s\n", allvalue, string(returnValue))
+	// }
+
+	// // Get HEAD all
+	// allvalue = `[{"bodyid":4000,"position":[151,251,301],"soma_side":"LHS"},{"a number":3456,"bodyid":1000,"position":[150,250,380]},{"bar":"another string","baz":[1,2,3],"bodyid":2000},{"a list":[23],"a number":3456,"bodyid":3000},{"bodyid":4000,"position":[151,251,301],"soma_side":"LHS"},{"a number":3456,"bodyid":1000,"position":[150,250,380]},{"bar":"another string","baz":[1,2,3],"bodyid":2000,"data":"new stuff"},{"a list":[23],"a number":3456,"bodyid":3000}]`
+	// allreq = fmt.Sprintf("%snode/%s/%s/all", server.WebAPIPath, uuid2, data.DataName())
+	// returnValue = server.TestHTTP(t, "GET", allreq, nil)
+	// if !equalListJSON(returnValue, []byte(allvalue), ShowBasic) {
+	// 	t.Errorf("Error on second version, GET all:\nexp: %s\ngot: %s\n", allvalue, string(returnValue))
+	// }
+
 	// returnValue = server.TestHTTP(t, "GET", uuid2req+"&show=user", nil)
 	// if !equalObjectJSON(returnValue, []byte("foo" /*uuid2val*/)) {
 	// 	t.Errorf("Error on second version, key %q: expected %s, got %s\n", testData[1].key, uuid2val, string(returnValue))

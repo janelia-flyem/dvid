@@ -819,15 +819,8 @@ func (d *Data) processRange(ctx storage.Context, f func(key string, value map[st
 		if err != nil {
 			return err
 		}
-		uncompress := true
-		data, _, err := dvid.DeserializeData(kv.V, uncompress)
-		if err != nil {
-			return fmt.Errorf("unable to deserialize data for key %q: %v", key, err)
-		}
-		buf := bytes.NewBuffer(data)
-		dec := gob.NewDecoder(buf)
 		var value map[string]interface{}
-		if err = dec.Decode(&value); err != nil {
+		if err := json.Unmarshal(kv.V, &value); err != nil {
 			return err
 		}
 		f(key, value)
@@ -2054,13 +2047,10 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 }
 
 func (d *Data) sendJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWriter,
-	r *http.Request, keyBeg, keyEnd string, showFields Fields) (numKeys int, err error) {
+	r *http.Request, bodyidBeg, bodyidEnd uint64, showFields Fields) (numKeys int, err error) {
 
 	if !ctx.Head() {
 		return 0, fmt.Errorf("cannot use range query on non-head version at this time")
-	}
-	if len(keyBeg) == 0 || len(keyEnd) == 0 {
-		return 0, fmt.Errorf("must specify non-empty beginning and ending key")
 	}
 	tarOut := (r.URL.Query().Get("jsontar") == "true") || (r.URL.Query().Get("tar") == "true")
 	jsonOut := r.URL.Query().Get("json") == "true"
@@ -2084,14 +2074,6 @@ func (d *Data) sendJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWr
 	}
 
 	// Accept arbitrary strings for first and last key for range
-	bodyidBeg, err := parseKeyStr(keyBeg)
-	if err != nil {
-		return 0, err
-	}
-	bodyidEnd, err := parseKeyStr(keyEnd)
-	if err != nil {
-		return 0, err
-	}
 	begI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] >= bodyidBeg })
 	endI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] > bodyidEnd })
 
@@ -2584,16 +2566,40 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 
-		// Return JSON list of keys
 		keyBeg := parts[4]
 		keyEnd := parts[5]
-		w.Header().Set("Content-Type", "application/json")
-		numKeys, err := d.sendJSONValuesInRange(ctx, w, r, keyBeg, keyEnd, showFields(r))
+		bodyidBeg, err := parseKeyStr(keyBeg)
 		if err != nil {
-			server.BadRequest(w, r, err)
+			server.BadRequest(w, r, "first key must be interpretable as an unsigned integer bodyid")
 			return
 		}
-		comment = fmt.Sprintf("HTTP GET keyrangevalues sent %d values for [%q, %q]", numKeys, keyBeg, keyEnd)
+		bodyidEnd, err := parseKeyStr(keyEnd)
+		if err != nil {
+			server.BadRequest(w, r, "first key must be interpretable as an unsigned integer bodyid")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if bodyidBeg == 0 && bodyidEnd == math.MaxUint64 {
+			kvList, err := d.GetAll(ctx, showFields(r))
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			jsonBytes, err := json.Marshal(kvList)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			fmt.Fprint(w, string(jsonBytes))
+			comment = fmt.Sprintf("HTTP GET keyrangevalues sent ALL values for [%q, %q]", keyBeg, keyEnd)
+		} else {
+			numKeys, err := d.sendJSONValuesInRange(ctx, w, r, bodyidBeg, bodyidEnd, showFields(r))
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			comment = fmt.Sprintf("HTTP GET keyrangevalues sent %d values for [%q, %q]", numKeys, keyBeg, keyEnd)
+		}
 
 	case "keyvalues":
 		switch action {
