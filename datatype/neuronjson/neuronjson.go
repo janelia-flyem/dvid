@@ -2046,11 +2046,139 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 	return string(m), nil
 }
 
+func (d *Data) sendOldJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWriter,
+	r *http.Request, keyBeg, keyEnd string, showFields Fields) (numKeys int, err error) {
+
+	tarOut := (r.URL.Query().Get("jsontar") == "true") || (r.URL.Query().Get("tar") == "true")
+	jsonOut := r.URL.Query().Get("json") == "true"
+	checkVal := r.URL.Query().Get("check") == "true"
+	if tarOut && jsonOut {
+		err = fmt.Errorf("can only specify tar or json output, not both")
+		return
+	}
+	db, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return 0, err
+	}
+
+	var kvs proto.KeyValues
+	var tw *tar.Writer
+
+	switch {
+	case tarOut:
+		w.Header().Set("Content-type", "application/tar")
+		tw = tar.NewWriter(w)
+	case jsonOut:
+		w.Header().Set("Content-type", "application/json")
+		if _, err = w.Write([]byte("{")); err != nil {
+			return
+		}
+	default:
+	}
+
+	// Compute first and last key for range
+	first, err := NewTKey(keyBeg)
+	if err != nil {
+		return 0, err
+	}
+	last, err := NewTKey(keyEnd)
+	if err != nil {
+		return 0, err
+	}
+
+	var wroteVal bool
+	err = db.ProcessRange(ctx, first, last, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+		if c == nil || c.TKeyValue == nil {
+			return nil
+		}
+		kv := c.TKeyValue
+		if kv.V == nil {
+			return nil
+		}
+		key, err := DecodeTKey(kv.K)
+		if err != nil {
+			return err
+		}
+		var jsonData NeuronJSON
+		if err := json.Unmarshal(kv.V, &jsonData); err != nil {
+			return err
+		}
+		out := removeReservedFields(jsonData, showFields)
+		jsonBytes, err := json.Marshal(out)
+		if err != nil {
+			return err
+		}
+		switch {
+		case tarOut:
+			hdr := &tar.Header{
+				Name: key,
+				Size: int64(len(jsonBytes)),
+				Mode: 0755,
+			}
+			if err = tw.WriteHeader(hdr); err != nil {
+				return err
+			}
+			if _, err = tw.Write(jsonBytes); err != nil {
+				return err
+			}
+		case jsonOut:
+			if wroteVal {
+				if _, err = w.Write([]byte(",")); err != nil {
+					return err
+				}
+			}
+			if len(jsonBytes) == 0 {
+				jsonBytes = []byte("{}")
+			} else if checkVal && !json.Valid(jsonBytes) {
+				return fmt.Errorf("bad JSON for key %q", key)
+			}
+			out := fmt.Sprintf(`"%s":`, key)
+			if _, err = w.Write([]byte(out)); err != nil {
+				return err
+			}
+			if _, err = w.Write(jsonBytes); err != nil {
+				return err
+			}
+			wroteVal = true
+		default:
+			kv := &proto.KeyValue{
+				Key:   key,
+				Value: jsonBytes,
+			}
+			kvs.Kvs = append(kvs.Kvs, kv)
+		}
+
+		return nil
+	})
+	switch {
+	case tarOut:
+		tw.Close()
+	case jsonOut:
+		if _, err = w.Write([]byte("}")); err != nil {
+			return
+		}
+	default:
+		numKeys = len(kvs.Kvs)
+		var serialization []byte
+		if serialization, err = pb.Marshal(&kvs); err != nil {
+			return
+		}
+		w.Header().Set("Content-type", "application/octet-stream")
+		if _, err = w.Write(serialization); err != nil {
+			return
+		}
+	}
+	return
+}
+
 func (d *Data) sendJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWriter,
-	r *http.Request, bodyidBeg, bodyidEnd uint64, showFields Fields) (numKeys int, err error) {
+	r *http.Request, keyBeg, keyEnd string, showFields Fields) (numKeys int, err error) {
 
 	if !ctx.Head() {
 		return 0, fmt.Errorf("cannot use range query on non-head version at this time")
+	}
+	if len(keyBeg) == 0 || len(keyEnd) == 0 {
+		return 0, fmt.Errorf("must specify non-empty beginning and ending key")
 	}
 	tarOut := (r.URL.Query().Get("jsontar") == "true") || (r.URL.Query().Get("tar") == "true")
 	jsonOut := r.URL.Query().Get("json") == "true"
@@ -2074,6 +2202,14 @@ func (d *Data) sendJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWr
 	}
 
 	// Accept arbitrary strings for first and last key for range
+	bodyidBeg, err := parseKeyStr(keyBeg)
+	if err != nil {
+		return 0, err
+	}
+	bodyidEnd, err := parseKeyStr(keyEnd)
+	if err != nil {
+		return 0, err
+	}
 	begI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] >= bodyidBeg })
 	endI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] > bodyidEnd })
 
@@ -2566,34 +2702,19 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 
+		// Return JSON list of keys
 		keyBeg := parts[4]
 		keyEnd := parts[5]
-		bodyidBeg, err := parseKeyStr(keyBeg)
-		if err != nil {
-			server.BadRequest(w, r, "first key must be interpretable as an unsigned integer bodyid")
-			return
-		}
-		bodyidEnd, err := parseKeyStr(keyEnd)
-		if err != nil {
-			server.BadRequest(w, r, "first key must be interpretable as an unsigned integer bodyid")
-			return
-		}
 		w.Header().Set("Content-Type", "application/json")
-		if bodyidBeg == 0 && bodyidEnd == math.MaxUint64 {
-			kvList, err := d.GetAll(ctx, showFields(r))
+		if ctx.Head() {
+			numKeys, err := d.sendJSONValuesInRange(ctx, w, r, keyBeg, keyEnd, showFields(r))
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
-			jsonBytes, err := json.Marshal(kvList)
-			if err != nil {
-				server.BadRequest(w, r, err)
-				return
-			}
-			fmt.Fprint(w, string(jsonBytes))
-			comment = fmt.Sprintf("HTTP GET keyrangevalues sent ALL values for [%q, %q]", keyBeg, keyEnd)
+			comment = fmt.Sprintf("HTTP GET keyrangevalues sent %d values for [%q, %q]", numKeys, keyBeg, keyEnd)
 		} else {
-			numKeys, err := d.sendJSONValuesInRange(ctx, w, r, bodyidBeg, bodyidEnd, showFields(r))
+			numKeys, err := d.sendOldJSONValuesInRange(ctx, w, r, keyBeg, keyEnd, showFields(r))
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
