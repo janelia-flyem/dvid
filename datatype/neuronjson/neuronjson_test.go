@@ -809,8 +809,8 @@ func TestKeyvalueRequests(t *testing.T) {
 		t.Fatalf("Bad response: %v\n", responseJSON)
 	}
 
-	// Check if we can keep old _user and _time while changing value (admin mods)
-	value3modA := fmt.Sprintf(`{"a string": "goo modified", "a string_user": "bill", "a string_time": "%s", "a 2nd list": [26]}`, responseJSON["a string_time"])
+	// Check if we replace or keep old _user and _time while changing and reusing value
+	value3modA := fmt.Sprintf(`{"a string": "goo modified", "a string_user": "bill", "a string_time": "%s", "a number_user": "donald", "a 2nd list": [26]}`, responseJSON["a string_time"])
 	key3modAreq := fmt.Sprintf("%snode/%s/%s/key/%s?u=frank&show=user", server.WebAPIPath, uuid, name, key3)
 	server.TestHTTP(t, "POST", key3modAreq, strings.NewReader(value3modA))
 
@@ -832,7 +832,7 @@ func TestKeyvalueRequests(t *testing.T) {
 	if value, found := responseJSON["a number"]; !found || !reflect.DeepEqual(value, uint64(3456)) {
 		t.Fatalf("Bad response for number (type %s): %v\n", reflect.TypeOf(value), responseJSON)
 	}
-	if value, found := responseJSON["a number_user"]; !found || value != "shawna" {
+	if value, found := responseJSON["a number_user"]; !found || value != "donald" {
 		t.Fatalf("Bad response: %v\n", responseJSON)
 	}
 	if value, found := responseJSON["a list"]; !found || !reflect.DeepEqual(value, []int64{23}) {
@@ -844,7 +844,7 @@ func TestKeyvalueRequests(t *testing.T) {
 	if value, found := responseJSON["a 2nd list"]; !found || !reflect.DeepEqual(value, []int64{26}) {
 		t.Fatalf("Bad response (type %s): %v\n", reflect.TypeOf(value), responseJSON)
 	}
-	if value, found := responseJSON["a 2nd list_user"]; !found || value != "frank" {
+	if value, found := responseJSON["a 2nd list_user"]; !found || value != "bill" {
 		t.Fatalf("Bad response: %v\n", responseJSON)
 	}
 

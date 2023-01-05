@@ -1870,33 +1870,47 @@ func (d *Data) GetData(ctx storage.VersionedCtx, keyStr string, showFields Field
 	return data, true, err
 }
 
-// update _user and _time fields for any fields newly set
+// update _user and _time fields for any fields newly set or modified.
 func updateJSON(origData, newData NeuronJSON, user string, conditionals []string, replace bool) {
+	// determine if any fields are being set for the first time or modified
 	newlySet := make(map[string]struct{}, len(newData))
-	for field, _ := range newData {
-		newlySet[field] = struct{}{}
-	}
-	if origData != nil && !replace {
-		protectedFields := make(map[string]struct{}, len(conditionals))
-		for _, field := range conditionals {
-			protectedFields[field] = struct{}{}
+	if origData == nil {
+		for field := range newData {
+			newlySet[field] = struct{}{}
 		}
-		for field, origValue := range origData {
-			if _, found := newData[field]; !found {
-				newData[field] = origValue
-				continue
+	} else {
+		for field, value := range newData {
+			if origValue, found := origData[field]; !found || !reflect.DeepEqual(value, origValue) {
+				newlySet[field] = struct{}{}
 			}
-			if _, found := protectedFields[field]; found {
-				newData[field] = origValue
-				delete(newlySet, field)
+		}
+
+		// carry forward any fields not being modified if replace option is not set
+		if !replace {
+			protectedFields := make(map[string]struct{}, len(conditionals))
+			for _, field := range conditionals {
+				protectedFields[field] = struct{}{}
 			}
-		} // newData will have inherited
+			for field, origValue := range origData {
+				if _, found := newData[field]; !found {
+					newData[field] = origValue
+					continue
+				}
+				if _, found := protectedFields[field]; found {
+					newData[field] = origValue
+					delete(newlySet, field)
+				}
+			}
+		}
 	}
 
 	// add _user and _time fields for newly set and not prevented via conditionals
 	t := time.Now()
 	timeStr := t.Format(time.RFC3339)
 	for field := range newlySet {
+		if field == "bodyid" || field == "user" {
+			continue // these fields shouldn't have _user or _time fields added
+		}
 		if strings.HasSuffix(field, "_time") || strings.HasSuffix(field, "_user") {
 			continue // we will handle this with main field
 		}
@@ -1911,6 +1925,7 @@ func updateJSON(origData, newData NeuronJSON, user string, conditionals []string
 
 // PutData puts a valid JSON []byte into a neuron key at a given uuid.
 // If replace is true, will use given value instead of updating fields that were given.
+// If field values are given but do not change, the _user and _time fields will not be updated.
 func (d *Data) PutData(ctx *datastore.VersionedCtx, keyStr string, value []byte, conditionals []string, replace bool) error {
 	// Allow "schema" and "schema_batch" on /key endpoint for backwards compatibility with DVID keyvalue instances.
 	switch keyStr {
