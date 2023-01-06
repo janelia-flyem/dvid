@@ -255,7 +255,7 @@ GET  <api URL>/node/<UUID>/<data name>/keyrangevalues/<key1>/<key2>?<options>
 	key1          Lexicographically lowest alphanumeric key in range.
 	key2          Lexicographically highest alphanumeric key in range.
 
-	GET Query-string Options (only one of these allowed):
+	Query-string Options (only one of these allowed):
 
 	json        If set to "true", the response will be JSON as above and the values must
 				  be valid JSON or an error will be returned.
@@ -301,14 +301,19 @@ GET  <api URL>/node/<UUID>/<data name>/key/<key>[?query-options]
 				If unset (default), shows neither *_user or *_time fields.
 
 
-
 POST <api URL>/node/<UUID>/<data name>/key/<key>
 
 	Updates a key-value pair, modifying the fields with the POSTed JSON fields.
-	Note that unlike POST /key in keyvalue instances, this operation updates
+	Note that unlike POST /key in keyvalue datatype instances, this operation updates
 	fields by defaults (using old fields not overwritten) rather than replacing
 	the entire annotation. The replace behavior can be explicitly set if desired
 	to match old keyvalue semantics.  
+
+	For each field, a *_user and *_time field will be added to the annotation unless
+	one is already present.  The *_user field will be set to the user making the
+	request and the *_time field will be set to the current time. If the current
+	field value is the same as the new value, the *_user and *_time fields will
+	not be updated.
 
 	Example: 
 
@@ -335,8 +340,8 @@ POST <api URL>/node/<UUID>/<data name>/key/<key>
 	replace		If "true" will remove any fields not present
 
 
-DEL  <api URL>/node/<UUID>/<data name>/key/<key> 
-HEAD <api URL>/node/<UUID>/<data name>/key/<key> 
+DELETE <api URL>/node/<UUID>/<data name>/key/<key> 
+HEAD   <api URL>/node/<UUID>/<data name>/key/<key> 
 
 	Performs operations on a key-value pair depending on the HTTP verb.  
 
@@ -352,9 +357,8 @@ HEAD <api URL>/node/<UUID>/<data name>/key/<key>
 				
 
 GET <api URL>/node/<UUID>/<data name>/keyvalues[?query-options]
-POST <api URL>/node/<UUID>/<data name>/keyvalues
 
-	Allows batch query or ingest of data. 
+	Allows batch query of data. 
 
 	Unless using one of the JSON query options listed below, requested keys and
 	returned neuronjson data is serialized in a format defined by the following 
@@ -373,33 +377,22 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 			repeated KeyValue kvs = 1;
 		}
 	
-	For GET, the query body must include a Keys serialization and a KeyValues serialization is
+	The query body must include a Keys serialization and a KeyValues serialization is
 	returned.
-
-	For POST, the query body must include a KeyValues serialization.
-	
-	POSTs will be logged as a series of Kafka JSON messages, each with the format equivalent
-	to the single POST /key:
-	{ 
-		"Action": "postkv",
-		"Key": <key>,
-		"Bytes": <number of bytes in data>,
-		"UUID": <UUID on which POST was done>
-	}
 
 	Arguments:
 
 	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of neuronjson data instance.
 
-	GET Query-string Options:
+	Query-string Options:
 
 	show		If "user", shows *_user fields.
 				If "time", shows *_time fields.
 				If "all", shows both *_user and *_time fields.
 				If unset (default), shows neither *_user or *_time fields.
 
-	GET Query-string Options (only one of these allowed):
+	Query-string Options (only one of these allowed):
 
 	json        If true (default false), query body must be JSON array of keys and returns JSON.
 	jsontar		If set to any value for GET, query body must be JSON array of string keys
@@ -435,6 +428,46 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 			repeated KeyValue kvs = 1;
 		}
 
+
+POST <api URL>/node/<UUID>/<data name>/keyvalues[?query-options]
+
+	Allows batch ingest of data. Each POSTed neuron annotation is handled in same
+	was as decribed in POST /key.
+	
+	The POST body must include a KeyValues serialization as defined by the following
+	protobuf3 definitions:
+
+		message KeyValue {
+			string key = 1;
+			bytes value = 2;
+		}
+
+		message Keys {
+			repeated string keys = 1;
+		}
+		
+		message KeyValues {
+			repeated KeyValue kvs = 1;
+		}
+	
+	
+	POSTs will be logged as a series of Kafka JSON messages, each with the format equivalent
+	to the single POST /key:
+	{ 
+		"Action": "postkv",
+		"Key": <key>,
+		"Bytes": <number of bytes in data>,
+		"UUID": <UUID on which POST was done>
+	}
+
+	Arguments:
+
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of neuronjson data instance.
+
+	Query-string Options:
+
+	replace		If "true" will remove any fields not present
 
 
 GET <api URL>/node/<UUID>/<data name>/query[?show=...]
