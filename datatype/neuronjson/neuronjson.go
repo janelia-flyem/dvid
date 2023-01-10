@@ -485,6 +485,13 @@ POST <api URL>/node/<UUID>/<data name>/query[?show=...]
 
 	A JSON list of objects that matches the query is returned.
 
+	Query fields can include two special types of values:
+	1. Regular expressions: a string value that starts with "re/" is treated as a regex with
+	   the remainder of the string being the regex.  The regex is anchored to the beginning.
+	2. Field existence: a string value that starts with "exists/" checks if a field exists.
+	   If "exists/0" is specified, the field must not exist.  If "exists/1" is specified,
+	   the field must exist.
+
 	Arguments:
 
 	UUID 		Hexadecimal string with enough characters to uniquely identify a version node.
@@ -1346,6 +1353,8 @@ func (d *Data) deleteBodyID(bodyid uint64) {
 type QueryJSON map[string]interface{}
 type ListQueryJSON []QueryJSON
 
+type FieldExistence bool // field is present or not
+
 // UnmarshalJSON parses JSON with numbers preferentially converted to uint64
 // or int64 if negative, and strings with "re/" as prefix are compiled as
 // a regular expression.
@@ -1386,6 +1395,14 @@ func (qj *QueryJSON) UnmarshalJSON(jsonText []byte) error {
 				(*qj)[key] = re
 				continue
 			}
+		}
+		if len(s) == 10 && strings.HasPrefix(s, `"exists/`) {
+			if s[8] == '0' {
+				(*qj)[key] = FieldExistence(false)
+			} else {
+				(*qj)[key] = FieldExistence(true)
+			}
+			continue
 		}
 		var strlist []string
 		if err = json.Unmarshal(val, &strlist); err == nil {
@@ -1637,9 +1654,21 @@ func queryMatch(queryList ListQueryJSON, value map[string]interface{}) (matches 
 	for _, query := range queryList {
 		and_match := true
 		for queryKey, queryValue := range query { // all query keys must be present and match
+			// field existence check
 			recordValue, found := value[queryKey]
-			if !found || !fieldMatch(queryValue, recordValue) {
-				and_match = false
+			switch v := queryValue.(type) {
+			case FieldExistence:
+				dvid.Infof("checking existence of field %s: %v where field %t", queryKey, v, found)
+				if (bool(v) && !found) || (!bool(v) && found) {
+					and_match = false
+				}
+			default:
+				// if field exists, check if it matches query
+				if !found || !fieldMatch(queryValue, recordValue) {
+					and_match = false
+				}
+			}
+			if !and_match {
 				break
 			}
 		}

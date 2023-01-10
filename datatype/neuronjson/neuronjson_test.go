@@ -927,7 +927,7 @@ func TestKeyvalueRange(t *testing.T) {
 	}
 }
 
-func TestAnnotationVersioning(t *testing.T) {
+func TestFieldExistenceAndVersioning(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
 	}
@@ -950,6 +950,25 @@ func TestAnnotationVersioning(t *testing.T) {
 	for i := 0; i < len(testData); i++ {
 		keyreq[i] = fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), testData[i].key)
 		server.TestHTTP(t, "POST", keyreq[i], strings.NewReader(testData[i].val))
+	}
+
+	// Check field existance query
+	query := `{"a number": "exists/0"}`
+	queryreq := fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
+	returnValue := server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
+
+	expectedValue := []byte("[" + testData[1].val + "," + testData[3].val + "]")
+	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
+		t.Errorf("Bad foo existence query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+	}
+
+	query = `{"a number": "exists/1", "position": "exists/0"}`
+	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
+	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
+
+	expectedValue = []byte("[" + testData[2].val + "]")
+	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
+		t.Errorf("Bad foo existence query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	// Use the batch POST for all 4 annotations with key += 10000
@@ -987,7 +1006,7 @@ func TestAnnotationVersioning(t *testing.T) {
 	server.TestHTTP(t, "POST", uuid2req, strings.NewReader(uuid2val))
 
 	// Get the first version value
-	returnValue := server.TestHTTP(t, "GET", keyreq[0], nil)
+	returnValue = server.TestHTTP(t, "GET", keyreq[0], nil)
 	if !equalObjectJSON(returnValue, []byte(testData[0].val), ShowBasic) {
 		t.Errorf("Error on first version, key %q: expected %s, got %s\n", testData[0].key, testData[0].val, string(returnValue))
 	}
