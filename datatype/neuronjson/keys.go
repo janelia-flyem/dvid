@@ -86,7 +86,7 @@ func NewSchemaBatchTKey() (storage.TKey, error) {
 	return storage.NewTKey(keySchemaBatch, nil), nil
 }
 
-func getMetadataKey(meta Metadata) (tkey storage.TKey, err error) {
+func getMetadataKey(meta Schema) (tkey storage.TKey, err error) {
 	switch meta {
 	case JSONSchema:
 		if tkey, err = NewJSONSchemaTKey(); err != nil {
