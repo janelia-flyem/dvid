@@ -182,6 +182,10 @@ GET  <api URL>/node/<UUID>/<data name>/all[?query-options]
 				If "time", shows *_time fields.
 				If "all", shows both *_user and *_time fields.
 				If unset (default), shows neither *_user or *_time fields.
+	
+	fields      Limit return to this list of field names separated by commas.
+                Example: ?fields=type,instance
+				Note that the above "show" query string still applies to the fields.
 			
 GET  <api URL>/node/<UUID>/<data name>/keys
 
@@ -271,7 +275,11 @@ GET  <api URL>/node/<UUID>/<data name>/keyrangevalues/<key1>/<key2>?<options>
 				If "time", shows *_time fields.
 				If "all", shows both *_user and *_time fields.
 				If unset (default), shows neither *_user or *_time fields.
-			  
+	
+	fields      Limit return to this list of field names separated by commas.
+                Example: ?fields=type,instance
+				Note that the above "show" query string still applies to the fields.
+
 
 GET  <api URL>/node/<UUID>/<data name>/key/<key>[?query-options]
 
@@ -299,6 +307,10 @@ GET  <api URL>/node/<UUID>/<data name>/key/<key>[?query-options]
 				If "time", shows *_time fields.
 				If "all", shows both *_user and *_time fields.
 				If unset (default), shows neither *_user or *_time fields.
+	
+	fields      Limit return to this list of field names separated by commas.
+                Example: ?fields=type,instance
+				Note that the above "show" query string still applies to the fields.
 
 
 POST <api URL>/node/<UUID>/<data name>/key/<key>
@@ -391,8 +403,12 @@ GET <api URL>/node/<UUID>/<data name>/keyvalues[?query-options]
 				If "time", shows *_time fields.
 				If "all", shows both *_user and *_time fields.
 				If unset (default), shows neither *_user or *_time fields.
+	
+	fields      Limit return to this list of field names separated by commas.
+                Example: ?fields=type,instance
+				Note that the above "show" query string still applies to the fields.
 
-	Query-string Options (only one of these allowed):
+	Only one of the following are allowed in a single query:
 
 	json        If true (default false), query body must be JSON array of keys and returns JSON.
 	jsontar		If set to any value for GET, query body must be JSON array of string keys
@@ -505,6 +521,10 @@ POST <api URL>/node/<UUID>/<data name>/query[?show=...]
 				If "time", shows *_time fields.
 				If "all", shows both *_user and *_time fields.
 				If unset (default), shows neither *_user or *_time fields.
+
+	fields      Limit return to this list of field names separated by commas.
+                Example: ?fields=type,instance
+				Note that the above "show" query string still applies to the fields.
 `
 
 func init() {
@@ -621,6 +641,22 @@ const (
 	ShowAll
 )
 
+func (f Fields) Bools() (showUser, showTime bool) {
+	switch f {
+	case ShowBasic:
+		return false, false
+	case ShowUsers:
+		return true, false
+	case ShowTime:
+		return false, true
+	case ShowAll:
+		return true, true
+	default:
+		return false, false
+	}
+}
+
+// parse query string "show" parameter into a Fields value.
 func showFields(r *http.Request) Fields {
 	switch r.URL.Query().Get("show") {
 	case "user":
@@ -632,6 +668,24 @@ func showFields(r *http.Request) Fields {
 	default:
 		return ShowBasic
 	}
+}
+
+// parse query string "fields" parameter into a list of field names
+func fieldList(r *http.Request) (fields []string) {
+	fieldsString := r.URL.Query().Get("fields")
+	if fieldsString != "" {
+		fields = strings.Split(fieldsString, ",")
+	}
+	return
+}
+
+// get a map of fields (none if all) from query string "fields"
+func fieldMap(r *http.Request) (fields map[string]struct{}) {
+	fields = make(map[string]struct{})
+	for _, field := range fieldList(r) {
+		fields[field] = struct{}{}
+	}
+	return
 }
 
 type Metadata uint8
@@ -725,6 +779,48 @@ func removeReservedFields(data NeuronJSON, showFields Fields) NeuronJSON {
 	for field := range data {
 		if (!showUser && strings.HasSuffix(field, "_user")) || (!showTime && strings.HasSuffix(field, "_time")) {
 			delete(out, field)
+		}
+	}
+	return out
+}
+
+// Return a subset of fields where
+//   onlyFields is a map of field names to include
+//   hideSuffixes is a map of fields suffixes (e.g., "_user") to exclude
+func selectFields(data NeuronJSON, fieldMap map[string]struct{}, showUser, showTime bool) NeuronJSON {
+	out := data.copy()
+	if len(fieldMap) > 0 {
+		for field := range data {
+			if field == "bodyid" {
+				continue
+			}
+			if _, found := fieldMap[field]; found {
+				if !showUser {
+					delete(out, field+"_user")
+				}
+				if !showTime {
+					delete(out, field+"_time")
+				}
+			} else {
+				delete(out, field)
+				delete(out, field+"_time")
+				delete(out, field+"_user")
+			}
+		}
+	} else {
+		if !showUser {
+			for field := range data {
+				if strings.HasSuffix(field, "_user") {
+					delete(out, field)
+				}
+			}
+		}
+		if !showTime {
+			for field := range data {
+				if strings.HasSuffix(field, "_time") {
+					delete(out, field)
+				}
+			}
 		}
 	}
 	return out
@@ -1437,7 +1533,6 @@ func (qj *QueryJSON) UnmarshalJSON(jsonText []byte) error {
 }
 
 type NeuronJSON map[string]interface{}
-type ListNeuronJSON []NeuronJSON
 
 func (nj NeuronJSON) copy() NeuronJSON {
 	dup := make(NeuronJSON, len(nj))
@@ -1456,6 +1551,11 @@ func (nj *NeuronJSON) UnmarshalJSON(jsonText []byte) error {
 	}
 	*nj = make(NeuronJSON, len(raw))
 
+	// NOTE: An incoming JSON integer could be uint64, int64, or float64 and we
+	//  test in that order. We could force all integers to be int64, but then
+	//  any field for body IDs would be int64 instead of uint64.
+	//  Since we store as JSON and only the in-memory HEAD makes these distinctions,
+	//  we just need to make sure queries on in-memory NeuronJSONs are consistent.
 	for key, val := range raw {
 		s := string(val)
 		u, err := strconv.ParseUint(s, 10, 64)
@@ -1491,6 +1591,32 @@ func (nj *NeuronJSON) UnmarshalJSON(jsonText []byte) error {
 		return fmt.Errorf("unable to parse JSON value %q: %v", s, err)
 	}
 	return nil
+}
+
+type ListNeuronJSON []NeuronJSON
+
+// --- implement sort interface
+
+func (lnj *ListNeuronJSON) Len() int {
+	return len(*lnj)
+}
+
+func (lnj *ListNeuronJSON) Swap(i, j int) {
+	(*lnj)[i], (*lnj)[j] = (*lnj)[j], (*lnj)[i]
+	fmt.Printf("swapping %d and %d", i, j)
+}
+
+func (lnj *ListNeuronJSON) Less(i, j int) bool {
+	bodyid_i, ok := (*lnj)[i]["bodyid"].(uint64)
+	if !ok {
+		dvid.Criticalf("ListNeuronJSON bodyid not of uint64 type: %v", (*lnj)[i]["bodyid"])
+	}
+	bodyid_j, ok := (*lnj)[j]["bodyid"].(uint64)
+	if !ok {
+		dvid.Criticalf("ListNeuronJSON bodyid not of uint64 type: %v", (*lnj)[j]["bodyid"])
+	}
+	fmt.Printf("Comparing bodyid %d (%d) < %d (%d) \n", i, bodyid_i, j, bodyid_j)
+	return bodyid_i < bodyid_j
 }
 
 // move the following to Generics when upgrading and requiring Go 1.18
@@ -1679,10 +1805,11 @@ func queryMatch(queryList ListQueryJSON, value map[string]interface{}) (matches 
 	return false, nil
 }
 
-func (d *Data) queryInMemory(w http.ResponseWriter, queryL ListQueryJSON, showFields Fields) (err error) {
+func (d *Data) queryInMemory(w http.ResponseWriter, queryL ListQueryJSON, fieldMap map[string]struct{}, showFields Fields) (err error) {
 	d.dbMu.RLock()
 	defer d.dbMu.RUnlock()
 
+	showUser, showTime := showFields.Bools()
 	numMatches := 0
 	var jsonBytes []byte
 	for _, value := range d.db {
@@ -1690,7 +1817,7 @@ func (d *Data) queryInMemory(w http.ResponseWriter, queryL ListQueryJSON, showFi
 		if matches, err = queryMatch(queryL, value); err != nil {
 			return
 		} else if matches {
-			out := removeReservedFields(value, showFields)
+			out := selectFields(value, fieldMap, showUser, showTime)
 			if jsonBytes, err = json.Marshal(out); err != nil {
 				break
 			}
@@ -1705,7 +1832,7 @@ func (d *Data) queryInMemory(w http.ResponseWriter, queryL ListQueryJSON, showFi
 }
 
 func (d *Data) queryBackingStore(ctx storage.VersionedCtx, w http.ResponseWriter,
-	queryL ListQueryJSON, showFields Fields) (err error) {
+	queryL ListQueryJSON, fieldMap map[string]struct{}, showFields Fields) (err error) {
 
 	process_func := func(key string, value map[string]interface{}) {
 		if matches, err := queryMatch(queryL, value); err != nil {
@@ -1726,7 +1853,7 @@ func (d *Data) queryBackingStore(ctx storage.VersionedCtx, w http.ResponseWriter
 }
 
 // Query reads POSTed data and returns JSON.
-func (d *Data) Query(ctx *datastore.VersionedCtx, w http.ResponseWriter, uuid dvid.UUID, onlyid bool, showFields Fields, in io.ReadCloser) (err error) {
+func (d *Data) Query(ctx *datastore.VersionedCtx, w http.ResponseWriter, uuid dvid.UUID, onlyid bool, fieldMap map[string]struct{}, showFields Fields, in io.ReadCloser) (err error) {
 	var queryBytes []byte
 	if queryBytes, err = io.ReadAll(in); err != nil {
 		return
@@ -1746,11 +1873,11 @@ func (d *Data) Query(ctx *datastore.VersionedCtx, w http.ResponseWriter, uuid dv
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, "[")
 	if ctx.Head() {
-		if err = d.queryInMemory(w, queryL, showFields); err != nil {
+		if err = d.queryInMemory(w, queryL, fieldMap, showFields); err != nil {
 			return
 		}
 	} else {
-		if err = d.queryBackingStore(ctx, w, queryL, showFields); err != nil {
+		if err = d.queryBackingStore(ctx, w, queryL, fieldMap, showFields); err != nil {
 			return
 		}
 	}
@@ -1832,22 +1959,25 @@ func (d *Data) GetKeysInRange(ctx storage.VersionedCtx, keyBeg, keyEnd string) (
 	return
 }
 
-func (d *Data) GetAll(ctx storage.VersionedCtx, showFields Fields) ([]map[string]interface{}, error) {
-	var all []map[string]interface{}
+func (d *Data) GetAll(ctx storage.VersionedCtx, fieldMap map[string]struct{}, showFields Fields) (ListNeuronJSON, error) {
+	showUser, showTime := showFields.Bools()
+
+	var all ListNeuronJSON
 	if ctx.Head() {
 		d.dbMu.RLock()
-		all = make([]map[string]interface{}, len(d.db)) // use cur size as starting size
-		i := 0
 		for _, value := range d.db {
-			out := removeReservedFields(value, showFields)
-			all[i] = out
-			i++
+			out := selectFields(value, fieldMap, showUser, showTime)
+			if len(out) > 1 {
+				all = append(all, out)
+			}
 		}
 		d.dbMu.RUnlock()
 	} else {
 		process_func := func(key string, value map[string]interface{}) {
-			out := removeReservedFields(value, showFields)
-			all = append(all, out)
+			out := selectFields(value, fieldMap, showUser, showTime)
+			if len(out) > 1 {
+				all = append(all, out)
+			}
 		}
 		if err := d.processRange(ctx, process_func); err != nil {
 			return nil, err
@@ -1886,7 +2016,7 @@ func (d *Data) GetFields() ([]string, error) {
 }
 
 // GetData gets a byte value using a key
-func (d *Data) GetData(ctx storage.VersionedCtx, keyStr string, showFields Fields) ([]byte, bool, error) {
+func (d *Data) GetData(ctx storage.VersionedCtx, keyStr string, fieldMap map[string]struct{}, showFields Fields) ([]byte, bool, error) {
 	// Allow "schema" and "schema_batch" on /key endpoint for backwards compatibility with DVID keyvalue instances.
 	switch keyStr {
 	case NeuSchema.String():
@@ -1927,7 +2057,8 @@ func (d *Data) GetData(ctx storage.VersionedCtx, keyStr string, showFields Field
 			return nil, false, err
 		}
 	}
-	out := removeReservedFields(value, showFields)
+	showUser, showTime := showFields.Bools()
+	out := selectFields(value, fieldMap, showUser, showTime)
 	data, err := json.Marshal(out)
 	return data, true, err
 }
@@ -2249,7 +2380,7 @@ func (d *Data) sendOldJSONValuesInRange(ctx storage.VersionedCtx, w http.Respons
 }
 
 func (d *Data) sendJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWriter,
-	r *http.Request, keyBeg, keyEnd string, showFields Fields) (numKeys int, err error) {
+	r *http.Request, keyBeg, keyEnd string, fieldMap map[string]struct{}, showFields Fields) (numKeys int, err error) {
 
 	if !ctx.Head() {
 		return 0, fmt.Errorf("cannot use range query on non-head version at this time")
@@ -2293,6 +2424,7 @@ func (d *Data) sendJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWr
 	// Collect JSON values in range
 	var kvs proto.KeyValues
 	var wroteVal bool
+	showUser, showTime := showFields.Bools()
 	for i := begI; i < endI; i++ {
 		bodyid := d.ids[i]
 		jsonData, ok := d.db[bodyid]
@@ -2300,7 +2432,7 @@ func (d *Data) sendJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWr
 			dvid.Errorf("inconsistent neuronjson DB: bodyid %d at pos %d is not in db cache... skipping", bodyid, i)
 			continue
 		}
-		out := removeReservedFields(jsonData, showFields)
+		out := selectFields(jsonData, fieldMap, showUser, showTime)
 		key := strconv.FormatUint(bodyid, 10)
 		var jsonBytes []byte
 		jsonBytes, err = json.Marshal(out)
@@ -2369,7 +2501,9 @@ func (d *Data) sendJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWr
 	return
 }
 
-func (d *Data) sendJSONKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys []string, checkVal bool, showFields Fields) (writtenBytes int, err error) {
+func (d *Data) sendJSONKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys []string, checkVal bool,
+	fieldMap map[string]struct{}, showFields Fields) (writtenBytes int, err error) {
+
 	w.Header().Set("Content-type", "application/json")
 	if writtenBytes, err = w.Write([]byte("{")); err != nil {
 		return
@@ -2385,7 +2519,7 @@ func (d *Data) sendJSONKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys 
 		}
 		var val []byte
 		var found bool
-		if val, found, err = d.GetData(ctx, key, showFields); err != nil {
+		if val, found, err = d.GetData(ctx, key, fieldMap, showFields); err != nil {
 			return
 		}
 		if !found {
@@ -2413,14 +2547,16 @@ func (d *Data) sendJSONKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys 
 	return
 }
 
-func (d *Data) sendTarKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys []string, showFields Fields) (writtenBytes int, err error) {
+func (d *Data) sendTarKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys []string,
+	fieldMap map[string]struct{}, showFields Fields) (writtenBytes int, err error) {
+
 	var n int
 	w.Header().Set("Content-type", "application/tar")
 	tw := tar.NewWriter(w)
 	for _, key := range keys {
 		var val []byte
 		var found bool
-		if val, found, err = d.GetData(ctx, key, showFields); err != nil {
+		if val, found, err = d.GetData(ctx, key, fieldMap, showFields); err != nil {
 			return
 		}
 		if !found {
@@ -2443,13 +2579,14 @@ func (d *Data) sendTarKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys [
 	return
 }
 
-func (d *Data) sendProtobufKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys proto.Keys, showFields Fields) (writtenBytes int, err error) {
+func (d *Data) sendProtobufKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys proto.Keys,
+	fieldMap map[string]struct{}, showFields Fields) (writtenBytes int, err error) {
 	var kvs proto.KeyValues
 	kvs.Kvs = make([]*proto.KeyValue, len(keys.Keys))
 	for i, key := range keys.Keys {
 		var val []byte
 		var found bool
-		if val, found, err = d.GetData(ctx, key, showFields); err != nil {
+		if val, found, err = d.GetData(ctx, key, fieldMap, showFields); err != nil {
 			return
 		}
 		if !found {
@@ -2475,7 +2612,7 @@ func (d *Data) sendProtobufKV(ctx storage.VersionedCtx, w http.ResponseWriter, k
 }
 
 func (d *Data) handleKeyValues(ctx storage.VersionedCtx, w http.ResponseWriter, r *http.Request,
-	uuid dvid.UUID, showFields Fields) (numKeys, writtenBytes int, err error) {
+	uuid dvid.UUID, fieldMap map[string]struct{}, showFields Fields) (numKeys, writtenBytes int, err error) {
 
 	tarOut := (r.URL.Query().Get("jsontar") == "true") || (r.URL.Query().Get("tar") == "true")
 	jsonOut := r.URL.Query().Get("json") == "true"
@@ -2497,7 +2634,7 @@ func (d *Data) handleKeyValues(ctx storage.VersionedCtx, w http.ResponseWriter, 
 			return
 		}
 		numKeys = len(keys)
-		writtenBytes, err = d.sendTarKV(ctx, w, keys, showFields)
+		writtenBytes, err = d.sendTarKV(ctx, w, keys, fieldMap, showFields)
 	case jsonOut:
 		var keys []string
 		var keysInt []uint64
@@ -2511,14 +2648,14 @@ func (d *Data) handleKeyValues(ctx storage.VersionedCtx, w http.ResponseWriter, 
 			return
 		}
 		numKeys = len(keys)
-		writtenBytes, err = d.sendJSONKV(ctx, w, keys, checkVal, showFields)
+		writtenBytes, err = d.sendJSONKV(ctx, w, keys, checkVal, fieldMap, showFields)
 	default:
 		var keys proto.Keys
 		if err = pb.Unmarshal(data, &keys); err != nil {
 			return
 		}
 		numKeys = len(keys.Keys)
-		writtenBytes, err = d.sendProtobufKV(ctx, w, keys, showFields)
+		writtenBytes, err = d.sendProtobufKV(ctx, w, keys, fieldMap, showFields)
 	}
 	return
 }
@@ -2694,7 +2831,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 
 	case "all":
-		kvList, err := d.GetAll(ctx, showFields(r))
+		kvList, err := d.GetAll(ctx, fieldMap(r), showFields(r))
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -2744,7 +2881,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		onlyid := r.URL.Query().Get("onlyid") == "true"
-		err := d.Query(ctx, w, uuid, onlyid, showFields(r), r.Body)
+		err := d.Query(ctx, w, uuid, onlyid, fieldMap(r), showFields(r), r.Body)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -2784,7 +2921,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		keyEnd := parts[5]
 		w.Header().Set("Content-Type", "application/json")
 		if ctx.Head() {
-			numKeys, err := d.sendJSONValuesInRange(ctx, w, r, keyBeg, keyEnd, showFields(r))
+			numKeys, err := d.sendJSONValuesInRange(ctx, w, r, keyBeg, keyEnd, fieldMap(r), showFields(r))
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
@@ -2802,7 +2939,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "keyvalues":
 		switch action {
 		case "get":
-			numKeys, writtenBytes, err := d.handleKeyValues(ctx, w, r, uuid, showFields(r))
+			numKeys, writtenBytes, err := d.handleKeyValues(ctx, w, r, uuid, fieldMap(r), showFields(r))
 			if err != nil {
 				server.BadRequest(w, r, "GET /keyvalues on %d keys, data %q: %v", numKeys, d.DataName(), err)
 				return
@@ -2842,7 +2979,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 		case "get":
 			// Return value of single key
-			value, found, err := d.GetData(ctx, keyStr, showFields(r))
+			value, found, err := d.GetData(ctx, keyStr, fieldMap(r), showFields(r))
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return

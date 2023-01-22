@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -327,7 +328,7 @@ func TestNeuronjsonRoundTrip(t *testing.T) {
 		t.Errorf("Could not put neuronjson data: %v\n", err)
 	}
 
-	retrieved, found, err := kvdata.GetData(ctx, keyStr, ShowBasic)
+	retrieved, found, err := kvdata.GetData(ctx, keyStr, nil, ShowBasic)
 	if err != nil {
 		t.Fatalf("Could not get neuronjson data: %v\n", err)
 	}
@@ -887,6 +888,72 @@ var testData = []struct {
 	{"2000", `{"bodyid": 2000, "bar":"another string", "baz":[1, 2, 3]}`},
 	{"3000", `{"bodyid": 3000, "a number": 3456, "a list": [23]}`},
 	{"4000", `{"position": [151, 251, 301], "bodyid": 4000, "soma_side": "LHS", "baz": "some string"}`},
+}
+
+func TestAll(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+
+	payload := bytes.NewBufferString(`{"typename": "neuronjson", "dataname": "neurons"}`)
+	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, payload)
+
+	allNeurons := make(ListNeuronJSON, len(testData))
+	var keyreq = make([]string, len(testData))
+	for i := 0; i < len(testData); i++ {
+		keyreq[i] = fmt.Sprintf("%snode/%s/neurons/key/%s", server.WebAPIPath, uuid, testData[i].key)
+		server.TestHTTP(t, "POST", keyreq[i], strings.NewReader(testData[i].val))
+		if err := json.Unmarshal([]byte(testData[i].val), &(allNeurons[i])); err != nil {
+			t.Fatalf("Unable to parse test annotation %d: %v\n", i, err)
+		}
+	}
+
+	// Get all neuronjson
+	allreq := fmt.Sprintf("%snode/%s/neurons/all", server.WebAPIPath, uuid)
+	returnValue := server.TestHTTP(t, "GET", allreq, nil)
+	var neurons ListNeuronJSON
+	if err := json.Unmarshal(returnValue, &neurons); err != nil {
+		t.Fatalf("Unable to parse return from /all request: %v\n", err)
+	}
+	sort.Sort(&neurons)
+	if !reflect.DeepEqual(neurons, allNeurons) {
+		t.Fatalf("Response to /all is incorrect. Expected: %v, Got: %v from JSON: %s\n", allNeurons, neurons, string(returnValue))
+	}
+
+	// Get only ["baz", "position"] fields from /all neuronjson
+	expectedVal := ListNeuronJSON{
+		NeuronJSON{
+			"bodyid":   uint64(1000),
+			"baz":      "",
+			"position": []int64{150, 250, 380},
+		},
+		NeuronJSON{
+			"bodyid": uint64(2000),
+			"baz":    []int64{1, 2, 3},
+		},
+		NeuronJSON{
+			"bodyid":   uint64(4000),
+			"baz":      "some string",
+			"position": []int64{151, 251, 301},
+		},
+	}
+	allreq = fmt.Sprintf("%snode/%s/neurons/all?fields=baz,position", server.WebAPIPath, uuid)
+	returnValue = server.TestHTTP(t, "GET", allreq, nil)
+	if err := json.Unmarshal(returnValue, &neurons); err != nil {
+		t.Fatalf("Unable to parse return from /all request: %v\n", err)
+	}
+	sort.Sort(&neurons)
+	for i := 0; i < 3; i++ {
+		dvid.Infof("Expected %d: bodyid %s, baz %s, position %s", i, reflect.TypeOf(expectedVal[i]["bodyid"]), reflect.TypeOf(expectedVal[i]["position"]), reflect.TypeOf(expectedVal[i]["baz"]))
+		dvid.Infof("Received %d: bodyid %s, baz %s, position %s", i, reflect.TypeOf(neurons[i]["bodyid"]), reflect.TypeOf(neurons[i]["position"]), reflect.TypeOf(neurons[i]["baz"]))
+	}
+	if !reflect.DeepEqual(neurons, expectedVal) {
+		t.Fatalf("Response to /all is incorrect. Expected: %v, Got: %v\n", expectedVal, neurons)
+	}
 }
 
 func TestKeyvalueRange(t *testing.T) {
