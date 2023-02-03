@@ -330,6 +330,7 @@ func (flogs *fileLogs) StreamAll(dataID, version dvid.UUID, ch chan storage.LogM
 			}
 		}
 	}
+	close(ch)
 
 	if found {
 		f2, err2 := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_APPEND|os.O_SYNC, 0755)
