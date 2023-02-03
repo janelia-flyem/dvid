@@ -3,8 +3,6 @@
 package labels
 
 import (
-	"sync"
-
 	pb "google.golang.org/protobuf/proto"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -229,7 +227,7 @@ func ReadMappingLog(d dvid.Data, v dvid.VersionID) ([]MappingOp, error) {
 	return mappingOps, nil
 }
 
-func StreamLog(d dvid.Data, v dvid.VersionID, ch chan storage.LogMessage, wg *sync.WaitGroup) error {
+func StreamLog(d dvid.Data, v dvid.VersionID, ch chan storage.LogMessage) error {
 	uuid, err := datastore.UUIDFromVersion(v)
 	if err != nil {
 		return err
@@ -244,7 +242,7 @@ func StreamLog(d dvid.Data, v dvid.VersionID, ch chan storage.LogMessage, wg *sy
 		close(ch)
 		return nil
 	}
-	return rl.StreamAll(d.DataUUID(), uuid, ch, wg)
+	return rl.StreamAll(d.DataUUID(), uuid, ch)
 }
 
 func LogAffinity(d dvid.Data, v dvid.VersionID, aff Affinity) error {

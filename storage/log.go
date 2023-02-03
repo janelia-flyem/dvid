@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
 )
@@ -29,7 +28,7 @@ type ReadLog interface {
 	dvid.Store
 	ReadBinary(dataID, version dvid.UUID) ([]byte, error)
 	ReadAll(dataID, version dvid.UUID) ([]LogMessage, error)
-	StreamAll(dataID, version dvid.UUID, ch chan LogMessage, wg *sync.WaitGroup) error
+	StreamAll(dataID, version dvid.UUID, ch chan LogMessage) error
 }
 
 type LogReadable interface {

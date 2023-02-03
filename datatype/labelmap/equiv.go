@@ -251,7 +251,8 @@ func addSupervoxelSplitToMapping(d dvid.Data, v dvid.VersionID, op labels.SplitS
 
 // returns true if the given newLabel does not exist as forward mapping key
 // TODO? Also check if it exists anywhere in mapping, which would probably
-//   full set of ids.
+//
+//	full set of ids.
 func (d *Data) verifyIsNewLabel(v dvid.VersionID, newLabel uint64) (bool, error) {
 	m, err := getMapping(d, v)
 	if err != nil {
@@ -596,7 +597,7 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID, loadMutations boo
 			wg.Add(1)
 			go svm.loadVersionMapping(ancestors[pos:], d.DataName(), ch, wg)
 
-			if err = labels.StreamLog(d, ancestor, ch, nil); err != nil {
+			if err = labels.StreamLog(d, ancestor, ch); err != nil {
 				return fmt.Errorf("problem loading mapping logs for data %q, version %d: %v", d.DataName(), ancestor, err)
 			}
 			wg.Wait()

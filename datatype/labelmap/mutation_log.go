@@ -142,8 +142,9 @@ func (d *Data) GetMutationHistory(w http.ResponseWriter, fromUUID, toUUID dvid.U
 		timedLog := dvid.NewTimeLog()
 		ch := make(chan storage.LogMessage, 100)
 		wg := new(sync.WaitGroup)
+		wg.Add(1)
 		go processMutationLogStream(w, v, ch, wg, origBodies, supervoxelSet)
-		if err = labels.StreamLog(d, v, ch, wg); err != nil {
+		if err = labels.StreamLog(d, v, ch); err != nil {
 			return fmt.Errorf("problem loading mutation log: %v", err)
 		}
 		wg.Wait()
@@ -269,6 +270,6 @@ func processMutationLogStream(w http.ResponseWriter, v dvid.VersionID, ch chan s
 				dvid.Errorf("Error writing mutation history for %s: %v\n", origBodies, err)
 			}
 		}
-		wg.Done()
 	}
+	wg.Done()
 }
