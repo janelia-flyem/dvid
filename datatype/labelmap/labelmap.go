@@ -1,9 +1,9 @@
 /*
-	Package labelmap handles both volumes of label data as well as indexing to
-	quickly find and generate sparse volumes of any particular label.  It differs
-	from labelmap in using in-memory label maps to greatly decrease changes
-	to underlying label data key-value pairs, instead handling all merges through
-	changes in label maps.
+Package labelmap handles both volumes of label data as well as indexing to
+quickly find and generate sparse volumes of any particular label.  It differs
+from labelmap in using in-memory label maps to greatly decrease changes
+to underlying label data key-value pairs, instead handling all merges through
+changes in label maps.
 */
 package labelmap
 
@@ -1433,7 +1433,7 @@ POST <api URL>/node/<UUID>/<data name>/split/<label>
 		}
 
 
-GET  <api URL>/node/<UUID>/<data name>/index/<label>
+GET  <api URL>/node/<UUID>/<data name>/index/<label>?mutid=<uint64>
 POST <api URL>/node/<UUID>/<data name>/index/<label>
 
 	Allows direct retrieval or storing of an index (blocks per supervoxel and their voxel count) 
@@ -1462,6 +1462,9 @@ POST <api URL>/node/<UUID>/<data name>/index/<label>
 	Query-string options:
 
 		metadata-only: if "true" (default "false"), returns JSON object of num_voxels, last_mutid, last_mod_time, last_mod_user.
+		mutid: (Read only) Returns the label index prior to completing the given mutation id in the current branch. If
+		   no cached label index is found prior to the given mutation id in the branch of the specified UUID, 
+		   a 404 not found is returned.
 
 	
 GET <api URL>/node/<UUID>/<data name>/listlabels[?queryopts]
@@ -4186,6 +4189,16 @@ func (d *Data) handleIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 		defer server.ThrottledOpDone()
 	}
 	metadata := (queryStrings.Get("metadata-only") == "true")
+	mutidStr := queryStrings.Get("mutid")
+	var mutID uint64
+	var err error
+	if mutidStr != "" {
+		mutID, err = strconv.ParseUint(mutidStr, 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, "mutid query string cannot be parsed: %v", err)
+			return
+		}
+	}
 
 	label, err := strconv.ParseUint(parts[4], 10, 64)
 	if err != nil {
@@ -4230,7 +4243,12 @@ func (d *Data) handleIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 		}
 
 	case "get":
-		idx, err := getCachedLabelIndex(d, ctx.VersionID(), label)
+		var idx *labels.Index
+		if mutidStr != "" {
+			idx, err = d.getMutcache(ctx.VersionID(), mutID, label)
+		} else {
+			idx, err = getCachedLabelIndex(d, ctx.VersionID(), label)
+		}
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return

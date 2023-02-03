@@ -36,10 +36,14 @@ var (
 	indexMu      [numIndexShards]sync.RWMutex
 	metaAttempts uint64
 	metaHits     uint64
+
+	mutcache map[dvid.UUID]storage.OrderedKeyValueDB
 )
 
-// Initialize establishes the in-memory labelmap and index caching
-// if cache size is specified in the server configuration.
+// Initialize establishes the in-memory labelmap and other supporting
+// data systems if specified in the server configuration:
+// - index caching if cache size is specified in the server config.
+// - mutation cache for label indices if specified in server config.
 func (d *Data) Initialize() {
 	numBytes := server.CacheSize("labelmap")
 	if indexCache == nil {
@@ -52,6 +56,28 @@ func (d *Data) Initialize() {
 		indexCache = nil
 	} else {
 		indexCache.Clear()
+	}
+
+	mutcachePath := server.MutcachePath(d.DataName())
+	if mutcachePath != "" {
+		// Setup database support for mutation cache for this instance
+		engine := storage.GetEngine("badger")
+		var cfg dvid.Config
+		cfg.Set("path", mutcachePath)
+		store, _, err := engine.NewStore(dvid.StoreConfig{Config: cfg, Engine: "badger"})
+		if err != nil {
+			dvid.Criticalf("can't initialize Badger: %v\n", err)
+		} else {
+			okvDB, ok := store.(storage.OrderedKeyValueDB)
+			if !ok {
+				dvid.Criticalf("can't get proper ordered keyvalue DB for mutation cache %q for data %q\n", mutcachePath, d.DataName())
+			} else {
+				if mutcache == nil {
+					mutcache = make(map[dvid.UUID]storage.OrderedKeyValueDB)
+				}
+				mutcache[d.DataUUID()] = okvDB
+			}
+		}
 	}
 
 	ancestry, err := datastore.GetBranchVersions(d.RootUUID(), "")
@@ -70,6 +96,55 @@ func (d *Data) Initialize() {
 	if _, err := getMapping(d, masterLeafV); err != nil {
 		dvid.Criticalf("Unable to initialize in-memory labelmap for data %q: %v\n", d.DataName(), err)
 	}
+}
+
+func (d *Data) getMutcache(v dvid.VersionID, mutID uint64, label uint64) (*labels.Index, error) {
+	if mutcache == nil {
+		return nil, nil
+	}
+	db, found := mutcache[d.DataUUID()]
+	if !found {
+		return nil, nil
+	}
+	ctx := datastore.NewVersionedCtx(d, v)
+	tkey1 := newMutcacheKey(label, mutID)
+	tkey2 := newMutcacheKey(label, 0)
+	var idx *labels.Index
+	db.ProcessRange(ctx, tkey1, tkey2, nil, func(chunk *storage.Chunk) error {
+		label, curMutID, err := decodeMutcacheKey(chunk.K)
+		if err != nil {
+			return err
+		}
+		idx = new(labels.Index)
+		if err := pb.Unmarshal(chunk.V, idx); err != nil {
+			return err
+		}
+		dvid.Infof("Mutcache label %d mutid %d > %d\n", label, mutID, curMutID)
+		return fmt.Errorf("found mutcache")
+	})
+	return idx, nil
+}
+
+func (d *Data) addMutcache(v dvid.VersionID, mutID uint64, indices ...*labels.Index) error {
+	if mutcache == nil {
+		return nil
+	}
+	db, found := mutcache[d.DataUUID()]
+	if !found {
+		return nil
+	}
+	ctx := datastore.NewVersionedCtx(d, v)
+	for _, idx := range indices {
+		tkey := newMutcacheKey(idx.Label, mutID)
+		idxBytes, err := pb.Marshal(idx)
+		if err != nil {
+			return fmt.Errorf("unable to marshal index for label %d before caching: %v", idx.Label, err)
+		}
+		if err := db.Put(ctx, tkey, idxBytes); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // indexKey is a three tuple (instance id, version, label)
@@ -506,29 +581,6 @@ func GetBoundedIndex(d dvid.Data, v dvid.VersionID, label uint64, bounds dvid.Bo
 	return idx, nil
 }
 
-// GetMultiLabelIndex gets index data for all labels in a set with possible bounds.
-func GetMultiLabelIndex(d dvid.Data, v dvid.VersionID, lbls labels.Set, bounds dvid.Bounds) (*labels.Index, error) {
-	if len(lbls) == 0 {
-		return nil, nil
-	}
-	idx := new(labels.Index)
-	for label := range lbls {
-		idx2, err := GetLabelIndex(d, v, label, false)
-		if err != nil {
-			return nil, err
-		}
-		if bounds.Block != nil && bounds.Block.IsSet() {
-			if err := idx2.FitToBounds(bounds.Block); err != nil {
-				return nil, err
-			}
-		}
-		if err := idx.Add(idx2); err != nil {
-			return nil, err
-		}
-	}
-	return idx, nil
-}
-
 // DeleteLabelIndex deletes the index for a given label set.
 func DeleteLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) error {
 	shard := label % numIndexShards
@@ -555,7 +607,7 @@ func PutLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, idx *labels.Inde
 
 // CleaveIndex modifies the label index to remove specified supervoxels and create another
 // label index for this cleaved body.
-func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp, info dvid.ModInfo) (cleavedSize, remainSize uint64, err error) {
+func (d *Data) cleaveIndex(v dvid.VersionID, op labels.CleaveOp, info dvid.ModInfo) (cleavedSize, remainSize uint64, err error) {
 	shard := op.Target % numIndexShards
 	indexMu[shard].Lock()
 	defer indexMu[shard].Unlock()
@@ -572,6 +624,10 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp, info dvid.Mo
 	idx.LastModUser = info.User
 	idx.LastModTime = info.Time
 	idx.LastModApp = info.App
+
+	if err := d.addMutcache(v, op.MutID, idx); err != nil {
+		dvid.Criticalf("unable to add cleaved mutid %d index %d: %v\n", op.MutID, op.Target, err)
+	}
 
 	supervoxels := idx.GetSupervoxels()
 	for _, supervoxel := range op.CleavedSupervoxels {
@@ -626,6 +682,32 @@ func ChangeLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, delta labels.
 		return deleteCachedLabelIndex(d, v, label)
 	}
 	return putCachedLabelIndex(d, v, idx)
+}
+
+// getMergedIndex gets index data for all labels in a set with possible bounds.
+func (d *Data) getMergedIndex(v dvid.VersionID, mutID uint64, lbls labels.Set, bounds dvid.Bounds) (*labels.Index, error) {
+	if len(lbls) == 0 {
+		return nil, nil
+	}
+	idx := new(labels.Index)
+	for label := range lbls {
+		idx2, err := GetLabelIndex(d, v, label, false)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.addMutcache(v, mutID, idx2); err != nil {
+			dvid.Criticalf("unable to add merge mutid %d index %d: %v\n", mutID, label, err)
+		}
+		if bounds.Block != nil && bounds.Block.IsSet() {
+			if err := idx2.FitToBounds(bounds.Block); err != nil {
+				return nil, err
+			}
+		}
+		if err := idx.Add(idx2); err != nil {
+			return nil, err
+		}
+	}
+	return idx, nil
 }
 
 // given supervoxels with given mapping and whether they were actually in in-memory SVMap, check
@@ -1187,27 +1269,26 @@ func (d *Data) writeStreamingRLE(ctx *datastore.VersionedCtx, blockMeta *labelBl
 	return nil
 }
 
-//  Write legacy RLEs to writer. Body can exist but have no data if scale is too low-res.
+// Write legacy RLEs to writer. Body can exist but have no data if scale is too low-res.
 //
-//  The encoding has the following format where integers are little endian:
+// The encoding has the following format where integers are little endian:
 //
-//    byte     Payload descriptor:
-//               Bit 0 (LSB) - 8-bit grayscale
-//               Bit 1 - 16-bit grayscale
-//               Bit 2 - 16-bit normal
-//               ...
-//    uint8    Number of dimensions
-//    uint8    Dimension of run (typically 0 = X)
-//    byte     Reserved (to be used later)
-//    uint32    0
-//    uint32    # Spans
-//    Repeating unit of:
-//        int32   Coordinate of run start (dimension 0)
-//        int32   Coordinate of run start (dimension 1)
-//        int32   Coordinate of run start (dimension 2)
-//        int32   Length of run
-//        bytes   Optional payload dependent on first byte descriptor
-//
+//	byte     Payload descriptor:
+//	           Bit 0 (LSB) - 8-bit grayscale
+//	           Bit 1 - 16-bit grayscale
+//	           Bit 2 - 16-bit normal
+//	           ...
+//	uint8    Number of dimensions
+//	uint8    Dimension of run (typically 0 = X)
+//	byte     Reserved (to be used later)
+//	uint32    0
+//	uint32    # Spans
+//	Repeating unit of:
+//	    int32   Coordinate of run start (dimension 0)
+//	    int32   Coordinate of run start (dimension 1)
+//	    int32   Coordinate of run start (dimension 2)
+//	    int32   Length of run
+//	    bytes   Optional payload dependent on first byte descriptor
 func (d *Data) writeLegacyRLE(ctx *datastore.VersionedCtx, blockMeta *labelBlockMetadata, compression string, w io.Writer) error {
 	buf := new(bytes.Buffer)
 	buf.WriteByte(dvid.EncodingBinary)
@@ -1303,18 +1384,17 @@ func (d *Data) writeLegacyRLE(ctx *datastore.VersionedCtx, blockMeta *labelBlock
 // if the given label was not found.  The encoding has the following format where integers are
 // little endian and blocks are returned in sorted ZYX order (small Z first):
 //
-// 		byte     Set to 0
-// 		uint8    Number of dimensions
-// 		uint8    Dimension of run (typically 0 = X)
-// 		byte     Reserved (to be used later)
-// 		uint32    # Blocks [TODO.  0 for now]
-// 		uint32    # Spans
-// 		Repeating unit of:
-//     		int32   Block coordinate of run start (dimension 0)
-//     		int32   Block coordinate of run start (dimension 1)
-//     		int32   Block coordinate of run start (dimension 2)
-//     		int32   Length of run
-//
+//			byte     Set to 0
+//			uint8    Number of dimensions
+//			uint8    Dimension of run (typically 0 = X)
+//			byte     Reserved (to be used later)
+//			uint32    # Blocks [TODO.  0 for now]
+//			uint32    # Spans
+//			Repeating unit of:
+//	    		int32   Block coordinate of run start (dimension 0)
+//	    		int32   Block coordinate of run start (dimension 1)
+//	    		int32   Block coordinate of run start (dimension 2)
+//	    		int32   Length of run
 func (d *Data) GetSparseCoarseVol(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds, isSupervoxel bool) ([]byte, error) {
 	idx, err := GetLabelIndex(d, ctx.VersionID(), label, isSupervoxel)
 	if err != nil {
@@ -1360,23 +1440,23 @@ func (d *Data) GetSparseCoarseVol(ctx *datastore.VersionedCtx, label uint64, bou
 // WriteSparseCoarseVols returns a stream of sparse volumes with blocks of the given label
 // in encoded RLE format:
 //
-// 		uint64   label
-// 		<coarse sparse vol as given below>
+//		uint64   label
+//		<coarse sparse vol as given below>
 //
-// 		uint64   label
-// 		<coarse sparse vol as given below>
+//		uint64   label
+//		<coarse sparse vol as given below>
 //
-// 		...
+//		...
 //
-// 	The coarse sparse vol has the following format where integers are little endian and the order
-// 	of data is exactly as specified below:
+//	The coarse sparse vol has the following format where integers are little endian and the order
+//	of data is exactly as specified below:
 //
-// 		int32    # Spans
-// 		Repeating unit of:
-// 			int32   Block coordinate of run start (dimension 0)
-// 			int32   Block coordinate of run start (dimension 1)
-// 			int32   Block coordinate of run start (dimension 2)
-// 			int32   Length of run
+//		int32    # Spans
+//		Repeating unit of:
+//			int32   Block coordinate of run start (dimension 0)
+//			int32   Block coordinate of run start (dimension 1)
+//			int32   Block coordinate of run start (dimension 2)
+//			int32   Length of run
 func (d *Data) WriteSparseCoarseVols(ctx *datastore.VersionedCtx, w io.Writer, begLabel, endLabel uint64, bounds dvid.Bounds) error {
 
 	store, err := datastore.GetOrderedKeyValueDB(d)

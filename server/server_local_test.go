@@ -109,9 +109,14 @@ func TestParseConfig(t *testing.T) {
 		t.Fatalf("bad TOML configuration: %v\n", err)
 	}
 
-	sz := CacheSize("labelarray")
-	if sz != 10*dvid.Mega {
-		t.Errorf("Expected labelarray cache to be set to 10 (MB), got %d bytes instead\n", sz)
+	sz := CacheSize("labelmap")
+	if sz != 1000*dvid.Mega {
+		t.Errorf("Expected labelmap cache to be set to 10 (MB), got %d bytes instead\n", sz)
+	}
+
+	path := MutcachePath("segmentation")
+	if path != "/path/to/database/cache/for/instance/segmentation" {
+		t.Errorf("Got wrong path for segmentation mutation cache\n")
 	}
 
 	datacfg := DatastoreConfig()

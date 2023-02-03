@@ -7,6 +7,7 @@ package labelmap
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -37,6 +38,9 @@ const (
 
 	// Stores the single repo-wide next label for the instance.  Overrides max labels.
 	keyRepoNextLabel = 239
+
+	// mutation cache keys = label + mutid. value = label index just before mutation applied.
+	keyMutcache = 240
 )
 
 // DescribeTKeyClass returns a string explanation of what a particular TKeyClass
@@ -57,6 +61,8 @@ func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
 		return "labelmap repo label max key"
 	case keyRepoNextLabel:
 		return "labelmap next label key"
+	case keyMutcache:
+		return "labelmap mutation cache key"
 	default:
 	}
 	return "unknown labelmap key"
@@ -111,7 +117,8 @@ func NewLabelIndexTKey(label uint64) storage.TKey {
 
 // DecodeLabelIndexTKey parses a TKey and returns the corresponding label.
 func DecodeLabelIndexTKey(tk storage.TKey) (label uint64, err error) {
-	ibytes, err := tk.ClassBytes(keyLabelIndex)
+	var ibytes []byte
+	ibytes, err = tk.ClassBytes(keyLabelIndex)
 	if err != nil {
 		return
 	}
@@ -133,5 +140,28 @@ func DecodeAffinitiesTKey(tk storage.TKey) (label uint64, err error) {
 		return
 	}
 	label = binary.BigEndian.Uint64(ibytes[0:8])
+	return
+}
+
+// -- support for mutation cache keys that should be stored in DB per instance
+func newMutcacheKey(label, mutID uint64) storage.TKey {
+	buf := make([]byte, 16)
+	binary.BigEndian.PutUint64(buf[0:8], label)
+	binary.BigEndian.PutUint64(buf[8:16], math.MaxUint64-mutID)
+	return storage.NewTKey(keyMutcache, buf)
+}
+
+func decodeMutcacheKey(tk storage.TKey) (label, mutid uint64, err error) {
+	var ibytes []byte
+	ibytes, err = tk.ClassBytes(keyMutcache)
+	if err != nil {
+		return
+	}
+	if len(ibytes) != 16 {
+		err = fmt.Errorf("bad key size (%d) for mutation cache key", len(ibytes))
+		return
+	}
+	label = binary.BigEndian.Uint64(ibytes[0:8])
+	mutid = math.MaxUint64 - binary.BigEndian.Uint64(ibytes[8:16])
 	return
 }

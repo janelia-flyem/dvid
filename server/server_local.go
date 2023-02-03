@@ -217,6 +217,7 @@ type tomlConfig struct {
 	Kafka      storage.KafkaConfig
 	Store      map[storage.Alias]storeConfig
 	Backend    map[dvid.DataSpecifier]backendConfig
+	Mutcache   map[dvid.InstanceName]pathConfig
 	Cache      map[string]sizeConfig
 	Groupcache storage.GroupcacheConfig
 	Mirror     map[dvid.DataSpecifier]mirrorConfig
@@ -383,6 +384,19 @@ func instanceMirrors(dataUUID, versionUUID dvid.UUID) []string {
 	return nil
 }
 
+// MutcachePath returns path to where mutation cache should be placed for
+// the given labelmap instance. If nothing specified, empty string returned.
+func MutcachePath(name dvid.InstanceName) string {
+	if tc.Mutcache == nil {
+		return ""
+	}
+	setting, found := tc.Mutcache[name]
+	if !found {
+		return ""
+	}
+	return setting.Path
+}
+
 // CacheSize returns the number oF bytes reserved for the given identifier.
 // If unset, will return 0.
 func CacheSize(id string) int {
@@ -443,6 +457,10 @@ func DatastoreConfig() datastore.Config {
 		MutationStart: tc.Server.MutIDStart,
 		ReadOnly:      readonly,
 	}
+}
+
+type pathConfig struct {
+	Path string
 }
 
 type sizeConfig struct {

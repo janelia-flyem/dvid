@@ -33,17 +33,17 @@ type sizeChange struct {
 // attempt to merge label 3 into 4 and also 4 into 5.  The caller should have flattened
 // the merges.
 // TODO: Provide some indication that subset of labels are under evolution, returning
-//   an "unavailable" status or 203 for non-authoritative response.  This might not be
-//   feasible for clustered DVID front-ends due to coordination issues.
 //
-// EVENTS
+//	an "unavailable" status or 203 for non-authoritative response.  This might not be
+//	feasible for clustered DVID front-ends due to coordination issues.
+//
+// # EVENTS
 //
 // labels.MergeStartEvent occurs at very start of merge and transmits labels.DeltaMergeStart struct.
 //
 // labels.MergeBlockEvent occurs for every block of a merged label and transmits labels.DeltaMerge struct.
 //
 // labels.MergeEndEvent occurs at end of merge and transmits labels.DeltaMergeEnd struct.
-//
 func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInfo) (mutID uint64, err error) {
 	if len(op.Merged) == 0 {
 		return 0, fmt.Errorf("merge requested without any labels to merge")
@@ -92,8 +92,11 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		err = fmt.Errorf("can't merge into a non-existent label %d", op.Target)
 		return
 	}
+	if err := d.addMutcache(v, mutID, targetIdx); err != nil {
+		dvid.Criticalf("unable to add merge mutid %d target index %d: %v\n", mutID, op.Target, err)
+	}
 	delta.TargetVoxels = targetIdx.NumVoxels()
-	if mergeIdx, err = GetMultiLabelIndex(d, v, op.Merged, dvid.Bounds{}); err != nil {
+	if mergeIdx, err = d.getMergedIndex(v, mutID, op.Merged, dvid.Bounds{}); err != nil {
 		err = fmt.Errorf("can't get block indices of merge labels %s: %v", op.Merged, err)
 		return
 	}
@@ -178,14 +181,13 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 // can be mapped to zero since it cannot have an underlying supervoxel, but a merged
 // label could have a supervoxel with the same ID.
 //
-// EVENTS
+// # EVENTS
 //
 // labels.MergeStartEvent occurs at very start of merge and transmits labels.DeltaMergeStart struct.
 //
 // labels.MergeBlockEvent occurs for every block of a merged label and transmits labels.DeltaMerge struct.
 //
 // labels.MergeEndEvent occurs at end of merge and transmits labels.DeltaMergeEnd struct.
-//
 func (d *Data) RenumberLabels(v dvid.VersionID, origLabel, newLabel uint64, info dvid.ModInfo) (mutID uint64, err error) {
 	var isNew bool
 	isNew, err = d.verifyIsNewLabel(v, newLabel)
@@ -243,6 +245,9 @@ func (d *Data) RenumberLabels(v dvid.VersionID, origLabel, newLabel uint64, info
 		err = fmt.Errorf("can't get block indices of renumbered label %d: %v", origLabel, err)
 		return
 	}
+	if err := d.addMutcache(v, mutID, mergeIdx); err != nil {
+		dvid.Criticalf("unable to add mutid %d index, renumber %d -> %d: %v\n", mutID, origLabel, newLabel, err)
+	}
 	if mergeIdx == nil {
 		err = fmt.Errorf("can't renumber non-existant body with label %d", origLabel)
 		return
@@ -274,9 +279,7 @@ func (d *Data) RenumberLabels(v dvid.VersionID, origLabel, newLabel uint64, info
 			return
 		}
 	}
-	for merged := range delta.Merged {
-		DeleteLabelIndex(d, v, merged)
-	}
+	DeleteLabelIndex(d, v, origLabel)
 
 	dvid.Infof("renumber label %d: %d supervoxels, %d blocks\n", newLabel, len(mergeIdx.GetSupervoxels()), len(mergeIdx.Blocks))
 
@@ -311,7 +314,9 @@ func (d *Data) RenumberLabels(v dvid.VersionID, origLabel, newLabel uint64, info
 
 // CleaveLabel synchornously cleaves a label given supervoxels to be cleaved.
 // Requires JSON in request body using the following format:
+//
 //	[supervoxel1, supervoxel2, ...]
+//
 // Each element of the JSON array is a supervoxel to be cleaved from the label and either
 // given a new label or the one optionally supplied via the "cleavelabel" query string.
 // A cleave label can be specified via the "toLabel" parameter, which if 0 will have an
@@ -386,7 +391,7 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 		CleavedSupervoxels: cleaveSupervoxels,
 	}
 	var cleavedSize, remainSize uint64
-	if cleavedSize, remainSize, err = CleaveIndex(d, v, op, info); err != nil {
+	if cleavedSize, remainSize, err = d.cleaveIndex(v, op, info); err != nil {
 		return
 	}
 	if err = addCleaveToMapping(d, v, op); err != nil {
@@ -714,6 +719,11 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 		err = fmt.Errorf("unable to modify split index for data %q: missing label %d", d.DataName(), fromLabel)
 		return
 	}
+	mutID = d.NewMutationID()
+	if err := d.addMutcache(v, mutID, idx); err != nil {
+		dvid.Criticalf("unable to add cleaved mutid %d index %d: %v\n", mutID, fromLabel, err)
+	}
+
 	fromLabelSize := idx.NumVoxels()
 	if splitSize >= fromLabelSize {
 		err = fmt.Errorf("split volume of %d voxels >= %d of label %d", splitSize, fromLabelSize, fromLabel)
@@ -768,7 +778,6 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 	}
 
 	// send kafka split event to instance-uuid topic
-	mutID = d.NewMutationID()
 	versionuuid, _ := datastore.UUIDFromVersion(v)
 	msginfo := map[string]interface{}{
 		"Action":     "split",

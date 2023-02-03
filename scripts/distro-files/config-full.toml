@@ -182,11 +182,21 @@ saslUsername = "KEY-TAKEN-FROM-CONFLUENT-CLOUD"
 # kafka config "sasl.password"
 saslPassword = "SECRET-TAKEN-FROM-CONFLUENT-CLOUD"
 
+# Mutation cache, currently supported only for labelmap's label indices,
+# stores every label index just before modification. This allows you to
+# reach back to its state just before any given mutation id.
+# For each labelmap instance, the instance name should specify its
+# path to a database cache.
+[mutcache]
+    [mutcache.segmentation]
+    path = "/path/to/database/cache/for/instance/segmentation" 
+
 # Cache support allows setting datatype-specific caching mechanisms.
 # Currently freecache is supported in labelarray and labelmap.
+# This experimental feature allows caching of label indices.
 [cache]
-    [cache.labelarray]
-    size = 10 # MB
+    [cache.labelmap]
+    size = 1000 # MB
 
 # Groupcache support lets you cache GETs from particular data instances using a
 # distributed, immutable key-value cache.
