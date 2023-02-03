@@ -151,6 +151,8 @@ func (flogs *fileLogs) ReadBinary(dataID, version dvid.UUID) ([]byte, error) {
 	return data, err
 }
 
+/***  Cleaner code for passing variety of log message processors might be too slow due to constant function calling ***
+
 func (flogs *fileLogs) readEntireVersion(dataID, version dvid.UUID, processor func(entryType uint16, data []byte) (cancel bool)) error {
 	k := string(dataID + "-" + version)
 	filename := filepath.Join(flogs.path, k)
@@ -212,16 +214,69 @@ func (flogs *fileLogs) readEntireVersion(dataID, version dvid.UUID, processor fu
 	return nil
 }
 
+****/
+
 // ReadAll reads all messages from a version's filelog.
 func (flogs *fileLogs) ReadAll(dataID, version dvid.UUID) ([]storage.LogMessage, error) {
-	msgs := []storage.LogMessage{}
-	err := flogs.readEntireVersion(dataID, version, func(entryType uint16, data []byte) (cancel bool) {
-		msg := storage.LogMessage{EntryType: entryType, Data: data}
-		msgs = append(msgs, msg)
-		return false
-	})
+	k := string(dataID + "-" + version)
+	filename := filepath.Join(flogs.path, k)
+
+	flogs.RLock()
+	fl, found := flogs.files[k]
+	flogs.RUnlock()
+	if found {
+		// close then reopen later.
+		fl.Lock()
+		fl.Close()
+		flogs.Lock()
+		delete(flogs.files, k)
+		flogs.Unlock()
+	}
+
+	f, err := os.OpenFile(filename, os.O_RDONLY, 0755)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	data, err := ioutil.ReadAll(f)
 	if err != nil {
 		return nil, err
+	}
+	f.Close()
+
+	msgs := []storage.LogMessage{}
+	if len(data) > 0 {
+		var pos uint32
+		for {
+			if len(data) < int(pos+6) {
+				dvid.Criticalf("malformed filelog %q at position %d\n", filename, pos)
+				break
+			}
+			entryType := binary.LittleEndian.Uint16(data[pos : pos+2])
+			size := binary.LittleEndian.Uint32(data[pos+2 : pos+6])
+			pos += 6
+			databuf := data[pos : pos+size]
+			pos += size
+			msg := storage.LogMessage{EntryType: entryType, Data: databuf}
+			msgs = append(msgs, msg)
+			if len(data) == int(pos) {
+				break
+			}
+		}
+	}
+
+	if found {
+		f2, err2 := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_APPEND|os.O_SYNC, 0755)
+		if err2 != nil {
+			dvid.Errorf("unable to reopen write log %s: %v\n", k, err)
+		} else {
+			flogs.Lock()
+			flogs.files[k] = &fileLog{File: f2}
+			flogs.Unlock()
+		}
+		fl.Unlock()
 	}
 	return msgs, nil
 }
@@ -229,13 +284,63 @@ func (flogs *fileLogs) ReadAll(dataID, version dvid.UUID) ([]storage.LogMessage,
 // StreamAll sends log messages down channel, adding one for each message to wait group if provided.
 // Closes given channel when streaming is done.
 func (flogs *fileLogs) StreamAll(dataID, version dvid.UUID, ch chan storage.LogMessage) error {
-	err := flogs.readEntireVersion(dataID, version, func(entryType uint16, data []byte) (cancel bool) {
-		ch <- storage.LogMessage{EntryType: entryType, Data: data}
-		return false
-	})
-	close(ch)
+	k := string(dataID + "-" + version)
+	filename := filepath.Join(flogs.path, k)
+
+	flogs.RLock()
+	fl, found := flogs.files[k]
+	flogs.RUnlock()
+	if found {
+		// close then reopen later.
+		fl.Lock()
+		fl.Close()
+		flogs.Lock()
+		delete(flogs.files, k)
+		flogs.Unlock()
+	}
+
+	f, err := os.OpenFile(filename, os.O_RDONLY, 0755)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	data, err := ioutil.ReadAll(f)
 	if err != nil {
 		return err
+	}
+	f.Close()
+
+	if len(data) > 0 {
+		var pos uint32
+		for {
+			if len(data) < int(pos+6) {
+				dvid.Criticalf("malformed filelog %q at position %d\n", filename, pos)
+				break
+			}
+			entryType := binary.LittleEndian.Uint16(data[pos : pos+2])
+			size := binary.LittleEndian.Uint32(data[pos+2 : pos+6])
+			pos += 6
+			databuf := data[pos : pos+size]
+			pos += size
+			ch <- storage.LogMessage{EntryType: entryType, Data: databuf}
+			if len(data) == int(pos) {
+				break
+			}
+		}
+	}
+
+	if found {
+		f2, err2 := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_APPEND|os.O_SYNC, 0755)
+		if err2 != nil {
+			dvid.Errorf("unable to reopen write log %s: %v\n", k, err)
+		} else {
+			flogs.Lock()
+			flogs.files[k] = &fileLog{File: f2}
+			flogs.Unlock()
+		}
+		fl.Unlock()
 	}
 	return nil
 }
