@@ -179,15 +179,22 @@ func (flogs *fileLogs) readEntireVersion(dataID, version dvid.UUID, processor fu
 		return err
 	}
 	f.Close()
-	var pos uint32
-	for {
-		entryType := binary.LittleEndian.Uint16(data[pos : pos+2])
-		size := binary.LittleEndian.Uint32(data[pos+2 : pos+6])
-		pos += 6
-		databuf := data[pos : pos+size]
-		pos += size
-		if cancel := processor(entryType, databuf); cancel {
-			break
+
+	if len(data) > 0 {
+		var pos uint32
+		for {
+			if len(data) < int(pos+6) {
+				dvid.Criticalf("malformed filelog %q at position %d\n", filename, pos)
+				break
+			}
+			entryType := binary.LittleEndian.Uint16(data[pos : pos+2])
+			size := binary.LittleEndian.Uint32(data[pos+2 : pos+6])
+			pos += 6
+			databuf := data[pos : pos+size]
+			pos += size
+			if cancel := processor(entryType, databuf); cancel {
+				break
+			}
 		}
 	}
 
