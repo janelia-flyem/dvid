@@ -282,8 +282,10 @@ func (flogs *fileLogs) ReadAll(dataID, version dvid.UUID) ([]storage.LogMessage,
 }
 
 // StreamAll sends log messages down channel, adding one for each message to wait group if provided.
-// Closes given channel when streaming is done.
+// Closes given channel when streaming is done or an error occurs.
 func (flogs *fileLogs) StreamAll(dataID, version dvid.UUID, ch chan storage.LogMessage) error {
+	defer close(ch)
+
 	k := string(dataID + "-" + version)
 	filename := filepath.Join(flogs.path, k)
 
@@ -330,7 +332,6 @@ func (flogs *fileLogs) StreamAll(dataID, version dvid.UUID, ch chan storage.LogM
 			}
 		}
 	}
-	close(ch)
 
 	if found {
 		f2, err2 := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_APPEND|os.O_SYNC, 0755)
