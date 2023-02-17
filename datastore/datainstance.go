@@ -220,7 +220,7 @@ func (vctx *VersionedCtx) GetGraphDB() (storage.GraphDB, error) {
 // DataService is an interface for operations on an instance of a supported datatype.
 type DataService interface {
 	dvid.Data
-	json.Marshaler
+	json.Marshaler // Supply JSON describing service.
 	BlobService
 
 	Help() string

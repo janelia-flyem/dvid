@@ -890,6 +890,33 @@ var testData = []struct {
 	{"4000", `{"position": [151, 251, 301], "bodyid": 4000, "soma_side": "LHS", "baz": "some string"}`},
 }
 
+func TestStressConcurrentRW(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+	payload := bytes.NewBufferString(`{"typename": "neuronjson", "dataname": "neurons"}`)
+	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, payload)
+
+	for n := 0; n < 10; n++ {
+		go func() {
+			for i := 1; i < 100; i++ {
+				keyreq := fmt.Sprintf("%snode/%s/neurons/key/%d", server.WebAPIPath, uuid, i)
+				keyval := fmt.Sprintf(`{"bodyid": %d, "somedata": "value-%d"}`, i, i)
+				server.TestHTTP(t, "POST", keyreq, strings.NewReader(keyval))
+			}
+		}()
+
+		rangeReq := fmt.Sprintf("%snode/%s/neurons/keyrangevalues/0/100", server.WebAPIPath, uuid)
+		server.TestHTTP(t, "GET", rangeReq+"?json=true", nil)
+		allreq := fmt.Sprintf("%snode/%s/neurons/all", server.WebAPIPath, uuid)
+		server.TestHTTP(t, "GET", allreq, nil)
+	}
+}
+
 func TestAll(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)

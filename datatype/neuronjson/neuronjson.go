@@ -1,5 +1,5 @@
 /*
-	Package neuronjson implements DVID support for neuron JSON annotations
+Package neuronjson implements DVID support for neuron JSON annotations
 */
 package neuronjson
 
@@ -738,8 +738,9 @@ func removeReservedFields(data NeuronJSON, showFields Fields) NeuronJSON {
 }
 
 // Return a subset of fields where
-//   onlyFields is a map of field names to include
-//   hideSuffixes is a map of fields suffixes (e.g., "_user") to exclude
+//
+//	onlyFields is a map of field names to include
+//	hideSuffixes is a map of fields suffixes (e.g., "_user") to exclude
 func selectFields(data NeuronJSON, fieldMap map[string]struct{}, showUser, showTime bool) NeuronJSON {
 	out := data.copy()
 	if len(fieldMap) > 0 {
@@ -1231,7 +1232,7 @@ type kvType interface {
 }
 
 func (d *Data) initMemoryDB() {
-	d.dbMu.Lock() // Note that mutex is NOT unlocked if firestore DB doesn't load because we don't want
+	d.dbMu.Lock()
 	defer d.dbMu.Unlock()
 
 	d.db = make(map[uint64]NeuronJSON)
@@ -1928,16 +1929,14 @@ func (d *Data) Query(ctx *datastore.VersionedCtx, w http.ResponseWriter, uuid dv
 // KeyExists returns true if a key is found.
 func (d *Data) KeyExists(ctx storage.VersionedCtx, keyStr string) (found bool, err error) {
 	if ctx.Head() {
-		d.dbMu.RLock()
-		defer d.dbMu.RUnlock()
 		var bodyid uint64
 		bodyid, err = strconv.ParseUint(keyStr, 10, 64)
 		if err != nil {
 			return false, err
 		}
 		d.dbMu.RLock()
-		defer d.dbMu.RUnlock()
 		_, found = d.db[bodyid]
+		d.dbMu.RUnlock()
 		return found, nil
 	}
 	db, err := datastore.GetKeyValueDB(d)
@@ -2028,8 +2027,8 @@ func (d *Data) GetAll(ctx storage.VersionedCtx, fieldMap map[string]struct{}, sh
 
 func (d *Data) GetKeys(ctx storage.VersionedCtx) (out []string, err error) {
 	if ctx.Head() {
-		out = make([]string, len(d.ids))
 		d.dbMu.RLock()
+		out = make([]string, len(d.ids))
 		for i, bodyid := range d.ids {
 			out[i] = strconv.FormatUint(bodyid, 10)
 		}
@@ -2046,12 +2045,14 @@ func (d *Data) GetKeys(ctx storage.VersionedCtx) (out []string, err error) {
 }
 
 func (d *Data) GetFields() ([]string, error) {
+	d.dbMu.RLock()
 	fields := make([]string, len(d.fields))
 	i := 0
 	for field := range d.fields {
 		fields[i] = field
 		i++
 	}
+	d.dbMu.RUnlock()
 	return fields, nil
 }
 
@@ -2086,8 +2087,8 @@ func (d *Data) GetData(ctx storage.VersionedCtx, keyStr string, fieldMap map[str
 	var found bool
 	if ctx.Head() {
 		d.dbMu.RLock()
-		defer d.dbMu.RUnlock()
 		value, found = d.db[bodyid]
+		d.dbMu.RUnlock()
 		if !found {
 			return nil, false, nil
 		}
@@ -2212,12 +2213,12 @@ func (d *Data) PutData(ctx *datastore.VersionedCtx, keyStr string, value []byte,
 	// write result
 	if ctx.Head() {
 		d.dbMu.Lock()
-		defer d.dbMu.Unlock()
 		d.db[bodyid] = newData
 		for field := range newData {
 			d.fields[field] = struct{}{}
 		}
 		d.addBodyID(bodyid)
+		d.dbMu.Unlock()
 	}
 	return d.putStoreData(ctx, keyStr, newData)
 }
@@ -2244,12 +2245,12 @@ func (d *Data) DeleteData(ctx storage.VersionedCtx, keyStr string) error {
 	}
 	if ctx.Head() {
 		d.dbMu.Lock()
-		defer d.dbMu.Unlock()
 		_, found := d.db[bodyid]
 		if found {
 			delete(d.db, bodyid)
 			d.deleteBodyID(bodyid)
 		}
+		d.dbMu.Unlock()
 	}
 	return d.deleteStoreData(ctx, keyStr)
 }
@@ -2420,16 +2421,20 @@ func (d *Data) sendJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWr
 	if err != nil {
 		return 0, err
 	}
+	d.dbMu.RLock()
 	begI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] >= bodyidBeg })
 	endI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] > bodyidEnd })
+	d.dbMu.RUnlock()
 
 	// Collect JSON values in range
 	var kvs proto.KeyValues
 	var wroteVal bool
 	showUser, showTime := showFields.Bools()
 	for i := begI; i < endI; i++ {
+		d.dbMu.RLock()
 		bodyid := d.ids[i]
 		jsonData, ok := d.db[bodyid]
+		d.dbMu.RUnlock()
 		if !ok {
 			dvid.Errorf("inconsistent neuronjson DB: bodyid %d at pos %d is not in db cache... skipping", bodyid, i)
 			continue
