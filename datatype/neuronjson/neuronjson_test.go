@@ -901,19 +901,45 @@ func TestStressConcurrentRW(t *testing.T) {
 	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
 	server.TestHTTP(t, "POST", apiStr, payload)
 
-	for n := 0; n < 10; n++ {
-		go func() {
-			for i := 1; i < 100; i++ {
+	for n := 0; n < 100; n++ {
+		done := make(chan struct{})
+		go func(done <-chan struct{}) {
+			i := 0
+			for {
+				i++
 				keyreq := fmt.Sprintf("%snode/%s/neurons/key/%d", server.WebAPIPath, uuid, i)
 				keyval := fmt.Sprintf(`{"bodyid": %d, "somedata": "value-%d"}`, i, i)
 				server.TestHTTP(t, "POST", keyreq, strings.NewReader(keyval))
+				select {
+				case <-done:
+					return
+				default:
+				}
 			}
-		}()
+		}(done)
 
-		rangeReq := fmt.Sprintf("%snode/%s/neurons/keyrangevalues/0/100", server.WebAPIPath, uuid)
-		server.TestHTTP(t, "GET", rangeReq+"?json=true", nil)
-		allreq := fmt.Sprintf("%snode/%s/neurons/all", server.WebAPIPath, uuid)
-		server.TestHTTP(t, "GET", allreq, nil)
+		go func(done <-chan struct{}) {
+			i := 0
+			for {
+				i++
+				keyreq := fmt.Sprintf("%snode/%s/neurons/key/%d", server.WebAPIPath, uuid, i)
+				keyval := fmt.Sprintf(`{"bodyid": %d, "somedata": "value-%d"}`, i, i)
+				server.TestHTTPResponse(t, "GET", keyreq, strings.NewReader(keyval))
+				select {
+				case <-done:
+					return
+				default:
+				}
+			}
+		}(done)
+
+		for m := 0; m < 10; m++ {
+			rangeReq := fmt.Sprintf("%snode/%s/neurons/keyrangevalues/0/1000", server.WebAPIPath, uuid)
+			server.TestHTTP(t, "GET", rangeReq+"?json=true", nil)
+			allreq := fmt.Sprintf("%snode/%s/neurons/all", server.WebAPIPath, uuid)
+			server.TestHTTP(t, "GET", allreq, nil)
+		}
+		close(done)
 	}
 }
 
