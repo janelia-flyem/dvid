@@ -94,9 +94,12 @@ func VersionFromUUID(uuid dvid.UUID) (dvid.VersionID, error) {
 //
 // Examples:
 // "3FA22:master" returns the leaf UUID 836ee of branch "master" for the repo containing
-//    the 3FA22 UUID.
+//
+//	the 3FA22 UUID.
+//
 // "3FA22:master~1" returns the 1st parent of the leaf UUID of branch "master" for the
-//    repo containing, which is 7cd11.
+//
+//	repo containing, which is 7cd11.
 func MatchingUUID(uuidStr string) (dvid.UUID, dvid.VersionID, error) {
 	if manager == nil {
 		return dvid.NilUUID, 0, ErrManagerNotInitialized
@@ -257,9 +260,8 @@ func MakeMaster(newMasterNode dvid.UUID, oldMasterBranchName string) error {
 }
 
 // HideBranch makes the branch at given UUID (that node and all its children)
-// the new master branch and renames the old master branch to the given
-// branch name.  NOTE: This command will fail if the given UUID is not
-// a node that is directly branched off master.
+// not visible from a metadata perspective. The actual data associated with
+// the branch are not deleted from the store.
 func HideBranch(uuid dvid.UUID, branchName string) error {
 	if manager == nil {
 		return ErrManagerNotInitialized
@@ -336,7 +338,8 @@ func NewData(uuid dvid.UUID, t TypeService, name dvid.InstanceName, c dvid.Confi
 
 // SaveDataByUUID persists metadata for a data instance with given uuid.
 // TODO -- Make this more efficient by storing data metadata separately from repo.
-//   Currently we save entire repo.
+//
+//	Currently we save entire repo.
 func SaveDataByUUID(uuid dvid.UUID, data DataService) error {
 	if manager == nil {
 		return ErrManagerNotInitialized
@@ -346,7 +349,8 @@ func SaveDataByUUID(uuid dvid.UUID, data DataService) error {
 
 // SaveDataByVersion persists metadata for a data instance with given version.
 // TODO -- Make this more efficient by storing data metadata separately from repo.
-//   Currently we save entire repo.
+//
+//	Currently we save entire repo.
 func SaveDataByVersion(v dvid.VersionID, data DataService) error {
 	if manager == nil {
 		return ErrManagerNotInitialized
