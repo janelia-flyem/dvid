@@ -605,6 +605,19 @@ func PutLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, idx *labels.Inde
 	return err
 }
 
+type proximityJSON struct {
+	Block    dvid.ChunkPoint3d
+	Distance int
+}
+
+// TODO: Flesh out this stub for /proximity endpoint.
+func (d *Data) getProximity(ctx *datastore.VersionedCtx, idx1, idx2 *labels.Index) (jsonBytes []byte, err error) {
+	// Find all blocks shared by the two indices
+
+	// For each intersecting block, determine distance between labels and add to output.
+	return
+}
+
 // CleaveIndex modifies the label index to remove specified supervoxels and create another
 // label index for this cleaved body.
 func (d *Data) cleaveIndex(v dvid.VersionID, op labels.CleaveOp, info dvid.ModInfo) (cleavedSize, remainSize uint64, err error) {

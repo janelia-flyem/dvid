@@ -1432,7 +1432,28 @@ POST <api URL>/node/<UUID>/<data name>/split/<label>
 			"Timestamp": <time at end of operation>
 		}
 
+GET <api URL>/node/<UUID>/<data name>/proximity/<label 1>,<label 2>
 
+	Determines proximity of two labels, returning the following JSON giving blocks in
+	which they intersect and the min geodesic voxel distance between the labels
+	within that block:
+		[
+			{ 
+				"Block": [<x1>, <y1>, <z1>],
+				"Distance": <min geodesic voxel distance in block 1>
+			}, 
+			{ 
+				"Block": [<x2>, <y2>, <z2>],
+				"Distance": <min geodesic voxel distance in block 2>
+			},
+			...
+		]
+
+	Note that this is an approximation in that we assume two labels aren't perfectly
+	separated across block boundaries. This could be the case for supervoxels that
+	are artificially split along block boundaries but won't be true for agglomerated
+	labels.
+	
 GET  <api URL>/node/<UUID>/<data name>/index/<label>?mutid=<uint64>
 POST <api URL>/node/<UUID>/<data name>/index/<label>
 
@@ -3903,6 +3924,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "renumber":
 		d.handleRenumber(ctx, w, r)
 
+	case "proximity":
+		d.handleProximity(ctx, w, r, parts)
+
 	case "index":
 		d.handleIndex(ctx, w, r, parts)
 
@@ -4168,6 +4192,67 @@ func (d *Data) handleIngest(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 		server.BadRequest(w, r, err)
 	}
 	timedLog.Infof("HTTP POST ingest-supervoxels %q, scale = %d", d.DataName(), scale)
+}
+
+func (d *Data) handleProximity(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
+	// GET <api URL>/node/<UUID>/<data name>/proximity/<label 1>,<label 2>
+	timedLog := dvid.NewTimeLog()
+
+	queryStrings := r.URL.Query()
+	if throttle := queryStrings.Get("throttle"); throttle == "on" || throttle == "true" {
+		if server.ThrottledHTTP(w) {
+			return
+		}
+		defer server.ThrottledOpDone()
+	}
+
+	label1, err := strconv.ParseUint(parts[4], 10, 64)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	label2, err := strconv.ParseUint(parts[5], 10, 64)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	if label1 == 0 || label2 == 0 {
+		server.BadRequest(w, r, "there is no index for protected label 0")
+		return
+	}
+	if label1 == label2 {
+		server.BadRequest(w, r, "the two supplied labels were identical")
+		return
+	}
+
+	if strings.ToLower(r.Method) != "get" {
+		server.BadRequest(w, r, fmt.Errorf("only GET action allowed on /proximity endpoint"))
+		return
+	}
+
+	idx1, err := getCachedLabelIndex(d, ctx.VersionID(), label1)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	idx2, err := getCachedLabelIndex(d, ctx.VersionID(), label2)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	if idx1 == nil || idx2 == nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	jsonBytes, err := d.getProximity(ctx, idx1, idx2)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, string(jsonBytes))
+
+	timedLog.Infof("HTTP %s proximity for labels %d, %d (%s)", r.Method, label1, label2, r.URL)
 }
 
 func writeIndexMetadata(w http.ResponseWriter, idx *labels.Index) {
