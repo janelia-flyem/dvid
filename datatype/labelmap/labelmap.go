@@ -1432,22 +1432,25 @@ POST <api URL>/node/<UUID>/<data name>/split/<label>
 			"Timestamp": <time at end of operation>
 		}
 
-GET <api URL>/node/<UUID>/<data name>/proximity/<label 1>,<label 2>
+GET <api URL>/node/<UUID>/<data name>/proximity/<label 1 (target)>,<label 2a>,<label 2b>,...
 
-	Determines proximity of two labels, returning the following JSON giving blocks in
-	which they intersect and the min geodesic voxel distance between the labels
-	within that block:
+	Determines proximity of a number of labels with a target label returning the 
+	following JSON giving blocks in which they intersect and the min euclidean 
+	voxel distance between the labels within that block:
 		[
 			{ 
 				"Block": [<x1>, <y1>, <z1>],
-				"Distance": <min geodesic voxel distance in block 1>
+				"Label": <label 2a>,
+				"Distance": <min euclidean voxel distance in block 1 to label 2a>
 			}, 
 			{ 
-				"Block": [<x2>, <y2>, <z2>],
-				"Distance": <min geodesic voxel distance in block 2>
+				"Block": [<x1>, <y1>, <z1>],
+				"Label": <label 2b>
+				"Distance": <min euclidean voxel distance in block 1 to label 2b>
 			},
 			...
 		]
+	If only two labels are specified, the "Label" property is omitted.
 
 	Note that this is an approximation in that we assume two labels aren't perfectly
 	separated across block boundaries. This could be the case for supervoxels that
