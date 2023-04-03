@@ -174,6 +174,8 @@ func GetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*Meta, error) {
 
 // GetLabelProcessedIndex gets label index data from storage for a given data instance
 // and version with scaling and/or bounds. Concurrency-safe access and supports caching.
+// If scale > 0, then the number of voxels is set to zero since an accurate count is not
+// available without more processing.
 func GetLabelProcessedIndex(d dvid.Data, v dvid.VersionID, label uint64, scale uint8, bounds dvid.Bounds) (*Meta, error) {
 	meta, err := GetLabelIndex(d, v, label)
 	if err != nil {
@@ -184,6 +186,11 @@ func GetLabelProcessedIndex(d dvid.Data, v dvid.VersionID, label uint64, scale u
 	}
 	voxels := meta.Voxels
 	blocks := meta.Blocks
+	if scale > 0 {
+		if blocks, err = blocks.Downres(scale); err != nil {
+			return nil, err
+		}
+	}
 	if bounds.Block != nil && bounds.Block.IsSet() {
 		blocks, err = meta.Blocks.FitToBounds(bounds.Block)
 		if err != nil {
@@ -192,11 +199,6 @@ func GetLabelProcessedIndex(d dvid.Data, v dvid.VersionID, label uint64, scale u
 		voxels = 0
 	}
 
-	if scale > 0 {
-		if blocks, err = blocks.Downres(scale); err != nil {
-			return nil, err
-		}
-	}
 	newMeta := Meta{Voxels: voxels, Blocks: blocks}
 	return &newMeta, nil
 }
@@ -986,25 +988,24 @@ func (d *Data) writeLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale u
 	return
 }
 
-//  The encoding has the following format where integers are little endian:
+// The encoding has the following format where integers are little endian:
 //
-//    byte     Payload descriptor:
-//               Bit 0 (LSB) - 8-bit grayscale
-//               Bit 1 - 16-bit grayscale
-//               Bit 2 - 16-bit normal
-//               ...
-//    uint8    Number of dimensions
-//    uint8    Dimension of run (typically 0 = X)
-//    byte     Reserved (to be used later)
-//    uint32    0
-//    uint32    # Spans
-//    Repeating unit of:
-//        int32   Coordinate of run start (dimension 0)
-//        int32   Coordinate of run start (dimension 1)
-//        int32   Coordinate of run start (dimension 2)
-//        int32   Length of run
-//        bytes   Optional payload dependent on first byte descriptor
-//
+//	byte     Payload descriptor:
+//	           Bit 0 (LSB) - 8-bit grayscale
+//	           Bit 1 - 16-bit grayscale
+//	           Bit 2 - 16-bit normal
+//	           ...
+//	uint8    Number of dimensions
+//	uint8    Dimension of run (typically 0 = X)
+//	byte     Reserved (to be used later)
+//	uint32    0
+//	uint32    # Spans
+//	Repeating unit of:
+//	    int32   Coordinate of run start (dimension 0)
+//	    int32   Coordinate of run start (dimension 1)
+//	    int32   Coordinate of run start (dimension 2)
+//	    int32   Length of run
+//	    bytes   Optional payload dependent on first byte descriptor
 func (d *Data) getLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds) ([]byte, error) {
 	meta, lbls, err := GetMappedLabelIndex(d, ctx.VersionID(), label, scale, bounds)
 	if err != nil {
@@ -1106,18 +1107,17 @@ func getBoundedBlockIndices(meta *Meta, bounds dvid.Bounds) (dvid.IZYXSlice, err
 // if the given label was not found.  The encoding has the following format where integers are
 // little endian:
 //
-// 		byte     Set to 0
-// 		uint8    Number of dimensions
-// 		uint8    Dimension of run (typically 0 = X)
-// 		byte     Reserved (to be used later)
-// 		uint32    # Blocks [TODO.  0 for now]
-// 		uint32    # Spans
-// 		Repeating unit of:
-//     		int32   Block coordinate of run start (dimension 0)
-//     		int32   Block coordinate of run start (dimension 1)
-//     		int32   Block coordinate of run start (dimension 2)
-//     		int32   Length of run
-//
+//			byte     Set to 0
+//			uint8    Number of dimensions
+//			uint8    Dimension of run (typically 0 = X)
+//			byte     Reserved (to be used later)
+//			uint32    # Blocks [TODO.  0 for now]
+//			uint32    # Spans
+//			Repeating unit of:
+//	    		int32   Block coordinate of run start (dimension 0)
+//	    		int32   Block coordinate of run start (dimension 1)
+//	    		int32   Block coordinate of run start (dimension 2)
+//	    		int32   Length of run
 func (d *Data) GetSparseCoarseVol(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds) ([]byte, error) {
 	meta, _, err := GetMappedLabelIndex(d, ctx.VersionID(), label, 0, bounds)
 	if err != nil {
@@ -1150,23 +1150,23 @@ func (d *Data) GetSparseCoarseVol(ctx *datastore.VersionedCtx, label uint64, bou
 // WriteSparseCoarseVols returns a stream of sparse volumes with blocks of the given label
 // in encoded RLE format:
 //
-// 		uint64   label
-// 		<coarse sparse vol as given below>
+//		uint64   label
+//		<coarse sparse vol as given below>
 //
-// 		uint64   label
-// 		<coarse sparse vol as given below>
+//		uint64   label
+//		<coarse sparse vol as given below>
 //
-// 		...
+//		...
 //
-// 	The coarse sparse vol has the following format where integers are little endian and the order
-// 	of data is exactly as specified below:
+//	The coarse sparse vol has the following format where integers are little endian and the order
+//	of data is exactly as specified below:
 //
-// 		int32    # Spans
-// 		Repeating unit of:
-// 			int32   Block coordinate of run start (dimension 0)
-// 			int32   Block coordinate of run start (dimension 1)
-// 			int32   Block coordinate of run start (dimension 2)
-// 			int32   Length of run
+//		int32    # Spans
+//		Repeating unit of:
+//			int32   Block coordinate of run start (dimension 0)
+//			int32   Block coordinate of run start (dimension 1)
+//			int32   Block coordinate of run start (dimension 2)
+//			int32   Length of run
 func (d *Data) WriteSparseCoarseVols(ctx *datastore.VersionedCtx, w io.Writer, begLabel, endLabel uint64, bounds dvid.Bounds) error {
 
 	store, err := datastore.GetOrderedKeyValueDB(d)

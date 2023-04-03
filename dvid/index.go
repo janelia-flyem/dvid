@@ -456,6 +456,22 @@ func (i IZYXString) Halfres() (IZYXString, error) {
 	return halfresPt.ToIZYXString(), nil
 }
 
+// Downres returns an IZYXString downres'd by the given scale.
+func (i IZYXString) Downres(scale uint8) (IZYXString, error) {
+	if scale == 0 {
+		return i, nil
+	}
+	chunkPt, err := i.ToChunkPoint3d()
+	if err != nil {
+		return "", err
+	}
+	dx := chunkPt[0] >> scale
+	dy := chunkPt[1] >> scale
+	dz := chunkPt[2] >> scale
+	downresPt := ChunkPoint3d{dx, dy, dz}
+	return downresPt.ToIZYXString(), nil
+}
+
 // BlockCounts is a thread-safe type for counting block references.
 type BlockCounts struct {
 	sync.RWMutex

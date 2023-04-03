@@ -93,6 +93,7 @@ func (d *Data) downresOctant(v dvid.VersionID, hiresScale uint8, mu *sync.Mutex,
 			return
 		}
 		tk := NewBlockTKeyByCoord(hiresScale+1, msg.loresZYX)
+		dvid.Infof("Storing downres block %s (%d bytes) at scale %d\n", msg.loresZYX, len(compressed), hiresScale+1)
 		mu.Lock()
 		batch.Put(tk, serialization)
 		mu.Unlock()
@@ -143,6 +144,6 @@ func (d *Data) StoreDownres(v dvid.VersionID, hiresScale uint8, hires downres.Bl
 	if err := batch.Commit(); err != nil {
 		return nil, fmt.Errorf("error on trying to write downres batch of scale %d->%d: %v", hiresScale, hiresScale+1, err)
 	}
-	timedLog.Infof("Computed down-resolution of %d octants", len(octants))
+	timedLog.Infof("Computed down-resolution of %d octants at scale %d", len(octants), hiresScale)
 	return downresBMap, nil
 }

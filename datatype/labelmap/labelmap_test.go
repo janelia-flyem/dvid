@@ -1563,6 +1563,18 @@ func TestMultiscaleVanish(t *testing.T) {
 		t.Fatalf("expected non-zero sparsevol return for label 4")
 	}
 
+	// -- test bounds
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/3?minx=14&maxx=18", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) == 0 {
+		t.Fatalf("expected non-zero sparsevol return for label 3 with bounds")
+	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/3?minx=10&maxx=15", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) != 0 {
+		t.Fatalf("expected zero sparsevol return for label 3 with out-of-scope bounds, got %d bytes", len(encoding))
+	}
+
 	// downres 1: 4 should drop out
 	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/1?scale=1", server.WebAPIPath, uuid)
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
@@ -1583,6 +1595,18 @@ func TestMultiscaleVanish(t *testing.T) {
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
 	if len(encoding) != 0 {
 		t.Fatalf("expected zero sparsevol return for label 4")
+	}
+
+	// -- test bounds
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/3?scale=1&minx=7&maxx=9", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) == 0 {
+		t.Fatalf("expected non-zero level-1 sparsevol return for label 3 with bounds")
+	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/3?scale=1&minx=5&maxx=7", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if len(encoding) != 0 {
+		t.Fatalf("expected zero level-1 sparsevol return for label 3 with out-of-scope bounds, got %d bytes", len(encoding))
 	}
 
 	// downres 2: 2 should drop out

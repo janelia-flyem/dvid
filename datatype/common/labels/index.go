@@ -2,6 +2,7 @@ package labels
 
 import (
 	fmt "fmt"
+	"sort"
 
 	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -295,27 +296,18 @@ func (idx *Index) LimitToSupervoxel(supervoxel uint64) (*Index, error) {
 	return sidx, nil
 }
 
-// GetProcessedBlockIndices returns the blocks for an index, possibly with bounds and down-res.
-// The returned blocks are not sorted.
+// GetProcessedBlockIndices returns the blocks for an index, possibly bounded and with
+// down-res applied by the given scale.
 func (idx *Index) GetProcessedBlockIndices(scale uint8, bounds dvid.Bounds) (dvid.IZYXSlice, error) {
 	if idx == nil {
 		return nil, nil
 	}
+
+	// Get all blocks in index, skipping any that are empty.
 	indices := make(dvid.IZYXSlice, len(idx.Blocks))
 	totBlocks := 0
 	for zyx := range idx.Blocks {
 		izyx := BlockIndexToIZYXString(zyx)
-		if bounds.Block.IsSet() {
-			blockPt, err := izyx.ToChunkPoint3d()
-			if err != nil {
-				return nil, fmt.Errorf("error decoding block %v: %v", izyx, err)
-			}
-			if bounds.Block.Outside(blockPt) {
-				// dvid.Infof("block pt %s considered OUTSIDE bounds (%v)\n", blockPt, bounds.Block)
-				continue
-			}
-			// dvid.Infof("block pt %s considered INSIDE bounds (%v)\n", blockPt, bounds.Block)
-		}
 		svc := idx.Blocks[zyx]
 		if svc == nil || svc.Counts == nil {
 			dvid.Debugf("ignoring block %s for label %d because of nil Counts\n", izyx, idx.Label)
@@ -339,8 +331,21 @@ func (idx *Index) GetProcessedBlockIndices(scale uint8, bounds dvid.Bounds) (dvi
 		return nil, nil
 	}
 	indices = indices[:totBlocks]
+
+	// Downres if requested.
 	if scale > 0 {
-		return indices.Downres(scale)
+		var err error
+		if indices, err = indices.Downres(scale); err != nil {
+			return nil, err
+		}
+	}
+
+	// Apply bounds if given.
+	if bounds.Block.IsSet() {
+		if scale == 0 {
+			sort.Sort(indices)
+		}
+		return indices.FitToBounds(bounds.Block)
 	}
 	return indices, nil
 }

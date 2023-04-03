@@ -1063,18 +1063,18 @@ GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
 			  "srles" - streaming RLEs with each RLE composed of 4 int32 (16 bytes) for x, y, z, run 
 			  "blocks" - binary Block stream
 
-    minx    Spans must be equal to or larger than this minimum hi-res (scale 0) x voxel coordinate.
-    maxx    Spans must be equal to or smaller than this maximum hi-res (scale 0) x voxel coordinate.
-    miny    Spans must be equal to or larger than this minimum hi-res (scale 0) y voxel coordinate.
-    maxy    Spans must be equal to or smaller than this maximum hi-res (scale 0) y voxel coordinate.
-    minz    Spans must be equal to or larger than this minimum hi-res (scale 0) z voxel coordinate.
-    maxz    Spans must be equal to or smaller than this maximum hi-res (scale 0) z voxel coordinate.
+    minx    Spans must be >= this minimum x voxel coordinate at given scale
+    maxx    Spans must be <= this maximum x voxel coordinate at given scale.
+    miny    Spans must be >= this minimum y voxel coordinate at given scale.
+    maxy    Spans must be <= this maximum y voxel coordinate at given scale.
+    minz    Spans must be >= this minimum z voxel coordinate at given scale.
+    maxz    Spans must be <= this maximum z voxel coordinate at given scale.
     exact   "false" if RLEs can extend a bit outside voxel bounds within border blocks.
              This will give slightly faster responses. 
 
     compression  "lz4" and "gzip" compressed format; only applies to "rles" format for now.
-	scale        A number from 0 up to MaxDownresLevel where each level beyond 0 has 1/2 
-                   resolution of previous level.  Level 0 is the highest resolution.
+	scale        A number from 0 (default highest res) to MaxDownresLevel where each level 
+				   beyond 0 has 1/2 resolution of previous level.
 	supervoxels   If "true", interprets the given label as a supervoxel id.
 
 
