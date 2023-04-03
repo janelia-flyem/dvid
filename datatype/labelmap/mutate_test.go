@@ -198,20 +198,31 @@ func (b testBody) checkSparsevolAPIs(t *testing.T, uuid dvid.UUID, label uint64)
 	b.checkSparseVol(t, encoding, dvid.OptionalBounds{})
 
 	// Check Y/Z restriction
-	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d?miny=30&maxy=50&minz=20&maxz=40", server.WebAPIPath, uuid, label)
-	if label != 4 {
-		encoding = server.TestHTTP(t, "GET", reqStr, nil)
-		var bound dvid.OptionalBounds
-		bound.SetMinY(30)
-		bound.SetMaxY(50)
-		bound.SetMinZ(20)
-		bound.SetMaxZ(40)
-		b.checkSparseVol(t, encoding, bound)
-	} else {
-		encoding = server.TestHTTP(t, "GET", reqStr, nil) // Should be 200 with no bytes
-		if len(encoding) != 0 {
-			t.Fatalf("expected 0 bytes, got %d for %s\n", len(encoding), reqStr)
+	miny := int32(30)
+	maxy := int32(50)
+	minz := int32(20)
+	maxz := int32(40)
+	for scale := uint8(0); scale < 3; scale++ {
+		reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d?scale=%d&miny=%d&maxy=%d&minz=%d&maxz=%d",
+			server.WebAPIPath, uuid, label, scale, miny, maxy, minz, maxz)
+		if label != 4 {
+			encoding = server.TestHTTP(t, "GET", reqStr, nil)
+			var bound dvid.OptionalBounds
+			bound.SetMinY(miny)
+			bound.SetMaxY(maxy)
+			bound.SetMinZ(minz)
+			bound.SetMaxZ(maxz)
+			b.checkScaledSparseVol(t, encoding, scale, bound)
+		} else {
+			encoding = server.TestHTTP(t, "GET", reqStr, nil) // Should be 200 with no bytes
+			if len(encoding) != 0 {
+				t.Fatalf("expected 0 bytes, got %d for %s\n", len(encoding), reqStr)
+			}
 		}
+		miny >>= 1
+		maxy >>= 1
+		minz >>= 1
+		maxz >>= 1
 	}
 
 	// Check X restriction
@@ -329,6 +340,10 @@ func (b testBody) checkSparseVol(t *testing.T, encoding []byte, bounds dvid.Opti
 
 // Makes sure the sparse volume encoding matches a downres of actual body voxels.
 func (b testBody) checkScaledSparseVol(t *testing.T, encoding []byte, scale uint8, bounds dvid.OptionalBounds) {
+	if scale == 0 {
+		b.checkSparseVol(t, encoding, bounds)
+		return
+	}
 	// Make down-res volume of body
 	vol := newTestVolume(128, 128, 128)
 	vol.addBody(b, 1)
