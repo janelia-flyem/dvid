@@ -1969,7 +1969,9 @@ func (d *Data) StreamBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 	var useAllScan bool
 	tags := d.Tags()
 	if scanStr, found := tags["ScanAllForBlocks"]; found {
-		useAllScan = strings.ToLower(scanStr) == "true"
+		useAllScan = (strings.ToLower(scanStr) == "true")
+	}
+	/**
 	} else {
 		// if there would be too many range requests, just get all
 		dz := endBlockCoord[2] - begBlockCoord[2]
@@ -1978,6 +1980,7 @@ func (d *Data) StreamBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 			useAllScan = true
 		}
 	}
+	**/
 
 	if _, err := w.Write([]byte("{")); err != nil {
 		return err
