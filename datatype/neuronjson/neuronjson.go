@@ -190,7 +190,7 @@ HEAD <api URL>/node/<UUID>/<data name>/<schema type>
 GET  <api URL>/node/<UUID>/<data name>/all-versions
 
 	Returns a JSON object with UUID fields containing a list of all JSON annotations 
-	added at that version as well as a special tombstone annotation for deleted annotations.
+	added/modified in that version as well as a special tombstone annotation for deleted annotations.
 
 	Example:
 	{
@@ -2050,10 +2050,6 @@ func (d *Data) GetAllVersions(ctx storage.VersionedCtx, w http.ResponseWriter) e
 				return
 			}
 
-			numAnnotations++
-			if numAnnotations%100000 == 0 {
-				timedLog.Infof("Getting all neuronjson versions, instance %q, processed %d keys", d.DataName(), numAnnotations)
-			}
 			_, versionID, _, err := storage.DataKeyToLocalIDs(kv.K)
 			if err != nil {
 				dvid.Infof("GetAllVersions error trying to parse data key %x: %v\n", kv.K, err)
@@ -2086,7 +2082,13 @@ func (d *Data) GetAllVersions(ctx storage.VersionedCtx, w http.ResponseWriter) e
 				}
 				jsonForVersion += fmt.Sprintf(`{"bodyid":%s, "tombstone":true}`, bodyid)
 			} else {
+				numAnnotations++
 				jsonForVersion += string(kv.V)
+			}
+
+			if (numTombstones+numAnnotations)%10000 == 0 {
+				timedLog.Infof("Getting all neuronjson versions, instance %q, processed %d annotations, %d tombstones",
+					d.DataName(), numAnnotations, numTombstones)
 			}
 			all[uuid] = jsonForVersion
 		}
@@ -2120,8 +2122,8 @@ func (d *Data) GetAllVersions(ctx storage.VersionedCtx, w http.ResponseWriter) e
 		return err
 	}
 
-	timedLog.Infof("Finished GetAllVersions for neuronjson %q, returning %d annotations, %d bytes",
-		d.DataName(), numAnnotations, bytesSent)
+	timedLog.Infof("Finished GetAllVersions for neuronjson %q, processing %d annotations, %d tombstones, %d bytes",
+		d.DataName(), numAnnotations, numTombstones, bytesSent)
 	return nil
 }
 
