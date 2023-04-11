@@ -93,6 +93,7 @@ type VersionedCtx interface {
 
 	// NumVersions returns the number of version in the current DAG
 	NumVersions() int32
+
 	// Returns lower bound key for versions.
 	MinVersionKey(TKey) (Key, error)
 
@@ -517,8 +518,8 @@ func (ctx *DataContext) VersionFromKey(key Key) (dvid.VersionID, error) {
 	return dvid.VersionIDFromBytes(key[start : start+dvid.VersionIDSize]), nil
 }
 
-//Split the key in two parts: the first one call unversioned key,
-//and the second one called versioned key
+// Split the key in two parts: the first one call unversioned key,
+// and the second one called versioned key
 func (ctx *DataContext) SplitKey(tk TKey) (Key, []byte, error) {
 	unvKey := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
 	unvKey = append(unvKey, tk...)
