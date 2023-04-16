@@ -1277,17 +1277,4 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 	if !equalObjectJSON(returnValue, expected2val, ShowBasic) {
 		t.Errorf("Error on second version, key %q: expected %s, got %s\n", testData[1].key, expected2val, string(returnValue))
 	}
-
-	// check GET all-versions
-	expectedString := fmt.Sprintf(`{
-        "%s":[{"a number":3456,"a number_time":"2023-04-10T23:49:39-04:00","baz":"","baz_time":"2023-04-10T23:49:39-04:00","bodyid":1000,"position":[150,250,380],"position_time":"2023-04-10T23:49:39-04:00"},{"a number":3456,"a number_time":"2023-04-10T23:49:39-04:00","baz":"","baz_time":"2023-04-10T23:49:39-04:00","bodyid":1000,"position":[150,250,380],"position_time":"2023-04-10T23:49:39-04:00"},{"bar":"another string","bar_time":"2023-04-10T23:49:39-04:00","baz":[1,2,3],"baz_time":"2023-04-10T23:49:39-04:00","bodyid":2000},{"a list":[23],"a list_time":"2023-04-10T23:49:39-04:00","a number":3456,"a number_time":"2023-04-10T23:49:39-04:00","bodyid":3000},{"baz":"some string","baz_time":"2023-04-10T23:49:39-04:00","bodyid":4000,"position":[151,251,301],"position_time":"2023-04-10T23:49:39-04:00","soma_side":"LHS","soma_side_time":"2023-04-10T23:49:39-04:00"},{"bar":"another string","bar_time":"2023-04-10T23:49:39-04:00","baz":[1,2,3],"baz_time":"2023-04-10T23:49:39-04:00","bodyid":2000},{"a list":[23],"a list_time":"2023-04-10T23:49:39-04:00","a number":3456,"a number_time":"2023-04-10T23:49:39-04:00","bodyid":3000},{"baz":"some string","baz_time":"2023-04-10T23:49:39-04:00","bodyid":4000,"position":[151,251,301],"position_time":"2023-04-10T23:49:39-04:00","soma_side":"LHS","soma_side_time":"2023-04-10T23:49:39-04:00"}],
-        "%s":[{"bar":"another string","bar_time":"2023-04-10T23:49:39-04:00","baz":[1,2,3],"baz_time":"2023-04-10T23:49:39-04:00","bodyid":2000,"data":"new stuff","data_time":"2023-04-10T23:49:39-04:00","data_user":"frank"}],
-        "%s":[{"bodyid":2000, "tombstone":true}]
-        }`, uuid, uuid2, uuid3)
-	getallvReq := fmt.Sprintf("%snode/%s/%s/all-versions", server.WebAPIPath, uuid3, data.DataName())
-	returnValue = server.TestHTTP(t, "GET", getallvReq, nil)
-	if !equalJSONString(string(returnValue), expectedString) {
-		t.Errorf("Got all-versions response (%d bytes):\n%s\nExpected (%d bytes):\n%s\n",
-			len(returnValue), string(returnValue), len(expectedString), expectedString)
-	}
 }

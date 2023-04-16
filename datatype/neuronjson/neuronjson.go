@@ -14,6 +14,8 @@ import (
 	"io/ioutil"
 	"math"
 	"net/http"
+	"os"
+	"path/filepath"
 	reflect "reflect"
 	"regexp"
 	"sort"
@@ -103,7 +105,23 @@ $ dvid node <UUID> <dataname> import-kv <keyvalue instance name>
 
 	The above imports data from the keyvalue instance "myOldKV" into the neuronjson
 	instance "myNeuronJSON".
-	
+
+$ dvid node <UUID> <data name> version-changes <path-to-file> <uuid1> <uuid2> ...
+
+	Writes a JSON object with UUID fields containing a list of all JSON annotations 
+	added/modified in that version as well as a special tombstone annotation for deleted annotations.
+	The UUID specifications are optional and if omitted, all versions with annotation changes are 
+	written to the given file.
+
+	Example:
+	{
+		"5127b50a87a74717b49bc7a91be96f55": [{<annotation1>}, {<annotation2>}, ...],
+		"2a6f741bd11f4caeb619f1c90e3caa13": [{<annotation3>}, {<annotation4>}, ...],
+		"7b73076a02834085a77bee619863dc0b": [{"bodyid":2000, "tombstone":true}]
+	}
+
+	The last UUID had one annotation (bodyid 2000) deleted.
+						
 	------------------
 
 HTTP API (Level 2 REST):
@@ -172,7 +190,7 @@ HEAD <api URL>/node/<UUID>/<data name>/<schema type>
 	data name     Name of keyvalue data instance.
 	schema type	  One of "json_schema" (validation), "schema" (neutu/neu3), "schema_batch" (neutu/neu3)
 				
-	GET  <api URL>/node/<UUID>/<data name>/all[?query-options]
+GET  <api URL>/node/<UUID>/<data name>/all[?query-options]
 
 	Returns a list of all JSON annotations
 
@@ -187,20 +205,6 @@ HEAD <api URL>/node/<UUID>/<data name>/<schema type>
                 Example: ?fields=type,instance
 				Note that the above "show" query string still applies to the fields.
 			
-GET  <api URL>/node/<UUID>/<data name>/all-versions
-
-	Returns a JSON object with UUID fields containing a list of all JSON annotations 
-	added/modified in that version as well as a special tombstone annotation for deleted annotations.
-
-	Example:
-	{
-		"5127b50a87a74717b49bc7a91be96f55": [{<annotation1>}, {<annotation2>}, ...],
-		"2a6f741bd11f4caeb619f1c90e3caa13": [{<annotation3>}, {<annotation4>}, ...],
-		"7b73076a02834085a77bee619863dc0b": [{"bodyid":2000, "tombstone":true}]
-	}
-
-	The last UUID had one annotation (bodyid 2000) deleted.
-						
 GET  <api URL>/node/<UUID>/<data name>/keys
 
 	Returns all keys for this data instance in JSON format:
@@ -1334,6 +1338,164 @@ func (d *Data) putCmd(cmd datastore.Request, reply *datastore.Response) error {
 	return nil
 }
 
+func convertToUUIDs(uuidStrings []string) ([]dvid.UUID, error) {
+	uuids := []dvid.UUID{}
+	for _, uuidStr := range uuidStrings {
+		uuid, _, err := datastore.MatchingUUID(uuidStr)
+		if err != nil {
+			return nil, err
+		}
+		uuids = append(uuids, uuid)
+	}
+	return uuids, nil
+}
+
+// versionChanges writes JSON file for all changes by versions, including tombstones.
+func (d *Data) versionChanges(request datastore.Request, reply *datastore.Response) error {
+	if len(request.Command) < 5 {
+		return fmt.Errorf("path to output file must be specified after 'versionchanges'")
+	}
+	var uuidStr, dataName, cmdStr, filePath string
+	uuidStrings := request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &filePath)
+	uuids, err := convertToUUIDs(uuidStrings)
+	if err != nil {
+		return err
+	}
+
+	go d.writeVersions(uuids, filePath)
+
+	reply.Output = []byte(fmt.Sprintf("Started writing version changes of neuronjson instance %q into %s ...\n",
+		d.DataName(), filePath))
+	return nil
+}
+
+type versionFiles struct {
+	fmap map[dvid.UUID]*os.File
+	path string
+}
+
+func initVersionFiles(path string) (vf *versionFiles, err error) {
+	if _, err = os.Stat(path); os.IsNotExist(err) {
+		dvid.Infof("creating path for version files: %s\n", path)
+		if err = os.MkdirAll(path, 0744); err != nil {
+			err = fmt.Errorf("can't make directory at %s: %v", path, err)
+			return
+		}
+	} else if err != nil {
+		err = fmt.Errorf("error initializing version files directory: %v", err)
+		return
+	}
+	vf = &versionFiles{
+		fmap: make(map[dvid.UUID]*os.File),
+		path: path,
+	}
+	return
+}
+
+func (vf *versionFiles) write(uuid dvid.UUID, data string) (err error) {
+	f, found := vf.fmap[uuid]
+	if !found {
+		path := filepath.Join(vf.path, string(uuid))
+		f, err = os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0755)
+		if err != nil {
+			return
+		}
+		vf.fmap[uuid] = f
+		data = "[" + data
+	} else {
+		data = "," + data
+	}
+	_, err = f.Write([]byte(data))
+	return
+}
+
+func (vf *versionFiles) close() {
+	for uuid, f := range vf.fmap {
+		if _, err := f.Write([]byte("]")); err != nil {
+			dvid.Errorf("unable to close list for uuid %s version file: %v\n", uuid, err)
+		}
+		f.Close()
+	}
+}
+
+// writeVersions creates a file per version with all changes, including tombstones, for that version.
+// Because the data is streamed to appropriate files during full database scan, very little has to
+// be kept in memory.
+func (d *Data) writeVersions(uuids []dvid.UUID, filePath string) error {
+	timedLog := dvid.NewTimeLog()
+	db, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return err
+	}
+
+	vf, err := initVersionFiles(filePath)
+	if err != nil {
+		return err
+	}
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+	ch := make(chan *storage.KeyValue, 100)
+
+	var numAnnotations, numTombstones uint64
+	go func(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
+		for {
+			kv := <-ch
+			if kv == nil {
+				wg.Done()
+				break
+			}
+
+			_, versionID, _, err := storage.DataKeyToLocalIDs(kv.K)
+			if err != nil {
+				dvid.Errorf("GetAllVersions error trying to parse data key %x: %v\n", kv.K, err)
+				continue
+			}
+			uuid, err := datastore.UUIDFromVersion(versionID)
+			if err != nil {
+				dvid.Errorf("GetAllVersions error trying to get UUID from version %d: %v", versionID, err)
+				continue
+			}
+
+			// append to the appropriate uuid in map of annotations by version
+			if kv.K.IsTombstone() {
+				numTombstones++
+				tk, err := storage.TKeyFromKey(kv.K)
+				if err != nil {
+					dvid.Errorf("GetAllVersions error trying to parse tombstone key %x: %v\n", kv.K, err)
+					continue
+				}
+				bodyid, err := DecodeTKey(tk)
+				if err != nil {
+					dvid.Errorf("GetAllVersions error trying to decode tombstone key %x: %v\n", kv.K, err)
+					continue
+				}
+				vf.write(uuid, fmt.Sprintf(`{"bodyid":%s, "tombstone":true}`, bodyid))
+			} else {
+				numAnnotations++
+				vf.write(uuid, string(kv.V))
+			}
+
+			if (numTombstones+numAnnotations)%10000 == 0 {
+				timedLog.Infof("Getting all neuronjson versions, instance %q, %d annotations, %d tombstones",
+					d.DataName(), numAnnotations, numTombstones)
+			}
+		}
+		vf.close()
+	}(wg, ch)
+
+	ctx := storage.NewDataContext(d, 0)
+	begKey := ctx.ConstructKeyVersion(MinAnnotationTKey, 0)
+	endKey := ctx.ConstructKeyVersion(MaxAnnotationTKey, 0) // version doesn't matter due to max prefix
+	if err := db.RawRangeQuery(begKey, endKey, false, ch, nil); err != nil {
+		return err
+	}
+	wg.Wait()
+
+	timedLog.Infof("Finished GetAllVersions for neuronjson %q, %d annotations, %d tombstones",
+		d.DataName(), numAnnotations, numTombstones)
+	return nil
+}
+
 // importKV imports a keyvalue instance into the neuronjson instance.
 func (d *Data) importKV(request datastore.Request, reply *datastore.Response) error {
 	if len(request.Command) < 5 {
@@ -2024,107 +2186,6 @@ func (d *Data) GetKeysInRange(ctx storage.VersionedCtx, keyBeg, keyEnd string) (
 		err = d.processStoreKeysInRange(ctx, begTKey, endTKey, process_func)
 	}
 	return
-}
-
-// GetAllVersions returns all versions of all annotations without any filtering.
-// Since we have to iterate over all database entries, just do a full scan and insert
-// a "neuronjson_uuid" field into the JSON.
-func (d *Data) GetAllVersions(ctx storage.VersionedCtx, w http.ResponseWriter) error {
-	timedLog := dvid.NewTimeLog()
-	db, err := datastore.GetOrderedKeyValueDB(d)
-	if err != nil {
-		return err
-	}
-
-	all := map[dvid.UUID]string{}
-	wg := new(sync.WaitGroup)
-	wg.Add(1)
-	ch := make(chan *storage.KeyValue, 100)
-
-	var numAnnotations, numTombstones uint64
-	go func(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
-		for {
-			kv := <-ch
-			if kv == nil {
-				wg.Done()
-				return
-			}
-
-			_, versionID, _, err := storage.DataKeyToLocalIDs(kv.K)
-			if err != nil {
-				dvid.Infof("GetAllVersions error trying to parse data key %x: %v\n", kv.K, err)
-				continue
-			}
-			uuid, err := datastore.UUIDFromVersion(versionID)
-			if err != nil {
-				dvid.Infof("GetAllVersions error trying to get UUID from version %d: %v", versionID, err)
-				continue
-			}
-
-			// append to the appropriate uuid in map of annotations by version
-			jsonForVersion, found := all[uuid]
-			if !found {
-				jsonForVersion = "["
-			} else {
-				jsonForVersion += ","
-			}
-			if kv.K.IsTombstone() {
-				numTombstones++
-				tk, err := storage.TKeyFromKey(kv.K)
-				if err != nil {
-					dvid.Infof("GetAllVersions error trying to parse tombstone key %x: %v\n", kv.K, err)
-					continue
-				}
-				bodyid, err := DecodeTKey(tk)
-				if err != nil {
-					dvid.Infof("GetAllVersions error trying to decode tombstone key %x: %v\n", kv.K, err)
-					continue
-				}
-				jsonForVersion += fmt.Sprintf(`{"bodyid":%s, "tombstone":true}`, bodyid)
-			} else {
-				numAnnotations++
-				jsonForVersion += string(kv.V)
-			}
-
-			if (numTombstones+numAnnotations)%10000 == 0 {
-				timedLog.Infof("Getting all neuronjson versions, instance %q, processed %d annotations, %d tombstones",
-					d.DataName(), numAnnotations, numTombstones)
-			}
-			all[uuid] = jsonForVersion
-		}
-	}(wg, ch)
-
-	begKey := ctx.ConstructKeyVersion(MinAnnotationTKey, 0)
-	endKey := ctx.ConstructKeyVersion(MaxAnnotationTKey, 0) // version doesn't matter due to max prefix
-	if err := db.RawRangeQuery(begKey, endKey, false, ch, nil); err != nil {
-		return err
-	}
-	wg.Wait()
-
-	// write each version's annotations to the response
-	if _, err := fmt.Fprint(w, "{\n"); err != nil {
-		return err
-	}
-	var bytesSent int64
-	for uuid, jsonForVersion := range all {
-		if bytesSent > 1 {
-			if _, err := fmt.Fprint(w, ",\n"); err != nil {
-				return err
-			}
-		}
-		n, err := fmt.Fprint(w, `"`+string(uuid)+`":`+jsonForVersion+"]")
-		if err != nil {
-			return err
-		}
-		bytesSent += int64(n)
-	}
-	if _, err := fmt.Fprint(w, "\n}"); err != nil {
-		return err
-	}
-
-	timedLog.Infof("Finished GetAllVersions for neuronjson %q, processing %d annotations, %d tombstones, %d bytes",
-		d.DataName(), numAnnotations, numTombstones, bytesSent)
-	return nil
 }
 
 func (d *Data) GetAll(ctx storage.VersionedCtx, fieldMap map[string]struct{}, showFields Fields) (ListNeuronJSON, error) {
@@ -2844,6 +2905,8 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		return d.importKV(request, reply)
 	case "import-filestore":
 		return d.loadFirestoreDB(request, reply)
+	case "version-changes":
+		return d.versionChanges(request, reply)
 	default:
 		return fmt.Errorf("unknown command.  Data %q [%s] does not support %q command",
 			d.DataName(), d.TypeName(), request.TypeCommand())
@@ -2965,14 +3028,6 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, err)
 			return
 		}
-
-	case "all-versions":
-		w.Header().Set("Content-Type", "application/json")
-		if err := d.GetAllVersions(ctx, w); err != nil {
-			server.BadRequest(w, r, err)
-			return
-		}
-		comment = "HTTP GET all-versions"
 
 	case "all":
 		kvList, err := d.GetAll(ctx, fieldMap(r), showFields(r))
