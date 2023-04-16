@@ -106,21 +106,20 @@ $ dvid node <UUID> <dataname> import-kv <keyvalue instance name>
 	The above imports data from the keyvalue instance "myOldKV" into the neuronjson
 	instance "myNeuronJSON".
 
-$ dvid node <UUID> <data name> version-changes <path-to-file> <uuid1> <uuid2> ...
+$ dvid node <UUID> <data name> version-changes <output-dir-path>
 
-	Writes a JSON object with UUID fields containing a list of all JSON annotations 
-	added/modified in that version as well as a special tombstone annotation for deleted annotations.
-	The UUID specifications are optional and if omitted, all versions with annotation changes are 
-	written to the given file.
+	Creates a directory at the given output-dir-path if one doesn't already exist,
+	then writes a file per version that has annotation changes. 
 
-	Example:
-	{
-		"5127b50a87a74717b49bc7a91be96f55": [{<annotation1>}, {<annotation2>}, ...],
-		"2a6f741bd11f4caeb619f1c90e3caa13": [{<annotation3>}, {<annotation4>}, ...],
-		"7b73076a02834085a77bee619863dc0b": [{"bodyid":2000, "tombstone":true}]
-	}
+	The annotation changes are a JSON object containing a list of all JSON annotations 
+	added/modified in that version as well as a special tombstone annotation for deleted 
+	annotations.
 
-	The last UUID had one annotation (bodyid 2000) deleted.
+	Example JSON for each "<uuid>.json" file within output directory:
+
+		[ {<annotation1>}, {<annotation2>}, {"bodyid":2000, "tombstone":true}, ...]
+
+	Note the tombstone example at end where bodyid 2000 annotation was deleted.
 						
 	------------------
 
@@ -1338,31 +1337,15 @@ func (d *Data) putCmd(cmd datastore.Request, reply *datastore.Response) error {
 	return nil
 }
 
-func convertToUUIDs(uuidStrings []string) ([]dvid.UUID, error) {
-	uuids := []dvid.UUID{}
-	for _, uuidStr := range uuidStrings {
-		uuid, _, err := datastore.MatchingUUID(uuidStr)
-		if err != nil {
-			return nil, err
-		}
-		uuids = append(uuids, uuid)
-	}
-	return uuids, nil
-}
-
 // versionChanges writes JSON file for all changes by versions, including tombstones.
 func (d *Data) versionChanges(request datastore.Request, reply *datastore.Response) error {
 	if len(request.Command) < 5 {
 		return fmt.Errorf("path to output file must be specified after 'versionchanges'")
 	}
 	var uuidStr, dataName, cmdStr, filePath string
-	uuidStrings := request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &filePath)
-	uuids, err := convertToUUIDs(uuidStrings)
-	if err != nil {
-		return err
-	}
+	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &filePath)
 
-	go d.writeVersions(uuids, filePath)
+	go d.writeVersions(filePath)
 
 	reply.Output = []byte(fmt.Sprintf("Started writing version changes of neuronjson instance %q into %s ...\n",
 		d.DataName(), filePath))
@@ -1395,7 +1378,7 @@ func initVersionFiles(path string) (vf *versionFiles, err error) {
 func (vf *versionFiles) write(uuid dvid.UUID, data string) (err error) {
 	f, found := vf.fmap[uuid]
 	if !found {
-		path := filepath.Join(vf.path, string(uuid))
+		path := filepath.Join(vf.path, string(uuid)+".json")
 		f, err = os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0755)
 		if err != nil {
 			return
@@ -1421,7 +1404,7 @@ func (vf *versionFiles) close() {
 // writeVersions creates a file per version with all changes, including tombstones, for that version.
 // Because the data is streamed to appropriate files during full database scan, very little has to
 // be kept in memory.
-func (d *Data) writeVersions(uuids []dvid.UUID, filePath string) error {
+func (d *Data) writeVersions(filePath string) error {
 	timedLog := dvid.NewTimeLog()
 	db, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
@@ -1476,8 +1459,8 @@ func (d *Data) writeVersions(uuids []dvid.UUID, filePath string) error {
 			}
 
 			if (numTombstones+numAnnotations)%10000 == 0 {
-				timedLog.Infof("Getting all neuronjson versions, instance %q, %d annotations, %d tombstones",
-					d.DataName(), numAnnotations, numTombstones)
+				timedLog.Infof("Getting all neuronjson versions, instance %q, %d annotations, %d tombstones across %d versions",
+					d.DataName(), numAnnotations, numTombstones, len(vf.fmap))
 			}
 		}
 		vf.close()
@@ -1491,8 +1474,8 @@ func (d *Data) writeVersions(uuids []dvid.UUID, filePath string) error {
 	}
 	wg.Wait()
 
-	timedLog.Infof("Finished GetAllVersions for neuronjson %q, %d annotations, %d tombstones",
-		d.DataName(), numAnnotations, numTombstones)
+	timedLog.Infof("Finished GetAllVersions for neuronjson %q, %d annotations, %d tombstones across %d versions",
+		d.DataName(), numAnnotations, numTombstones, len(vf.fmap))
 	return nil
 }
 
