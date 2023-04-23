@@ -943,7 +943,7 @@ func TestPostBlocksAndAll(t *testing.T) {
 		t.Errorf("Expected 2 blocks in synapse data, got %d\n", retJSON["num kv pairs"])
 	}
 	if retJSON["num empty blocks"] != 0 {
-		t.Errorf("Expected 3 empty blocks, got %d\n", retJSON["num empty blocks"])
+		t.Errorf("Expected 0 empty blocks, got %d\n", retJSON["num empty blocks"])
 	}
 
 	scanURL = fmt.Sprintf("%snode/%s/%s/scan?byCoord=true", server.WebAPIPath, uuid, data.DataName())
@@ -955,7 +955,25 @@ func TestPostBlocksAndAll(t *testing.T) {
 		t.Errorf("Expected 2 blocks in synapse data, got %d\n", retJSON["num kv pairs"])
 	}
 	if retJSON["num empty blocks"] != 0 {
-		t.Errorf("Expected 3 empty blocks, got %d\n", retJSON["num empty blocks"])
+		t.Errorf("Expected 0 empty blocks, got %d\n", retJSON["num empty blocks"])
+	}
+
+	scanURL = fmt.Sprintf("%snode/%s/%s/scan?keysOnly=true", server.WebAPIPath, uuid, data.DataName())
+	ret = server.TestHTTP(t, "GET", scanURL, nil)
+	if err := json.Unmarshal(ret, &retJSON); err != nil {
+		t.Fatalf("Error on unmarshaling /scan response: %v\n", err)
+	}
+	if retJSON["num kv pairs"] != 2 {
+		t.Errorf("Expected 2 blocks in synapse data, got %d\n", retJSON["num kv pairs"])
+	}
+
+	scanURL = fmt.Sprintf("%snode/%s/%s/scan?keysOnly=true&byCoord=true", server.WebAPIPath, uuid, data.DataName())
+	ret = server.TestHTTP(t, "GET", scanURL, nil)
+	if err := json.Unmarshal(ret, &retJSON); err != nil {
+		t.Fatalf("Error on unmarshaling /scan response: %v\n", err)
+	}
+	if retJSON["num kv pairs"] != 2 {
+		t.Errorf("Expected 2 blocks in synapse data, got %d\n", retJSON["num kv pairs"])
 	}
 }
 

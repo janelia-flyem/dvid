@@ -243,7 +243,9 @@ GET <api URL>/node/<UUID>/<data name>/scan[?<options>]
 	GET Query-string Options:
 
 	byCoord    If "true" (not set by default), the scan bounds will be by min/max 
-			   block coord instead of internal constants.
+			    block coord instead of internal constants.
+	keysOnly   If "true" (not set by default), scans using keys only range query
+	            and will not check if value is empty.
 
 
 GET <api URL>/node/<UUID>/<data name>/all-elements
@@ -2500,7 +2502,7 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d, k
 }
 
 // scan does a range query on all blocks of annotations and compiles stats.
-func (d *Data) scan(ctx *datastore.VersionedCtx, w http.ResponseWriter, byCoord bool) error {
+func (d *Data) scan(ctx *datastore.VersionedCtx, w http.ResponseWriter, byCoord, keysOnly bool) error {
 	timedLog := dvid.NewTimeLog()
 
 	store, err := datastore.GetOrderedKeyValueDB(d)
@@ -2515,17 +2517,27 @@ func (d *Data) scan(ctx *datastore.VersionedCtx, w http.ResponseWriter, byCoord 
 		maxTKey = storage.MaxTKey(keyBlock)
 	}
 
-	// d.RLock()
-	// defer d.RUnlock()
-
 	var numKV, numEmpty uint64
-	err = store.ProcessRange(ctx, minTKey, maxTKey, nil, func(chunk *storage.Chunk) error {
-		numKV++
-		if len(chunk.V) == 0 {
-			numEmpty++
+	if keysOnly {
+		keyChan := make(storage.KeyChan)
+		go func() {
+			store.SendKeysInRange(ctx, minTKey, maxTKey, keyChan)
+			close(keyChan)
+		}()
+		for key := range keyChan {
+			if key != nil {
+				numKV++
+			}
 		}
-		return nil
-	})
+	} else {
+		err = store.ProcessRange(ctx, minTKey, maxTKey, nil, func(chunk *storage.Chunk) error {
+			numKV++
+			if len(chunk.V) == 0 {
+				numEmpty++
+			}
+			return nil
+		})
+	}
 	if err != nil {
 		return err
 	}
@@ -2536,8 +2548,9 @@ func (d *Data) scan(ctx *datastore.VersionedCtx, w http.ResponseWriter, byCoord 
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(w, string(jsonBytes))
-	timedLog.Infof("Scanned %d blocks (%d empty) in a /scan request (byCoord = %t)\n", numKV, numEmpty, byCoord)
+	fmt.Fprint(w, string(jsonBytes))
+	timedLog.Infof("Scanned %d blocks (%d empty) in a /scan request (byCoord = %t, keysOnly = %t)\n",
+		numKV, numEmpty, byCoord, keysOnly)
 	return nil
 }
 
@@ -3296,8 +3309,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				return
 			}
 			byCoord := r.URL.Query().Get("byCoord") == "true"
+			keysOnly := r.URL.Query().Get("keysOnly") == "true"
 			w.Header().Set("Content-type", "application/json")
-			if err := d.scan(ctx, w, byCoord); err != nil {
+			if err := d.scan(ctx, w, byCoord, keysOnly); err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
