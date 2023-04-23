@@ -2647,25 +2647,47 @@ func (d *Data) resyncInMemory(ctx *datastore.VersionedCtx, check bool) {
 	}
 	timedLog.Infof("Completed loading %d blocks of annotations (%d elements in %d labels / %d elements in %d tags), errors %d", totBlocks, totLabelE, len(labelE), totTagE, len(tagE), totElemErrs)
 
+	// Get a sorted list of the labels so we can sequentially write them.
+	labels := make([]uint64, len(labelE))
+	i := 0
+	for label := range labelE {
+		labels[i] = label
+		i++
+	}
+	sort.Slice(labels, func(i, j int) bool { return labels[i] < labels[j] })
+
+	if check {
+		d.write_denorms_with_check(ctx, store, labelE, tagE, labels)
+	} else {
+		d.write_denorms(ctx, store, labelE, tagE, labels)
+	}
+
+}
+
+func (d *Data) write_denorms_with_check(ctx *datastore.VersionedCtx, store storage.OrderedKeyValueDB,
+	labelE LabelElements, tagE map[Tag]ElementsNR, labels []uint64) {
+
+	timedLog := dvid.NewTimeLog()
+
+	// Write denormalizations
 	var wg sync.WaitGroup
 	var numErrs, numProcessed, numChanged int64
+	numTags := int64(len(tagE))
 	ch := make(chan denormElems, 1000)
 	for i := 0; i < 100; i++ {
 		wg.Add(1)
 		go func() {
 			for de := range ch {
 				changed := true
-				if check {
-					correctNormalized := de.elems.Normalize()
-					old, err := getElementsNR(ctx, de.tk)
-					if err != nil {
-						atomic.AddInt64(&numErrs, 1)
-						continue
-					}
-					oldNormalized := old.Normalize()
-					if reflect.DeepEqual(correctNormalized, oldNormalized) {
-						changed = false
-					}
+				correctNormalized := de.elems.Normalize()
+				old, err := getElementsNR(ctx, de.tk)
+				if err != nil {
+					atomic.AddInt64(&numErrs, 1)
+					continue
+				}
+				oldNormalized := old.Normalize()
+				if reflect.DeepEqual(correctNormalized, oldNormalized) {
+					changed = false
 				}
 				if changed {
 					atomic.AddInt64(&numChanged, 1)
@@ -2679,17 +2701,18 @@ func (d *Data) resyncInMemory(ctx *datastore.VersionedCtx, check bool) {
 					}
 				}
 				atomic.AddInt64(&numProcessed, 1)
-				if numProcessed%10000 == 0 {
-					timedLog.Infof("Processed %d of %d labels", numProcessed, len(labelE))
+				if numProcessed%100000 == 0 {
+					pct := float64(numProcessed) / float64(len(labels)) * 100.0
+					timedLog.Infof("Processed %6.3f%% of %d labels", pct, len(labels))
 				}
 			}
 			wg.Done()
 		}()
 	}
 
-	dvid.Infof("Writing elements for %d labels, %d tags ...", len(labelE), len(tagE))
-	for label, elems := range labelE {
-		ch <- denormElems{tk: NewLabelTKey(label), elems: elems}
+	dvid.Infof("Writing elements using checks for %d labels, %d tags ...", len(labels), numTags)
+	for _, label := range labels {
+		ch <- denormElems{tk: NewLabelTKey(label), elems: labelE[label]}
 	}
 	for tag, elems := range tagE {
 		tk, err := NewTagTKey(tag)
@@ -2702,7 +2725,68 @@ func (d *Data) resyncInMemory(ctx *datastore.VersionedCtx, check bool) {
 	}
 	close(ch)
 	wg.Wait()
-	timedLog.Infof("Finished denormalization of %d kvs, %d changed (%d errors)", numProcessed, numChanged, numErrs)
+	timedLog.Infof("Finished checked denormalization of %d kvs, %d changed (%d errors)", numProcessed, numChanged, numErrs)
+}
+
+type denormJSON struct {
+	tk        storage.TKey
+	elemsJSON []byte
+}
+
+func (d *Data) write_denorms(ctx *datastore.VersionedCtx, store storage.OrderedKeyValueDB,
+	labelE LabelElements, tagE map[Tag]ElementsNR, labels []uint64) {
+
+	timedLog := dvid.NewTimeLog()
+
+	// Write denormalizations
+	var wg sync.WaitGroup
+	var numErrs, numProcessed int64
+	numTags := int64(len(tagE))
+	ch := make(chan denormJSON, 1000)
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			for de := range ch {
+				if err := store.Put(ctx, de.tk, de.elemsJSON); err != nil {
+					atomic.AddInt64(&numErrs, 1)
+				}
+				atomic.AddInt64(&numProcessed, 1)
+				if numProcessed%100000 == 0 {
+					pct := float64(numProcessed) / float64(len(labels)) * 100.0
+					timedLog.Infof("Processed %6.3f%% of %d labels", pct, len(labels))
+				}
+			}
+			wg.Done()
+		}()
+	}
+
+	dvid.Infof("Writing elements for %d labels, %d tags ...", len(labels), numTags)
+	for _, label := range labels {
+		val, err := json.Marshal(labelE[label])
+		delete(labelE, label) // once copied to JSON, we don't need the original
+		if err != nil {
+			atomic.AddInt64(&numErrs, 1)
+			continue
+		}
+		ch <- denormJSON{tk: NewLabelTKey(label), elemsJSON: val}
+	}
+	for tag, elems := range tagE {
+		tk, err := NewTagTKey(tag)
+		if err != nil {
+			dvid.Errorf("problem with tag key tkey for tag %q: %v\n", tag, err)
+			atomic.AddInt64(&numErrs, 1)
+			continue
+		}
+		val, err := json.Marshal(elems)
+		if err != nil {
+			atomic.AddInt64(&numErrs, 1)
+			continue
+		}
+		ch <- denormJSON{tk: tk, elemsJSON: val}
+	}
+	close(ch)
+	wg.Wait()
+	timedLog.Infof("Finished denormalization of %d kvs, %d changed (%d errors)", numProcessed, numErrs)
 }
 
 // Get all keyBlock kv pairs, forcing the label and tag denormalizations.
