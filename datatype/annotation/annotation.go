@@ -235,6 +235,17 @@ POST <api URL>/node/<UUID>/<data name>/elements[?<options>]
 
 	kafkalog    Set to "off" if you don't want this mutation logged to kafka.
 
+GET <api URL>/node/<UUID>/<data name>/scan[?<options>]
+
+	Scans the annotations stored in blocks and returns simple stats on usage
+	in JSON format.
+
+	GET Query-string Options:
+
+	byCoord    If "true" (not set by default), the scan bounds will be by min/max 
+			   block coord instead of internal constants.
+
+
 GET <api URL>/node/<UUID>/<data name>/all-elements
 
 	Returns all point annotations in the entire data instance, which could exceed data
@@ -2488,6 +2499,48 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d, k
 	return batch.Commit()
 }
 
+// scan does a range query on all blocks of annotations and compiles stats.
+func (d *Data) scan(ctx *datastore.VersionedCtx, w http.ResponseWriter, byCoord bool) error {
+	timedLog := dvid.NewTimeLog()
+
+	store, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return err
+	}
+	var minTKey, maxTKey storage.TKey
+	if byCoord {
+		minTKey, maxTKey = BlockTKeyRange()
+	} else {
+		minTKey = storage.MinTKey(keyBlock)
+		maxTKey = storage.MaxTKey(keyBlock)
+	}
+
+	// d.RLock()
+	// defer d.RUnlock()
+
+	var numKV, numEmpty uint64
+	err = store.ProcessRange(ctx, minTKey, maxTKey, nil, func(chunk *storage.Chunk) error {
+		numKV++
+		if len(chunk.V) == 0 {
+			numEmpty++
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	jsonBytes, err := json.Marshal(struct {
+		NumKV    uint64 `json:"num kv pairs"`
+		NumEmpty uint64 `json:"num empty blocks"`
+	}{numKV, numEmpty})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(w, string(jsonBytes))
+	timedLog.Infof("Scanned %d blocks (%d empty) in a /scan request (byCoord = %t)\n", numKV, numEmpty, byCoord)
+	return nil
+}
+
 // RecreateDenormalizations will recreate label and tag denormalizations from
 // the block-based elements.
 func (d *Data) RecreateDenormalizations(ctx *datastore.VersionedCtx, inMemory, check bool) {
@@ -2710,7 +2763,7 @@ func (d *Data) write_denorms_with_check(ctx *datastore.VersionedCtx, store stora
 		}()
 	}
 
-	dvid.Infof("Writing elements using checks for %d labels, %d tags ...", len(labels), numTags)
+	dvid.Infof("Writing elements using checks for %d labels, %d tags ...\n", len(labels), numTags)
 	for _, label := range labels {
 		ch <- denormElems{tk: NewLabelTKey(label), elems: labelE[label]}
 	}
@@ -2760,7 +2813,7 @@ func (d *Data) write_denorms(ctx *datastore.VersionedCtx, store storage.OrderedK
 		}()
 	}
 
-	dvid.Infof("Writing elements for %d labels, %d tags ...", len(labels), numTags)
+	dvid.Infof("Writing elements for %d labels, %d tags ...\n", len(labels), numTags)
 	for _, label := range labels {
 		val, err := json.Marshal(labelE[label])
 		delete(labelE, label) // once copied to JSON, we don't need the original
@@ -2786,7 +2839,7 @@ func (d *Data) write_denorms(ctx *datastore.VersionedCtx, store storage.OrderedK
 	}
 	close(ch)
 	wg.Wait()
-	timedLog.Infof("Finished denormalization of %d kvs, %d changed (%d errors)", numProcessed, numErrs)
+	timedLog.Infof("Finished denormalization of %d kvs (%d errors)", numProcessed, numErrs)
 }
 
 // Get all keyBlock kv pairs, forcing the label and tag denormalizations.
@@ -3218,7 +3271,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		switch action {
 		case "get":
 			// GET <api URL>/node/<UUID>/<data name>/all-elements
-			if len(parts) >= 6 {
+			if len(parts) > 4 {
 				server.BadRequest(w, r, "Do not expect additional parameters after 'all-elements' in GET request")
 				return
 			}
@@ -3231,6 +3284,27 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 		default:
 			server.BadRequest(w, r, "Only GET is available on 'all-elements' endpoint.")
+			return
+		}
+
+	case "scan":
+		switch action {
+		case "get":
+			// GET <api URL>/node/<UUID>/<data name>/scan
+			if len(parts) > 4 {
+				server.BadRequest(w, r, "Do not expect additional parameters after 'scan' in GET request")
+				return
+			}
+			byCoord := r.URL.Query().Get("byCoord") == "true"
+			w.Header().Set("Content-type", "application/json")
+			if err := d.scan(ctx, w, byCoord); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			timedLog.Infof("HTTP %s: scan annotations %q (%s)", r.Method, d.DataName(), r.URL)
+
+		default:
+			server.BadRequest(w, r, "Only GET is available on 'scan' endpoint.")
 			return
 		}
 

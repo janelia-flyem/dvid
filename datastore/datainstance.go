@@ -85,6 +85,11 @@ func NewVersionedCtxMasterLeaf(data dvid.Data) (*VersionedCtx, error) {
 // VersionedKeyValue returns the key-value pair corresponding to this key's version
 // given a list of key-value pairs across many versions.  If no suitable key-value
 // pair is found or a tombstone is encounterd closest to version, nil is returned.
+//
+// TODO: This function doesn't rely on the values being pre-sorted by version because
+// any storage backend could be used. If we want to optimize this, we could require
+// backends to return pre-sorted kv pairs. However migrating to DAGStore as sole
+// backend would make this function obsolete.
 func (vctx *VersionedCtx) VersionedKeyValue(values []*storage.KeyValue) (*storage.KeyValue, error) {
 	// Set up a map[VersionID]KeyValue
 	versionMap := make(kvVersions, len(values))
