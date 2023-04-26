@@ -1,3 +1,4 @@
+//go:build badger
 // +build badger
 
 package badger
@@ -640,7 +641,7 @@ func (db *BadgerDB) GetRange(ctx storage.Context, kStart, kEnd storage.TKey) ([]
 		if err != nil {
 			return nil, err
 		}
-		tkv := storage.TKeyValue{tk, result.KeyValue.V}
+		tkv := storage.TKeyValue{K: tk, V: result.KeyValue.V}
 		values = append(values, &tkv)
 	}
 }
@@ -684,8 +685,8 @@ func (db *BadgerDB) ProcessRange(ctx storage.Context, kStart, kEnd storage.TKey,
 		if err != nil {
 			return err
 		}
-		tkv := storage.TKeyValue{tk, result.KeyValue.V}
-		chunk := &storage.Chunk{op, &tkv}
+		tkv := storage.TKeyValue{K: tk, V: result.KeyValue.V}
+		chunk := &storage.Chunk{ChunkOp: op, TKeyValue: &tkv}
 		if err := f(chunk); err != nil {
 			return err
 		}
@@ -971,10 +972,15 @@ func (db *BadgerDB) DeleteAll(ctx storage.Context) error {
 					return fmt.Errorf("Error on flush of DeleteAll at key-value pair %d: %v", numKV, err)
 				}
 				wb = db.bdp.NewWriteBatch()
-				defer wb.Cancel()
 				dvid.Debugf("Deleted %d key-value pairs in ongoing DELETE ALL for %s.\n", numKV+1, vctx)
 			}
 			numKV++
+		}
+		if numKV%BATCH_SIZE != 0 {
+			if err := wb.Flush(); err != nil {
+				dvid.Criticalf("Error on last flush of DeleteAll: %v\n", err)
+				return fmt.Errorf("Error on last flush of DeleteAll: %v", err)
+			}
 		}
 		return nil
 	})
@@ -982,12 +988,6 @@ func (db *BadgerDB) DeleteAll(ctx storage.Context) error {
 		return err
 	}
 
-	if numKV%BATCH_SIZE != 0 {
-		if err := wb.Flush(); err != nil {
-			dvid.Criticalf("Error on last flush of DeleteAll: %v\n", err)
-			return fmt.Errorf("Error on last flush of DeleteAll: %v", err)
-		}
-	}
 	dvid.Debugf("Deleted %d key-value pairs via DELETE ALL for %s.\n", numKV, vctx)
 	return nil
 }
