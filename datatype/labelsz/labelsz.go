@@ -1,5 +1,5 @@
 /*
-	Package labelsz supports ranking labels by # annotations of each type.
+Package labelsz supports ranking labels by # annotations of each type.
 */
 package labelsz
 
@@ -915,6 +915,10 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 		binary.LittleEndian.PutUint32(buf, allsyn)
 		store.Put(ctx, NewTypeLabelTKey(AllSyn, label), buf)
 		store.Put(ctx, NewTypeSizeLabelTKey(AllSyn, allsyn, label), nil)
+
+		if totLabels%10000 == 0 {
+			timedLog.Infof("Reloading labelsz %q: %d labels done...\n", d.DataName(), totLabels)
+		}
 	})
 	if err != nil {
 		dvid.Errorf("Error in reload of labelsz %q: %v\n", d.DataName(), err)
