@@ -298,7 +298,11 @@ func DoServe(cmd dvid.Command) error {
 	if err != nil {
 		return err
 	}
-	initMetadata, err := storage.Initialize(cmd.Settings(), backend)
+	datatypes := make(map[dvid.TypeString]struct{})
+	for _, t := range datastore.Compiled {
+		datatypes[t.GetTypeName()] = struct{}{}
+	}
+	initMetadata, err := storage.Initialize(cmd.Settings(), backend, datatypes)
 	if err != nil {
 		return fmt.Errorf("unable to initialize storage: %v", err)
 	}

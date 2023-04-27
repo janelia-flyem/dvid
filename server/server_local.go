@@ -527,8 +527,8 @@ func GetBackend() (backend *storage.Backend, err error) {
 	}
 
 	// Create the backend mapping.
-	backend.KVStore = make(storage.DataMap)
-	backend.LogStore = make(storage.DataMap)
+	backend.KVAssign = make(storage.DataMap)
+	backend.LogAssign = make(storage.DataMap)
 	for k, v := range tc.Backend {
 		// lookup store config
 		_, found := backend.Stores[v.Store]
@@ -537,13 +537,13 @@ func GetBackend() (backend *storage.Backend, err error) {
 			return
 		}
 		spec := dvid.DataSpecifier(strings.Trim(string(k), "\""))
-		backend.KVStore[spec] = v.Store
+		backend.KVAssign[spec] = v.Store
 		dvid.Infof("backend.KVStore[%s] = %s\n", spec, v.Store)
 		if v.Log != "" {
-			backend.LogStore[spec] = v.Log
+			backend.LogAssign[spec] = v.Log
 		}
 	}
-	defaultStore, found := backend.KVStore["default"]
+	defaultStore, found := backend.KVAssign["default"]
 	if found {
 		backend.DefaultKVDB = defaultStore
 	} else {
@@ -553,12 +553,12 @@ func GetBackend() (backend *storage.Backend, err error) {
 		}
 	}
 
-	defaultLog, found := backend.LogStore["default"]
+	defaultLog, found := backend.LogAssign["default"]
 	if found {
 		backend.DefaultLog = defaultLog
 	}
 
-	defaultMetadataName, found := backend.KVStore["metadata"]
+	defaultMetadataName, found := backend.KVAssign["metadata"]
 	if found {
 		backend.Metadata = defaultMetadataName
 	} else {

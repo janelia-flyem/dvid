@@ -50,7 +50,11 @@ func openStores(create bool, datamap ...DataStorageMap) {
 			log.Fatal(err)
 		}
 	}
-	initMetadata, err := storage.Initialize(dvid.Config{}, testStore.backend)
+	datatypes := make(map[dvid.TypeString]struct{})
+	for _, t := range Compiled {
+		datatypes[t.GetTypeName()] = struct{}{}
+	}
+	initMetadata, err := storage.Initialize(dvid.Config{}, testStore.backend, datatypes)
 	if err != nil {
 		log.Fatalf("Can't initialize test datastore: %v\n", err)
 	}

@@ -26,8 +26,8 @@ type Backend struct {
 	DefaultLog  Alias // The log that should be used by default.
 	DefaultKVDB Alias // The key-value datastore that should be used by default.
 	Stores      map[Alias]dvid.StoreConfig
-	KVStore     DataMap
-	LogStore    DataMap
+	KVAssign    DataMap
+	LogAssign   DataMap
 	Groupcache  GroupcacheConfig
 }
 
@@ -43,7 +43,7 @@ func (b Backend) StoreConfig(d dvid.DataSpecifier) (config dvid.StoreConfig, fou
 		config, found = b.Stores[b.Metadata]
 		return
 	}
-	alias, ok := b.KVStore[d]
+	alias, ok := b.KVAssign[d]
 	if !ok {
 		return
 	}
@@ -154,8 +154,8 @@ func GetTestableBackend(kvMap, logMap DataMap) (map[Alias]TestableEngine, *Backe
 			}
 		}
 	}
-	backend.KVStore = kvMap
-	backend.LogStore = logMap
+	backend.KVAssign = kvMap
+	backend.LogAssign = logMap
 	if !found {
 		return nil, nil, fmt.Errorf("could not find any testable storage configuration")
 	}

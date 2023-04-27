@@ -11,21 +11,19 @@ import (
 )
 
 var manager managerT
+var datatypes map[dvid.TypeString]struct{} // set of all compiled datatypes
 
 type managerT struct {
 	setup bool
 
-	// cache the default stores at both global and datatype level
-	// defaultKV     dvid.Store // could be non-ordered kv store
-	// defaultLog    dvid.Store
 	metadataStore dvid.Store
 
-	stores   map[Alias]dvid.Store
-	storeMap storeAssignment
-	logMap   storeAssignment
+	stores map[Alias]dvid.Store
 
-	// groupcache support
-	gcache groupcacheT
+	storeMap storeAssignment // database assignments for data instances
+	logMap   storeAssignment // log assignments for data instances
+
+	gcache groupcacheT // groupcache support
 }
 
 // mappings of data instances to stores using various criteria
@@ -45,16 +43,22 @@ func (s *storeAssignment) cache(store dvid.Store, dataspec dvid.DataSpecifier) e
 	instanceParts := strings.Split(spec, ":")
 	tagParts := strings.Split(spec, "=")
 	switch {
-	case spec == string(dataspec): // no quotes, so must be a datatype
-		s.datatype[dvid.TypeString(spec)] = store
-	case len(instanceParts) == 1 && len(tagParts) == 1: // quotes but no colon or equals
-		s.instance[dvid.DataSpecifier(spec)] = store
 	case len(instanceParts) == 2:
 		dataid := dvid.GetDataSpecifier(dvid.InstanceName(instanceParts[0]), dvid.UUID(instanceParts[1]))
 		s.instance[dataid] = store
 	case len(tagParts) == 2:
 		dataid := dvid.GetDataSpecifierByTag(tagParts[0], tagParts[1])
 		s.instance[dataid] = store
+	case spec == string(dataspec): // no quotes, so must be a datatype
+		s.datatype[dvid.TypeString(spec)] = store
+	case len(instanceParts) == 1 && len(tagParts) == 1: // either datatype or data UUID
+		for t := range datatypes {
+			if t == dvid.TypeString(spec) {
+				s.datatype[dvid.TypeString(spec)] = store
+				return nil
+			}
+		}
+		s.instance[dvid.DataSpecifier(spec)] = store // Assume must be DataUUID
 	default:
 		return fmt.Errorf("bad backend data specification: %s", dataspec)
 	}
@@ -137,7 +141,9 @@ func getManagerStore(ds DataSpec, logMap bool) (store dvid.Store, err error) {
 // true if the metadata store is newly created and needs initialization.
 // The map of store configurations should be keyed by either a datatype name,
 // "default", or "metadata".
-func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, err error) {
+func Initialize(cmdline dvid.Config, backend *Backend, compiledTypes map[dvid.TypeString]struct{}) (createdMetadata bool, err error) {
+	datatypes = compiledTypes
+
 	// Allocate maps for stores.
 	manager.stores = make(map[Alias]dvid.Store, len(backend.Stores))
 	manager.storeMap.init()
@@ -201,7 +207,7 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 	}
 
 	// Make all data instance, tag-specific, or datatype-specific store assignments.
-	for dataspec, alias := range backend.KVStore {
+	for dataspec, alias := range backend.KVAssign {
 		if dataspec == "default" || dataspec == "metadata" {
 			continue
 		}
@@ -214,7 +220,7 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 			return
 		}
 	}
-	for dataspec, alias := range backend.LogStore {
+	for dataspec, alias := range backend.LogAssign {
 		if dataspec == "default" {
 			continue
 		}
