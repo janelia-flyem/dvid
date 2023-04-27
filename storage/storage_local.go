@@ -49,8 +49,6 @@ func (s *storeAssignment) cache(store dvid.Store, dataspec dvid.DataSpecifier) e
 	case len(tagParts) == 2:
 		dataid := dvid.GetDataSpecifierByTag(tagParts[0], tagParts[1])
 		s.instance[dataid] = store
-	case spec == string(dataspec): // no quotes, so must be a datatype
-		s.datatype[dvid.TypeString(spec)] = store
 	case len(instanceParts) == 1 && len(tagParts) == 1: // either datatype or data UUID
 		for t := range datatypes {
 			if t == dvid.TypeString(spec) {
