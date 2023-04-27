@@ -56,7 +56,6 @@ type Requirements struct {
 	BulkIniter bool
 	BulkWriter bool
 	Batcher    bool
-	GraphDB    bool
 }
 
 // Engine is a storage engine that can create a storage instance, dvid.Store, which could be

@@ -212,16 +212,6 @@ func (vctx *VersionedCtx) GetOrderedKeyValueDB() (storage.OrderedKeyValueDB, err
 	return GetOrderedKeyValueDB(d)
 }
 
-// GetGraphDB returns a graph store associated with this context or an error
-// if one is not available.
-func (vctx *VersionedCtx) GetGraphDB() (storage.GraphDB, error) {
-	d := vctx.DataContext.Data()
-	if d == nil {
-		return nil, fmt.Errorf("invalid data %v in GetGraphDB", d)
-	}
-	return GetGraphDB(d)
-}
-
 // DataService is an interface for operations on an instance of a supported datatype.
 type DataService interface {
 	dvid.Data
@@ -593,11 +583,11 @@ func NewDataService(t TypeService, rootUUID dvid.UUID, id dvid.InstanceID, name 
 
 	// Cache assigned store and/or log.
 	var err error
-	data.kvStore, err = storage.GetAssignedStore(name, rootUUID, data.tags, t.GetTypeName())
+	data.kvStore, err = storage.GetAssignedStore(data)
 	if err != nil {
 		return nil, err
 	}
-	data.logStore, err = storage.GetAssignedLog(name, rootUUID, data.tags, t.GetTypeName())
+	data.logStore, err = storage.GetAssignedLog(data)
 	if err != nil {
 		return nil, err
 	}
@@ -1113,24 +1103,6 @@ func GetKeyValueBatcher(d dvid.Data) (db storage.KeyValueBatcher, err error) {
 	db, ok = store.(storage.KeyValueBatcher)
 	if !ok {
 		return nil, fmt.Errorf("Store assigned to data %q (%s) is not able to batch key-value ops", d.DataName(), store)
-	}
-	return
-}
-
-// GetGraphDB returns a graph store assigned to this data instance.
-// If the store is nil or not available, an error is returned.
-func GetGraphDB(d dvid.Data) (db storage.GraphDB, err error) {
-	store, err := d.KVStore()
-	if err != nil {
-		return nil, err
-	}
-	if store == nil {
-		return nil, ErrInvalidStore
-	}
-	var ok bool
-	db, ok = store.(storage.GraphDB)
-	if !ok {
-		return nil, fmt.Errorf("Store assigned to data %q (%s) is not a graph db", d.DataName(), store)
 	}
 	return
 }

@@ -1,3 +1,4 @@
+//go:build !clustered && !gcloud
 // +build !clustered,!gcloud
 
 /*
@@ -345,9 +346,37 @@ type repoTxMsg struct {
 type DataTxInit struct {
 	Session    rpc.SessionID
 	DataName   dvid.InstanceName
+	DataUUID   dvid.UUID
+	RootUUID   dvid.UUID
 	TypeName   dvid.TypeString
 	InstanceID dvid.InstanceID
 	Tags       map[string]string
+}
+
+// ---- fulfills storage.DataSpec interface ----
+
+type DataSpec struct {
+	tx *DataTxInit
+}
+
+func (d *DataSpec) DataName() dvid.InstanceName {
+	return d.tx.DataName
+}
+
+func (d *DataSpec) DataUUID() dvid.UUID {
+	return d.tx.DataUUID
+}
+
+func (d *DataSpec) RootUUID() dvid.UUID {
+	return d.tx.RootUUID
+}
+
+func (d *DataSpec) Tags() map[string]string {
+	return d.tx.Tags
+}
+
+func (d *DataSpec) TypeName() dvid.TypeString {
+	return d.tx.TypeName
 }
 
 // KVMessage packages a key-value pair for transmission to a remote DVID as well as control
@@ -494,7 +523,7 @@ func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 		}
 
 		// check if we have an assigned store for this data instance.
-		store, err := storage.GetAssignedStore(d.DataName(), d.RootUUID(), d.Tags(), d.TypeName())
+		store, err := storage.GetAssignedStore(d)
 		if err != nil {
 			return nil, err
 		}
@@ -568,7 +597,10 @@ func (p *pusher) startData(d *DataTxInit) error {
 	p.dname = d.DataName
 
 	// Get the store associated with this data instance.
-	store, err := storage.GetAssignedStore(d.DataName, p.uuid, d.Tags, d.TypeName)
+	ds := &DataSpec{
+		tx: d,
+	}
+	store, err := storage.GetAssignedStore(ds)
 	if err != nil {
 		return err
 	}

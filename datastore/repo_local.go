@@ -1,3 +1,4 @@
+//go:build !clustered && !gcloud
 // +build !clustered,!gcloud
 
 /*
@@ -593,13 +594,12 @@ func (m *repoManager) loadVersion0() error {
 			m.dataByUUID[dataservice.DataUUID()] = dataservice
 
 			// Cache the assigned store and log
-			typename := dataservice.TypeName()
-			store, err := storage.GetAssignedStore(dataname, dataservice.RootUUID(), dataservice.Tags(), typename)
+			store, err := storage.GetAssignedStore(dataservice)
 			if err != nil {
 				return err
 			}
 			dataservice.SetKVStore(store)
-			lstore, err := storage.GetAssignedLog(dataname, dataservice.RootUUID(), dataservice.Tags(), typename)
+			lstore, err := storage.GetAssignedLog(dataservice)
 			if err != nil {
 				return err
 			}
@@ -928,7 +928,9 @@ func (m *repoManager) versionFromUUID(uuid dvid.UUID) (dvid.VersionID, error) {
 // case-sensitive branch name of the repo with the given UUID, and the UUID returned
 // will be the HEAD or uncommitted leaf of that branch.
 // Example 1: "3FA22:master" returns the leaf UUID of branch "master" for the repo containing
-//  the 3FA22 UUID.
+//
+//	the 3FA22 UUID.
+//
 // Example 2: ":master" returns the leaf UUID of branch "master" if there is only one repo.
 func (m *repoManager) matchingUUID(str string) (dvid.UUID, dvid.VersionID, error) {
 	splits := strings.Split(str, ":")

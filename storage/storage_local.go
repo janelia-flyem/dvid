@@ -1,3 +1,4 @@
+//go:build !clustered && !gcloud
 // +build !clustered,!gcloud
 
 package storage
@@ -15,25 +16,121 @@ type managerT struct {
 	setup bool
 
 	// cache the default stores at both global and datatype level
-	defaultKV     dvid.Store // could be non-ordered kv store
-	defaultLog    dvid.Store
+	// defaultKV     dvid.Store // could be non-ordered kv store
+	// defaultLog    dvid.Store
 	metadataStore dvid.Store
 
-	stores        map[Alias]dvid.Store
-	instanceStore map[dvid.DataSpecifier]dvid.Store
-	datatypeStore map[dvid.TypeString]dvid.Store
-
-	instanceLog map[dvid.DataSpecifier]dvid.Store
-	datatypeLog map[dvid.TypeString]dvid.Store
-
-	// Cached type-asserted interfaces
-	graphEngine Engine
-	graphDB     GraphDB
-	graphSetter GraphSetter
-	graphGetter GraphGetter
+	stores   map[Alias]dvid.Store
+	storeMap storeAssignment
+	logMap   storeAssignment
 
 	// groupcache support
 	gcache groupcacheT
+}
+
+// mappings of data instances to stores using various criteria
+type storeAssignment struct {
+	defaultStore dvid.Store
+	instance     map[dvid.DataSpecifier]dvid.Store
+	datatype     map[dvid.TypeString]dvid.Store
+}
+
+func (s *storeAssignment) init() {
+	s.instance = make(map[dvid.DataSpecifier]dvid.Store)
+	s.datatype = make(map[dvid.TypeString]dvid.Store)
+}
+
+func (s *storeAssignment) cache(store dvid.Store, dataspec dvid.DataSpecifier) error {
+	spec := strings.Trim(string(dataspec), "\"")
+	instanceParts := strings.Split(spec, ":")
+	tagParts := strings.Split(spec, "=")
+	switch {
+	case spec == string(dataspec): // no quotes, so must be a datatype
+		s.datatype[dvid.TypeString(spec)] = store
+	case len(instanceParts) == 1 && len(tagParts) == 1: // quotes but no colon or equals
+		s.instance[dvid.DataSpecifier(spec)] = store
+	case len(instanceParts) == 2:
+		dataid := dvid.GetDataSpecifier(dvid.InstanceName(instanceParts[0]), dvid.UUID(instanceParts[1]))
+		s.instance[dataid] = store
+	case len(tagParts) == 2:
+		dataid := dvid.GetDataSpecifierByTag(tagParts[0], tagParts[1])
+		s.instance[dataid] = store
+	default:
+		return fmt.Errorf("bad backend data specification: %s", dataspec)
+	}
+	return nil
+}
+
+func getAssignedStore(assignMap storeAssignment, ds DataSpec) (store dvid.Store, spec dvid.DataSpecifier) {
+	var found bool
+
+	// Assignment priority:
+	// 1. DataUUID
+	spec = dvid.DataSpecifier(ds.DataUUID())
+	store, found = assignMap.instance[spec]
+	if found {
+		dvid.Infof("Data %q assigned to store %q by DataUUID (%s).\n",
+			ds.DataName(), store, ds.DataUUID())
+		return
+	}
+
+	// 2. InstanceName, VersionUUID
+	spec = dvid.GetDataSpecifier(ds.DataName(), ds.RootUUID())
+	store, found = assignMap.instance[spec]
+	if found {
+		dvid.Infof("Data %q assigned to store %q by InstanceName (%s), RootUUID (%s).\n",
+			ds.DataName(), store, ds.DataName(), ds.RootUUID())
+		return
+	}
+
+	// 3. Tags
+	for tag, value := range ds.Tags() {
+		spec = dvid.GetDataSpecifierByTag(tag, value)
+		store, found = assignMap.instance[spec]
+		if found {
+			dvid.Infof("Data %q assigned to store %q by tag %q (%s).\n",
+				ds.DataName(), store, tag, value)
+			return
+		}
+	}
+
+	// 4. TypeName
+	spec = dvid.DataSpecifier(ds.TypeName())
+	store, found = assignMap.datatype[ds.TypeName()]
+	if found {
+		dvid.Infof("Data %q assigned to store %q by TypeName (%s).\n",
+			ds.DataName(), store, ds.TypeName())
+		return
+	}
+
+	// 5. Default store
+	return assignMap.defaultStore, ""
+}
+
+func getManagerStore(ds DataSpec, logMap bool) (store dvid.Store, err error) {
+	if !manager.setup {
+		return nil, fmt.Errorf("can't get assigned store before storage manager is setup")
+	}
+
+	var spec dvid.DataSpecifier
+	if logMap {
+		store, spec = getAssignedStore(manager.logMap, ds)
+	} else {
+		store, spec = getAssignedStore(manager.storeMap, ds)
+
+		// See if this is using caching and if so, establish a wrapper around it.
+		if _, supported := manager.gcache.supported[spec]; supported {
+			store, err = wrapGroupcache(store, manager.gcache.cache)
+			if err != nil {
+				dvid.Errorf("Unable to wrap groupcache around store %s for data instance %q (%s): %v\n",
+					store, ds.DataName(), ds.DataUUID(), err)
+			} else {
+				dvid.Infof("Returning groupcache-wrapped store %s for data instance %q (%s)\n",
+					store, ds.DataName(), ds.DataUUID())
+			}
+		}
+	}
+	return
 }
 
 // Initialize the storage systems.  Returns a bool + error where the bool is
@@ -41,8 +138,12 @@ type managerT struct {
 // The map of store configurations should be keyed by either a datatype name,
 // "default", or "metadata".
 func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, err error) {
-	// Open all the backend stores
+	// Allocate maps for stores.
 	manager.stores = make(map[Alias]dvid.Store, len(backend.Stores))
+	manager.storeMap.init()
+	manager.logMap.init()
+
+	// Open all the backend stores
 	var gotDefault, gotMetadata, createdDefault, lastCreated bool
 	var lastStore dvid.Store
 	for alias, dbconfig := range backend.Stores {
@@ -65,10 +166,10 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 		if alias == backend.DefaultKVDB {
 			gotDefault = true
 			createdDefault = created
-			manager.defaultKV = store
+			manager.storeMap.defaultStore = store
 		}
 		if alias == backend.DefaultLog {
-			manager.defaultLog = store
+			manager.logMap.defaultStore = store
 		}
 		manager.stores[alias] = store
 		lastStore = store
@@ -79,18 +180,18 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 	// at configuration loading, but here as well as double check.
 	if !gotDefault {
 		if len(backend.Stores) == 1 {
-			manager.defaultKV = lastStore
+			manager.storeMap.defaultStore = lastStore
 			createdDefault = lastCreated
 		} else {
 			return false, fmt.Errorf("either backend.default or a single store must be set in configuration TOML file")
 		}
 	}
 	if !gotMetadata {
-		manager.metadataStore = manager.defaultKV
+		manager.metadataStore = manager.storeMap.defaultStore
 		createdMetadata = createdDefault
 	}
-	dvid.TimeInfof("Default kv store: %s\n", manager.defaultKV)
-	dvid.TimeInfof("Default log store: %s\n", manager.defaultLog)
+	dvid.TimeInfof("Default kv store: %s\n", manager.storeMap.defaultStore)
+	dvid.TimeInfof("Default log store: %s\n", manager.logMap.defaultStore)
 	dvid.TimeInfof("Metadata store: %s\n", manager.metadataStore)
 
 	// Setup the groupcache if specified.
@@ -100,8 +201,6 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 	}
 
 	// Make all data instance, tag-specific, or datatype-specific store assignments.
-	manager.instanceStore = make(map[dvid.DataSpecifier]dvid.Store)
-	manager.datatypeStore = make(map[dvid.TypeString]dvid.Store)
 	for dataspec, alias := range backend.KVStore {
 		if dataspec == "default" || dataspec == "metadata" {
 			continue
@@ -111,26 +210,10 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 			err = fmt.Errorf("bad backend store alias: %q -> %q", dataspec, alias)
 			return
 		}
-		// Cache the store for mapped tag, datatype or data instance.
-		s := strings.Trim(string(dataspec), "\"")
-		instanceParts := strings.Split(s, ":")
-		tagParts := strings.Split(s, "=")
-		switch {
-		case len(instanceParts) == 1 && len(tagParts) == 1:
-			manager.datatypeStore[dvid.TypeString(s)] = store
-		case len(instanceParts) == 2:
-			dataid := dvid.GetDataSpecifier(dvid.InstanceName(instanceParts[0]), dvid.UUID(instanceParts[1]))
-			manager.instanceStore[dataid] = store
-		case len(tagParts) == 2:
-			dataid := dvid.GetDataSpecifierByTag(tagParts[0], tagParts[1])
-			manager.instanceStore[dataid] = store
-		default:
-			err = fmt.Errorf("bad backend data specification: %s", dataspec)
+		if err = manager.storeMap.cache(store, dataspec); err != nil {
 			return
 		}
 	}
-	manager.instanceLog = make(map[dvid.DataSpecifier]dvid.Store)
-	manager.datatypeLog = make(map[dvid.TypeString]dvid.Store)
 	for dataspec, alias := range backend.LogStore {
 		if dataspec == "default" {
 			continue
@@ -140,50 +223,11 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 			err = fmt.Errorf("bad backend store alias: %q -> %q", dataspec, alias)
 			return
 		}
-
-		// Cache the store for mapped datatype or data instance.
-		name := strings.Trim(string(dataspec), "\"")
-		parts := strings.Split(name, ":")
-		switch len(parts) {
-		case 1:
-			manager.datatypeLog[dvid.TypeString(name)] = store
-		case 2:
-			dataid := dvid.GetDataSpecifier(dvid.InstanceName(parts[0]), dvid.UUID(parts[1]))
-			manager.instanceLog[dataid] = store
-		default:
-			err = fmt.Errorf("bad backend data specification: %s", dataspec)
+		if err = manager.logMap.cache(store, dataspec); err != nil {
 			return
 		}
 	}
 	manager.setup = true
-
-	// Setup the graph store
-	var store dvid.Store
-	store, err = assignedStoreByType("labelgraph")
-	if err != nil {
-		return
-	}
-	var ok bool
-	kvdb, ok := store.(OrderedKeyValueDB)
-	if !ok {
-		dvid.Errorf("assigned labelgraph store %q isn't ordered kv db, labelgraph not available\n", store)
-		return
-	}
-	manager.graphDB, err = NewGraphStore(kvdb)
-	if err != nil {
-		dvid.Errorf("cannot get new graph store (%v), labelgraph not available\n", err)
-		return
-	}
-	manager.graphSetter, ok = manager.graphDB.(GraphSetter)
-	if !ok {
-		dvid.Errorf("Database %q cannot support a graph setter, so labelgraph not available\n", kvdb)
-		return
-	}
-	manager.graphGetter, ok = manager.graphDB.(GraphGetter)
-	if !ok {
-		dvid.Errorf("Database %q cannot support a graph getter, so labelgraph not available\n", kvdb)
-		return
-	}
 	return
 }
 
@@ -198,20 +242,20 @@ func DefaultKVStore() (dvid.Store, error) {
 	if !manager.setup {
 		return nil, fmt.Errorf("Storage manager not initialized before requesting default kv store")
 	}
-	if manager.defaultKV == nil {
+	if manager.storeMap.defaultStore == nil {
 		return nil, fmt.Errorf("No default kv store has been initialized")
 	}
-	return manager.defaultKV, nil
+	return manager.storeMap.defaultStore, nil
 }
 
 func DefaultLogStore() (dvid.Store, error) {
 	if !manager.setup {
 		return nil, fmt.Errorf("Storage manager not initialized before requesting default log store")
 	}
-	if manager.defaultLog == nil {
+	if manager.logMap.defaultStore == nil {
 		return nil, fmt.Errorf("No default log store has been initialized")
 	}
-	return manager.defaultLog, nil
+	return manager.logMap.defaultStore, nil
 }
 
 func MetaDataKVStore() (OrderedKeyValueDB, error) {
@@ -229,9 +273,9 @@ func DefaultKVDB() (KeyValueDB, error) {
 	if !manager.setup {
 		return nil, fmt.Errorf("Storage manager not initialized before requesting DefaultKVDB")
 	}
-	kvstore, ok := manager.defaultKV.(KeyValueDB)
+	kvstore, ok := manager.storeMap.defaultStore.(KeyValueDB)
 	if !ok {
-		return nil, fmt.Errorf("Default store %q is not a key-value store!", manager.defaultKV)
+		return nil, fmt.Errorf("Default store %q is not a key-value store!", manager.storeMap.defaultStore)
 	}
 	return kvstore, nil
 }
@@ -240,18 +284,11 @@ func DefaultOrderedKVDB() (OrderedKeyValueDB, error) {
 	if !manager.setup {
 		return nil, fmt.Errorf("Storage manager not initialized before requesting DefaultKVDB")
 	}
-	kvstore, ok := manager.defaultKV.(OrderedKeyValueDB)
+	kvstore, ok := manager.storeMap.defaultStore.(OrderedKeyValueDB)
 	if !ok {
-		return nil, fmt.Errorf("Default store %q is not an ordered key-value store!", manager.defaultKV)
+		return nil, fmt.Errorf("Default store %q is not an ordered key-value store!", manager.storeMap.defaultStore)
 	}
 	return kvstore, nil
-}
-
-func GraphStore() (GraphDB, error) {
-	if !manager.setup {
-		return nil, fmt.Errorf("Storage manager not initialized before requesting GraphStore")
-	}
-	return manager.graphDB, nil
 }
 
 // GetStoreByAlias returns a store by the alias given to it in the configuration TOML file, e.g., "raid6".
@@ -266,106 +303,26 @@ func GetStoreByAlias(alias Alias) (dvid.Store, error) {
 	return store, nil
 }
 
-// GetAssignedStore returns the store assigned based on (instance name, root uuid), tag, or type,
-// in that order.  In some cases, this store may include a caching wrapper if the data instance has
-// been configured to use groupcache.
-func GetAssignedStore(dataname dvid.InstanceName, root dvid.UUID, tags map[string]string, typename dvid.TypeString) (dvid.Store, error) {
-	if !manager.setup {
-		return nil, fmt.Errorf("Storage manager not initialized before requesting store for %s/%s", dataname, root)
-	}
-	dataid := dvid.GetDataSpecifier(dataname, root)
-	store, found := manager.instanceStore[dataid]
-	var err error
-	var byMethod string
-	if found {
-		byMethod = fmt.Sprintf("direct specification %q", dataid)
-	} else {
-		// see if any tags have been assigned a store.
-		for tag, value := range tags {
-			dataid = dvid.GetDataSpecifierByTag(tag, value)
-			store, found = manager.instanceStore[dataid]
-			if found {
-				byMethod = fmt.Sprintf("tag specification %q", dataid)
-				break
-			}
-		}
-
-		// finally see if this data type has an assigned store
-		if !found {
-			store, err = assignedStoreByType(typename)
-			if err != nil {
-				return nil, fmt.Errorf("Cannot get assigned store for data %q, type %q", dataname, typename)
-			}
-			byMethod = fmt.Sprintf("type specification %q", typename)
-		}
-	}
-	dvid.Infof("GetAssignedStore(%s) by %s: %s\n", dataname, byMethod, store)
-
-	// See if this is using caching and if so, establish a wrapper around it.
-	if _, supported := manager.gcache.supported[dataid]; supported {
-		store, err = wrapGroupcache(store, manager.gcache.cache)
-		if err != nil {
-			dvid.Errorf("Unable to wrap groupcache around store %s for data instance %q (uuid %s): %v\n", store, dataname, root, err)
-		} else {
-			dvid.Infof("Returning groupcache-wrapped store %s for data instance %q @ %s\n", store, dataname, root)
-		}
-	}
-	return store, nil
+// DataSpec is an interface for properties of data instances useful for store assignment.
+type DataSpec interface {
+	DataName() dvid.InstanceName
+	DataUUID() dvid.UUID
+	RootUUID() dvid.UUID
+	Tags() map[string]string
+	TypeName() dvid.TypeString
 }
 
-// assignedStoreByType returns the store assigned to a particular datatype.
-func assignedStoreByType(typename dvid.TypeString) (dvid.Store, error) {
-	if !manager.setup {
-		return nil, fmt.Errorf("Storage manager not initialized before requesting store for %s", typename)
-	}
-	store, found := manager.datatypeStore[typename]
-	if !found {
-		return manager.defaultKV, nil
-	}
-	return store, nil
+// GetAssignedStore returns the store based on DataUUID, (Name, RootUUID), tag, or type,
+// in that order.  In some cases, this store may include a caching wrapper if the data
+// instance has been configured to use groupcache.
+func GetAssignedStore(ds DataSpec) (dvid.Store, error) {
+	return getManagerStore(ds, false)
 }
 
-// GetAssignedLog returns the append-only log assigned based on (instance name, root uuid) or type.
-func GetAssignedLog(dataname dvid.InstanceName, root dvid.UUID, tags map[string]string, typename dvid.TypeString) (dvid.Store, error) {
-	if !manager.setup {
-		return nil, fmt.Errorf("Storage manager not initialized before requesting log for %s/%s", dataname, root)
-	}
-	dataid := dvid.GetDataSpecifier(dataname, root)
-	store, found := manager.instanceLog[dataid]
-	var err error
-	if !found {
-		// see if any tags have been assigned a store.
-		for tag, value := range tags {
-			dataid = dvid.GetDataSpecifierByTag(tag, value)
-			store, found = manager.instanceLog[dataid]
-			if found {
-				break
-			}
-		}
-
-		if !found {
-			store, err = assignedLogByType(typename)
-			if err != nil {
-				return nil, fmt.Errorf("Cannot get assigned log for data %q, type %q: %v", dataname, typename, err)
-			}
-		}
-	}
-	return store, nil
-}
-
-// assignedLogByType returns the log (can be nil) assigned to a particular datatype.
-func assignedLogByType(typename dvid.TypeString) (dvid.Store, error) {
-	if !manager.setup {
-		return nil, fmt.Errorf("Storage manager not initialized before requesting log for %s", typename)
-	}
-	store, found := manager.datatypeLog[typename]
-	if !found {
-		if manager.defaultLog == nil {
-			return nil, nil
-		}
-		return manager.defaultLog, nil
-	}
-	return store, nil
+// GetAssignedLog returns the append-only log based on DataUUID, (Name, RootUUID), tag,
+// or type, in that order.
+func GetAssignedLog(ds DataSpec) (dvid.Store, error) {
+	return getManagerStore(ds, true)
 }
 
 // Shutdown handles any storage-specific shutdown procedures.

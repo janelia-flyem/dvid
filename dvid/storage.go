@@ -38,13 +38,18 @@ type StoreConfig struct {
 	Engine string
 }
 
-// DataSpecifier is either a TypeString or a (InstanceName, UUID) tuple, allowing
-// an immutable specification of a datatype or data instance.  The DataSpecifier
-// can be used as the key of a map, and is useful when configuring which data is
-// stored using different storage engines.
+// DataSpecifier is a scope for a configuration setting.  It can be one of the
+// following:
+//
+//	a plain string -> TypeString (the name of a datatype)
+//	a quoted string of form "InstanceName, VersionUUID" -> data instance
+//	a quoted string of form "DataUUID" -> data instance
+//
+// The DataSpecifier can be used as the key of a map, and is useful when configuring
+// which data is stored using different storage engines.
 type DataSpecifier string
 
-// GetDataSpecifier returns an DataSpecifier given an instance name and UUID.
+// GetDataSpecifier returns an DataSpecifier given an instance name and a version UUID.
 func GetDataSpecifier(name InstanceName, uuid UUID) DataSpecifier {
 	return DataSpecifier(name) + DataSpecifier(uuid)
 }
