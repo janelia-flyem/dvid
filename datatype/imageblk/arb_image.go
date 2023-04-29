@@ -106,7 +106,7 @@ func (d *Data) GetArbitraryImage(ctx storage.Context, tlStr, trStr, blStr, resSt
 	var i int32
 	var wg sync.WaitGroup
 	for y := int32(0); y < arb.size[1]; y++ {
-		<-server.HandlerToken
+		server.CheckChunkThrottling()
 		wg.Add(1)
 		go func(curPt dvid.Vector3d, dstI int32) {
 			defer func() {

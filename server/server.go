@@ -68,7 +68,7 @@ var (
 
 	// MaxChunkHandlers sets the maximum number of chunk handlers (goroutines) that
 	// can be multiplexed onto available cores.  (See -numcpu setting in dvid.go)
-	MaxChunkHandlers = runtime.NumCPU()
+	MaxChunkHandlers = 10 * runtime.NumCPU()
 
 	// HandlerToken is buffered channel to limit spawning of goroutines.
 	// See ProcessChunk() in datatype/imageblk for example.
@@ -101,6 +101,9 @@ var (
 	// Full write mode allows writes to all nodes, even committed ones.
 	fullwrite bool
 
+	// Monitor mode writes load data to debug log if chunk handlers are active.
+	monitor bool
+
 	// gitVersion is a git-derived string that allows recovery of the exact source code
 	// used for this version of the DVID server.  This package variable is exposed through
 	// the read-only Version() function and is set by build-time code generation using
@@ -126,11 +129,12 @@ func init() {
 	dvid.Debugf("DVID server GC target percentage changed from %d to %d\n", old, defaultGCPercent)
 
 	// Initialize the number of handler tokens available.
+	dvid.Debugf("DVID server set to have maximum of %d chunk handlers\n", MaxChunkHandlers)
 	for i := 0; i < MaxChunkHandlers; i++ {
 		HandlerToken <- 1
 	}
 
-	// Monitor the handler token load, resetting every second.
+	// Monitor the handler token load, resetting every second and possibly writing stats to log.
 	loadCheckTimer := time.Tick(10 * time.Millisecond)
 	ticks := 0
 	go func() {
@@ -140,6 +144,9 @@ func init() {
 			if ticks == 0 {
 				ActiveHandlers = curActiveHandlers
 				curActiveHandlers = 0
+				if monitor {
+					go monitorLoad()
+				}
 			}
 			numHandlers := MaxChunkHandlers - len(HandlerToken)
 			if numHandlers > curActiveHandlers {
@@ -163,6 +170,19 @@ func init() {
 			}
 		}
 	}()
+}
+
+func monitorLoad() {
+	if ActiveHandlers > 0 || storage.GetsPerSec > 0 || storage.PutsPerSec > 0 {
+		dvid.Debugf("Load: handlers=%d, GETs=%d, PUT=%d, keyR=%d, keyW=%d, valR=%d, valW=%d\n",
+			ActiveHandlers, storage.GetsPerSec, storage.PutsPerSec,
+			storage.StoreKeyBytesReadPerSec, storage.StoreKeyBytesWrittenPerSec,
+			storage.StoreValueBytesReadPerSec, storage.StoreValueBytesWrittenPerSec)
+	}
+}
+
+func CheckChunkThrottling() {
+	<-HandlerToken
 }
 
 // if a pidfile is specified in the [server] config TOML, make sure it doesn't
@@ -253,6 +273,11 @@ func SetReadOnly(on bool) {
 func SetFullWrite(on bool) {
 	fullwrite = on
 	readonly = !on
+}
+
+// SetMonitor can put server in monitor mode (writes load stats to debug if activity).
+func SetMonitor(on bool) {
+	monitor = on
 }
 
 // SetAdminToken sets what can be passed in query string under "admintoken" to

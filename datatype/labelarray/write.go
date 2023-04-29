@@ -132,7 +132,7 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 				downresMut: downresMut,
 				blockCh:    blockCh,
 			}
-			<-server.HandlerToken
+			server.CheckChunkThrottling()
 			go d.putChunk(putOp, wg, putbuffer)
 			blocks++
 		}
@@ -275,7 +275,7 @@ func (d *Data) writeXYImage(v dvid.VersionID, vox *imageblk.Voxels, b storage.TK
 		begX := ptBeg.Value(0)
 		endX := ptEnd.Value(0)
 
-		<-server.HandlerToken
+		server.CheckChunkThrottling()
 		wg.Add(1)
 		go func(blockNum int32) {
 			c := dvid.ChunkPoint3d{begX, ptBeg.Value(1), ptBeg.Value(2)}
@@ -314,7 +314,7 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *syn
 	ctx := datastore.NewVersionedCtx(d, v)
 	evt := datastore.SyncEvent{d.DataUUID(), labels.IngestBlockEvent}
 
-	<-server.HandlerToken
+	server.CheckChunkThrottling()
 	blockCh := make(chan blockChange, 100)
 	go d.aggregateBlockChanges(v, blockCh)
 	go func() {

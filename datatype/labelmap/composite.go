@@ -104,7 +104,7 @@ func (d *Data) createComposite(request datastore.Request, reply *datastore.Respo
 // Only some multiple of the # of CPU cores can be used for chunk handling before
 // it waits for chunk processing to abate via the buffered server.HandlerToken channel.
 func (d *Data) CreateCompositeChunk(chunk *storage.Chunk) error {
-	<-server.HandlerToken
+	server.CheckChunkThrottling()
 	go d.createCompositeChunk(chunk)
 	return nil
 }

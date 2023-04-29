@@ -54,6 +54,9 @@ var (
 	// Run in verbose mode if true.
 	runVerbose = flag.Bool("verbose", false, "")
 
+	// Run in monitor mode (write load stats to debug log if activity) if true.
+	monitor = flag.Bool("monitor", false, "")
+
 	rpcAddress = flag.String("rpc", server.DefaultRPCAddress, "")
 
 	// msgAddress = flag.String("message", message.DefaultAddress, "")
@@ -87,6 +90,7 @@ Usage: dvid [options] <command>
       -numcpu     =number   Number of logical CPUs to use for DVID.
       -stdin      (flag)    Accept and send stdin to server for use in commands.
       -verbose    (flag)    Run in verbose mode.
+      -monitor    (flag)    Run in monitor mode (write load stats to debug log if activity).
       -fullwrite  (flag)    Allow limited ops to all nodes, even committed ones. [Limit to expert use]
 	  -sleep      =number	Number of seconds to sleep before starting. Useful for remote debugging.
   -h, -help       (flag)    Show help message
@@ -174,6 +178,9 @@ func main() {
 	}
 	if *fullwrite {
 		server.SetFullWrite(true)
+	}
+	if *monitor {
+		server.SetMonitor(true)
 	}
 
 	if *cpuprofile != "" {

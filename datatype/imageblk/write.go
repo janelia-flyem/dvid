@@ -307,7 +307,7 @@ func (d *Data) PutBlocks(v dvid.VersionID, mutID uint64, start dvid.ChunkPoint3d
 func (d *Data) PutChunk(chunk *storage.Chunk, hasbuffer bool, finishedRequests chan error) error {
 	if !hasbuffer {
 		// if storage engine handles buffering, limited advantage to throttling here
-		<-server.HandlerToken
+		server.CheckChunkThrottling()
 	}
 
 	go d.putChunk(chunk, hasbuffer, finishedRequests)
@@ -448,7 +448,7 @@ func (d *Data) writeXYImage(v dvid.VersionID, vox *Voxels, b storage.TKeyValues)
 		begX := ptBeg.Value(0)
 		endX := ptEnd.Value(0)
 
-		<-server.HandlerToken
+		server.CheckChunkThrottling()
 		wg.Add(1)
 		go func(blockNum int32) {
 			c := dvid.ChunkPoint3d{begX, ptBeg.Value(1), ptBeg.Value(2)}
@@ -486,7 +486,7 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *syn
 	ctx := datastore.NewVersionedCtx(d, v)
 	evt := datastore.SyncEvent{d.DataUUID(), IngestBlockEvent}
 
-	<-server.HandlerToken
+	server.CheckChunkThrottling()
 	go func() {
 		defer func() {
 			wg1.Done()

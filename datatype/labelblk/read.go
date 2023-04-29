@@ -243,7 +243,7 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([
 // Only some multiple of the # of CPU cores can be used for chunk handling before
 // it waits for chunk processing to abate via the buffered server.HandlerToken channel.
 func (d *Data) ReadChunk(chunk *storage.Chunk) error {
-	<-server.HandlerToken
+	server.CheckChunkThrottling()
 	go d.readChunk(chunk)
 	return nil
 }
