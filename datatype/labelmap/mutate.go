@@ -897,7 +897,7 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 	}
 
 	// read parent label index and do simple check on split size
-	var mapping *SVMap
+	var mapping *VCache
 	mapping, err = getMapping(d, v)
 	if err != nil {
 		return

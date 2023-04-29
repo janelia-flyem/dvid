@@ -13,7 +13,6 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	pb "google.golang.org/protobuf/proto"
 
@@ -917,7 +916,7 @@ type blockChange struct {
 
 // goroutine(s) that aggregates supervoxel changes across blocks for one mutation, then calls
 // mutex-guarded label index mutation routine.
-func (d *Data) aggregateBlockChanges(v dvid.VersionID, svmap *SVMap, ch <-chan blockChange) {
+func (d *Data) aggregateBlockChanges(v dvid.VersionID, svmap *VCache, ch <-chan blockChange) {
 	mappedVersions := svmap.getMappedVersionsDist(v)
 	labelset := make(labels.Set)
 	svChanges := make(labels.SupervoxelChanges)
@@ -933,9 +932,7 @@ func (d *Data) aggregateBlockChanges(v dvid.VersionID, svmap *SVMap, ch <-chan b
 			if supervoxel > maxLabel {
 				maxLabel = supervoxel
 			}
-			svmap.fmMu.RLock()
 			label, _ := svmap.mapLabel(supervoxel, mappedVersions)
-			svmap.fmMu.RUnlock()
 			labelset[label] = struct{}{}
 		}
 	}
@@ -1613,7 +1610,7 @@ func (d *Data) writeSVCounts(f *os.File, outPath string, v dvid.VersionID) {
 }
 
 func (d *Data) writeFileMappings(f *os.File, outPath string, v dvid.VersionID) {
-	if err := d.writeMappings(f, v, false, true); err != nil {
+	if err := d.writeMappings(f, v, false); err != nil {
 		dvid.Errorf("error writing mapping to file %q: %v\n", outPath, err)
 		return
 	}
@@ -1622,65 +1619,21 @@ func (d *Data) writeFileMappings(f *os.File, outPath string, v dvid.VersionID) {
 	}
 }
 
-// does not hold lock for entire time so mappings stream could be altered if concurrent mutations occur.
-func (d *Data) writeMappings(w io.Writer, v dvid.VersionID, binaryFormat, consistent bool) error {
+func (d *Data) writeMappings(w io.Writer, v dvid.VersionID, binaryFormat bool) error {
 	timedLog := dvid.NewTimeLog()
 
-	svm, err := getMapping(d, v)
+	vc, err := getMapping(d, v)
 	if err != nil {
 		return fmt.Errorf("unable to retrieve mappings for data %q, version %d: %v", d.DataName(), v, err)
 	}
-	mappedVersions := svm.getMappedVersionsDist(v)
-
-	// assume in-memory copy of mappings, especially if large, is much faster than writing
-	// out stream, so do only the copy under read lock to minimize time under read lock.
-	svm.fmMu.RLock()
-	if len(svm.fm) == 0 {
-		svm.fmMu.RUnlock()
+	if !vc.mapUsed {
 		dvid.Infof("no mappings found for data %q\n", d.DataName())
 		return nil
 	}
-	svm.fmMu.RUnlock()
+	numMappings, err := vc.writeMappings(w, v, binaryFormat)
 
-	var elemNum, numMappings, numErrors uint64
-	svm.fmMu.RLock()
-	for supervoxel, vm := range svm.fm {
-		label, present := vm.value(mappedVersions)
-		if present {
-			numMappings++
-			if supervoxel != label {
-				var err error
-				if binaryFormat {
-					err = binary.Write(w, binary.LittleEndian, supervoxel)
-					if err == nil {
-						err = binary.Write(w, binary.LittleEndian, label)
-					}
-				} else {
-					line := fmt.Sprintf("%d %d\n", supervoxel, label)
-					_, err = w.Write([]byte(line))
-				}
-
-				if err != nil {
-					numErrors++
-					if numErrors > 100 {
-						svm.fmMu.RUnlock()
-						return fmt.Errorf("unable to write data for mapping of supervoxel %d -> %d, data %q: %v", supervoxel, label, d.DataName(), err)
-					}
-				}
-			}
-		}
-		if !consistent {
-			elemNum++
-			if elemNum%100000 == 0 { // don't hold lock for really long time.  Faster check than actual time compare.
-				svm.fmMu.RUnlock()
-				time.Sleep(1 * time.Millisecond)
-				svm.fmMu.RLock()
-			}
-		}
-	}
-	svm.fmMu.RUnlock()
-	timedLog.Infof("Finished retrieving %d mappings (%d errors) for data %q, version %d", numMappings, numErrors, d.DataName(), v)
-	return nil
+	timedLog.Infof("Wrote %d mappings: err = %v", numMappings, err)
+	return err
 }
 
 // Streams labels and optionally # voxels for the label to the http.ResponseWriter.

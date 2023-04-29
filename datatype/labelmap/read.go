@@ -127,7 +127,7 @@ type getOperation struct {
 	version     dvid.VersionID
 	voxels      *Labels
 	blocksInROI map[string]bool
-	mapping     *SVMap
+	mapping     *VCache
 }
 
 // GetLabels copies labels from the storage engine to Labels, a requested subvolume or 2d image.
@@ -145,7 +145,7 @@ func (d *Data) GetLabels(v dvid.VersionID, supervoxels bool, scale uint8, vox *L
 	server.LargeMutationMutex.Lock()
 	defer server.LargeMutationMutex.Unlock()
 
-	var mapping *SVMap
+	var mapping *VCache
 	if !supervoxels {
 		if mapping, err = getMapping(d, v); err != nil {
 			return err
@@ -323,16 +323,14 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 
 // overwrites labels in header with their mapped values, so converts blocks from
 // supervoxels to body labels
-func modifyBlockMapping(v dvid.VersionID, block *labels.Block, m *SVMap) error {
-	mappedVersions := m.getMappedVersionsDist(v)
-	m.fmMu.RLock()
+func modifyBlockMapping(v dvid.VersionID, block *labels.Block, vc *VCache) error {
+	mappedVersions := vc.getMappedVersionsDist(v)
 	for i, label := range block.Labels {
-		mapped, found := m.mapLabel(label, mappedVersions)
+		mapped, found := vc.mapLabel(label, mappedVersions)
 		if found {
 			block.Labels[i] = mapped
 		}
 	}
-	m.fmMu.RUnlock()
 	return nil
 }
 

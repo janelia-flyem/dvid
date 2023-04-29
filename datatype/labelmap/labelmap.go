@@ -1630,11 +1630,6 @@ GET <api URL>/node/<UUID>/<data name>/mappings[?queryopts]
 
 		format: If format=binary, the data is returned as little-endian binary uint64 pairs,
 				in the same order as shown in the CSV format above.
-		consistent: default is "false", use "true" if you want a lock to prevent any
-				concurrent mutations on the mappings.  For example, under default behavior,
-				the mappings endpoint will periodically release the lock to play nice with
-				other requesters, which allows a concurrent mutation to cause an inconsistent
-				mapping.
 
 POST <api URL>/node/<UUID>/<data name>/mappings
 
@@ -2825,12 +2820,12 @@ func (d *Data) transcodeBlock(b blockData) (out []byte, err error) {
 	}
 
 	var doMapping bool
-	var mapping *SVMap
+	var mapping *VCache
 	if !b.supervoxels {
 		if mapping, err = getMapping(d, b.v); err != nil {
 			return
 		}
-		if mapping != nil && mapping.exists() {
+		if mapping != nil && mapping.mapUsed {
 			doMapping = true
 		}
 	}
@@ -4579,10 +4574,6 @@ func (d *Data) handleMappings(ctx *datastore.VersionedCtx, w http.ResponseWriter
 	}
 
 	format := queryStrings.Get("format")
-	var consistent bool
-	if queryStrings.Get("consistent") == "true" {
-		consistent = true
-	}
 
 	switch strings.ToLower(r.Method) {
 	case "post":
@@ -4604,7 +4595,7 @@ func (d *Data) handleMappings(ctx *datastore.VersionedCtx, w http.ResponseWriter
 		timedLog.Infof("HTTP POST %d mappings (%s)", len(mappings.Mappings), r.URL)
 
 	case "get":
-		if err := d.writeMappings(w, ctx.VersionID(), (format == "binary"), consistent); err != nil {
+		if err := d.writeMappings(w, ctx.VersionID(), (format == "binary")); err != nil {
 			server.BadRequest(w, r, "unable to write mappings: %v", err)
 		}
 		timedLog.Infof("HTTP GET mappings (%s)", r.URL)
@@ -5744,7 +5735,7 @@ func (d *Data) GetLabelBytesWithScale(v dvid.VersionID, bcoord dvid.ChunkPoint3d
 	if err != nil {
 		return nil, err
 	}
-	var mapping *SVMap
+	var mapping *VCache
 	if !supervoxels {
 		if mapping, err = getMapping(d, v); err != nil {
 			return nil, err
@@ -5849,7 +5840,7 @@ func (d *Data) GetLabelPoints(v dvid.VersionID, pts []dvid.Point3d, scale uint8,
 	blockPts := d.partitionPoints(pts)
 
 	// Get mapping.
-	var mapping *SVMap
+	var mapping *VCache
 	var mappedVersions distFromRoot
 	if !useSupervoxels {
 		if mapping, err = getMapping(d, v); err != nil {

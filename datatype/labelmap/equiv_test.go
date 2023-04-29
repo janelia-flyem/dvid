@@ -14,10 +14,8 @@ import (
 	"github.com/janelia-flyem/dvid/server"
 )
 
-func (svm *SVMap) checkMapping(t *testing.T, mappedVersions distFromRoot, from, to uint64) {
-	svm.fmMu.RLock()
-	mappedLabel, found := svm.mapLabel(from, mappedVersions)
-	svm.fmMu.RUnlock()
+func (vc *VCache) checkMapping(t *testing.T, mappedVersions distFromRoot, from, to uint64) {
+	mappedLabel, found := vc.mapLabel(from, mappedVersions)
 	if !found {
 		t.Fatalf("expected mapping of %d to be found\n", from)
 	}
@@ -83,7 +81,7 @@ func TestSVMap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("can't get labelmap data service: %v\n", err)
 	}
-	svm := initMapping(d, v)
+	vc := initMapping(d, v)
 
 	mapping := map[uint64]uint64{
 		1: 3,
@@ -92,13 +90,13 @@ func TestSVMap(t *testing.T) {
 		5: 6,
 	}
 	for from, to := range mapping {
-		svm.setMapping(v, from, to)
+		vc.setMapping(v, from, to)
 	}
 
-	mappedVersions := svm.getMappedVersionsDist(v)
+	mappedVersions := vc.getMappedVersionsDist(v)
 
 	for from, to := range mapping {
-		svm.checkMapping(t, mappedVersions, from, to)
+		vc.checkMapping(t, mappedVersions, from, to)
 	}
 
 	// Create a new version
@@ -126,23 +124,23 @@ func TestSVMap(t *testing.T) {
 		5: 8,
 	}
 	for from, to := range mapping2 {
-		svm.setMapping(v2, from, to)
+		vc.setMapping(v2, from, to)
 	}
 	expected2 := mapUpdate(mapping, mapping2)
 
 	// Make sure that the mapping is the new one
-	mappedVersions2 := svm.getMappedVersionsDist(v2)
+	mappedVersions2 := vc.getMappedVersionsDist(v2)
 
-	svm.checkMapping(t, mappedVersions2, 1, 3) // unset should fall back to version 1
+	vc.checkMapping(t, mappedVersions2, 1, 3) // unset should fall back to version 1
 	for from, to := range mapping2 {
-		svm.checkMapping(t, mappedVersions2, from, to)
+		vc.checkMapping(t, mappedVersions2, from, to)
 	}
 
 	// Verify that the old mapping is still there
-	mappedVersions = svm.getMappedVersionsDist(v)
+	mappedVersions = vc.getMappedVersionsDist(v)
 
 	for from, to := range mapping {
-		svm.checkMapping(t, mappedVersions, from, to)
+		vc.checkMapping(t, mappedVersions, from, to)
 	}
 
 	// Create a new branch off of the first version
@@ -164,39 +162,39 @@ func TestSVMap(t *testing.T) {
 		6: 18,
 	}
 	for from, to := range mapping3 {
-		svm.setMapping(v3, from, to)
+		vc.setMapping(v3, from, to)
 	}
 	expected3 := mapUpdate(mapping, mapping3)
 
 	// Make sure that the mapping is the new one
-	mappedVersions3 := svm.getMappedVersionsDist(v3)
+	mappedVersions3 := vc.getMappedVersionsDist(v3)
 
-	svm.checkMapping(t, mappedVersions3, 1, 3) // unset should fall back to version 1
-	svm.checkMapping(t, mappedVersions3, 2, 3) // unset should fall back to version 1
-	svm.checkMapping(t, mappedVersions3, 5, 6) // unset should fall back to version 1
+	vc.checkMapping(t, mappedVersions3, 1, 3) // unset should fall back to version 1
+	vc.checkMapping(t, mappedVersions3, 2, 3) // unset should fall back to version 1
+	vc.checkMapping(t, mappedVersions3, 5, 6) // unset should fall back to version 1
 	for from, to := range mapping3 {
-		svm.checkMapping(t, mappedVersions3, from, to)
+		vc.checkMapping(t, mappedVersions3, from, to)
 	}
 
 	// Verify that the old mapping is still there
-	mappedVersions = svm.getMappedVersionsDist(v)
+	mappedVersions = vc.getMappedVersionsDist(v)
 
 	for from, to := range mapping {
-		svm.checkMapping(t, mappedVersions, from, to)
+		vc.checkMapping(t, mappedVersions, from, to)
 	}
 
 	// check mappings
 	buf := new(bytes.Buffer)
-	if err := d.writeMappings(buf, v, false, true); err != nil {
+	if err := d.writeMappings(buf, v, false); err != nil {
 		t.Fatal(err)
 	}
 	checkMappings(t, v, buf, mapping)
 	buf.Reset()
-	if err := d.writeMappings(buf, v2, false, true); err != nil {
+	if err := d.writeMappings(buf, v2, false); err != nil {
 		t.Fatal(err)
 	}
 	checkMappings(t, v2, buf, expected2)
-	if err := d.writeMappings(buf, v3, false, true); err != nil {
+	if err := d.writeMappings(buf, v3, false); err != nil {
 		t.Fatal(err)
 	}
 	checkMappings(t, v3, buf, expected3)
