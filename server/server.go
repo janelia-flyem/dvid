@@ -29,7 +29,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -125,11 +124,9 @@ func init() {
 	shutdownCh = make(chan struct{})
 
 	// Set the GC closer to old Go 1.4 setting
-	old := debug.SetGCPercent(defaultGCPercent)
-	dvid.Debugf("DVID server GC target percentage changed from %d to %d\n", old, defaultGCPercent)
+	// old := debug.SetGCPercent(defaultGCPercent)
 
 	// Initialize the number of handler tokens available.
-	dvid.Debugf("DVID server set to have maximum of %d chunk handlers\n", MaxChunkHandlers)
 	for i := 0; i < MaxChunkHandlers; i++ {
 		HandlerToken <- 1
 	}
@@ -342,6 +339,7 @@ func About() string {
 	writeLine("Datastore Version", datastore.Version)
 	text += "\n"
 	writeLine("Storage engines", storage.EnginesAvailable())
+	writeLine("Max chunk handlers", fmt.Sprintf("%d", MaxChunkHandlers))
 	for _, t := range datastore.Compiled {
 		writeLine(t.GetTypeName(), t.GetTypeVersion())
 	}
