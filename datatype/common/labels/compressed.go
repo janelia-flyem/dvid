@@ -1725,97 +1725,15 @@ func (b Block) WriteLabelVolume(w io.Writer) error {
 	return nil
 }
 
-// WriteNeuroglancer streams a single block in neuroglancer segmentation compression format.
+// TODO if needed for performance:
+// WriteNeuroglancer streams neuroglancer segmentation compression format.
 // This integrates the approach of labelmap.compressGoogle() into block.WriteLabelVolume()
 // in a sub-block slice-at-a-time fashion.
-func (b Block) WriteNeuroglancer(w io.Writer) error {
-	gx, gy, gz := b.Size[0]/SubBlockSize, b.Size[1]/SubBlockSize, b.Size[2]/SubBlockSize
-
-	blockSize := b.Size.Prod()
-
-	if len(b.Labels) < 2 {
-		var label uint64
-		if len(b.Labels) == 1 {
-			label = b.Labels[0]
-		}
-		for i := int64(0); i < blockSize; i++ {
-			if err := binary.Write(w, binary.LittleEndian, label); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
-	sliceSize := b.Size[0] * b.Size[1] * SubBlockSize // # of voxels in a single XY subblock plane
-	sliceVoxels := make([]uint64, sliceSize)
-
-	subBlockNumVoxels := SubBlockSize * SubBlockSize * SubBlockSize
-	sbLabels := make([]uint64, subBlockNumVoxels) // preallocate max # of labels for sub-block
-
-	// Since we must write in ZYX order, to prevent bookkeeping, we should process outputs
-	// one XY sub-block plane at a time.
-	var writePos int32
-	var indexPos, bitpos uint32
-	var subBlockNum int
-	var sx, sy, sz int32
-	for sz = 0; sz < gz; sz++ {
-
-		// Load all sub-block labels for this Z plane.
-		for sy = 0; sy < gy; sy++ {
-			for sx = 0; sx < gx; sx++ {
-				numSBLabels := b.NumSBLabels[subBlockNum]
-				bits := bitsFor(numSBLabels)
-
-				for i := uint16(0); i < numSBLabels; i++ {
-					sbLabels[i] = b.Labels[b.SBIndices[indexPos]]
-					indexPos++
-				}
-
-				lblpos := sy*SubBlockSize*b.Size[0] + sx*SubBlockSize
-				var x, y, z int32
-				for z = 0; z < SubBlockSize; z++ {
-					for y = 0; y < SubBlockSize; y++ {
-						for x = 0; x < SubBlockSize; x++ {
-							switch numSBLabels {
-							case 0:
-								sliceVoxels[lblpos] = 0
-							case 1:
-								sliceVoxels[lblpos] = sbLabels[0]
-							default:
-								index := getPackedValue(b.SBValues, bitpos, bits)
-								sliceVoxels[lblpos] = sbLabels[index]
-								bitpos += bits
-							}
-							lblpos++
-						}
-						lblpos += b.Size[0] - SubBlockSize
-					}
-					lblpos += b.Size[0]*b.Size[1] - b.Size[0]*SubBlockSize
-				}
-				if bitpos%8 != 0 {
-					bitpos += 8 - (bitpos % 8)
-				}
-				subBlockNum++
-			}
-		}
-
-		// Write out the slice in ZYX order.
-		var lblpos int32
-		for z := int32(0); z < SubBlockSize; z++ {
-			for y := int32(0); y < b.Size[1]; y++ {
-				for x := int32(0); x < b.Size[0]; x++ {
-					if err := binary.Write(w, binary.LittleEndian, sliceVoxels[lblpos]); err != nil {
-						return fmt.Errorf("aborted block write at voxel %d of %d: %v",
-							writePos+lblpos, blockSize, err)
-					}
-					lblpos++
-				}
-			}
-		}
-		writePos += sliceSize
-	}
-	return nil
-}
+// However the write error termination is only useful if we are not doing gzip compression
+// afterwards.
+//
+// func (b Block) WriteNeuroglancer(w io.Writer) error {
+// }
 
 // MarshalBinary implements the encoding.BinaryMarshaler interface. Note that for
 // efficiency, the returned byte slice will share memory with the receiver Block.
