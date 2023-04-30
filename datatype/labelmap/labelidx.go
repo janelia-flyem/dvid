@@ -438,6 +438,20 @@ func deleteCachedLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) error {
 ///////////////////////////////////////////////////////////////////////////
 // The following public functions are concurrency-safe and support caching.
 
+// GetSupervoxels returns the set of supervoxel ids that compose the given label.
+// Used in other datatypes private interfaces (e.g., tarsupervoxels) and generally useful
+// for other packages.
+func (d *Data) GetSupervoxels(v dvid.VersionID, label uint64) (labels.Set, error) {
+	idx, err := GetLabelIndex(d, v, label, false)
+	if err != nil {
+		return nil, err
+	}
+	if idx == nil || len(idx.Blocks) == 0 {
+		return nil, err
+	}
+	return idx.GetSupervoxels(), nil
+}
+
 // GetLabelIndex gets label set index data from storage for a given data instance and version.
 // If isSupervoxel is true, the label is interpreted as a supervoxel and the label set index
 // containing the given supervoxel is returned.  Concurrency-safe access and supports caching.

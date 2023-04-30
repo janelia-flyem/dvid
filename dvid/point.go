@@ -774,7 +774,8 @@ type ListChunkPoint3d struct {
 }
 
 // ListChunkPoint3dFromVoxels creates a ListChunkPoint3d from JSON of voxel coordinates:
-//   [ [x0, y0, z0], [x1, y1, z1], ... ]
+//
+//	[ [x0, y0, z0], [x1, y1, z1], ... ]
 func ListChunkPoint3dFromVoxels(jsonBytes []byte, blockSize Point) (*ListChunkPoint3d, error) {
 	var pts []Point3d
 	if err := json.Unmarshal(jsonBytes, &pts); err != nil {
@@ -1089,6 +1090,16 @@ var (
 )
 
 const ChunkPoint3dSize = 12
+
+func GetChunkPoint3d(pt, chunkSize Point3d) (chunkPt ChunkPoint3d, aligned bool) {
+	chunkPt = ChunkPoint3d{
+		pt[0] / chunkSize[0],
+		pt[1] / chunkSize[1],
+		pt[2] / chunkSize[2],
+	}
+	aligned = pt[0]%chunkSize[0] == 0 && pt[1]%chunkSize[1] == 0 && pt[2]%chunkSize[2] == 0
+	return
+}
 
 func (c ChunkPoint3d) String() string {
 	return fmt.Sprintf("(%d,%d,%d)", c[0], c[1], c[2])

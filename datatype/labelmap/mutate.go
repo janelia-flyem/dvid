@@ -469,7 +469,7 @@ func (d *Data) splitPass1(ctx *datastore.VersionedCtx, splitmap dvid.BlockRLEs, 
 	var scale uint8
 	getLog := dvid.NewTimeLog()
 	for _, izyx := range splitblks {
-		pb, err := d.getLabelBlock(ctx, scale, izyx)
+		pb, err := d.getLabelPositionedBlock(ctx, scale, izyx)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -611,7 +611,7 @@ func (d *Data) splitPass2(ctx *datastore.VersionedCtx, downresMut *downres.Mutat
 		if !found {
 			return fmt.Errorf("split affected block %s was not found in index", izyxStr)
 		}
-		pb, err := d.getLabelBlock(ctx, scale, izyxStr)
+		pb, err := d.getLabelPositionedBlock(ctx, scale, izyxStr)
 		if err != nil {
 			return fmt.Errorf("error in getting block %s: %v", izyxStr, err)
 		}
@@ -1020,7 +1020,7 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 	var scale uint8
 	for _, izyx := range splitblks {
 		var pb *labels.PositionedBlock
-		pb, err = d.getLabelBlock(ctx, scale, izyx)
+		pb, err = d.getLabelPositionedBlock(ctx, scale, izyx)
 		if err != nil {
 			d.restoreOldBlocks(ctx, numBlocks, origBlocks)
 			return

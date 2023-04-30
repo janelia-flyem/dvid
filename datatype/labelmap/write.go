@@ -2,6 +2,7 @@ package labelmap
 
 import (
 	"fmt"
+	"io"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -172,7 +173,7 @@ func (d *Data) putChunk(op *putOperation, wg *sync.WaitGroup, putbuffer storage.
 	var oldBlock *labels.PositionedBlock
 	if op.mutate {
 		var err error
-		if oldBlock, err = d.getLabelBlock(ctx, scale, bcoord); err != nil {
+		if oldBlock, err = d.getLabelPositionedBlock(ctx, scale, bcoord); err != nil {
 			dvid.Errorf("Unable to load previous block in %q, key %v: %v\n", d.DataName(), bcoord, err)
 			return
 		}
@@ -383,5 +384,211 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *syn
 			return
 		}
 	}()
+	return nil
+}
+
+func (d *Data) blockChangesExtents(extents *dvid.Extents, bx, by, bz int32) bool {
+	blockSize := d.BlockSize().(dvid.Point3d)
+	start := dvid.Point3d{bx * blockSize[0], by * blockSize[1], bz * blockSize[2]}
+	end := dvid.Point3d{start[0] + blockSize[0] - 1, start[1] + blockSize[1] - 1, start[2] + blockSize[2] - 1}
+	return extents.AdjustPoints(start, end)
+}
+
+// storeBlocks reads blocks from io.ReadCloser and puts them in store, handling metadata bookkeeping
+// unlike ingestBlocks function.
+func (d *Data) storeBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale uint8, downscale bool, compression string, indexing bool) error {
+	if r == nil {
+		return fmt.Errorf("no data blocks POSTed")
+	}
+
+	if downscale && scale != 0 {
+		return fmt.Errorf("cannot downscale blocks of scale > 0")
+	}
+
+	switch compression {
+	case "", "blocks":
+	default:
+		return fmt.Errorf(`compression must be "blocks" (default) at this time`)
+	}
+
+	timedLog := dvid.NewTimeLog()
+	store, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return fmt.Errorf("Data type labelmap had error initializing store: %v", err)
+	}
+
+	// Only do voxel-based mutations one at a time.  This lets us remove handling for block-level concurrency.
+	d.voxelMu.Lock()
+	defer d.voxelMu.Unlock()
+
+	d.StartUpdate()
+	defer d.StopUpdate()
+
+	// extract buffer interface if it exists
+	var putbuffer storage.RequestBuffer
+	if req, ok := store.(storage.KeyValueRequester); ok {
+		putbuffer = req.NewBuffer(ctx)
+	}
+
+	mutID := d.NewMutationID()
+	var downresMut *downres.Mutation
+	if downscale {
+		downresMut = downres.NewMutation(d, ctx.VersionID(), mutID)
+	}
+
+	svmap, err := getMapping(d, ctx.VersionID())
+	if err != nil {
+		return fmt.Errorf("ReceiveBlocks couldn't get mapping for data %q, version %d: %v", d.DataName(), ctx.VersionID(), err)
+	}
+	var blockCh chan blockChange
+	var putWG, processWG sync.WaitGroup
+	if indexing {
+		blockCh = make(chan blockChange, 100)
+		processWG.Add(1)
+		go func() {
+			d.aggregateBlockChanges(ctx.VersionID(), svmap, blockCh)
+			processWG.Done()
+		}()
+	}
+
+	callback := func(bcoord dvid.IZYXString, block *labels.Block, ready chan error) {
+		if ready != nil {
+			if resperr := <-ready; resperr != nil {
+				dvid.Errorf("Unable to PUT voxel data for block %v: %v\n", bcoord, resperr)
+				return
+			}
+		}
+		event := labels.IngestBlockEvent
+		ingestBlock := IngestedBlock{mutID, bcoord, block}
+		if scale == 0 {
+			if indexing {
+				d.handleBlockIndexing(ctx.VersionID(), blockCh, ingestBlock)
+			}
+			go d.updateBlockMaxLabel(ctx.VersionID(), ingestBlock.Data)
+			evt := datastore.SyncEvent{d.DataUUID(), event}
+			msg := datastore.SyncMessage{event, ctx.VersionID(), ingestBlock}
+			if err := datastore.NotifySubscribers(evt, msg); err != nil {
+				dvid.Errorf("Unable to notify subscribers of event %s in %s\n", event, d.DataName())
+			}
+			if downscale {
+				if err := downresMut.BlockMutated(bcoord, block); err != nil {
+					dvid.Errorf("data %q publishing downres: %v\n", d.DataName(), err)
+				}
+			}
+		}
+
+		putWG.Done()
+	}
+
+	if d.Compression().Format() != dvid.Gzip {
+		return fmt.Errorf("labelmap %q cannot accept GZIP /blocks POST since it internally uses %s", d.DataName(), d.Compression().Format())
+	}
+	var extentsChanged bool
+	extents, err := d.GetExtents(ctx)
+	if err != nil {
+		return err
+	}
+	var numBlocks int
+	for {
+		block, compressed, bx, by, bz, err := readStreamedBlock(r, scale)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		bcoord := dvid.ChunkPoint3d{bx, by, bz}.ToIZYXString()
+		tk := NewBlockTKeyByCoord(scale, bcoord)
+		if scale == 0 {
+			if mod := d.blockChangesExtents(&extents, bx, by, bz); mod {
+				extentsChanged = true
+			}
+			go d.updateBlockMaxLabel(ctx.VersionID(), block)
+		}
+		serialization, err := dvid.SerializePrecompressedData(compressed, d.Compression(), d.Checksum())
+		if err != nil {
+			return fmt.Errorf("can't serialize received block %s data: %v", bcoord, err)
+		}
+		putWG.Add(1)
+		if putbuffer != nil {
+			ready := make(chan error, 1)
+			go callback(bcoord, block, ready)
+			putbuffer.PutCallback(ctx, tk, serialization, ready)
+		} else {
+			if err := store.Put(ctx, tk, serialization); err != nil {
+				return fmt.Errorf("Unable to PUT voxel data for block %s: %v", bcoord, err)
+			}
+			go callback(bcoord, block, nil)
+		}
+		numBlocks++
+	}
+
+	putWG.Wait()
+	if blockCh != nil {
+		close(blockCh)
+	}
+	processWG.Wait()
+
+	if extentsChanged {
+		if err := d.PostExtents(ctx, extents.StartPoint(), extents.EndPoint()); err != nil {
+			dvid.Criticalf("could not modify extents for labelmap %q: %v\n", d.DataName(), err)
+		}
+	}
+
+	// if a bufferable op, flush
+	if putbuffer != nil {
+		putbuffer.Flush()
+	}
+	if downscale {
+		if err := downresMut.Execute(); err != nil {
+			return err
+		}
+	}
+	timedLog.Infof("Received and stored %d blocks for labelmap %q", numBlocks, d.DataName())
+	return nil
+}
+
+// Writes supervoxel blocks without worrying about overlap or computation of indices, syncs, maxlabel, or extents.
+// Additional goroutines are not spawned so caller can set concurrency through parallel evocations.
+func (d *Data) ingestBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale uint8) error {
+	if r == nil {
+		return fmt.Errorf("no data blocks POSTed")
+	}
+
+	timedLog := dvid.NewTimeLog()
+	store, err := datastore.GetKeyValueDB(d)
+	if err != nil {
+		return fmt.Errorf("Data type labelmap had error initializing store: %v", err)
+	}
+
+	if d.Compression().Format() != dvid.Gzip {
+		return fmt.Errorf("labelmap %q cannot accept GZIP /blocks POST since it internally uses %s", d.DataName(), d.Compression().Format())
+	}
+
+	d.StartUpdate()
+	defer d.StopUpdate()
+
+	var numBlocks int
+	for {
+		_, compressed, bx, by, bz, err := readStreamedBlock(r, scale)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		bcoord := dvid.ChunkPoint3d{bx, by, bz}.ToIZYXString()
+		tk := NewBlockTKeyByCoord(scale, bcoord)
+		serialization, err := dvid.SerializePrecompressedData(compressed, d.Compression(), d.Checksum())
+		if err != nil {
+			return fmt.Errorf("can't serialize received block %s data: %v", bcoord, err)
+		}
+		if err := store.Put(ctx, tk, serialization); err != nil {
+			return fmt.Errorf("unable to PUT voxel data for block %s: %v", bcoord, err)
+		}
+		numBlocks++
+	}
+
+	timedLog.Infof("Received and stored %d blocks for labelmap %q", numBlocks, d.DataName())
 	return nil
 }

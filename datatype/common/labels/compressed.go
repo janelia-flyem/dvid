@@ -541,34 +541,34 @@ func MakeBlock(uint64array []byte, bsize dvid.Point3d) (*Block, error) {
 //
 // The byte layout will be the following if there are N labels in the Block:
 //
-//      3 * uint32      values of gx, gy, and gz
-//      uint32          # of labels (N), cannot exceed uint32.
-//      N * uint64      packed labels in little-endian format.  Label 0 can be
-//							used to represent deleted labels, e.g., after a merge
-//							operation to avoid changing all sub-block indices.
+//	     3 * uint32      values of gx, gy, and gz
+//	     uint32          # of labels (N), cannot exceed uint32.
+//	     N * uint64      packed labels in little-endian format.  Label 0 can be
+//								used to represent deleted labels, e.g., after a merge
+//								operation to avoid changing all sub-block indices.
 //
-//      ----- Data below is only included if N > 1, otherwise it is a solid block.
-//            Nsb = # sub-blocks = gx * gy * gz
+//	     ----- Data below is only included if N > 1, otherwise it is a solid block.
+//	           Nsb = # sub-blocks = gx * gy * gz
 //
-//      Nsb * uint16        # of labels for sub-blocks (Ns[i]).
-//                              Each uint16 Ns[i] = # labels for sub-block i.
-//                              If Ns[i] == 0, the sub-block has no data
-// 								(uninitialized), which is useful for constructing
-//								Blocks with sparse data.
+//	     Nsb * uint16        # of labels for sub-blocks (Ns[i]).
+//	                             Each uint16 Ns[i] = # labels for sub-block i.
+//	                             If Ns[i] == 0, the sub-block has no data
+//									(uninitialized), which is useful for constructing
+//									Blocks with sparse data.
 //
-//      Nsb * Ns * uint32   label indices for sub-blocks where Ns = sum of Ns[i]
-//								over all sub-blocks. For each sub-block i, we have
-//								Ns[i] label indices of lBits.
+//	     Nsb * Ns * uint32   label indices for sub-blocks where Ns = sum of Ns[i]
+//									over all sub-blocks. For each sub-block i, we have
+//									Ns[i] label indices of lBits.
 //
-//      Nsb * values        sub-block indices for each voxel.
-//                              Data encompasses 512 * ceil(log2(Ns[i])) bits,
-//								padded so no two sub-blocks have indices in the
-//								same byte. At most we use 9 bits per voxel for up
-//								to the 512 labels in sub-block. A value gives the
-//								sub-block index which points to the index into
-//                              the N labels.  If Ns[i] <= 1, there are no values.
-//								If Ns[i] = 0, the 8x8x8 voxels are set to label 0.
-//								If Ns[i] = 1, all voxels are the given label index.
+//	     Nsb * values        sub-block indices for each voxel.
+//	                             Data encompasses 512 * ceil(log2(Ns[i])) bits,
+//									padded so no two sub-blocks have indices in the
+//									same byte. At most we use 9 bits per voxel for up
+//									to the 512 labels in sub-block. A value gives the
+//									sub-block index which points to the index into
+//	                             the N labels.  If Ns[i] <= 1, there are no values.
+//									If Ns[i] = 0, the 8x8x8 voxels are set to label 0.
+//									If Ns[i] = 1, all voxels are the given label index.
 type Block struct {
 	Labels []uint64     // labels in Block.
 	Size   dvid.Point3d // # voxels in each dimension for this block
@@ -1633,6 +1633,98 @@ func (b Block) MakeLabelVolume() (uint64array []byte, size dvid.Point3d) {
 	return
 }
 
+// WriteLabelVolume streams packed little-endian uint64 labels in ZYX order,
+// i.e., a uint64 for each voxel where consecutive values are in the (x,y,z) order:
+// (0,0,0), (1,0,0), (2,0,0) ... (0,1,0)
+func (b Block) WriteLabelVolume(w io.Writer) error {
+	gx, gy, gz := b.Size[0]/SubBlockSize, b.Size[1]/SubBlockSize, b.Size[2]/SubBlockSize
+
+	blockSize := b.Size.Prod()
+
+	if len(b.Labels) < 2 {
+		var label uint64
+		if len(b.Labels) == 1 {
+			label = b.Labels[0]
+		}
+		for i := int64(0); i < blockSize; i++ {
+			if err := binary.Write(w, binary.LittleEndian, label); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	sliceSize := b.Size[0] * b.Size[1] * SubBlockSize // # of voxels in a single XY subblock plane
+	sliceVoxels := make([]uint64, sliceSize)
+
+	subBlockNumVoxels := SubBlockSize * SubBlockSize * SubBlockSize
+	sbLabels := make([]uint64, subBlockNumVoxels) // preallocate max # of labels for sub-block
+
+	// Since we must write in ZYX order, to prevent bookkeeping, we should process outputs
+	// one XY sub-block plane at a time.
+	var writePos int32
+	var indexPos, bitpos uint32
+	var subBlockNum int
+	var sx, sy, sz int32
+	for sz = 0; sz < gz; sz++ {
+
+		// Load all sub-block labels for this Z plane.
+		for sy = 0; sy < gy; sy++ {
+			for sx = 0; sx < gx; sx++ {
+				numSBLabels := b.NumSBLabels[subBlockNum]
+				bits := bitsFor(numSBLabels)
+
+				for i := uint16(0); i < numSBLabels; i++ {
+					sbLabels[i] = b.Labels[b.SBIndices[indexPos]]
+					indexPos++
+				}
+
+				lblpos := sy*SubBlockSize*b.Size[0] + sx*SubBlockSize
+				var x, y, z int32
+				for z = 0; z < SubBlockSize; z++ {
+					for y = 0; y < SubBlockSize; y++ {
+						for x = 0; x < SubBlockSize; x++ {
+							switch numSBLabels {
+							case 0:
+								sliceVoxels[lblpos] = 0
+							case 1:
+								sliceVoxels[lblpos] = sbLabels[0]
+							default:
+								index := getPackedValue(b.SBValues, bitpos, bits)
+								sliceVoxels[lblpos] = sbLabels[index]
+								bitpos += bits
+							}
+							lblpos++
+						}
+						lblpos += b.Size[0] - SubBlockSize
+					}
+					lblpos += b.Size[0]*b.Size[1] - b.Size[0]*SubBlockSize
+				}
+				if bitpos%8 != 0 {
+					bitpos += 8 - (bitpos % 8)
+				}
+				subBlockNum++
+			}
+		}
+
+		// Write out the slice in ZYX order.
+		var lblpos int32
+		for z := int32(0); z < SubBlockSize; z++ {
+			for y := int32(0); y < b.Size[1]; y++ {
+				for x := int32(0); x < b.Size[0]; x++ {
+					if err := binary.Write(w, binary.LittleEndian, sliceVoxels[lblpos]); err != nil {
+						return fmt.Errorf("aborted block write at voxel %d of %d: %v",
+							writePos+lblpos, blockSize, err)
+					}
+					lblpos++
+				}
+			}
+		}
+		writePos += sliceSize
+	}
+	return nil
+}
+
 // MarshalBinary implements the encoding.BinaryMarshaler interface. Note that for
 // efficiency, the returned byte slice will share memory with the receiver Block.
 func (b Block) MarshalBinary() ([]byte, error) {
@@ -1854,10 +1946,11 @@ func (op OutputOp) Finish() error {
 // WriteRLEs, like WriteBinaryBlocks, writes a compact serialization of a binarized Block to
 // the supplied Writer.  In this case, the serialization uses little-endian encoded integers
 // and RLEs with the repeating units of the following format:
-//        int32   Coordinate of run start (dimension 0)
-//        int32   Coordinate of run start (dimension 1)
-//        int32   Coordinate of run start (dimension 2)
-//        int32   Length of run in X direction
+//
+//	int32   Coordinate of run start (dimension 0)
+//	int32   Coordinate of run start (dimension 1)
+//	int32   Coordinate of run start (dimension 2)
+//	int32   Length of run in X direction
 //
 // The offset is the DVID space offset to the first voxel in the Block.  After the RLEs have
 // been written to the io.Writer, an error message is sent down the given errCh.
@@ -2197,11 +2290,10 @@ func ReceiveBinaryBlocks(r io.Reader) ([]BinaryBlock, error) {
 // supplied Writer.  The serialization is a header + stream of blocks.  The header
 // is the following:
 //
-//   3 * uint32      values of gx, gy, and gz
-//   uint64          foreground label
+//	 3 * uint32      values of gx, gy, and gz
+//	 uint64          foreground label
 //
-//  The format of each binary block in the stream is detailed by the WriteBinaryBlock() function.
-//
+//	The format of each binary block in the stream is detailed by the WriteBinaryBlock() function.
 func WriteBinaryBlocks(mainLabel uint64, lbls Set, op *OutputOp, bounds dvid.Bounds) {
 	var blockWritten bool
 	for pb := range op.pbCh {
@@ -2258,19 +2350,19 @@ func WriteBinaryBlocks(mainLabel uint64, lbls Set, op *OutputOp, bounds dvid.Bou
 //
 // The byte layout will be the following:
 //
-//      3 * int32       offset of first voxel of Block in DVID space (x, y, z)
-//      byte            content flag:
-//                      0 = background ONLY  (no more data for this block)
-//                      1 = foreground ONLY  (no more data for this block)
-//                      2 = both background and foreground so stream of sub-blocks required.
+//	3 * int32       offset of first voxel of Block in DVID space (x, y, z)
+//	byte            content flag:
+//	                0 = background ONLY  (no more data for this block)
+//	                1 = foreground ONLY  (no more data for this block)
+//	                2 = both background and foreground so stream of sub-blocks required.
 //
-//      Stream of gx * gy * gz sub-blocks with the following data:
+//	Stream of gx * gy * gz sub-blocks with the following data:
 //
-//      byte            content flag:
-//                      0 = background ONLY  (no more data for this sub-block)
-//                      1 = foreground ONLY  (no more data for this sub-block)
-//                      2 = both background and foreground so mask data required.
-//      mask            64 byte bitmask where each voxel is 0 (background) or 1 (foreground)
+//	byte            content flag:
+//	                0 = background ONLY  (no more data for this sub-block)
+//	                1 = foreground ONLY  (no more data for this sub-block)
+//	                2 = both background and foreground so mask data required.
+//	mask            64 byte bitmask where each voxel is 0 (background) or 1 (foreground)
 func (pb *PositionedBlock) WriteBinaryBlock(indices map[uint32]struct{}, hasBackground bool, op *OutputOp, bounds dvid.Bounds) error {
 	offset, err := pb.OffsetDVID()
 	if err != nil {

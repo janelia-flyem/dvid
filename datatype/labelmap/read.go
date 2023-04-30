@@ -18,6 +18,7 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
+// low-level reading of blocks from io.Reader for use with POSTing of blocks and other ingestion.
 func readStreamedBlock(r io.Reader, scale uint8) (block *labels.Block, compressed []byte, bx, by, bz int32, err error) {
 	hdrBytes := make([]byte, 16)
 	var n int
