@@ -275,19 +275,17 @@ func (d *Data) sendCompressedBlock(ctx *datastore.VersionedCtx, w http.ResponseW
 	if block == nil {
 		return fmt.Errorf("unable to get label block %s", bcoordStr)
 	}
-	vc, err := getMapping(d, ctx.VersionID())
-	if err != nil {
-		return err
-	}
 	if !supervoxels {
+		vc, err := getMapping(d, ctx.VersionID())
+		if err != nil {
+			return err
+		}
 		modifyBlockMapping(ctx.VersionID(), block, vc)
 	}
 	data, _ := block.MakeLabelVolume()
 	if err := writeCompressedToHTTP(compression, data, subvol, w); err != nil {
 		return err
 	}
-
-	dvid.Infof("Sent single block with compression %q, supervoxels %t, scale %d\n", compression, supervoxels, scale)
 	return nil
 }
 
@@ -299,17 +297,16 @@ func (d *Data) streamRawBlock(ctx *datastore.VersionedCtx, w http.ResponseWriter
 	if err != nil {
 		return err
 	}
-	mapping, err := getMapping(d, ctx.VersionID())
-	if err != nil {
-		return err
-	}
 	if !supervoxels {
+		mapping, err := getMapping(d, ctx.VersionID())
+		if err != nil {
+			return err
+		}
 		modifyBlockMapping(ctx.VersionID(), block, mapping)
 	}
 	if err := block.WriteLabelVolume(w); err != nil {
 		return err
 	}
-	dvid.Infof("Streaming label block %s with supervoxels %t, scale %d\n", bcoord, supervoxels, scale)
 	return nil
 }
 
