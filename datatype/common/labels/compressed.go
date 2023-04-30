@@ -1633,7 +1633,7 @@ func (b Block) MakeLabelVolume() (uint64array []byte, size dvid.Point3d) {
 	return
 }
 
-// WriteLabelVolume streams packed little-endian uint64 labels in ZYX order,
+// WriteLabelVolume streams uncompressed, packed little-endian uint64 labels in ZYX order,
 // i.e., a uint64 for each voxel where consecutive values are in the (x,y,z) order:
 // (0,0,0), (1,0,0), (2,0,0) ... (0,1,0)
 func (b Block) WriteLabelVolume(w io.Writer) error {

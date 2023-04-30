@@ -209,7 +209,9 @@ func compressGoogle(data []byte, subvol *dvid.Subvolume) ([]byte, error) {
 	return datagoogle, nil
 }
 
-func sendBinaryData(compression string, data []byte, subvol *dvid.Subvolume, w http.ResponseWriter) error {
+// Given an array of label data (little-endian uint64) of dimensions related by subvol, write
+// via HTTP with the appropriate compression schemes.
+func writeCompressedToHTTP(compression string, data []byte, subvol *dvid.Subvolume, w http.ResponseWriter) error {
 	var err error
 	w.Header().Set("Content-type", "application/octet-stream")
 	switch compression {

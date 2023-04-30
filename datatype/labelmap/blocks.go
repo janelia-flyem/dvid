@@ -226,6 +226,68 @@ func (d *Data) transcodeBlock(b blockData) (out []byte, err error) {
 	return
 }
 
+// try to write a single block either by streaming (allows for termination) or by writing
+// with a simplified pipeline compared to subvolumes larger than a block.
+func (d *Data) writeBlockToHTTP(ctx *datastore.VersionedCtx, w http.ResponseWriter, subvol *dvid.Subvolume, compression string, supervoxels bool, scale uint8, roiname dvid.InstanceName) (done bool, err error) {
+	// Can't handle ROI for now.
+	if roiname != "" {
+		return
+	}
+
+	// Can only handle 3d requests.
+	blockSize, okBlockSize := d.BlockSize().(dvid.Point3d)
+	subvolSize, okSubvolSize := subvol.Size().(dvid.Point3d)
+	startPt, okStartPt := subvol.StartPoint().(dvid.Point3d)
+	if !okBlockSize || !okSubvolSize || !okStartPt {
+		return
+	}
+
+	// Can only handle single block for now.
+	if subvolSize != blockSize {
+		return
+	}
+
+	// Can only handle aligned block for now.
+	chunkPt, aligned := dvid.GetChunkPoint3d(startPt, blockSize)
+	if !aligned {
+		return
+	}
+
+	if compression != "" {
+		err = d.sendCompressedBlock(ctx, w, subvol, compression, chunkPt, scale, supervoxels)
+	} else {
+		err = d.streamRawBlock(ctx, w, chunkPt, scale, supervoxels)
+	}
+	if err != nil {
+		return
+	}
+
+	return true, nil
+}
+
+// send a single aligned block of data via HTTP.
+func (d *Data) sendCompressedBlock(ctx *datastore.VersionedCtx, w http.ResponseWriter, subvol *dvid.Subvolume, compression string, chunkPt dvid.ChunkPoint3d, scale uint8, supervoxels bool) error {
+	bcoordStr := chunkPt.ToIZYXString()
+	block, err := d.getLabelBlock(ctx, scale, bcoordStr)
+	if err != nil {
+		return err
+	}
+	vc, err := getMapping(d, ctx.VersionID())
+	if err != nil {
+		return err
+	}
+	if !supervoxels {
+		modifyBlockMapping(ctx.VersionID(), block, vc)
+	}
+	data, _ := block.MakeLabelVolume()
+	if err := writeCompressedToHTTP(compression, data, subvol, w); err != nil {
+		return err
+	}
+
+	dvid.Infof("Sent single block with compression %q, supervoxels %t, scale %d\n", compression, supervoxels, scale)
+	return nil
+}
+
 // writes a block of data as uncompressed ZYX uint64 to the writer in streaming fashion, allowing
 // for possible termination / error at any point.
 func (d *Data) streamRawBlock(ctx *datastore.VersionedCtx, w http.ResponseWriter, bcoord dvid.ChunkPoint3d, scale uint8, supervoxels bool) error {
@@ -241,7 +303,11 @@ func (d *Data) streamRawBlock(ctx *datastore.VersionedCtx, w http.ResponseWriter
 	if !supervoxels {
 		modifyBlockMapping(ctx.VersionID(), block, mapping)
 	}
-	return block.WriteLabelVolume(w)
+	if err := block.WriteLabelVolume(w); err != nil {
+		return err
+	}
+	dvid.Infof("Streaming label block %s with supervoxels %t, scale %d\n", bcoord, supervoxels, scale)
+	return nil
 }
 
 // returns nil block if no block is at the given block coordinate
@@ -297,45 +363,6 @@ func (d *Data) putLabelBlock(ctx *datastore.VersionedCtx, scale uint8, pblock *l
 		return fmt.Errorf("unable to serialize block %s in %q: %v", pblock.BCoord, d.DataName(), err)
 	}
 	return store.Put(ctx, tk, val)
-}
-
-// see if we can handle request for given parameters with current implementations of streaming blocks.
-func (d *Data) streamableBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, subvol *dvid.Subvolume, compression string, supervoxels bool, scale uint8, roiname dvid.InstanceName) (done bool, err error) {
-	// Can't handle ROI for now.
-	if roiname != "" {
-		return
-	}
-
-	// Can only handle 3d requests.
-	blockSize, okBlockSize := d.BlockSize().(dvid.Point3d)
-	subvolSize, okSubvolSize := subvol.Size().(dvid.Point3d)
-	startPt, okStartPt := subvol.StartPoint().(dvid.Point3d)
-	if !okBlockSize || !okSubvolSize || !okStartPt {
-		return
-	}
-
-	// Can only handle single block for now.
-	if subvolSize != blockSize {
-		return
-	}
-
-	// Can only handle aligned block for now.
-	chunkPt, aligned := dvid.GetChunkPoint3d(startPt, blockSize)
-	if !aligned {
-		return
-	}
-
-	// Can only handle uncompressed for now.
-	if compression != "" {
-		return
-	}
-
-	dvid.Infof("Streaming label blocks for subvol %s, compression %q, supervoxels %t, scale %d\n", subvol, compression, supervoxels, scale)
-
-	if err = d.streamRawBlock(ctx, w, chunkPt, scale, supervoxels); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 type blockSend struct {

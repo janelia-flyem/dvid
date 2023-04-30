@@ -883,7 +883,7 @@ func (d *Data) handleDataRequest(ctx *datastore.VersionedCtx, w http.ResponseWri
 			return
 		}
 		if strings.ToLower(r.Method) == "get" {
-			done, err := d.streamableBlocks(ctx, w, subvol, compression, supervoxels, scale, roiname)
+			done, err := d.writeBlockToHTTP(ctx, w, subvol, compression, supervoxels, scale, roiname)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
@@ -900,7 +900,7 @@ func (d *Data) handleDataRequest(ctx *datastore.VersionedCtx, w http.ResponseWri
 					server.BadRequest(w, r, err)
 					return
 				}
-				if err := sendBinaryData(compression, data, subvol, w); err != nil {
+				if err := writeCompressedToHTTP(compression, data, subvol, w); err != nil {
 					server.BadRequest(w, r, err)
 					return
 				}
