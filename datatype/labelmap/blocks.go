@@ -272,6 +272,9 @@ func (d *Data) sendCompressedBlock(ctx *datastore.VersionedCtx, w http.ResponseW
 	if err != nil {
 		return err
 	}
+	if block == nil {
+		return fmt.Errorf("unable to get label block %s", bcoordStr)
+	}
 	vc, err := getMapping(d, ctx.VersionID())
 	if err != nil {
 		return err
