@@ -1,6 +1,6 @@
 /*
-	Package labelblk supports only label volumes.  See labelvol package for support
-	of sparse labels.  The labelblk and labelvol datatypes typically are synced to each other.
+Package labelblk supports only label volumes.  See labelvol package for support
+of sparse labels.  The labelblk and labelvol datatypes typically are synced to each other.
 */
 package labelblk
 
@@ -815,8 +815,10 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 	}
 
 	// only do one request at a time, although each request can start many goroutines.
-	server.LargeMutationMutex.Lock()
-	defer server.LargeMutationMutex.Unlock()
+	if subvol.NumVoxels() > 256*256*256 {
+		server.LargeMutationMutex.Lock()
+		defer server.LargeMutationMutex.Unlock()
+	}
 
 	okv := store.(storage.BufferableOps)
 	// extract buffer interface

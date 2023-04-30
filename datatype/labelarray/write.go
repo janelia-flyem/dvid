@@ -50,8 +50,10 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 	}
 
 	// Only do one request at a time, although each request can start many goroutines.
-	server.LargeMutationMutex.Lock()
-	defer server.LargeMutationMutex.Unlock()
+	if subvol.NumVoxels() > 256*256*256 {
+		server.LargeMutationMutex.Lock()
+		defer server.LargeMutationMutex.Unlock()
+	}
 
 	// Keep track of changing extents, labels and mark repo as dirty if changed.
 	var extentChanged bool

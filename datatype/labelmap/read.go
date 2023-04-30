@@ -142,9 +142,11 @@ func (d *Data) GetLabels(v dvid.VersionID, supervoxels bool, scale uint8, vox *L
 		return fmt.Errorf("DVID does not currently support ROI masks on lower-scale GETs")
 	}
 
-	// Only do one request at a time, although each request can start many goroutines.
-	server.LargeMutationMutex.Lock()
-	defer server.LargeMutationMutex.Unlock()
+	// Only do one large request at a time, although each request can start many goroutines.
+	if vox.NumVoxels() > 256*256*256 {
+		server.LargeMutationMutex.Lock()
+		defer server.LargeMutationMutex.Unlock()
+	}
 
 	var mapping *VCache
 	if !supervoxels {

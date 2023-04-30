@@ -154,8 +154,10 @@ func (d *Data) PutVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dv
 
 	// Only do one request at a time, although each request can start many goroutines.
 	if !hasbuffer {
-		server.LargeMutationMutex.Lock()
-		defer server.LargeMutationMutex.Unlock()
+		if vox.NumVoxels() > 256*256*256 {
+			server.LargeMutationMutex.Lock()
+			defer server.LargeMutationMutex.Unlock()
+		}
 	}
 
 	// create some buffer for handling requests

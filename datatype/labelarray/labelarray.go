@@ -1,6 +1,6 @@
 /*
-	Package labelarray handles both volumes of label data as well as indexing to
-	quickly find and generate sparse volumes of any particular label.
+Package labelarray handles both volumes of label data as well as indexing to
+quickly find and generate sparse volumes of any particular label.
 */
 package labelarray
 
@@ -2007,8 +2007,10 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, sc
 	}
 
 	// only do one request at a time, although each request can start many goroutines.
-	server.LargeMutationMutex.Lock()
-	defer server.LargeMutationMutex.Unlock()
+	if subvol.NumVoxels() > 256*256*256 {
+		server.LargeMutationMutex.Lock()
+		defer server.LargeMutationMutex.Unlock()
+	}
 
 	okv := store.(storage.BufferableOps)
 	// extract buffer interface

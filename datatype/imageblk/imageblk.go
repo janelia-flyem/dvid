@@ -1,6 +1,6 @@
 /*
-	Package imageblk implements DVID support for image blocks of various formats (uint8, uint16, rgba8).
-    For label data, use labelblk.
+		Package imageblk implements DVID support for image blocks of various formats (uint8, uint16, rgba8).
+	    For label data, use labelblk.
 */
 package imageblk
 
@@ -2053,8 +2053,10 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 	}
 
 	// only do one request at a time, although each request can start many goroutines.
-	server.LargeMutationMutex.Lock()
-	defer server.LargeMutationMutex.Unlock()
+	if subvol.NumVoxels() > 256*256*256 {
+		server.LargeMutationMutex.Lock()
+		defer server.LargeMutationMutex.Unlock()
+	}
 
 	if gridStore != nil {
 		ordered := false
