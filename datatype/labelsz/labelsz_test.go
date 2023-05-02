@@ -727,6 +727,9 @@ func TestLabelmap(t *testing.T) {
 	server.TestHTTP(t, "POST", url, strings.NewReader(string(testJSON)))
 
 	// Need to pause to prevent race condition for when the labelsz is synced.
+	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
+		t.Fatalf("Error blocking on sync of elements to labelsz: %v\n", err)
+	}
 	if err := datastore.BlockOnUpdating(uuid, "noroi"); err != nil {
 		t.Fatalf("Error blocking on sync of elements to labelsz: %v\n", err)
 	}
