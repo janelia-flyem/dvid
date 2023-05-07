@@ -2206,15 +2206,6 @@ func (d *Data) newLabel(v dvid.VersionID) (uint64, error) {
 	d.mlMu.Lock()
 	defer d.mlMu.Unlock()
 
-	// Make sure we aren't trying to increment a label on a locked node.
-	locked, err := datastore.LockedVersion(v)
-	if err != nil {
-		return 0, err
-	}
-	if locked {
-		return 0, fmt.Errorf("can't ask for new label in a locked version id %d", v)
-	}
-
 	// Increment and store if we don't have an ephemeral new label start ID.
 	if d.NextLabel != 0 {
 		d.NextLabel++
@@ -2241,16 +2232,6 @@ func (d *Data) newLabels(v dvid.VersionID, numLabels uint64) (begin, end uint64,
 	}
 	d.mlMu.Lock()
 	defer d.mlMu.Unlock()
-
-	// Make sure we aren't trying to add labels on a locked node.
-	var locked bool
-	if locked, err = datastore.LockedVersion(v); err != nil {
-		return
-	}
-	if locked {
-		err = fmt.Errorf("can't ask for new labels in a locked version id %d", v)
-		return
-	}
 
 	// Increment and store.
 	if d.NextLabel != 0 {

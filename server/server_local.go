@@ -337,6 +337,10 @@ func AllowTiming() bool {
 	return tc.Server.AllowTiming
 }
 
+func NoLabelmapSplit() bool {
+	return tc.Server.NoLabelmapSplit
+}
+
 func KafkaServers() []string {
 	if len(tc.Kafka.Servers) != 0 {
 		return tc.Kafka.Servers
@@ -438,6 +442,8 @@ type localConfig struct {
 	AllowTiming        bool   // If true, returns * for Timing-Allow-Origin in response headers.
 	StartWebhook       string // http address that should be called when server is started up.
 	StartJaneliaConfig string // like StartWebhook, but with Janelia-specific behavior
+
+	NoLabelmapSplit bool // If true (default false), prevents labelmap /split endpoint.
 
 	IIDGen   string `toml:"instance_id_gen"`
 	IIDStart uint32 `toml:"instance_id_start"`
