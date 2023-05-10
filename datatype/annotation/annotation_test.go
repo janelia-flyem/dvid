@@ -887,6 +887,54 @@ var testBlocksElements = Elements{
 	},
 }
 
+var testLabelPoints = map[string]string{
+	"42": `[{"Pos":[31,54,17],"Kind":"PreSyn","Prop":{"Some prop":"yes"}},{"Pos":[65,70,75],"Kind":"PostSyn","Prop":{"I'm not a PSD":"sure","Im a T-Bar":"yes","i'm really special":""}}]`,
+	"67": `[{"Pos":[25,11,76],"Kind":"PreSyn","Prop":{"A prop":"no"}},{"Pos":[86,2,56],"Kind":"PostSyn","Prop":{"A":"B","C":"D"}}]`,
+}
+
+func TestPostLabels(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+
+	config := dvid.NewConfig()
+	dataservice, err := datastore.NewData(uuid, syntype, "mysynapses", config)
+	if err != nil {
+		t.Fatalf("Error creating new data instance: %v\n", err)
+	}
+	data, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("Returned new data instance is not synapse.Data\n")
+	}
+
+	// PUT first label synapses
+	testJSON, err := json.Marshal(testLabelPoints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	url1 := fmt.Sprintf("%snode/%s/%s/labels", server.WebAPIPath, uuid, data.DataName())
+	server.TestHTTP(t, "POST", url1, strings.NewReader(string(testJSON)))
+
+	// GET for each of the labels
+	for label, expectedStr := range testLabelPoints {
+		url := fmt.Sprintf("%snode/%s/%s/label/%s", server.WebAPIPath, uuid, data.DataName(), label)
+		ret := server.TestHTTP(t, "GET", url, nil)
+		var expected, got ElementsNR
+		if err := json.Unmarshal([]byte(expectedStr), &expected); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(ret, &got); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(expected, got) {
+			t.Errorf("Expected:\n%v\nGot:\n%v\n", expected, got)
+		}
+	}
+}
+
 var testBlocksReturn = `{"1,1,1":[{"Pos":[65,70,75],"Kind":"PostSyn","Tags":["Synapse1"],"Prop":null,"Rels":[{"Rel":"PostSynTo","To":[129,130,131]}]}],"2,2,2":[{"Pos":[129,130,131],"Kind":"PreSyn","Tags":["Synapse1"],"Prop":{"I'm not a PSD":"not really","Im a T-Bar":"no","i'm not really special":"at all"},"Rels":[{"Rel":"PreSynTo","To":[129,130,131]},{"Rel":"PreSynTo","To":[65,70,75]}]},{"Pos":[130,131,132],"Kind":"PostSyn","Tags":["Synapse1"],"Prop":null,"Rels":[{"Rel":"PostSynTo","To":[129,130,131]}]}]}`
 
 func TestPostBlocksAndAll(t *testing.T) {
