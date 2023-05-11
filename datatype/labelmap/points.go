@@ -150,8 +150,6 @@ func (d *Data) partitionPoints(pts []dvid.Point3d) map[dvid.IZYXString]ptsIndex 
 }
 
 func (d *Data) getFewLabelPoints(mapped []uint64, v dvid.VersionID, bptsSlice blockPtsSlice, mapping *VCache, mappedVersions distFromRoot, scale uint8) error {
-	timedLog := dvid.NewTimeLog()
-
 	for _, bptsI := range bptsSlice {
 		chunkPt3d, err := bptsI.BCoord.ToChunkPoint3d()
 		if err != nil {
@@ -169,9 +167,6 @@ func (d *Data) getFewLabelPoints(mapped []uint64, v dvid.VersionID, bptsSlice bl
 			mapped[index] = blockLabels[i]
 		}
 	}
-
-	timedLog.Infof("Small-scale labelmap %q label lookup for %d pts -> %d blocks",
-		d.DataName(), len(mapped), len(bptsSlice))
 	return nil
 }
 

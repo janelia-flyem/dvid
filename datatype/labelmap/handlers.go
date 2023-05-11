@@ -48,7 +48,7 @@ func (d *Data) handleLabel(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 	}
 	w.Header().Set("Content-type", "application/json")
 	jsonStr := fmt.Sprintf(`{"Label": %d}`, labels[0])
-	fmt.Fprintf(w, jsonStr)
+	fmt.Fprint(w, jsonStr)
 
 	timedLog.Infof("HTTP GET label at %s (%s)", parts[4], r.URL)
 }
