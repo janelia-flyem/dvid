@@ -2382,6 +2382,8 @@ func (d *Data) PutData(ctx *datastore.VersionedCtx, keyStr string, value []byte,
 		origData = nil
 	}
 	updateJSON(origData, newData, ctx.User, conditionals, replace)
+	dvid.Debugf("neuronjson %s put by user %q, conditionals %v, replace %t:\nOrig %v\n New: %v\n",
+		d.DataName(), ctx.User, conditionals, replace, origData, newData)
 
 	// write result
 	if ctx.Head() {
