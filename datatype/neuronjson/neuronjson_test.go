@@ -599,7 +599,7 @@ func TestValidation(t *testing.T) {
 		"something_else": "foo"
 	}` // group is string, not int
 	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(badValue))
-	if resp.Code == http.StatusOK {
+	if resp.Code != http.StatusOK {
 		t.Errorf("POST on %s should have been ok after auto-conversion\n", key1req)
 	}
 }
