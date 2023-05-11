@@ -2330,6 +2330,37 @@ func updateJSON(origData, newData NeuronJSON, user string, conditionals []string
 	}
 }
 
+func (d *Data) storeAndUpdate(ctx *datastore.VersionedCtx, keyStr string, newData NeuronJSON, conditionals []string, replace bool) error {
+	bodyid, err := strconv.ParseUint(keyStr, 10, 64)
+	if err != nil {
+		return err
+	}
+
+	// get original data so we can handle default update and tell which values change for _user/_time fields.
+	origData, found, err := d.getStoreData(ctx, keyStr)
+	if err != nil {
+		return err
+	}
+	if !found {
+		origData = nil
+	}
+	updateJSON(origData, newData, ctx.User, conditionals, replace)
+	dvid.Infof("neuronjson %s put by user %q, conditionals %v, replace %t:\nOrig: %v\n New: %v\n",
+		d.DataName(), ctx.User, conditionals, replace, origData, newData)
+
+	// write result
+	if ctx.Head() {
+		d.dbMu.Lock()
+		d.db[bodyid] = newData
+		for field := range newData {
+			d.fields[field] = struct{}{}
+		}
+		d.addBodyID(bodyid)
+		d.dbMu.Unlock()
+	}
+	return d.putStoreData(ctx, keyStr, newData)
+}
+
 // PutData puts a valid JSON []byte into a neuron key at a given uuid.
 // If replace is true, will use given value instead of updating fields that were given.
 // If field values are given but do not change, the _user and _time fields will not be updated.
@@ -2350,19 +2381,37 @@ func (d *Data) PutData(ctx *datastore.VersionedCtx, keyStr string, value []byte,
 		return nil
 	}
 
-	bodyid, err := strconv.ParseUint(keyStr, 10, 64)
-	if err != nil {
-		return err
-	}
-
 	// validate if we have a JSON schema
 	if sch, err := d.getJSONSchema(ctx); err == nil {
 		var v interface{}
 		if err = json.Unmarshal(value, &v); err != nil {
 			return err
 		}
-		if err = sch.Validate(v); err != nil {
-			return err
+		for err = sch.Validate(v); err != nil; {
+			if verr, ok := err.(*jsonschema.ValidationError); ok {
+				if !strings.HasSuffix(verr.Error(), "expected integer, but got string") {
+					return err
+				}
+				// Try to convert string to integer for fields that need conversion.
+				var field string
+				if _, scanerr := fmt.Sscanf(err.Error(), `jsonschema: %s does`, &field); scanerr != nil {
+					return err
+				}
+				field = strings.Trim(field, `'/`)
+				dvid.Infof("Converting string to integer for field %q\n", field)
+				var newData NeuronJSON
+				if err := json.Unmarshal(value, &newData); err != nil {
+					return err
+				}
+				if newData[field], err = strconv.ParseInt(newData[field].(string), 10, 64); err != nil {
+					return err
+				}
+				if value, err = json.Marshal(newData); err != nil {
+					return err
+				}
+			} else {
+				return err
+			}
 		}
 	} else {
 		dvid.Infof("Skipping validation of POST %q neuron annotation: %v\n", d.DataName(), err)
@@ -2372,30 +2421,7 @@ func (d *Data) PutData(ctx *datastore.VersionedCtx, keyStr string, value []byte,
 	if err := json.Unmarshal(value, &newData); err != nil {
 		return err
 	}
-
-	// get original data so we can handle default update and tell which values change for _user/_time fields.
-	origData, found, err := d.getStoreData(ctx, keyStr)
-	if err != nil {
-		return err
-	}
-	if !found {
-		origData = nil
-	}
-	updateJSON(origData, newData, ctx.User, conditionals, replace)
-	dvid.Debugf("neuronjson %s put by user %q, conditionals %v, replace %t:\nOrig %v\n New: %v\n",
-		d.DataName(), ctx.User, conditionals, replace, origData, newData)
-
-	// write result
-	if ctx.Head() {
-		d.dbMu.Lock()
-		d.db[bodyid] = newData
-		for field := range newData {
-			d.fields[field] = struct{}{}
-		}
-		d.addBodyID(bodyid)
-		d.dbMu.Unlock()
-	}
-	return d.putStoreData(ctx, keyStr, newData)
+	return d.storeAndUpdate(ctx, keyStr, newData, conditionals, replace)
 }
 
 // DeleteData deletes a key-value pair

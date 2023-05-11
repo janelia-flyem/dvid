@@ -589,6 +589,7 @@ func TestValidation(t *testing.T) {
 	if resp.Code == http.StatusOK {
 		t.Errorf("POST on %s returned 200 when it shouldn't have been validated\n", key1req)
 	}
+	// test auto-convert from string to int
 	badValue = `
 	{
 		"bodyid": 13087493,
@@ -599,7 +600,7 @@ func TestValidation(t *testing.T) {
 	}` // group is string, not int
 	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(badValue))
 	if resp.Code == http.StatusOK {
-		t.Errorf("POST on %s returned 200 when it shouldn't have been validated\n", key1req)
+		t.Errorf("POST on %s should have been ok after auto-conversion\n", key1req)
 	}
 }
 
