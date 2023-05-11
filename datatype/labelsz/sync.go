@@ -85,6 +85,7 @@ func (d *Data) processEvents() {
 	}
 	var stop bool
 	var wg *sync.WaitGroup
+	var droppedDeltas uint64
 	for {
 		select {
 		case wg = <-d.syncDone:
@@ -98,6 +99,13 @@ func (d *Data) processEvents() {
 				return
 			}
 		case msg := <-d.syncCh:
+			if d.uninitialized {
+				droppedDeltas++
+				if droppedDeltas%100 == 0 {
+					dvid.Criticalf("Dropped %d deltas in past because stats not available.\n", droppedDeltas)
+				}
+				continue
+			}
 			d.StartUpdate()
 			ctx := datastore.NewVersionedCtx(d, msg.Version)
 			switch delta := msg.Delta.(type) {
@@ -109,6 +117,7 @@ func (d *Data) processEvents() {
 			d.StopUpdate()
 
 			if stop && len(d.syncCh) == 0 {
+				dvid.Criticalf("Dropped %d deltas because stats weren't available.\n", droppedDeltas)
 				dvid.Infof("Shutting down sync even handler for instance %q after draining sync events.\n", d.DataName())
 				wg.Done()
 				return

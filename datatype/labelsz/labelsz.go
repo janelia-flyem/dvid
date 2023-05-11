@@ -340,10 +340,12 @@ type Data struct {
 	iROI       *roi.Immutable
 	roiChecked bool
 
+	// channels for processing messages from synced data like annotations
 	syncCh   chan datastore.SyncMessage
 	syncDone chan *sync.WaitGroup
 
-	sync.RWMutex
+	// if true, should just return error if trying to access the stats
+	uninitialized bool
 }
 
 func (d *Data) Equals(d2 *Data) bool {
@@ -391,13 +393,14 @@ func (d *Data) inROI(pos dvid.Point3d) bool {
 
 // GetCountElementType returns a count of the given ElementType for a given label.
 func (d *Data) GetCountElementType(ctx *datastore.VersionedCtx, label uint64, i IndexType) (uint32, error) {
+	if d.uninitialized {
+		return 0, fmt.Errorf("stats not available for labelsz %q at this time", d.DataName())
+	}
+
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return 0, err
 	}
-
-	// d.RLock()
-	// defer d.RUnlock()
 
 	val, err := store.Get(ctx, NewTypeLabelTKey(i, label))
 	if err != nil {
@@ -415,13 +418,14 @@ func (d *Data) GetCountElementType(ctx *datastore.VersionedCtx, label uint64, i 
 
 // SendCountsByElementType writes the counts for given index type for a list of labels
 func (d *Data) SendCountsByElementType(w http.ResponseWriter, ctx *datastore.VersionedCtx, labels []uint64, idxType IndexType) error {
+	if d.uninitialized {
+		return fmt.Errorf("stats not available for labelsz %q at this time", d.DataName())
+	}
+
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return err
 	}
-
-	// d.RLock()
-	// defer d.RUnlock()
 
 	w.Header().Set("Content-type", "application/json")
 	if _, err := fmt.Fprintf(w, "["); err != nil {
@@ -455,6 +459,10 @@ func (d *Data) SendCountsByElementType(w http.ResponseWriter, ctx *datastore.Ver
 
 // GetTopElementType returns a sorted list of the top N labels that have the given ElementType.
 func (d *Data) GetTopElementType(ctx *datastore.VersionedCtx, n int, i IndexType) (LabelSizes, error) {
+	if d.uninitialized {
+		return nil, fmt.Errorf("stats not available for labelsz %q at this time", d.DataName())
+	}
+
 	if n < 0 {
 		return nil, fmt.Errorf("bad N (%d) in top request", n)
 	}
@@ -470,9 +478,6 @@ func (d *Data) GetTopElementType(ctx *datastore.VersionedCtx, n int, i IndexType
 	// Setup key range for iterating through keys of this ElementType.
 	begTKey := NewTypeSizeLabelTKey(i, math.MaxUint32-1, 0)
 	endTKey := NewTypeSizeLabelTKey(i, 0, math.MaxUint64)
-
-	// d.RLock()
-	// defer d.RUnlock()
 
 	// Iterate through the first N kv then abort.
 	shortCircuitErr := fmt.Errorf("Found data, aborting.")
@@ -502,6 +507,10 @@ func (d *Data) GetTopElementType(ctx *datastore.VersionedCtx, n int, i IndexType
 // GetLabelsByThreshold returns a sorted list of labels that meet the given minSize threshold.
 // We allow a maximum of MaxLabelsReturned returned labels and start with rank "offset".
 func (d *Data) GetLabelsByThreshold(ctx *datastore.VersionedCtx, i IndexType, minSize uint32, offset, num int) (LabelSizes, error) {
+	if d.uninitialized {
+		return nil, fmt.Errorf("stats not available for labelsz %q at this time", d.DataName())
+	}
+
 	var nReturns int
 	if num == 0 {
 		nReturns = MaxLabelsReturned
@@ -519,9 +528,6 @@ func (d *Data) GetLabelsByThreshold(ctx *datastore.VersionedCtx, i IndexType, mi
 	// Setup key range for iterating through keys of this ElementType.
 	begTKey := NewTypeSizeLabelTKey(i, math.MaxUint32-1, 0)
 	endTKey := NewTypeSizeLabelTKey(i, 0, math.MaxUint64)
-
-	// d.RLock()
-	// defer d.RUnlock()
 
 	// Iterate through sorted size list until we get what we need.
 	shortCircuitErr := fmt.Errorf("Found data, aborting.")
@@ -873,8 +879,11 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 
 	d.StartUpdate()
 	defer d.StopUpdate()
-	// d.Lock()
-	// defer d.Unlock()
+
+	d.uninitialized = true
+	defer func() {
+		d.uninitialized = false
+	}()
 
 	minTSLTKey := storage.MinTKey(keyTypeSizeLabel)
 	maxTSLTKey := storage.MaxTKey(keyTypeSizeLabel)
@@ -890,14 +899,29 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 		return
 	}
 
-	buf := make([]byte, 4)
-	var indexMap [AllSyn]uint32
+	// launch goroutines to write label stats
+	var writerWG sync.WaitGroup
+	writerCh := make(chan *storage.TKeyValue, 1000)
+	for i := 0; i < 4; i++ {
+		writerWG.Add(1)
+		go func() {
+			for tkv := range writerCh {
+				if tkv == nil {
+					return
+				}
+				if err := store.Put(ctx, tkv.K, tkv.V); err != nil {
+					dvid.Errorf("Unable to write label stat for labelsz %q: %v\n", d.DataName(), err)
+				}
+			}
+			writerWG.Done()
+		}()
+	}
+
+	// interate through all label annotations and pass to writer
 	var totLabels uint64
 	err = annot.ProcessLabelAnnotations(ctx.VersionID(), func(label uint64, elems annotation.ElementsNR) {
-		totLabels++
-		for i := IndexType(0); i < AllSyn; i++ {
-			indexMap[i] = 0
-		}
+		var indexMap [AllSyn]uint32
+
 		for _, elem := range elems {
 			if d.inROI(elem.Pos) {
 				indexMap[elementToIndexType(elem.Kind)]++
@@ -906,16 +930,19 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 		var allsyn uint32
 		for i := IndexType(0); i < AllSyn; i++ {
 			if indexMap[i] > 0 {
+				buf := make([]byte, 4)
 				binary.LittleEndian.PutUint32(buf, indexMap[i])
-				store.Put(ctx, NewTypeLabelTKey(i, label), buf)
-				store.Put(ctx, NewTypeSizeLabelTKey(i, indexMap[i], label), nil)
+				writerCh <- &storage.TKeyValue{K: NewTypeLabelTKey(i, label), V: buf}
+				writerCh <- &storage.TKeyValue{K: NewTypeSizeLabelTKey(i, indexMap[i], label)}
 				allsyn += indexMap[i]
 			}
 		}
+		buf := make([]byte, 4)
 		binary.LittleEndian.PutUint32(buf, allsyn)
-		store.Put(ctx, NewTypeLabelTKey(AllSyn, label), buf)
-		store.Put(ctx, NewTypeSizeLabelTKey(AllSyn, allsyn, label), nil)
+		writerCh <- &storage.TKeyValue{K: NewTypeLabelTKey(AllSyn, label), V: buf}
+		writerCh <- &storage.TKeyValue{K: NewTypeSizeLabelTKey(AllSyn, allsyn, label)}
 
+		totLabels++
 		if totLabels%10000 == 0 {
 			timedLog.Infof("Reloading labelsz %q: %d labels done...\n", d.DataName(), totLabels)
 		}
@@ -923,6 +950,8 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 	if err != nil {
 		dvid.Errorf("Error in reload of labelsz %q: %v\n", d.DataName(), err)
 	}
+	close(writerCh)
+	writerWG.Wait()
 
 	timedLog.Infof("Completed labelsz %q reload of %d labels from annotation %q", d.DataName(), totLabels, annot.DataName())
 }
