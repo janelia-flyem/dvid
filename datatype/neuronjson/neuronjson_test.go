@@ -209,20 +209,15 @@ func equalListJSON(x, y []byte, showFields Fields) bool {
 	if len(vx) == 0 {
 		return true // both have 0 objects.
 	}
-	vx[0] = removeReservedFields(vx[0], showFields)
-	vy[0] = removeReservedFields(vy[0], showFields)
-	if len(vx) == 1 && reflect.DeepEqual(vx[0], vy[0]) {
-		return true
+	for i := range vx {
+		vx[i] = removeReservedFields(vx[i], showFields)
 	}
-	if len(vx) == 2 {
-		vx[1] = removeReservedFields(vx[1], showFields)
-		vy[1] = removeReservedFields(vy[1], showFields)
-		if reflect.DeepEqual(vx[0], vy[0]) && reflect.DeepEqual(vx[1], vy[1]) {
-			return true
-		}
-		return reflect.DeepEqual(vx[0], vy[1]) && reflect.DeepEqual(vx[1], vy[0])
+	for i := range vy {
+		vy[i] = removeReservedFields(vy[i], showFields)
 	}
-	return false
+	dvid.Infof("equalListJSON: vx = %v\n", vx)
+	dvid.Infof("equalListJSON: vy = %v\n", vy)
+	return reflect.DeepEqual(vx, vy)
 }
 
 func TestFields(t *testing.T) {
@@ -906,8 +901,8 @@ var testData = []struct {
 	val string
 }{
 	{"1000", `{"bodyid": 1000, "a number": 3456, "position": [150,250,380], "baz": ""}`},
-	{"2000", `{"bodyid": 2000, "bar":"another string", "baz":[1, 2, 3]}`},
-	{"3000", `{"bodyid": 3000, "a number": 3456, "a list": [23]}`},
+	{"2000", `{"bodyid": 2000, "bar":"another string", "baz":[1, 2, 3], "nullfield": "im here"}`},
+	{"3000", `{"bodyid": 3000, "a number": 3456, "a list": [23], "nullfield": null}`},
 	{"4000", `{"position": [151, 251, 301], "bodyid": 4000, "soma_side": "LHS", "baz": "some string"}`},
 }
 
@@ -1100,7 +1095,7 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 
 	expectedValue := []byte("[" + testData[1].val + "," + testData[3].val + "]")
 	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
-		t.Errorf("Bad foo existence query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+		t.Errorf("Bad existence query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	query = `{"a number": "exists/1", "position": "exists/0"}`
@@ -1109,7 +1104,16 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 
 	expectedValue = []byte("[" + testData[2].val + "]")
 	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
-		t.Errorf("Bad foo existence query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+		t.Errorf("Bad existence query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+	}
+
+	query = `{"nullfield": "exists/0"}`
+	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
+	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
+
+	expectedValue = []byte("[" + testData[0].val + "," + testData[2].val + "," + testData[3].val + "]")
+	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
+		t.Fatalf("Bad existence query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	// Check if field is missing or empty string.

@@ -898,6 +898,7 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 		dvid.Errorf("Unable to delete type-label denormalization for labelsz %q: %v\n", d.DataName(), err)
 		return
 	}
+	timedLog.Infof("Completed deletion of labelsz %q indices. Now regenerating.", d.DataName())
 
 	// launch goroutines to write label stats
 	var writerWG sync.WaitGroup
@@ -944,7 +945,7 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 
 		totLabels++
 		if totLabels%10000 == 0 {
-			timedLog.Infof("Reloading labelsz %q: %d labels done...\n", d.DataName(), totLabels)
+			timedLog.Infof("Reloading labelsz %q: %d labels processed", d.DataName(), totLabels)
 		}
 	})
 	if err != nil {

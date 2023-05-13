@@ -511,19 +511,19 @@ POST <api URL>/node/<UUID>/<data name>/query[?show=...]
 	The JSON query format uses field names as the keys, and desired values.
 	Example:
 	{ "bodyid": 23, "hemilineage": "0B", ... }
-	Each field value must be true, i.e., the conditions or ANDed together.
+	Each field value must be true, i.e., the conditions are ANDed together.
 
 	If a list of queries (JSON object per query) is POSTed, the results for each query are ORed
 	together with duplicate annotations removed.
 
-	A JSON list of objects that matches the query is returned.
+	A JSON list of objects that matches the query is returned in ascending order of body ID.
 
 	Query fields can include two special types of values:
 	1. Regular expressions: a string value that starts with "re/" is treated as a regex with
 	   the remainder of the string being the regex.  The regex is anchored to the beginning.
 	2. Field existence: a string value that starts with "exists/" checks if a field exists.
-	   If "exists/0" is specified, the field must not exist.  If "exists/1" is specified,
-	   the field must exist.
+	   If "exists/0" is specified, the field must not exist or be set to null.  If "exists/1" 
+	   is specified, the field must exist.
 
 	Arguments:
 
@@ -937,6 +937,10 @@ func (nj *NeuronJSON) UnmarshalJSON(jsonText []byte) error {
 	//  we just need to make sure queries on in-memory NeuronJSONs are consistent.
 	for key, val := range raw {
 		s := string(val)
+		if s == "null" {
+			(*nj)[key] = nil
+			continue
+		}
 		u, err := strconv.ParseUint(s, 10, 64)
 		if err == nil {
 			(*nj)[key] = u
@@ -1177,7 +1181,8 @@ func queryMatch(queryList ListQueryJSON, value map[string]interface{}) (matches 
 			recordValue, found := value[queryKey]
 			switch v := queryValue.(type) {
 			case FieldExistence:
-				dvid.Infof("checking existence of field %s: %v where field %t", queryKey, v, found)
+				found = found && recordValue != nil
+				dvid.Infof("checking existence of field %s: %v where field %t (%v)", queryKey, v, found, recordValue)
 				if (bool(v) && !found) || (!bool(v) && found) {
 					and_match = false
 				}
@@ -2026,7 +2031,8 @@ func (d *Data) queryInMemory(w http.ResponseWriter, queryL ListQueryJSON, fieldM
 	showUser, showTime := showFields.Bools()
 	numMatches := 0
 	var jsonBytes []byte
-	for _, value := range d.db {
+	for _, bodyid := range d.ids {
+		value := d.db[bodyid]
 		var matches bool
 		if matches, err = queryMatch(queryL, value); err != nil {
 			return
