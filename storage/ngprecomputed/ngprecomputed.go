@@ -885,9 +885,9 @@ func (ng *ngStore) GridGetVolume(scaleLevel int, minBlock, maxBlock dvid.ChunkPo
 	}
 
 	// Calculate all the block coords in ZYX for this subvolume and send down channel.
-	for z := minBlock.Value(0); z <= maxBlock.Value(0); z++ {
+	for z := minBlock.Value(2); z <= maxBlock.Value(2); z++ {
 		for y := minBlock.Value(1); y <= maxBlock.Value(1); y++ {
-			for x := minBlock.Value(2); x <= maxBlock.Value(2); x++ {
+			for x := minBlock.Value(0); x <= maxBlock.Value(0); x++ {
 				ch <- dvid.ChunkPoint3d{x, y, z}
 			}
 		}
