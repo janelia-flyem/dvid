@@ -2324,7 +2324,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 
 	case "subvolblocks":
-		// GET <api URL>/node/<UUID>/<data name>/subvolblocks/<coord>/<offset>[?compression=...]
+		// GET <api URL>/node/<UUID>/<data name>/subvolblocks/<size>/<offset>[?compression=...]
 		sizeStr, offsetStr := parts[4], parts[5]
 
 		if throttle := queryStrings.Get("throttle"); throttle == "on" || throttle == "true" {

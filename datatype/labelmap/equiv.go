@@ -63,14 +63,13 @@ func initMapping(d dvid.Data, v dvid.VersionID) *VCache {
 
 // adds a merge into the equivalence map for a given instance version and also
 // records the mappings into the log.
-func addMergeToMapping(d dvid.Data, v dvid.VersionID, mutID, toLabel uint64, mergeIdx *labels.Index) error {
+func addMergeToMapping(d dvid.Data, v dvid.VersionID, mutID, toLabel uint64, supervoxels labels.Set) error {
+	if len(supervoxels) == 0 {
+		return nil
+	}
 	lmap, err := getMapping(d, v)
 	if err != nil {
 		return err
-	}
-	supervoxels := mergeIdx.GetSupervoxels()
-	if len(supervoxels) == 0 {
-		return nil
 	}
 	for supervoxel := range supervoxels {
 		lmap.setMapping(v, supervoxel, toLabel)
@@ -85,20 +84,24 @@ func addMergeToMapping(d dvid.Data, v dvid.VersionID, mutID, toLabel uint64, mer
 
 // // adds a renumber into the equivalence map for a given instance version and also
 // // records the mappings into the log.
-func addRenumberToMapping(d dvid.Data, v dvid.VersionID, mutID, origLabel, newLabel uint64, mergeIdx *labels.Index) error {
+func addRenumberToMapping(d dvid.Data, v dvid.VersionID, mutID, origLabel, newLabel uint64, supervoxels labels.Set) error {
+	if len(supervoxels) == 0 {
+		return nil
+	}
 	lmap, err := getMapping(d, v)
 	if err != nil {
 		return err
-	}
-	supervoxels := mergeIdx.GetSupervoxels()
-	if len(supervoxels) == 0 {
-		return nil
 	}
 	for supervoxel := range supervoxels {
 		lmap.setMapping(v, supervoxel, newLabel)
 	}
 	lmap.setMapping(v, newLabel, 0)
-	return labels.LogRenumber(d, v, mutID, origLabel, newLabel)
+	op := labels.MappingOp{
+		MutID:    mutID,
+		Mapped:   newLabel,
+		Original: supervoxels,
+	}
+	return labels.LogMapping(d, v, op)
 }
 
 // adds new arbitrary split into the equivalence map for a given instance version.

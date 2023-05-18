@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 )
@@ -198,4 +199,78 @@ func TestSVMap(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkMappings(t, v3, buf, expected3)
+}
+
+// Tests the logging of various mutations and whether they are properly
+// reloaded from the log.
+func TestMappingIngest(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, v := initTestRepo()
+	var config dvid.Config
+	server.CreateTestInstance(t, uuid, "labelmap", "labels", config)
+
+	d, err := GetByVersionName(v, "labels")
+	if err != nil {
+		t.Fatalf("can't get labelmap data service: %v\n", err)
+	}
+	vc := initMapping(d, v)
+
+	mapping := map[uint64]uint64{
+		1: 1,
+		5: 1,
+
+		2: 2,
+		3: 3,
+		4: 4,
+	}
+	for from, to := range mapping {
+		vc.setMapping(v, from, to)
+	}
+
+	// Renumber of label 4 to 50.
+	mutID := d.NewMutationID()
+	supervoxels := labels.Set{4: struct{}{}}
+	addRenumberToMapping(d, v, mutID, 4, 50, supervoxels)
+
+	// Merge label 2 into 3.
+	mutID = d.NewMutationID()
+	supervoxels = labels.Set{2: struct{}{}}
+	addMergeToMapping(d, v, mutID, 3, supervoxels)
+
+	// Cleave label 1 so that sv 1 remains and sv 5 -> 6.
+	mutID = d.NewMutationID()
+	op := labels.CleaveOp{
+		MutID:              mutID,
+		Target:             1,
+		CleavedLabel:       6,
+		CleavedSupervoxels: []uint64{5},
+	}
+	addCleaveToMapping(d, v, op)
+
+	// Check current in-memory map.
+	expected := map[uint64]uint64{
+		1: 1,
+		5: 6,
+		2: 3,
+		3: 3,
+		4: 50,
+	}
+	mappedVersions := vc.getMappedVersionsDist(v)
+	for from, to := range expected {
+		vc.checkMapping(t, mappedVersions, from, to)
+	}
+
+	// Reload the mapping from the log.
+	vc2 := initMapping(d, v)
+	vc2.initToVersion(d, v, true)
+
+	// Test that the mapping is correct.
+	mappedVersions = vc2.getMappedVersionsDist(v)
+	for from, to := range expected {
+		vc2.checkMapping(t, mappedVersions, from, to)
+	}
 }

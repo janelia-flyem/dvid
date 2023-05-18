@@ -118,7 +118,8 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		return
 	}
 
-	if err = addMergeToMapping(d, v, mutID, op.Target, mergeIdx); err != nil {
+	supervoxels := mergeIdx.GetSupervoxels()
+	if err = addMergeToMapping(d, v, mutID, op.Target, supervoxels); err != nil {
 		return
 	}
 
@@ -266,9 +267,14 @@ func (d *Data) RenumberLabels(v dvid.VersionID, origLabel, newLabel uint64, info
 		return
 	}
 
-	if err = addRenumberToMapping(d, v, mutID, origLabel, newLabel, mergeIdx); err != nil {
+	supervoxels := mergeIdx.GetSupervoxels()
+	if err = addRenumberToMapping(d, v, mutID, origLabel, newLabel, supervoxels); err != nil {
 		return
 	}
+	if err = labels.LogRenumber(d, v, mutID, origLabel, newLabel); err != nil {
+		return
+	}
+
 	if mergeIdx != nil && len(mergeIdx.Blocks) != 0 {
 		targetIdx = mergeIdx
 		targetIdx.LastMutId = mutID

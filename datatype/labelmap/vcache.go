@@ -267,7 +267,7 @@ func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 	vc.splits[v] = splits
 	vc.splitsMu.Unlock()
 	timedLog.Infof("Loaded mappings for data %q, version %d", dataname, v)
-	dvid.Infof("Mutations for version %d: %v\n", v, numMsgs)
+	dvid.Infof("Mutations for version %d for data %q: %v\n", v, dataname, numMsgs)
 	wg.Done()
 }
 
