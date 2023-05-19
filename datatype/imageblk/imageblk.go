@@ -135,9 +135,8 @@ GET  <api URL>/node/<UUID>/<data name>/help
 
 
 GET  <api URL>/node/<UUID>/<data name>/info
-POST <api URL>/node/<UUID>/<data name>/info
 
-    Retrieves or puts DVID-specific data properties for these voxels.
+    Retrieves or DVID-specific data properties for these voxels.
 
     Example: 
 
@@ -2180,11 +2179,6 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	switch action {
 	case "get":
 	case "post":
-		// TODO -- relax this once GridStore implementations allow mutation
-		if d.GridStore != "" {
-			server.BadRequest(w, r, "Data %q uses an immutable GridStore so cannot received POSTs", d.DataName())
-			return
-		}
 	default:
 		server.BadRequest(w, r, "Data %q can only handle GET or POST HTTP verbs", d.DataName())
 		return
@@ -2195,6 +2189,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	parts := strings.Split(url, "/")
 	if len(parts[len(parts)-1]) == 0 {
 		parts = parts[:len(parts)-1]
+	}
+	if len(parts) < 4 {
+		server.BadRequest(w, r, "Incomplete API request")
+		return
 	}
 
 	// Get query strings and possible roi
@@ -2218,31 +2216,6 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 	}
 
-	// // Handle POST on data -> setting of configuration
-	// if len(parts) == 3 && action == "post" {
-	// 	fmt.Printf("Setting configuration of data '%s'\n", d.DataName())
-	// 	config, err := server.DecodeJSON(r)
-	// 	if err != nil {
-	// 		server.BadRequest(w, r, err)
-	// 		return
-	// 	}
-	// 	if err := d.ModifyConfig(config); err != nil {
-	// 		server.BadRequest(w, r, err)
-	// 		return
-	// 	}
-	// 	if err := datastore.SaveDataByUUID(uuid, d); err != nil {
-	// 		server.BadRequest(w, r, err)
-	// 		return
-	// 	}
-	// 	fmt.Fprintf(w, "Changed '%s' based on received configuration:\n%s\n", d.DataName(), config)
-	// 	return
-	// }
-
-	if len(parts) < 4 {
-		server.BadRequest(w, r, "Incomplete API request")
-		return
-	}
-
 	// Process help and info.
 	switch parts[3] {
 	case "help":
@@ -2261,6 +2234,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		return
 
 	case "extents":
+		if action != "post" {
+			server.BadRequest(w, r, "extents endpoint only supports POST HTTP verb")
+			return
+		}
 		jsonBytes, err := ioutil.ReadAll(r.Body)
 		if err != nil {
 			server.BadRequest(w, r, err)
@@ -2272,6 +2249,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 
 	case "resolution":
+		if action != "post" {
+			server.BadRequest(w, r, "resolution endpoint only supports POST HTTP verb")
+			return
+		}
 		jsonBytes, err := ioutil.ReadAll(r.Body)
 		if err != nil {
 			server.BadRequest(w, r, err)
@@ -2283,13 +2264,17 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 
 	case "info":
-		jsonBytes, err := d.MarshalJSONExtents(ctx)
-		if err != nil {
-			server.BadRequest(w, r, err)
-			return
+		if action != "get" {
+			server.BadRequest(w, r, "info endpoint only supports GET HTTP verb")
+		} else {
+			jsonBytes, err := d.MarshalJSONExtents(ctx)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, string(jsonBytes))
 		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, string(jsonBytes))
 		return
 
 	case "rawkey":
@@ -2392,6 +2377,11 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				return
 			}
 		} else {
+			// TODO -- relax this once GridStore implementations allow mutation
+			if d.GridStore != "" {
+				server.BadRequest(w, r, "Data %q uses an immutable GridStore so cannot received POSTs", d.DataName())
+				return
+			}
 			mutID := d.NewMutationID()
 			mutate := (queryStrings.Get("mutate") == "true")
 			if err := d.PutBlocks(ctx.VersionID(), mutID, bcoord, span, r.Body, mutate); err != nil {
@@ -2555,6 +2545,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				if isotropic {
 					err := fmt.Errorf("can only POST 'raw' not 'isotropic' images")
 					server.BadRequest(w, r, err)
+					return
+				}
+				if d.GridStore != "" {
+					server.BadRequest(w, r, "Data %q uses an immutable GridStore so cannot received POSTs", d.DataName())
 					return
 				}
 				data, err := ioutil.ReadAll(r.Body)

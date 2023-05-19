@@ -185,7 +185,7 @@ func TestVoxelsInstanceCreation(t *testing.T) {
 	}
 }
 
-func TestExtents(t *testing.T) {
+func TestExtentsAndRes(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
 	}
@@ -200,6 +200,10 @@ func TestExtents(t *testing.T) {
 	}`
 	apiStr := fmt.Sprintf("%snode/%s/grayscale/extents", server.WebAPIPath, uuid)
 	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(extents))
+
+	resolution := `[4.0, 4.0, 4.0]`
+	apiStr = fmt.Sprintf("%snode/%s/grayscale/resolution", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(resolution))
 
 	apiStr = fmt.Sprintf("%snode/%s/grayscale/info", server.WebAPIPath, uuid)
 	result := server.TestHTTP(t, "GET", apiStr, nil)
@@ -231,6 +235,9 @@ func TestExtents(t *testing.T) {
 	}
 	if !parsed.Extended.MaxIndex.Equals(dvid.Point3d{31, 150, 380}) {
 		t.Errorf("Bad MaxIndex in new uint8blk instance: %s\n", parsed.Extended.MaxIndex)
+	}
+	if !parsed.Extended.VoxelSize.Equals(dvid.NdFloat32{4.0, 4.0, 4.0}) {
+		t.Errorf("Bad voxel size in new uint8blk instance: %s\n", parsed.Extended.VoxelSize)
 	}
 }
 
