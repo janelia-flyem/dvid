@@ -116,7 +116,10 @@ blobstore = "raid6"
     store = "ssd"
     log = "labelmutationlog"
 
-    [backend."grayscale:99ef22cd85f143f58a623bd22aad0ef7"]
+    [backend."2ff3197a5a9844be9a905b38d12d41ca"] # if only UUID, it's instance Data UUID
+    store = "badger"
+
+    [backend."grayscale:99ef22cd85f143f58a623bd22aad0ef7"] # instance name : version UUID
     store = "badger"
 
     [backend."grayscale2:83698c997b214365abd479cfc7744049"]
