@@ -283,6 +283,26 @@ func SetAdminToken(token string) {
 	adminToken = token
 }
 
+// SetPorts sets the port numbers for the HTTP and RPC servers.
+func SetPorts(ports string) error {
+	if ports == "" {
+		return nil
+	}
+	parts := strings.Split(ports, ",")
+	if len(parts) != 2 {
+		return fmt.Errorf(`could not parse ports string %q: should be in format "http-port,rpc-port"`, ports)
+	}
+	tc.Server.HTTPAddress = parts[0]
+	tc.Server.RPCAddress = parts[1]
+	return nil
+}
+
+func SetConsole(console string) {
+	if console != "" {
+		tc.Server.WebClient = console
+	}
+}
+
 // AboutJSON returns a JSON string describing the properties of this server.
 func AboutJSON() (jsonStr string, err error) {
 	data := map[string]string{

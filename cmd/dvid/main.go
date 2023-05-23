@@ -57,7 +57,17 @@ var (
 	// Run in monitor mode (write load stats to debug log if activity) if true.
 	monitor = flag.Bool("monitor", false, "")
 
+	// instead of specifying in TOML, allows config via command-line. Useful for grayscale
+	// serving.
+	ports = flag.String("ports",
+		strings.Join([]string{server.DefaultWebAddress, server.DefaultRPCAddress}, ","),
+		"http port,rpc port")
+
 	rpcAddress = flag.String("rpc", server.DefaultRPCAddress, "")
+
+	console = flag.String("console", "", "")
+
+	grayscaleRef = flag.String("grayscale", "", "")
 
 	// msgAddress = flag.String("message", message.DefaultAddress, "")
 
@@ -84,7 +94,13 @@ dvid is a command-line interface to a distributed, versioned image-oriented data
 Usage: dvid [options] <command>
 
       -readonly   (flag)    HTTP API ignores anything but GET and HEAD requests.
-      -rpc        =string   Address for RPC communication.
+      -rpc        =string   Address for RPC communication to another DVID.
+      -ports      =string   Ports for HTTP and RPC communication (overrides TOML config).
+      -console    =string   Path to DVID web console directory (overrides TOML config).
+                              Default is "console" directory in current exe path.
+      -grayscale  =string   Address for grayscale data (neuroglancer precomputed, etc).
+                              If used, only "grayscale" data instance will be available
+                              and TOML config file will be ignored.
       -cpuprofile =string   Write CPU profile to this file.
       -memprofile =string   Write memory profile to this file on ctrl-C.
       -numcpu     =number   Number of logical CPUs to use for DVID.
@@ -92,8 +108,8 @@ Usage: dvid [options] <command>
       -verbose    (flag)    Run in verbose mode.
       -monitor    (flag)    Run in monitor mode (write load stats to debug log if activity).
       -fullwrite  (flag)    Allow limited ops to all nodes, even committed ones. [Limit to expert use]
-	  -sleep      =number	Number of seconds to sleep before starting. Useful for remote debugging.
-  -h, -help       (flag)    Show help message
+      -sleep      =number   Number of seconds to sleep before starting. Useful for remote debugging.
+      -h, -help   (flag)    Show help message
 
 Commands that can be performed without a running server:
 
@@ -118,15 +134,7 @@ To get help for a remote DVID server:
 
 var usage = func() {
 	// Print local DVID help
-	fmt.Printf(helpMessage)
-}
-
-func currentDir() string {
-	currentDir, err := os.Getwd()
-	if err != nil {
-		log.Fatalln("Could not get current directory:", err)
-	}
-	return currentDir
+	fmt.Print(helpMessage)
 }
 
 func main() {
@@ -220,7 +228,7 @@ func main() {
 // sending via rpc those commands that need a running server.
 func DoCommand(cmd dvid.Command) error {
 	if len(cmd) == 0 {
-		return fmt.Errorf("Blank command!")
+		return fmt.Errorf("blank command")
 	}
 
 	switch cmd.Name() {
@@ -287,16 +295,28 @@ func DoServe(cmd dvid.Command) error {
 	}()
 	signal.Notify(stopSig, os.Interrupt, os.Kill, syscall.SIGTERM)
 
+	// If grayscale server, just serve that.
+	if *grayscaleRef != "" {
+		if err := storage.InitializeGrayscale(*grayscaleRef); err != nil {
+			return err
+		}
+		if err := datastore.InitializeGrayscale(*grayscaleRef); err != nil {
+			return err
+		}
+		server.ServeGrayscale(*console, *ports, *grayscaleRef)
+		return nil
+	}
+
 	// Load server configuration.
 	configPath := cmd.Argument(1)
 	if configPath == "" {
 		return fmt.Errorf("serve command must be followed by the path to the TOML configuration file")
 	}
-	if err := server.LoadConfig(configPath); err != nil {
+	if err := server.LoadConfig(*console, *ports, configPath); err != nil {
 		return fmt.Errorf("error loading configuration file %q: %v", configPath, err)
 	}
 
-	if err := server.Initialize(); err != nil {
+	if err := server.StartAuxServices(); err != nil {
 		return err
 	}
 

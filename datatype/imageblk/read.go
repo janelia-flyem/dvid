@@ -331,7 +331,7 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
-		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
+		return fmt.Errorf("data type imageblk had error initializing store: %v", err)
 	}
 
 	// Only do one request at a time, although each request can start many goroutines.
@@ -407,7 +407,7 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 			// Send the entire range of key-value pairs to chunk processor
 			err = okv.ProcessRange(ctx, begTKey, endTKey, chunkOp, storage.ChunkFunc(d.ReadChunk))
 			if err != nil {
-				return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
+				return fmt.Errorf("unable to GET data %s: %v", ctx, err)
 			}
 		} else {
 			// Extract block list
@@ -429,7 +429,7 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 
 			err = okv.(storage.RequestBuffer).ProcessList(ctx, tkeys, chunkOp, storage.ChunkFunc(d.ReadChunk))
 			if err != nil {
-				return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
+				return fmt.Errorf("unable to GET data %s: %v", ctx, err)
 			}
 		}
 	}
@@ -439,7 +439,7 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 		err = okv.(storage.RequestBuffer).Flush()
 
 		if err != nil {
-			return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
+			return fmt.Errorf("unable to GET data %s: %v", ctx, err)
 
 		}
 	}

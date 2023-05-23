@@ -1,3 +1,4 @@
+//go:build !clustered && !gcloud
 // +build !clustered,!gcloud
 
 /*
@@ -294,28 +295,29 @@ func getDataTypeInstances(repo *repoT, typeName dvid.TypeString) (names dvid.Ins
 // destination store is available.
 //
 // The migrate config file contains JSON with the following format:
-// {
-// 	"Versions": ["2881e9","52a13","57e8d"],
-// 	"Migrations": [
-// 		{
-// 			"Name": "instance-name",
-// 			"SrcStore": "source store",
-// 			"DstStore": {
-// 				"Path": "/path/to/store",
-// 				"Engine": "basholeveldb"
-// 			}
-// 		},
-// 		{
-// 			"Name": "#datatype",
-// 			"SrcStore": "source store",
-// 			"DstStore": {
-// 				"Path": "/another/store",
-// 				"Engine": "badger"
-// 			}
-// 		},
-// 	],
-// 	"Exclusions": ["name1", "name2"]
-// }
+//
+//	{
+//		"Versions": ["2881e9","52a13","57e8d"],
+//		"Migrations": [
+//			{
+//				"Name": "instance-name",
+//				"SrcStore": "source store",
+//				"DstStore": {
+//					"Path": "/path/to/store",
+//					"Engine": "basholeveldb"
+//				}
+//			},
+//			{
+//				"Name": "#datatype",
+//				"SrcStore": "source store",
+//				"DstStore": {
+//					"Path": "/another/store",
+//					"Engine": "badger"
+//				}
+//			},
+//		],
+//		"Exclusions": ["name1", "name2"]
+//	}
 func MigrateBatch(uuid dvid.UUID, configFName string) (err error) {
 	var repo *repoT
 	repo, err = manager.repoFromUUID(uuid)
@@ -584,14 +586,15 @@ func LimitVersions(uui dvid.UUID, configFName string) error {
 // TransferData copies key-value pairs from one repo to store and apply filtering as specified
 // by the JSON configuration in the file specified by configFName.
 // An example of the transfer JSON configuration file format:
-// {
-// 	"Versions": [
-// 		"8a90ec0d257c415cae29f8c46603bcae",
-// 		"a5682904bb824c06aba470c0a0cbffab",
-// 		...
-// 	},
-// 	"Metadata": true,
-// }
+//
+//	{
+//		"Versions": [
+//			"8a90ec0d257c415cae29f8c46603bcae",
+//			"a5682904bb824c06aba470c0a0cbffab",
+//			...
+//		},
+//		"Metadata": true,
+//	}
 //
 // All ancestors of desired leaf nodes should be specified because
 // key-value pair transfer only occurs if the version in which
@@ -719,7 +722,7 @@ func CopyInstance(uuid dvid.UUID, source, target dvid.InstanceName, c dvid.Confi
 	if err != nil {
 		return err
 	}
-	d2, err := manager.newData(uuid, t, target, c)
+	d2, err := manager.newData(uuid, t, target, c, true)
 	if err != nil {
 		return err
 	}

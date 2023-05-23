@@ -25,7 +25,7 @@ func loadConfigFile(t *testing.T, filename string) string {
 }
 
 func TestStartWebhook(t *testing.T) {
-	if err := LoadConfig("../scripts/distro-files/config-full.toml"); err != nil {
+	if err := LoadConfig("", "", "../scripts/distro-files/config-full.toml"); err != nil {
 		t.Fatalf("bad TOML configuration: %v\n", err)
 	}
 	tc.Mutations.Jsonstore = ""
@@ -62,7 +62,7 @@ func TestStartWebhook(t *testing.T) {
 
 	// check server startup
 	tc.Kafka = storage.KafkaConfig{}
-	if err := Initialize(); err != nil {
+	if err := StartAuxServices(); err != nil {
 		t.Fatalf("couldn't initialize server: %v\n", err)
 	}
 
@@ -78,7 +78,7 @@ func TestStartWebhook(t *testing.T) {
 }
 
 func TestServerInfo(t *testing.T) {
-	if err := LoadConfig("../scripts/distro-files/config-full.toml"); err != nil {
+	if err := LoadConfig("", "", "../scripts/distro-files/config-full.toml"); err != nil {
 		t.Fatalf("bad TOML configuration: %v\n", err)
 	}
 	jsonStr, err := AboutJSON()
@@ -105,7 +105,7 @@ func TestServerInfo(t *testing.T) {
 }
 
 func TestParseConfig(t *testing.T) {
-	if err := LoadConfig("../scripts/distro-files/config-full.toml"); err != nil {
+	if err := LoadConfig("", "", "../scripts/distro-files/config-full.toml"); err != nil {
 		t.Fatalf("bad TOML configuration: %v\n", err)
 	}
 

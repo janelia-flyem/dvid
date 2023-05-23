@@ -819,6 +819,7 @@ func (d *Data) gridStoreGetter() (gridStore storage.GridStoreGetter, okvDB stora
 			var ok bool
 			gridStore, ok = store.(storage.GridStoreGetter)
 			if ok {
+				dvid.Infof("Found gridstore %q\n", d.GridStore)
 				return
 			}
 			gridStore = nil

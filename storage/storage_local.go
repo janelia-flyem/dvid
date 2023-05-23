@@ -135,6 +135,31 @@ func getManagerStore(ds DataSpec, logMap bool) (store dvid.Store, err error) {
 	return
 }
 
+// InitializeGrayscale sets up a storage system consisting of a simple proxy
+// to a cloud-based grayscale store.
+func InitializeGrayscale(grayscaleRef string) error {
+	name := "grayscale"
+	engineName := "ngprecomputed"
+	engine := GetEngine(engineName)
+	if engine == nil {
+		return fmt.Errorf("unknown storage engine %q", engineName)
+	}
+	engConfig := dvid.NewConfig()
+	engConfig.Set("ref", grayscaleRef)
+	engConfig.Set("instance", name)
+	store, _, err := engine.NewStore(dvid.StoreConfig{Config: engConfig, Engine: engineName})
+	if err != nil {
+		return err
+	}
+
+	manager.stores = map[Alias]dvid.Store{Alias(name): store}
+	manager.storeMap.init()
+	manager.storeMap.datatype[dvid.TypeString("uint8blk")] = DummyKVStore()
+	manager.storeMap.defaultStore = DummyKVStore()
+	manager.setup = true
+	return nil
+}
+
 // Initialize the storage systems.  Returns a bool + error where the bool is
 // true if the metadata store is newly created and needs initialization.
 // The map of store configurations should be keyed by either a datatype name,
@@ -154,7 +179,7 @@ func Initialize(cmdline dvid.Config, backend *Backend, compiledTypes map[dvid.Ty
 		var store dvid.Store
 		for dbalias, db := range manager.stores {
 			if db.Equal(dbconfig) {
-				return false, fmt.Errorf("Store %q configuration is duplicate of store %q", alias, dbalias)
+				return false, fmt.Errorf("store %q configuration is duplicate of store %q", alias, dbalias)
 			}
 		}
 		store, created, err := NewStore(dbconfig)

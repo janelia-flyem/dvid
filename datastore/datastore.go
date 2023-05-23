@@ -333,7 +333,7 @@ func NewData(uuid dvid.UUID, t TypeService, name dvid.InstanceName, c dvid.Confi
 	if manager == nil {
 		return nil, ErrManagerNotInitialized
 	}
-	return manager.newData(uuid, t, name, c)
+	return manager.newData(uuid, t, name, c, true)
 }
 
 // SaveDataByUUID persists metadata for a data instance with given uuid.
