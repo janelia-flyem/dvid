@@ -2117,12 +2117,19 @@ func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 
 	var uuidPtr *dvid.UUID
 	if len(jsonData.UUID) > 0 {
-		uuid, err := dvid.StringToUUID(jsonData.UUID)
-		if err != nil {
-			BadRequest(w, r, fmt.Sprintf("Bad UUID provided: %v", err))
-			return
+		var uuidChosen dvid.UUID
+		if string(jsonData.UUID[0]) == "v" {
+			dvid.Infof("using a version tag (%s) as UUID for new version off parent %s", jsonData.UUID, uuid)
+			uuidChosen = dvid.UUID(jsonData.UUID)
+		} else {
+			var err error
+			uuidChosen, err = dvid.StringToUUID(jsonData.UUID)
+			if err != nil {
+				BadRequest(w, r, fmt.Sprintf("Bad UUID provided: %v", err))
+				return
+			}
 		}
-		uuidPtr = &uuid
+		uuidPtr = &uuidChosen
 	}
 
 	// the default or master name should be not be specified
