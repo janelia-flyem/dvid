@@ -374,19 +374,9 @@ func TestAssignableUUID(t *testing.T) {
 	payload = bytes.NewBufferString(`{"uuid": "fXX70173ad1d4a6a872b9fd860e246b3"}`)
 	TestBadHTTP(t, "POST", versionReq, payload)
 
-	// Test assigned version Tag as a UUID
-	branchReq := fmt.Sprintf("%snode/%s/branch", WebAPIPath, uuid)
-	payload = bytes.NewBufferString(`{"branch": "mybranch", "uuid": "v1.0"}`)
-	respData = TestHTTP(t, "POST", branchReq, payload)
-	if err := json.Unmarshal(respData, &resp); err != nil {
-		t.Errorf("Expected 'child' JSON response.  Got %s\n", string(respData))
-	}
-	if resp.Child != "v1.0" {
-		t.Errorf("Expected new version UUID to be v1.0, got %s\n", resp.Child)
-	}
-
 	// Create a sibling.
 	payload = bytes.NewBufferString(`{"branch": "mybranch2", "uuid": "7487347145aa42d0bda8ae6f27d4605c"}`)
+	branchReq := fmt.Sprintf("%snode/%s/branch", WebAPIPath, uuid)
 	respData = TestHTTP(t, "POST", branchReq, payload)
 	if err := json.Unmarshal(respData, &resp); err != nil {
 		t.Errorf("Expected 'child' JSON response.  Got %s\n", string(respData))
@@ -397,6 +387,11 @@ func TestAssignableUUID(t *testing.T) {
 	if _, err := dvid.StringToUUID(resp.Child); err != nil {
 		t.Errorf("bad child uuid: %v\n", err)
 	}
+
+	// Test tagging
+	payload = bytes.NewBufferString(`{"note": "This is my tag", "tag": "v1.0"}`)
+	tagReq := fmt.Sprintf("%snode/%s/tag", WebAPIPath, uuid)
+	TestHTTP(t, "POST", tagReq, payload)
 }
 
 func doMetadataReads(t *testing.T, uuid dvid.UUID, wg *sync.WaitGroup, done chan bool) {

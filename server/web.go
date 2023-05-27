@@ -499,6 +499,27 @@ references to "B:master" now return the data from "D".
 	}
 
 
+ POST /api/node/{uuid}/tag/{tag}
+
+	Tags a version with a unique string across the DAG (including UUIDs).
+
+	The post body should be in JSON format, where the tag name is specified
+	in the "tag" field and a "note" is optional:
+
+	{
+		"note": "this is what this tag means",
+		"tag": "my-great-tag"
+	}
+
+	A JSON message will be sent to any associated Kafka system with the following format:
+	{ 
+		"Action": "tag",
+		"Parent": <UUID of parent>
+		"Child": <supplied tag>,
+		"Branch": "tag-<supplied tag>",
+		"Note": "Tag of version <UUID of parent> with <supplied tag>"
+	}
+
  GET /api/node/{uuid}/{data name}/blobstore/{reference}
  POST /api/node/{uuid}/{data name}/blobstore
 
@@ -804,6 +825,7 @@ func initRoutes() {
 	nodeMux.Post("/api/node/:uuid/commit", repoCommitHandler)
 	nodeMux.Post("/api/node/:uuid/branch", repoBranchHandler)
 	nodeMux.Post("/api/node/:uuid/newversion", repoNewVersionHandler)
+	nodeMux.Post("/api/node/:uuid/tag", repoTagHandler)
 
 	instanceMux := web.New()
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword", instanceMux)
@@ -1132,7 +1154,11 @@ func nodeSelector(c *web.C, h http.Handler) http.Handler {
 			return
 		}
 		method := strings.ToLower(r.Method)
-		branchRequest := (c.URLParams["action"] == "branch") || (c.URLParams["action"] == "newversion")
+		var branchRequest bool
+		switch c.URLParams["action"] {
+		case "branch", "newversion", "tag":
+			branchRequest = true
+		}
 		adminPriv := c.Env["adminPriv"].(bool)
 		if !adminPriv && !fullwrite && locked && !branchRequest && method != "get" && method != "head" {
 			BadRequest(w, r, "Cannot do %s on locked node %s", method, uuid)
@@ -2089,8 +2115,6 @@ func repoNewVersionHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// TODO -- Might allow specification of UUID for child via HTTP, or only
-// allow this potentially dangerous op via command line.
 func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	uuid := c.Env["uuid"].(dvid.UUID)
 	jsonData := struct {
@@ -2117,19 +2141,12 @@ func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 
 	var uuidPtr *dvid.UUID
 	if len(jsonData.UUID) > 0 {
-		var uuidChosen dvid.UUID
-		if string(jsonData.UUID[0]) == "v" {
-			dvid.Infof("using a version tag (%s) as UUID for new version off parent %s", jsonData.UUID, uuid)
-			uuidChosen = dvid.UUID(jsonData.UUID)
-		} else {
-			var err error
-			uuidChosen, err = dvid.StringToUUID(jsonData.UUID)
-			if err != nil {
-				BadRequest(w, r, fmt.Sprintf("Bad UUID provided: %v", err))
-				return
-			}
+		uuid, err := dvid.StringToUUID(jsonData.UUID)
+		if err != nil {
+			BadRequest(w, r, fmt.Sprintf("Bad UUID provided: %v", err))
+			return
 		}
-		uuidPtr = &uuidChosen
+		uuidPtr = &uuid
 	}
 
 	// the default or master name should be not be specified
@@ -2159,6 +2176,67 @@ func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	if err := datastore.LogRepoOpToKafka(uuid, jsonmsg); err != nil {
 		BadRequest(w, r, fmt.Sprintf("Error on sending branch op to kafka: %v\n", err))
 		return
+	}
+}
+
+func repoTagHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	// internally a tag is just a branch with the tag name assigned as a UUID,
+	// and then the new node is committed.
+
+	uuid := c.Env["uuid"].(dvid.UUID)
+
+	jsonData := struct {
+		Tag  string `json:"tag"`
+		Note string `json:"note"`
+	}{}
+
+	if r.Body != nil {
+		data, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			BadRequest(w, r, err)
+			return
+		}
+
+		if len(data) > 0 {
+			if err := json.Unmarshal(data, &jsonData); err != nil {
+				BadRequest(w, r, fmt.Sprintf("Malformed JSON request in body: %v", err))
+				return
+			}
+		}
+	}
+
+	// create new branch
+	branch := "tag-" + jsonData.Tag
+	note := fmt.Sprintf("Tag of version %s with %q", uuid, jsonData.Tag)
+	uuidTag := dvid.UUID(jsonData.Tag)
+
+	// create new branch (will just version node if branch name is the same as the parent)
+	newuuid, err := datastore.NewVersion(uuid, jsonData.Note, branch, &uuidTag)
+	if err != nil {
+		BadRequest(w, r, err)
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "{%q: %q}", "child", newuuid)
+	}
+
+	// send tag op to kafka
+	msginfo := map[string]interface{}{
+		"Action": "tag",
+		"Parent": string(uuid),
+		"Child":  newuuid,
+		"Branch": branch,
+		"Tag":    jsonData.Tag,
+		"Note":   note,
+	}
+	jsonmsg, _ := json.Marshal(msginfo)
+	if err := datastore.LogRepoOpToKafka(uuid, jsonmsg); err != nil {
+		BadRequest(w, r, fmt.Sprintf("Error on sending branch op to kafka: %v\n", err))
+		return
+	}
+
+	// Commit the branch
+	if err := datastore.Commit(uuid, note, []string{}); err != nil {
+		BadRequest(w, r, err)
 	}
 }
 
@@ -2204,7 +2282,7 @@ func repoMergeHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	case "conflict-free":
 		mt = datastore.MergeConflictFree
 	default:
-		BadRequest(w, r, fmt.Sprintf("'mergeType' must be 'conflict-free' at this time"))
+		BadRequest(w, r, "'mergeType' must be 'conflict-free' at this time")
 		return
 	}
 
@@ -2255,7 +2333,7 @@ func repoResolveHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	// Convert JSON of parents into []UUID and whether we need a child for them to add deletions.
 	numParents := len(jsonData.Parents)
 	oldParents := make([]dvid.UUID, numParents)
-	newParents := make([]dvid.UUID, numParents, numParents) // UUID of any parent extension for deletions.
+	newParents := make([]dvid.UUID, numParents) // UUID of any parent extension for deletions.
 	for i, uuidFrag := range jsonData.Parents {
 		uuid, _, err := datastore.MatchingUUID(uuidFrag)
 		if err != nil {
@@ -2276,7 +2354,7 @@ func repoResolveHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := datastore.DeleteConflicts(uuid, data, oldParents, newParents); err != nil {
-			BadRequest(w, r, fmt.Errorf("Conflict deletion error for data %q: %v", data.DataName(), err))
+			BadRequest(w, r, fmt.Errorf("conflict deletion error for data %q: %v", data.DataName(), err))
 			return
 		}
 	}
