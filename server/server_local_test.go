@@ -2,10 +2,12 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -24,7 +26,7 @@ func loadConfigFile(t *testing.T, filename string) string {
 	return string(data)
 }
 
-func TestStartWebhook(t *testing.T) {
+func TestServerInit(t *testing.T) {
 	if err := LoadConfig("../scripts/distro-files/config-full.toml"); err != nil {
 		t.Fatalf("bad TOML configuration: %v\n", err)
 	}
@@ -45,9 +47,7 @@ func TestStartWebhook(t *testing.T) {
 	// test handler for Janelia-specific start webhook
 	var data string
 	ts2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var err error
-
-		err = r.ParseForm()
+		err := r.ParseForm()
 		if err != nil {
 			t.Fatalf("couldn't parse posted form from StartJaneliaConfig: %v\n", err)
 		}
@@ -74,6 +74,22 @@ func TestStartWebhook(t *testing.T) {
 	// check Janelia webhook
 	if data != `{"HTTP Address":":8000","Host":"mygreatserver.test.com","Note":"You can put anything you want in here and have it available via /api/server/note.\nMultiple lines!\n","RPC Address":":8001"}` {
 		t.Fatalf("Expected server info to be sent to Janelia webhook, but received this instead:\n%s\n", data)
+	}
+
+	// check block list
+	if len(blockList.users) != 1 {
+		t.Fatalf("Expected 1 user in block list, got %d: %v\n", len(blockList.users), blockList.users)
+	}
+	if len(blockList.ips) != 1 {
+		t.Fatalf("Expected 1 user in block list, got %d: %v\n", len(blockList.ips), blockList.ips)
+	}
+	retbytes, err := TestHTTPError(t, "GET", fmt.Sprintf("%sserver/info?u=waldo", WebAPIPath), nil)
+	if err == nil {
+		t.Fatalf("Expected error for blocked user, got 200 and response: %s\n", string(retbytes))
+	}
+	expected := `User "waldo" is blocked: Sorry waldo you've been temporarily blocked`
+	if strings.TrimSpace(string(retbytes)) != expected {
+		t.Fatalf("\nExpected: %s.\ngot: %s.\n", expected, string(retbytes))
 	}
 }
 
@@ -204,19 +220,19 @@ func TestTOMLConfigAbsolutePath(t *testing.T) {
 		t.Errorf("Logfile not correctly converted to absolute path: %s", c.Logging.Logfile)
 	}
 
-	foo, _ := c.Store["foo"]
-	path, _ := foo["path"]
+	foo := c.Store["foo"]
+	path := foo["path"]
 	if path.(string) != "/tmp/dvid-configs/foo-storage-db" {
 		t.Errorf("[store.foo].path not correctly converted to absolute path: %s", path)
 	}
 
-	engine, _ := foo["engine"]
+	engine := foo["engine"]
 	if engine.(string) != "basholeveldb" {
 		t.Errorf("[store.foo].engine should not have been touched: %s", path)
 	}
 
-	bar, _ := c.Store["bar"]
-	path, _ = bar["path"]
+	bar := c.Store["bar"]
+	path = bar["path"]
 	if path.(string) != "/tmp/bar-storage-db" {
 		t.Errorf("[store.bar].path was already absolute and should have been left unchanged: %s", path)
 	}

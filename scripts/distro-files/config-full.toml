@@ -30,6 +30,12 @@ corsDomains = ["mydomain.org"] # Allow CORS origin in these domains (not subdoma
 
 noLabelmapSplit = true # Default false. If true, won't allow /split endpoint on labelmap.
 
+# Blocking that can will be read on server startup or calling POST /api/server/reload-blocklist.
+# Each line should be one of the following:
+# u=someuserid,optional note to be sent with the 429 (Too Many Requests) response code
+# ip=23.10.5.*,optional note to be sent with the 429 (Too Many Requests) response code
+blockListFile = "../scripts/distro-files/blocklist-example.csv"
+
 # rwmode settings allow read-only and full write modes similar to command-line flags
 # rwmode = "readonly"
 # rwmode = "fullwrite"

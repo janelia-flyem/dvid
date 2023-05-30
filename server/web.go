@@ -153,6 +153,14 @@ GET  /api/server/groupcache
  	Returns JSON for groupcache statistics for this server.  See github.com/golang/groupcache package
 	Stats and CacheStats for MainCache and HotCache.
 
+GET /api/server/blobstore/{reference}
+   
+	GETs data with the given reference string from this server's blobstore. The blobstore is
+	populated as part of mutation logging and is read-only.  The reference is a URL-friendly 
+	content hash (FNV-128) of the blob data.
+
+---- Server endpoints that require use of additional authorization by requester ----
+
 POST  /api/server/settings
 
 	Sets server parameters.  Expects JSON to be posted with optional keys denoting parameters:
@@ -172,15 +180,14 @@ POST  /api/server/settings
 				Default = 1.
 
 
-GET /api/server/blobstore/{reference}
-   
-	GETs data with the given reference string from this server's blobstore. The blobstore is
-	populated as part of mutation logging and is read-only.  The reference is a URL-friendly 
-	content hash (FNV-128) of the blob data.
-
 POST /api/server/reload-auth
 
 	Reloads any authorization file as configured in the TOML file.
+
+POST /api/server/reload-blocklist
+
+	Reloads any blocklist file as configured in the TOML file.
+
 
 -------------------------
 Memory Profiler endpoints
@@ -499,7 +506,7 @@ references to "B:master" now return the data from "D".
 	}
 
 
- POST /api/node/{uuid}/tag/{tag}
+ POST /api/node/{uuid}/tag
 
 	Tags a version with a unique string across the DAG (including UUIDs).
 
@@ -756,6 +763,8 @@ func initRoutes() {
 
 	mainMux.Get("/api/storage", serverStorageHandler)
 
+	// -- server API
+
 	serverMux := web.New()
 	mainMux.Handle("/api/server/:action", serverMux)
 	serverMux.Use(activityLogHandler)
@@ -771,15 +780,22 @@ func initRoutes() {
 	serverMux.Get("/api/server/compiled-types/", serverCompiledTypesHandler)
 	serverMux.Get("/api/server/groupcache", serverGroupcacheHandler)
 	serverMux.Get("/api/server/groupcache/", serverGroupcacheHandler)
-	serverMux.Post("/api/server/settings", serverSettingsHandler)
 	serverMux.Get("/api/server/blobstore/:ref", blobstoreHandler)
 	serverMux.Get("/api/server/token", serverTokenHandler)
 	serverMux.Get("/api/server/token/", serverTokenHandler)
+
+	serverMux.Post("/api/server/settings", serverSettingsHandler)
 	serverMux.Post("/api/server/reload-auth", serverReloadAuthHandler)
 	serverMux.Post("/api/server/reload-auth/", serverReloadAuthHandler)
+	serverMux.Post("/api/server/reload-blocklist", serverReloadBlocklistHandler)
+	serverMux.Post("/api/server/reload-blocklist/", serverReloadBlocklistHandler)
+
+	// -- repos API
 
 	mainMux.Post("/api/repos", reposPostHandler)
 	mainMux.Get("/api/repos/info", reposInfoHandler)
+
+	// -- repo API
 
 	repoRawMux := web.New()
 	mainMux.Handle("/api/repo/:uuid", repoRawMux)
@@ -886,7 +902,7 @@ func wrapResponseWriter(w http.ResponseWriter) *wrappedResponseWriter {
 // shutdown of server when doing critical reorg of internals.
 func httpAvailHandler(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
-		if httpUnavailable(w) {
+		if httpUnavailable(w) || blockedRequest(w, r) {
 			return
 		}
 		h.ServeHTTP(w, r)
@@ -1621,6 +1637,15 @@ func serverReloadAuthHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain")
 	fmt.Fprintf(w, "Reloaded authorizations from file %q.\n", tc.Auth.AuthFile)
+}
+
+func serverReloadBlocklistHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	if err := loadBlockListFile(); err != nil {
+		BadRequest(w, r, "unable to reload blocklist file: %v", err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	fmt.Fprintf(w, "Reloaded block list from file %q.\n", tc.Server.BlockListFile)
 }
 
 func blobstoreHandler(c web.C, w http.ResponseWriter, r *http.Request) {

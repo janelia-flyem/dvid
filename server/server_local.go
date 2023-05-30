@@ -142,6 +142,10 @@ func Initialize() error {
 		fullwrite = true
 	}
 
+	if tc.Server.BlockListFile != "" {
+		loadBlockListFile()
+	}
+
 	// don't let server start if it can't create critical directories like
 	// mutation log files.
 	if tc.Mutations.Jsonstore != "" {
@@ -438,6 +442,7 @@ type localConfig struct {
 	Note            string
 	CorsDomains     []string
 	RWMode          string // optional setting can be empty, "readonly" or "fullwrite"
+	BlockListFile   string // filename for blocked users or IP addresses and optional note
 
 	AllowTiming        bool   // If true, returns * for Timing-Allow-Origin in response headers.
 	StartWebhook       string // http address that should be called when server is started up.
