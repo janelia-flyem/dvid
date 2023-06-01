@@ -1621,6 +1621,9 @@ func (m *repoManager) commit(uuid dvid.UUID, note string, log []string) error {
 	if !found {
 		return ErrInvalidVersion
 	}
+	if node.locked {
+		return fmt.Errorf("node %s already committed", uuid)
+	}
 
 	t := time.Now()
 

@@ -398,7 +398,7 @@ var expectedKV3 = []versionedKV{
 func commitAndNewVersion(t *testing.T, parent dvid.UUID) (child dvid.UUID, curV dvid.VersionID) {
 	err := datastore.Commit(parent, "", []string{})
 	if err != nil {
-		t.Fatalf("couldn't commit node %q\n", parent)
+		t.Fatalf("couldn't commit node %q: %s\n", parent, err)
 	}
 	child, err = datastore.NewVersion(parent, "master note", "", nil)
 	if err != nil {
@@ -414,8 +414,23 @@ func commitAndNewVersion(t *testing.T, parent dvid.UUID) (child dvid.UUID, curV 
 func commitAndNewBranch(t *testing.T, parent dvid.UUID) (child dvid.UUID, curV dvid.VersionID) {
 	err := datastore.Commit(parent, "", []string{})
 	if err != nil {
-		t.Fatalf("couldn't commit node %q\n", parent)
+		t.Fatalf("couldn't commit node %q: %s\n", parent, err)
 	}
+	tm := time.Now()
+	branch := fmt.Sprintf("new branch %s", tm)
+	child, err = datastore.NewVersion(parent, "master note", branch, nil)
+	if err != nil {
+		t.Fatalf("couldn't create new version on %q: %v\n", parent, err)
+	}
+	curV, err = datastore.VersionFromUUID(child)
+	if err != nil {
+		t.Fatalf("couldn't get version from uuid %q: %v\n", child, err)
+	}
+	return
+}
+
+func newBranch(t *testing.T, parent dvid.UUID) (child dvid.UUID, curV dvid.VersionID) {
+	var err error
 	tm := time.Now()
 	branch := fmt.Sprintf("new branch %s", tm)
 	child, err = datastore.NewVersion(parent, "master note", branch, nil)
@@ -477,7 +492,7 @@ func TestMigrateInstance(t *testing.T) {
 	uuid6, curV := commitAndNewVersion(t, uuid5)
 	writeTestDataForVersion(&srcDB, data, curV) // version 6
 
-	uuid7, curV := commitAndNewBranch(t, uuid5)
+	uuid7, curV := newBranch(t, uuid5)
 	writeTestDataForVersion(&srcDB, data, curV) // version 7 (new branch off 5)
 
 	uuid8, curV := commitAndNewVersion(t, uuid6)

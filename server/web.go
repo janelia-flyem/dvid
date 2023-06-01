@@ -2254,13 +2254,13 @@ func repoTagHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		"Note":   note,
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
-	if err := datastore.LogRepoOpToKafka(uuid, jsonmsg); err != nil {
+	if err := datastore.LogRepoOpToKafka(uuidTag, jsonmsg); err != nil {
 		BadRequest(w, r, fmt.Sprintf("Error on sending branch op to kafka: %v\n", err))
 		return
 	}
 
 	// Commit the branch
-	if err := datastore.Commit(uuid, note, []string{}); err != nil {
+	if err := datastore.Commit(uuidTag, note, []string{}); err != nil {
 		BadRequest(w, r, err)
 	}
 }

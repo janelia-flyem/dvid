@@ -392,6 +392,19 @@ func TestAssignableUUID(t *testing.T) {
 	payload = bytes.NewBufferString(`{"note": "This is my tag", "tag": "v1.0"}`)
 	tagReq := fmt.Sprintf("%snode/%s/tag", WebAPIPath, uuid)
 	TestHTTP(t, "POST", tagReq, payload)
+
+	// Test commit status
+	statusReq := fmt.Sprintf("%snode/%s/status", WebAPIPath, dvid.UUID("v1.0"))
+	respData = TestHTTP(t, "GET", statusReq, nil)
+	respStatus := struct {
+		Locked bool
+	}{}
+	if err := json.Unmarshal(respData, &respStatus); err != nil {
+		t.Errorf("Expected 'Locked' JSON response.  Got %s\n", string(respData))
+	}
+	if !respStatus.Locked {
+		t.Fatalf("Expected new tagged node %q to be committed, got: %s\n", "v1.0", string(respData))
+	}
 }
 
 func doMetadataReads(t *testing.T, uuid dvid.UUID, wg *sync.WaitGroup, done chan bool) {
