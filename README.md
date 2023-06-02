@@ -6,7 +6,7 @@ DVID       [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github
 
 DVID is a ***D**istributed, **V**ersioned, **I**mage-oriented **D**ataservice* written to support 
 neural reconstruction, analysis and visualization efforts at 
-[HHMI Janelia Research Center](http://www.janelia.org) using teravoxel-scale image volumes.
+[HHMI Janelia Research Center](http://www.janelia.org). It provides storage with branched versioning of a variety of data necessary for our research including teravoxel-scale image volumes, JSON descriptions of objects, sparse volumes, point annotations with relationships (like synapses), etc.
 
 Its goal is to provide:
 
@@ -20,10 +20,11 @@ similar to distributed version control systems like [git](http://git-scm.com).
 
 How it's different from other forms of versioned data systems:
 
-* DVID handles large-scale data as in billions or more discrete units of data. Once you get to this scale, storing so many files can be difficult on a local file system or impose a lot of load even on shared file systems.  Cloud storage is always an option but that adds latency and doesn't reduce transfer time of such large numbers of files or data chunks. Database systems (including embedded ones) handle this by consolidating many bits of data into larger files. This can also be described as a [sharded data approach](https://github.com/google/neuroglancer/blob/master/src/neuroglancer/datasource/precomputed/sharded.md).
+* DVID handles large-scale data as in billions or more discrete units of data. Once you get to this scale, storing so many files can be difficult on a local file system or impose a lot of load even on shared file systems.  Cloud storage is always an option (and available in some DVID backends) but that adds latency and doesn't reduce transfer time of such large numbers of files or data chunks. Database systems (including embedded ones) handle this by consolidating many bits of data into larger files. This can also be described as a [sharded data approach](https://github.com/google/neuroglancer/blob/master/src/neuroglancer/datasource/precomputed/sharded.md).
 * All versions are available for queries. There is no checkout to read committed data.
 * The high-level science API uses pluggable datatypes.  This allows clients to operate on domain-specific data and operations rather than operations on generic files.
-* Data can be flexibly assigned to different types of storage, so tera- to peta-scale immutable imaging data can be kept in cloud storage while smaller, frequently mutated label data can be kept on fast local NVMe SSDs. This also allows data to be partitioned across databases.
+* Data can be flexibly assigned to different types of storage, so tera- to peta-scale immutable imaging data can be kept in cloud storage while smaller, frequently mutated label data can be kept on fast local NVMe SSDs. This also allows data to be partitioned across databases by data instance. Our recent datasets primarily use
+the [Badger embedded database](https://github.com/dgraph-io/badger) which is also written in the Go language.
 * (Work in progress) A newer storage backend (DAGStore) will allow "chained storage" such that data published at a particular version, say on AWS Open Data, could be reused for later versions with only new modifications stored locally.  This requires extending storage flexibility to versions of data across storage locations. DAGStore will greatly simplify "pull requests" where just the changes within a set of versions are transmitted between separate DVID servers.
 
 
@@ -110,7 +111,8 @@ GET, POST, and DELETE operations, we create a custom datatype package with a spe
 DVID allows you to assign different storage systems to data instances within a single repo, 
 which allows great flexibility in optimizing storage for particular use cases.  For example, easily 
 compressed label data can be store in fast, expensive SSDs while larger, 
-immutable grayscale image data can be stored in petabyte-scale read-optimized systems.
+immutable grayscale image data can be stored in petabyte-scale read-optimized systems like
+Google Cloud Storage.
 
 DVID is written in Go and supports pluggable storage backends, a REST HTTP API,
 and command-line access (likely minimized in near future).  Some components written in 
