@@ -906,6 +906,16 @@ var testData = []struct {
 	{"4000", `{"position": [151, 251, 301], "bodyid": 4000, "soma_side": "LHS", "baz": "some string"}`},
 }
 
+var testData2 = []struct {
+	key string
+	val string
+}{
+	{"10000", `{"bodyid": 10000, "a number": 3456, "position": [150,250,380], "baz": ""}`},
+	{"20000", `{"bodyid": 20000, "bar":"another string", "baz":[1, 2, 3], "nullfield": "im here"}`},
+	{"30000", `{"bodyid": 30000, "a number": 3456, "a list": [23], "nullfield": null}`},
+	{"40000", `{"position": [151, 251, 301], "bodyid": 40000, "soma_side": "LHS", "baz": "some string"}`},
+}
+
 func TestStressConcurrentRW(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
@@ -1099,7 +1109,6 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 	}
 
 	query = `{"a number": "exists/1", "position": "exists/0"}`
-	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte("[" + testData[2].val + "]")
@@ -1108,7 +1117,6 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 	}
 
 	query = `{"nullfield": "exists/0"}`
-	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte("[" + testData[0].val + "," + testData[2].val + "," + testData[3].val + "]")
@@ -1131,8 +1139,8 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 	kvs.Kvs = make([]*proto.KeyValue, 4)
 	for i := 0; i < 4; i++ {
 		kvs.Kvs[i] = &proto.KeyValue{
-			Key:   fmt.Sprintf("1%s", testData[i].key),
-			Value: []byte(testData[i].val),
+			Key:   testData2[i].key,
+			Value: []byte(testData2[i].val),
 		}
 	}
 	serialization, err := pb.Marshal(&kvs)
@@ -1142,10 +1150,21 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 	kvsPostReq := fmt.Sprintf("%snode/%s/%s/keyvalues", server.WebAPIPath, uuid, data.DataName())
 	server.TestHTTP(t, "POST", kvsPostReq, bytes.NewReader(serialization))
 
-	// Create a new version in repo
+	// Commit current version
 	if err = datastore.Commit(uuid, "my commit msg", []string{"stuff one", "stuff two"}); err != nil {
 		t.Errorf("Unable to lock root node %s: %v\n", uuid, err)
 	}
+
+	// Verify we can still do queries on committed version.
+	query = `{"a number": "exists/1", "position": "exists/0"}`
+	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
+
+	expectedValue = []byte("[" + testData[2].val + "," + testData2[2].val + "]")
+	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
+		t.Errorf("Bad existence query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+	}
+
+	// Make new version for additional testing.
 	uuid2, err := datastore.NewVersion(uuid, "some child", "", nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %v\n", uuid, err)
@@ -1188,10 +1207,10 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 
 	// Check values from batch POST using individual key gets
 	for i := 0; i < 4; i++ {
-		k := fmt.Sprintf("1%s", testData[i].key)
+		k := testData2[i].key
 		keyreq := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), k)
 		returnValue := server.TestHTTP(t, "GET", keyreq, nil)
-		if !equalObjectJSON(returnValue, []byte(testData[i].val), ShowBasic) {
+		if !equalObjectJSON(returnValue, []byte(testData2[i].val), ShowBasic) {
 			t.Errorf("Expected batch POST key %q to have value %s, got %d instead\n", k, testData[i].val, returnValue)
 		}
 	}

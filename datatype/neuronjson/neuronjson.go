@@ -1219,6 +1219,16 @@ type Data struct {
 	metadataMu     sync.RWMutex
 }
 
+// IsMutationRequest overrides the default behavior to specify POST /query as an immutable
+// request.
+func (d *Data) IsMutationRequest(action, endpoint string) bool {
+	lc := strings.ToLower(action)
+	if endpoint == "query" && lc == "post" {
+		return false
+	}
+	return d.Data.IsMutationRequest(action, endpoint) // default for rest.
+}
+
 func (d *Data) Equals(d2 *Data) bool {
 	return d.Data.Equals(d2.Data)
 }
@@ -2054,6 +2064,7 @@ func (d *Data) queryInMemory(w http.ResponseWriter, queryL ListQueryJSON, fieldM
 func (d *Data) queryBackingStore(ctx storage.VersionedCtx, w http.ResponseWriter,
 	queryL ListQueryJSON, fieldMap map[string]struct{}, showFields Fields) (err error) {
 
+	numMatches := 0
 	process_func := func(key string, value map[string]interface{}) {
 		if matches, err := queryMatch(queryL, value); err != nil {
 			dvid.Errorf("error in matching process: %v\n", err) // TODO: alter d.processRange to allow return of err
@@ -2067,7 +2078,11 @@ func (d *Data) queryBackingStore(ctx storage.VersionedCtx, w http.ResponseWriter
 			dvid.Errorf("error in JSON encoding: %v\n", err)
 			return
 		}
+		if numMatches > 0 {
+			fmt.Fprint(w, ",")
+		}
 		fmt.Fprint(w, string(jsonBytes))
+		numMatches++
 	}
 	return d.processStoreRange(ctx, process_func)
 }
