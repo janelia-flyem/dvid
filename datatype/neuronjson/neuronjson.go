@@ -2738,22 +2738,20 @@ func (d *Data) sendJSONKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys 
 		return
 	}
 	var n int
-	var wroteVal bool
+	var foundKeys bool
 	for _, key := range keys {
-		if wroteVal {
-			if n, err = w.Write([]byte(",")); err != nil {
-				return
-			}
-			writtenBytes += n
-		}
 		var val []byte
 		var found bool
 		if val, found, err = d.GetData(ctx, key, fieldMap, showFields); err != nil {
 			return
 		}
 		if !found {
-			wroteVal = false
 			continue
+		} else if foundKeys {
+			if n, err = w.Write([]byte(",")); err != nil {
+				return
+			}
+			writtenBytes += n
 		}
 		if len(val) == 0 {
 			val = []byte("{}")
@@ -2770,7 +2768,7 @@ func (d *Data) sendJSONKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys 
 			return
 		}
 		writtenBytes += n
-		wroteVal = true
+		foundKeys = true
 	}
 	_, err = w.Write([]byte("}"))
 	return

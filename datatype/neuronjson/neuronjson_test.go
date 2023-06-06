@@ -705,9 +705,15 @@ func TestKeyvalueRequests(t *testing.T) {
 
 	jsonIds = `["2000", "3000"]`
 	returnValue = server.TestHTTP(t, "GET", kvreq, strings.NewReader(jsonIds))
-
 	if !equalObjectJSON(returnValue, expectedValue, ShowBasic) {
 		t.Errorf("Bad keyvalues request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+	}
+
+	// Make sure non-existant keys return appropriately
+	jsonIds = `["23910", "23", "2000", "14", "3000", "10000"]`
+	returnValue = server.TestHTTP(t, "GET", kvreq, strings.NewReader(jsonIds))
+	if !equalObjectJSON(returnValue, expectedValue, ShowBasic) {
+		t.Errorf("Bad keyvalues request return using unknown key.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	// Check query
