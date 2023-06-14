@@ -190,12 +190,12 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 //
 // labels.MergeEndEvent occurs at end of merge and transmits labels.DeltaMergeEnd struct.
 func (d *Data) RenumberLabels(v dvid.VersionID, origLabel, newLabel uint64, info dvid.ModInfo) (mutID uint64, err error) {
-	var isNew bool
-	isNew, err = d.verifyIsNewLabel(v, newLabel)
+	var isPresent bool
+	isPresent, err = d.labelIndexExists(v, newLabel)
 	if err != nil {
 		return
 	}
-	if !isNew {
+	if isPresent {
 		err = fmt.Errorf("target label for renumber (%d) already exists in mapping", newLabel)
 		return
 	}

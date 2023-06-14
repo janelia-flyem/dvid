@@ -165,6 +165,16 @@ func (k indexKey) VersionedCtx() *datastore.VersionedCtx {
 	return datastore.NewVersionedCtx(k.data, k.version)
 }
 
+// TODO -- allow check of the cache as well.
+func (d *Data) labelIndexExists(v dvid.VersionID, label uint64) (bool, error) {
+	ctx := datastore.NewVersionedCtx(d, v)
+	store, err := datastore.GetKeyValueDB(d)
+	if err != nil {
+		return false, err
+	}
+	return store.Exists(ctx, NewLabelIndexTKey(label))
+}
+
 // returns nil if no Meta is found.
 // should only call getCachedLabelIndex external to this file.
 func getLabelIndex(ctx *datastore.VersionedCtx, label uint64) (*labels.Index, error) {

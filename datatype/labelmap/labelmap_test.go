@@ -2533,8 +2533,8 @@ func TestBlocksWithRenumber(t *testing.T) {
 	}
 	testBlockData := setupTestBlocks(t, uuid)
 
-	testMerge := renumberJSON(`[3, 1, 4, 2]`)
-	testMerge.send(t, uuid, "labels")
+	testRenumber := renumberJSON(`[3, 1, 4, 2]`)
+	testRenumber.send(t, uuid, "labels")
 
 	apiStr := fmt.Sprintf("%snode/%s/labels/blocks/128_64_64/128_192_256?compression=blocks", server.WebAPIPath, uuid)
 	respRec := server.TestHTTPResponse(t, "GET", apiStr, nil)
