@@ -211,6 +211,7 @@ func (e Engine) newStore(config dvid.StoreConfig) (*ngStore, bool, error) {
 		instance:   instance,
 		uuid:       uuid,
 		shardIndex: make(map[string]*shardT),
+		config:     config,
 	}
 	if err := json.Unmarshal(data, &(ng.vol)); err != nil {
 		return nil, false, err
@@ -352,6 +353,8 @@ type ngStore struct {
 	// cached shard information
 	shardIndex   map[string]*shardT // cache of shard filename to shard data
 	shardIndexMu sync.RWMutex
+
+	config dvid.StoreConfig
 }
 
 type shardT struct {
@@ -482,6 +485,10 @@ func (ng *ngStore) Equal(config dvid.StoreConfig) bool {
 		return false
 	}
 	return ref == ng.ref && instance == ng.instance && uuid == ng.uuid
+}
+
+func (ng *ngStore) GetStoreConfig() dvid.StoreConfig {
+	return ng.config
 }
 
 // ----- storage.AutoInstanceEngine interface implementation -------

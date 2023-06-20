@@ -208,7 +208,7 @@ func (db *BadgerDB) String() string {
 	return fmt.Sprintf("badger @ %s", db.directory)
 }
 
-// --- The BadgerDB Implementation must satisfy a Engine interface ----
+// --- The BadgerDB Implementation must satisfy a dvid.Store interface ----
 
 type BadgerDB struct {
 	// Directory of datastore
@@ -239,6 +239,11 @@ func (db *BadgerDB) Equal(config dvid.StoreConfig) bool {
 		return false
 	}
 	return db.directory == path
+}
+
+// GetStoreConfig returns the configuration for this store.
+func (db *BadgerDB) GetStoreConfig() dvid.StoreConfig {
+	return db.config
 }
 
 func (db *BadgerDB) metadataExists() (bool, error) {

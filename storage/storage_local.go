@@ -26,6 +26,7 @@ type managerT struct {
 	gcache groupcacheT // groupcache support
 }
 
+// TODO -- Need to also keep the config for each store.
 // mappings of data instances to stores using various criteria
 type storeAssignment struct {
 	defaultStore dvid.Store
@@ -154,7 +155,7 @@ func Initialize(cmdline dvid.Config, backend *Backend, compiledTypes map[dvid.Ty
 		var store dvid.Store
 		for dbalias, db := range manager.stores {
 			if db.Equal(dbconfig) {
-				return false, fmt.Errorf("Store %q configuration is duplicate of store %q", alias, dbalias)
+				return false, fmt.Errorf("store %q configuration is duplicate of store %q", alias, dbalias)
 			}
 		}
 		store, created, err := NewStore(dbconfig)

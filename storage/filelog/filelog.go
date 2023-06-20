@@ -437,6 +437,8 @@ func (flogs *fileLogs) TopicClose(topic string) error {
 	return flogs.closeWriteLog(topic)
 }
 
+// --- dvid.Store interface implementation ----
+
 func (flogs *fileLogs) Close() {
 	flogs.Lock()
 	for _, flogs := range flogs.files {
@@ -459,6 +461,10 @@ func (flogs *fileLogs) Equal(config dvid.StoreConfig) bool {
 		return false
 	}
 	return path == flogs.path
+}
+
+func (flogs *fileLogs) GetStoreConfig() dvid.StoreConfig {
+	return flogs.config
 }
 
 // ---- TestableEngine interface implementation -------

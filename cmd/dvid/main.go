@@ -301,7 +301,7 @@ func DoServe(cmd dvid.Command) error {
 	}
 
 	// Initialize storage and datastore layer
-	backend, err := server.GetBackend()
+	backend, err := server.InitBackend()
 	if err != nil {
 		return err
 	}

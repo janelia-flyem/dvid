@@ -162,6 +162,11 @@ blobstore = "raid6"
     engine = "filelog"
     path = "/data/labelmutlog"  # directory that holds mutation log per instance-UUID.
 
+    [store.neuronjson]
+    engine = "badger"
+    path = "/path/to/badger"
+    inmemory = ["83698c997b214365abd479cfc7744049", ":mybranch"] # in-memory DBs in addition to main HEAD.
+
     [store.ng]
     engine = "ngprecomputed"
     ref = "the-GCS-bucket-name" # note this is ref and not path

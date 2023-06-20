@@ -1,3 +1,4 @@
+//go:build swift
 // +build swift
 
 package swift
@@ -41,6 +42,8 @@ type Store struct {
 	batchLocks         map[string]int // Maps Swift object names to number of locks held.
 	batchLocksReleased chan struct{}  // One-time-use channel which signals the release of locks of a batch.
 	batchLocksMutex    sync.Mutex     // Synchronize access to the lock map and channel.
+
+	config dvid.StoreConfig
 }
 
 func (s *Store) String() string {
@@ -70,12 +73,17 @@ func (s *Store) Equal(config dvid.StoreConfig) bool {
 	return true
 }
 
+func (s *Store) GetStoreConfig() dvid.StoreConfig {
+	return s.config
+}
+
 // NewStore returns a new Swift store.
 func NewStore(config dvid.StoreConfig) (*Store, bool, error) {
 	// Make new store.
 	s := &Store{
 		conn:       &swift.Connection{},
 		batchLocks: make(map[string]int),
+		config:     config,
 	}
 
 	// Get configuration values.

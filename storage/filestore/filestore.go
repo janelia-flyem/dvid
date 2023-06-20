@@ -1,3 +1,4 @@
+//go:build filestore
 // +build filestore
 
 /*
@@ -172,6 +173,10 @@ func (fs *fileStore) Equal(config dvid.StoreConfig) bool {
 		return false
 	}
 	return path == fs.path
+}
+
+func (fs *fileStore) GetStoreConfig() dvid.StoreConfig {
+	return fs.config
 }
 
 // ---- KeyValueGetter interface ------

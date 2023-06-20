@@ -147,7 +147,7 @@ func TestParseConfig(t *testing.T) {
 	if logCfg.Logfile != "/demo/logs/dvid.log" || logCfg.MaxSize != 500 || logCfg.MaxAge != 30 {
 		t.Errorf("Bad logging configuration retrieval: %v\n", logCfg)
 	}
-	backend, err := GetBackend()
+	backend, err := InitBackend()
 	if err != nil {
 		t.Errorf("couldn't get backend: %v\n", err)
 	}

@@ -1,3 +1,4 @@
+//go:build basholeveldb
 // +build basholeveldb
 
 package basholeveldb
@@ -363,6 +364,8 @@ func getOptions(config dvid.Config) (*leveldbOptions, error) {
 	return opt, nil
 }
 
+// --- dvid.Store interface ---
+
 // Close closes the leveldb and then the I/O abstraction for leveldb.
 func (db *LevelDB) Close() {
 	if db != nil {
@@ -399,6 +402,11 @@ func (db *LevelDB) Equal(config dvid.StoreConfig) bool {
 		return false
 	}
 	return db.directory == path
+}
+
+// GetStoreConfig returns the configuration for this store.
+func (db *LevelDB) GetStoreConfig() dvid.StoreConfig {
+	return db.config
 }
 
 func (db *LevelDB) metadataExists() (bool, error) {

@@ -167,6 +167,13 @@ func GetBranchVersions(uuid dvid.UUID, name string) ([]dvid.UUID, error) {
 	return manager.getBranchVersions(uuid, name)
 }
 
+func GetBranchHead(uuid dvid.UUID, name string) (branchUUID dvid.UUID, branchV dvid.VersionID, err error) {
+	if manager == nil {
+		return dvid.NilUUID, 0, ErrManagerNotInitialized
+	}
+	return manager.getBranchVersion(uuid, name)
+}
+
 func GetRepoAlias(uuid dvid.UUID) (string, error) {
 	if manager == nil {
 		return "", ErrManagerNotInitialized

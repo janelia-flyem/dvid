@@ -1,3 +1,4 @@
+//go:build kvautobus
 // +build kvautobus
 
 package kvautobus
@@ -205,6 +206,8 @@ func (db *KVAutobus) sendOwnership() error {
 	return nil
 }
 
+// ---- dvid.Store interface -----
+
 func (db *KVAutobus) String() string {
 	return fmt.Sprintf("KVAutobus @ %s", db.host)
 }
@@ -223,6 +226,12 @@ func (db *KVAutobus) Equal(c dvid.StoreConfig) bool {
 	}
 	return false
 }
+
+func (db *KVAutobus) GetStoreConfig() dvid.StoreConfig {
+	return db.config
+}
+
+// --------------
 
 func (db *KVAutobus) RawGet(key storage.Key) ([]byte, error) {
 	b64key := encodeKey(key)

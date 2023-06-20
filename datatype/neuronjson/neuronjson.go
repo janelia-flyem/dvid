@@ -6,7 +6,6 @@ package neuronjson
 import (
 	"archive/tar"
 	"bytes"
-	"context"
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
@@ -17,15 +16,11 @@ import (
 	"os"
 	"path/filepath"
 	reflect "reflect"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"cloud.google.com/go/firestore"
-	"google.golang.org/api/iterator"
 
 	pb "google.golang.org/protobuf/proto"
 
@@ -33,7 +28,6 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/proto"
-	"github.com/janelia-flyem/dvid/datatype/keyvalue"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
@@ -580,55 +574,6 @@ func (m Schema) String() string {
 	}
 }
 
-// ---- Interface for Firestore-like persistence that can be stubbed for tests.
-
-type DocGetter interface {
-	Data() map[string]interface{}
-}
-
-type DocIterator interface {
-	Next() (doc DocGetter, err error) // err must be iterator.Done if finished, see pkg "google.golang.org/api/iterator"
-	Close()
-}
-
-// ---- Firestore implementation of DocGetter and DocIterator.
-
-type firestoreDocGetter struct {
-	doc *firestore.DocumentSnapshot
-}
-
-func (f *firestoreDocGetter) Data() map[string]interface{} {
-	return f.doc.Data()
-}
-
-type firestoreIterator struct {
-	client *firestore.Client
-	it     *firestore.DocumentIterator
-}
-
-func (fi *firestoreIterator) Next() (DocGetter, error) {
-	firestoreDoc, err := fi.it.Next()
-	if err != nil {
-		return nil, err
-	}
-	return &firestoreDocGetter{firestoreDoc}, nil
-}
-
-func (fi *firestoreIterator) Close() {
-	fi.client.Close()
-}
-
-func firestoreOpen(projectID, datasetID string) (DocIterator, error) {
-	ctx := context.Background()
-	fi := &firestoreIterator{}
-	var err error
-	if fi.client, err = firestore.NewClient(ctx, projectID); err != nil {
-		return nil, fmt.Errorf("could not connect to Firestore for project %q: %v", projectID, err)
-	}
-	fi.it = fi.client.Collection("clio_annotations_global").Doc("neurons").Collection(datasetID).Where("_head", "==", true).Documents(ctx)
-	return fi, nil
-}
-
 // Type embeds the datastore's Type to create a unique type for neuronjson functions.
 type Type struct {
 	datastore.Type
@@ -823,94 +768,6 @@ func getBodyID(data map[string]interface{}) (uint64, error) {
 	return uint64(bodyid), nil
 }
 
-// ---- Query support ----
-
-type QueryJSON map[string]interface{}
-type ListQueryJSON []QueryJSON
-
-type FieldExistence bool // field is present or not
-
-// UnmarshalJSON parses JSON with numbers preferentially converted to uint64
-// or int64 if negative, and strings with "re/" as prefix are compiled as
-// a regular expression.
-func (qj *QueryJSON) UnmarshalJSON(jsonText []byte) error {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(jsonText), &raw); err != nil {
-		return err
-	}
-	*qj = make(QueryJSON, len(raw))
-
-	dvid.Infof("query unmarshal on: %s\n", string(jsonText))
-
-	for key, val := range raw {
-		s := string(val)
-		u, err := strconv.ParseUint(s, 10, 64)
-		if err == nil {
-			(*qj)[key] = u
-			continue
-		}
-		i, err := strconv.ParseInt(s, 10, 64)
-		if err == nil {
-			(*qj)[key] = i
-			continue
-		}
-		f, err := strconv.ParseFloat(s, 64)
-		if err == nil {
-			(*qj)[key] = f
-			continue
-		}
-		var int64list []int64
-		if err = json.Unmarshal(val, &int64list); err == nil {
-			(*qj)[key] = int64list
-			continue
-		}
-		if len(s) > 4 && strings.HasPrefix(s, `"re/`) {
-			re, err := regexp.Compile(s[4 : len(s)-1])
-			if err == nil {
-				(*qj)[key] = re
-				continue
-			}
-		}
-		if len(s) == 10 && strings.HasPrefix(s, `"exists/`) {
-			if s[8] == '0' {
-				(*qj)[key] = FieldExistence(false)
-			} else {
-				(*qj)[key] = FieldExistence(true)
-			}
-			continue
-		}
-		var strlist []string
-		if err = json.Unmarshal(val, &strlist); err == nil {
-			hasRegex := false
-			iflist := make([]interface{}, len(strlist))
-			for i, s := range strlist {
-				if len(s) > 3 && strings.HasPrefix(s, "re/") {
-					hasRegex = true
-					if re, err := regexp.Compile(s[3:]); err == nil {
-						iflist[i] = re
-					}
-				}
-				if iflist[i] == nil {
-					iflist[i] = s
-				}
-			}
-			if hasRegex {
-				(*qj)[key] = iflist
-			} else {
-				(*qj)[key] = strlist
-			}
-			continue
-		}
-		var listVal interface{}
-		if err = json.Unmarshal(val, &listVal); err == nil {
-			(*qj)[key] = listVal
-			continue
-		}
-		return fmt.Errorf("unable to parse JSON value %q: %v", s, err)
-	}
-	return nil
-}
-
 type NeuronJSON map[string]interface{}
 
 func (nj NeuronJSON) copy() NeuronJSON {
@@ -1016,207 +873,19 @@ func (lnj *ListNeuronJSON) Less(i, j int) bool {
 	return bodyid_i < bodyid_j
 }
 
-// move the following to Generics when upgrading and requiring Go 1.18
-
-func checkIntMatch(query int64, field []int64) bool {
-	if len(field) == 0 {
-		return false
-	}
-	for _, fieldValue := range field {
-		if fieldValue == query {
-			return true
-		}
-	}
-	return false
-}
-
-func checkStrMatch(query string, field []string) bool {
-	if len(field) == 0 {
-		return false
-	}
-	for _, fieldValue := range field {
-		if fieldValue == query {
-			return true
-		}
-	}
-	return false
-}
-
-func checkRegexMatch(query *regexp.Regexp, field []string) bool {
-	if len(field) == 0 {
-		return false
-	}
-	for _, fieldValue := range field {
-		if query.Match([]byte(fieldValue)) {
-			return true
-		}
-	}
-	return false
-}
-
-// given a query on this field composed of one or a list of values of unknown type,
-// see if any of the field's values match a query value regardless of slightly
-// different integer typing.
-func checkField(queryValue, fieldValue interface{}) bool {
-	// if field value is integer of some kind, convert to []int64 assuming MSB not
-	// needed for our data.
-	// if field value is string, make it []string.
-	// Field can be (single or list of) number, string, other.
-	var fieldNumList []int64
-	var fieldStrList []string
-	switch v := fieldValue.(type) {
-	case int64:
-		fieldNumList = []int64{v}
-	case []int64:
-		fieldNumList = v
-	case uint64:
-		fieldNumList = []int64{int64(v)}
-	case []uint64:
-		fieldNumList = make([]int64, len(v))
-		for i, val := range v {
-			fieldNumList[i] = int64(val)
-		}
-	case string:
-		fieldStrList = []string{v}
-	case []string:
-		fieldStrList = v
-
-	default:
-		dvid.Errorf("Unknown field value of type %s: %v\n", reflect.TypeOf(v), v)
-		return false
-	}
-	if len(fieldNumList) == 0 && len(fieldStrList) == 0 {
-		return false
-	}
-
-	// convert query value to list of types as above for field value.
-	switch v := queryValue.(type) {
-	case int64:
-		if checkIntMatch(v, fieldNumList) {
-			return true
-		}
-	case []int64:
-		for _, i := range v {
-			if checkIntMatch(i, fieldNumList) {
-				return true
-			}
-		}
-	case uint64:
-		if checkIntMatch(int64(v), fieldNumList) {
-			return true
-		}
-	case []uint64:
-		for _, val := range v {
-			if checkIntMatch(int64(val), fieldNumList) {
-				return true
-			}
-		}
-	case string:
-		if checkStrMatch(v, fieldStrList) {
-			return true
-		}
-	case []string:
-		for _, s := range v {
-			if checkStrMatch(s, fieldStrList) {
-				return true
-			}
-		}
-	case *regexp.Regexp:
-		if checkRegexMatch(v, fieldStrList) {
-			return true
-		}
-	case []interface{}:
-		elem := v[0]
-		switch e := elem.(type) {
-		case int:
-			for _, val := range v {
-				if checkIntMatch(int64(val.(int)), fieldNumList) {
-					return true
-				}
-			}
-		case string, *regexp.Regexp:
-			for _, val := range v {
-				switch query := val.(type) {
-				case string:
-					if checkStrMatch(query, fieldStrList) {
-						return true
-					}
-				case *regexp.Regexp:
-					if checkRegexMatch(query, fieldStrList) {
-						return true
-					}
-				}
-			}
-		default:
-			var t = reflect.TypeOf(e)
-			dvid.Errorf("neuronjson query value %v has elements of illegal type %v\n", v, t)
-		}
-	default:
-		var t = reflect.TypeOf(v)
-		dvid.Errorf("neuronjson query value %v has illegal type %v\n", v, t)
-	}
-	return false
-}
-
-func fieldMatch(queryValue, fieldValue interface{}) bool {
-	if queryValue == nil {
-		return false
-	}
-	if fieldValue == nil {
-		return false
-	}
-	return checkField(queryValue, fieldValue)
-}
-
-// returns true if at least one query on the list matches the value.
-func queryMatch(queryList ListQueryJSON, value map[string]interface{}) (matches bool, err error) {
-	if len(queryList) == 0 {
-		matches = false
-		return
-	}
-	for _, query := range queryList {
-		and_match := true
-		for queryKey, queryValue := range query { // all query keys must be present and match
-			// field existence check
-			recordValue, found := value[queryKey]
-			switch v := queryValue.(type) {
-			case FieldExistence:
-				found = found && recordValue != nil
-				dvid.Infof("checking existence of field %s: %v where field %t (%v)", queryKey, v, found, recordValue)
-				if (bool(v) && !found) || (!bool(v) && found) {
-					and_match = false
-				}
-			default:
-				// if field exists, check if it matches query
-				if !found || !fieldMatch(queryValue, recordValue) {
-					and_match = false
-				}
-			}
-			if !and_match {
-				break
-			}
-		}
-		if and_match {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 // Data embeds the datastore's Data and extends it with neuronjson properties.
 type Data struct {
 	*datastore.Data
 
-	// The in-memory neuron annotations for HEAD version
-	db     map[uint64]NeuronJSON
-	ids    []uint64            // sorted list of body ids
-	fields map[string]struct{} // list of all fields among the annotations
-	dbMu   sync.RWMutex
+	// The in-memory dbs for main HEAD and any other important versions.
+	dbs   *memdbs
+	dbsMu sync.RWMutex
 
 	// The in-memory metadata for HEAD version
 	compiledSchema *jsonschema.Schema // cached on setting of JSONSchema value for rapid validate
-	metadata       map[Schema][]byte
-	metadataMu     sync.RWMutex
+
+	metadata   map[Schema][]byte
+	metadataMu sync.RWMutex
 }
 
 // IsMutationRequest overrides the default behavior to specify POST /query as an immutable
@@ -1268,52 +937,6 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 		return "", err
 	}
 	return string(m), nil
-}
-
-//----- In-memory DB internal routines -----
-
-type kvType interface {
-	DataName() dvid.InstanceName
-	StreamKV(v dvid.VersionID) (chan storage.KeyValue, error)
-}
-
-func (d *Data) initMemoryDB() {
-	d.dbMu.Lock()
-	defer d.dbMu.Unlock()
-
-	d.db = make(map[uint64]NeuronJSON)
-	d.fields = make(map[string]struct{})
-	d.metadata = make(map[Schema][]byte, 3)
-	d.ids = []uint64{}
-}
-
-// add bodyid to sorted in-memory list of bodyids
-func (d *Data) addBodyID(bodyid uint64) {
-	i := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] >= bodyid })
-	if i < len(d.ids) && d.ids[i] == bodyid {
-		return
-	}
-	d.ids = append(d.ids, 0)
-	copy(d.ids[i+1:], d.ids[i:])
-	d.ids[i] = bodyid
-}
-
-// delete bodyid from sorted in-memory list of bodyids
-func (d *Data) deleteBodyID(bodyid uint64) {
-	i := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] == bodyid })
-	if i == len(d.ids) {
-		return
-	}
-	d.ids = append(d.ids[:i], d.ids[i+1:]...)
-}
-
-// add an annotation to the in-memory DB in batch mode assuming ids are sorted later
-func (d *Data) addAnnotation(bodyid uint64, annotation NeuronJSON) {
-	d.db[bodyid] = annotation
-	d.ids = append(d.ids, bodyid)
-	for field := range annotation {
-		d.fields[field] = struct{}{}
-	}
 }
 
 // ----- Low-level ingestion of data from various sources -----
@@ -1491,197 +1114,6 @@ func (d *Data) writeVersions(filePath string) error {
 
 	timedLog.Infof("Finished GetAllVersions for neuronjson %q, %d annotations, %d tombstones across %d versions",
 		d.DataName(), numAnnotations, numTombstones, len(vf.fmap))
-	return nil
-}
-
-// importKV imports a keyvalue instance into the neuronjson instance.
-func (d *Data) importKV(request datastore.Request, reply *datastore.Response) error {
-	if len(request.Command) < 5 {
-		return fmt.Errorf("keyvalue instance name must be specified after importKV")
-	}
-	var uuidStr, dataName, cmdStr, kvName string
-	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &kvName)
-
-	uuid, versionID, err := datastore.MatchingUUID(uuidStr)
-	if err != nil {
-		return err
-	}
-
-	sourceKV, err := keyvalue.GetByUUIDName(uuid, dvid.InstanceName(kvName))
-	if err != nil {
-		return err
-	}
-	go d.loadFromKV(versionID, sourceKV)
-
-	reply.Output = []byte(fmt.Sprintf("Started loading from keyvalue instance %q into neuronjson instance %q, uuid %s\n",
-		kvName, d.DataName(), uuidStr))
-	return nil
-}
-
-// goroutine-friendly ingest from a keyvalue instance
-func (d *Data) loadFromKV(v dvid.VersionID, kvData kvType) {
-	tlog := dvid.NewTimeLog()
-
-	db, err := datastore.GetKeyValueDB(d)
-	if err != nil {
-		dvid.Criticalf("unable to get keyvalue database: %v", err)
-		return
-	}
-
-	d.initMemoryDB()
-
-	ch, err := kvData.StreamKV(v)
-	if err != nil {
-		dvid.Errorf("Error in getting stream of data from keyvalue instance %q: %v\n", kvData.DataName(), err)
-		return
-	}
-	ctx := datastore.NewVersionedCtx(d, v)
-	numLoaded := 0
-	numFromKV := 0
-	for kv := range ch {
-		key := string(kv.K)
-		numFromKV++
-
-		// Handle metadata string keys
-		switch key {
-		case JSONSchema.String():
-			dvid.Infof("Transferring metadata %q from keyvalue instance %q to neuronjson instance %q",
-				key, kvData.DataName(), d.DataName())
-			if err := d.putMetadata(ctx, kv.V, JSONSchema); err != nil {
-				dvid.Errorf("Unable to handle JSON schema metadata transfer, skipping: %v\n", err)
-			}
-			continue
-		case NeuSchema.String():
-			dvid.Infof("Transferring metadata %q from keyvalue instance %q to neuronjson instance %q",
-				key, kvData.DataName(), d.DataName())
-			if err := d.putMetadata(ctx, kv.V, NeuSchema); err != nil {
-				dvid.Errorf("Unable to handle neutu/neu3 schema metadata transfer, skipping: %v\n", err)
-			}
-			continue
-		case NeuSchemaBatch.String():
-			dvid.Infof("Transferring metadata %q from keyvalue instance %q to neuronjson instance %q",
-				key, kvData.DataName(), d.DataName())
-			if err := d.putMetadata(ctx, kv.V, NeuSchemaBatch); err != nil {
-				dvid.Errorf("Unable to handle neutu/neu3 batch schema metadata transfer, skipping: %v\n", err)
-			}
-			continue
-		}
-
-		// Handle numeric keys for neuron annotations
-		bodyid, err := strconv.ParseUint(key, 10, 64)
-		if err != nil {
-			dvid.Errorf("Received non-integer key %q during neuronjson load from keyvalue: ignored\n", key)
-			continue
-		}
-
-		// a) Persist to storage first
-		tk, err := NewTKey(key)
-		if err != nil {
-			dvid.Errorf("unable to encode neuronjson %q key %q, skipping: %v\n", d.DataName(), key, err)
-			continue
-		}
-		if err := db.Put(ctx, tk, kv.V); err != nil {
-			dvid.Errorf("unable to persist neuronjson %q key %s annotation, skipping: %v\n", d.DataName(), key, err)
-			continue
-		}
-
-		// b) Add to in-memory annotations db
-		var annotation NeuronJSON
-		if err := json.Unmarshal(kv.V, &annotation); err != nil {
-			dvid.Errorf("Unable to decode annotation for bodyid %d, skipping: %v\n", bodyid, err)
-			continue
-		}
-		d.addAnnotation(bodyid, annotation)
-
-		numLoaded++
-		if numLoaded%1000 == 0 {
-			tlog.Infof("Loaded %d annotations into neuronjson instance %q", numLoaded, d.DataName())
-		}
-	}
-	sort.Slice(d.ids, func(i, j int) bool { return d.ids[i] < d.ids[j] })
-	errored := numFromKV - numLoaded
-	tlog.Infof("Completed loading of %d annotations into neuronjson instance %q (%d skipped)",
-		numLoaded, d.DataName(), errored)
-}
-
-// loadFirestoreDB loads annotations from a Firestore database.
-func (d *Data) loadFirestoreDB(request datastore.Request, reply *datastore.Response) error {
-	if len(request.Command) < 6 {
-		return fmt.Errorf("ProjectID and DatasetID must be specified after %q", "ingest")
-	}
-	var uuidStr, dataName, cmdStr, projectID, datasetID string
-	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &projectID, &datasetID)
-
-	_, versionID, err := datastore.MatchingUUID(uuidStr)
-	if err != nil {
-		return err
-	}
-	vctx := datastore.NewVersionedCtx(d, versionID)
-
-	var docIterator DocIterator
-	if docIterator, err = firestoreOpen(projectID, datasetID); err != nil {
-		return err
-	}
-	if err := d.ingestFirestore(vctx, docIterator); err != nil {
-		return err
-	}
-	docIterator.Close()
-
-	reply.Output = []byte(fmt.Sprintf("Ingested Firestore annotations from project %q, dataset %q into neuronjson instance %q, uuid %s\n",
-		projectID, datasetID, d.DataName(), uuidStr))
-	return nil
-}
-
-// ingest documents from Firestore into backing store and in-memory database.
-func (d *Data) ingestFirestore(ctx *datastore.VersionedCtx, docStore DocIterator) error {
-	tlog := dvid.NewTimeLog()
-
-	db, err := datastore.GetKeyValueDB(d)
-	if err != nil {
-		return fmt.Errorf("unable to get keyvalue database: %v", err)
-	}
-
-	d.dbMu.Lock() // Note that mutex is NOT unlocked if firestore DB doesn't load because we don't want
-	defer d.dbMu.Unlock()
-
-	d.db = make(map[uint64]NeuronJSON)
-	d.fields = make(map[string]struct{})
-	numdocs := 0
-	for {
-		doc, err := docStore.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("documents iterator error: %v", err)
-		}
-		annotation := doc.Data()
-		bodyid, err := getBodyID(annotation)
-		if err != nil {
-			return fmt.Errorf("error getting bodyID from annotation: %v", annotation)
-		}
-		d.addAnnotation(bodyid, annotation)
-
-		data, err := json.Marshal(annotation)
-		if err != nil {
-			return err
-		}
-		keyStr := strconv.FormatUint(bodyid, 10)
-		tk, err := NewTKey(keyStr)
-		if err != nil {
-			return err
-		}
-		if err := db.Put(ctx, tk, data); err != nil {
-			return err
-		}
-
-		numdocs++
-		if numdocs%1000 == 0 {
-			tlog.Infof("Loaded %d HEAD annotations", numdocs)
-		}
-	}
-	sort.Slice(d.ids, func(i, j int) bool { return d.ids[i] < d.ids[j] })
-	tlog.Infof("Completed loading of %d HEAD annotations", numdocs)
 	return nil
 }
 
@@ -1942,8 +1374,6 @@ func (d *Data) processStoreRange(ctx storage.Context, f func(key string, value m
 // Initialize loads mutable properties of the neuronjson data instance,
 // which in this case is the in-memory neuron json map for the HEAD version.
 func (d *Data) Initialize() {
-	tlog := dvid.NewTimeLog()
-
 	leafMain := string(d.RootUUID()) + ":master"
 	leafUUID, leafV, err := datastore.MatchingUUID(leafMain)
 	if err != nil {
@@ -1951,11 +1381,12 @@ func (d *Data) Initialize() {
 		return
 	}
 	dvid.Infof("Loading neuron annotations JSON into memory for neuronjson %q ...\n", d.DataName())
-	ctx := datastore.NewVersionedCtx(d, leafV)
 
-	d.initMemoryDB()
+	d.metadata = make(map[Schema][]byte, 3)
 
 	// Load all the data into memory.
+
+	ctx := datastore.NewVersionedCtx(d, leafV)
 	if sch, err := d.getJSONSchema(ctx); err == nil {
 		if sch != nil {
 			d.compiledSchema = sch
@@ -1979,59 +1410,32 @@ func (d *Data) Initialize() {
 	} else {
 		dvid.Criticalf("Can't load neutu/neu3 batch schema for neuronjson %q: %v\n", d.DataName(), err)
 	}
-
-	db, err := datastore.GetOrderedKeyValueDB(d)
-	if err != nil {
-		dvid.Criticalf("Can't setup ordered keyvalue db for neuronjson %q: %v\n", d.DataName(), err)
-		return
-	}
-
-	numLoaded := 0
-	err = db.ProcessRange(ctx, MinAnnotationTKey, MaxAnnotationTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
-		if c == nil || c.TKeyValue == nil {
-			return nil
-		}
-		kv := c.TKeyValue
-		if kv.V == nil {
-			return nil
-		}
-		key, err := DecodeTKey(kv.K)
-		if err != nil {
-			return err
-		}
-
-		bodyid, err := strconv.ParseUint(key, 10, 64)
-		if err != nil {
-			return fmt.Errorf("received non-integer key %q during neuronjson load from database: %v", key, err)
-		}
-
-		var annotation NeuronJSON
-		if err := json.Unmarshal(kv.V, &annotation); err != nil {
-			return fmt.Errorf("unable to decode annotation for bodyid %d, skipping: %v", bodyid, err)
-		}
-		d.addAnnotation(bodyid, annotation)
-
-		numLoaded++
-		if numLoaded%1000 == 0 {
-			tlog.Infof("Loaded %d annotations into neuronjson instance %q", numLoaded, d.DataName())
-		}
-		return nil
-	})
-	if err != nil {
-		dvid.Criticalf("Error on loading neuron annotations from database into neuronjson %q: %v\n", d.DataName(), err)
-	}
-	sort.Slice(d.ids, func(i, j int) bool { return d.ids[i] < d.ids[j] })
-	tlog.Infof("Completed loading of %d annotations into neuronjson instance %q HEAD version %s",
-		numLoaded, d.DataName(), string(leafUUID[:6]))
 }
 
 // --- DataInitializer interface ---
 
-// InitDataHandlers initializes ephemeral data for this instance, which is
-// the in-memory keyvalue store where the values are neuron annotation JSON.
+// InitDataHandlers initializes ephemeral data for this instance, which is the
+// in-memory databases holding JSON static and mutable data for given versions/branches.
 func (d *Data) InitDataHandlers() error {
-	d.initMemoryDB()
-	return nil
+	store, err := storage.GetAssignedStore(d)
+	if err != nil {
+		return err
+	}
+
+	storeConfig := store.GetStoreConfig()
+	uuidList := []string{}
+	uuidListI, found := storeConfig.Get("inmemory")
+	if found {
+		dvid.Infof("Found configuration for additional in-memory UUIDs for neuronjson %q: %v\n",
+			d.DataName(), uuidListI)
+		var ok bool
+		uuidList, ok = uuidListI.([]string)
+		if !ok {
+			return fmt.Errorf("configuration for inmemory dbs for neuronjson %q not a list of UUIDs: %v",
+				d.DataName(), uuidListI)
+		}
+	}
+	return d.initMemoryDB(uuidList)
 }
 
 func (d *Data) queryInMemory(w http.ResponseWriter, queryL ListQueryJSON, fieldMap map[string]struct{}, showFields Fields) (err error) {
@@ -2370,7 +1774,7 @@ func (d *Data) storeAndUpdate(ctx *datastore.VersionedCtx, keyStr string, newDat
 		d.DataName(), ctx.User, conditionals, replace, origData, newData)
 
 	// write result
-	if ctx.Head() {
+	if mdb, found := d.getMemDB(ctx); found {
 		d.dbMu.Lock()
 		d.db[bodyid] = newData
 		for field := range newData {
@@ -2933,8 +2337,6 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		return d.putCmd(request, reply)
 	case "import-kv":
 		return d.importKV(request, reply)
-	case "import-filestore":
-		return d.loadFirestoreDB(request, reply)
 	case "version-changes":
 		return d.versionChanges(request, reply)
 	default:

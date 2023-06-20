@@ -21,6 +21,8 @@ type Store interface {
 	fmt.Stringer
 	StoreCloser
 	StoreIdentifiable
+
+	GetStoreConfig() StoreConfig
 }
 
 // AutoInstanceStore is a store that can request automatic temporary instances

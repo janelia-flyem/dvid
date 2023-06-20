@@ -1,3 +1,4 @@
+//go:build gbucket
 // +build gbucket
 
 package gbucket
@@ -158,6 +159,7 @@ func parseConfig(config dvid.StoreConfig) (*GBucket, error) {
 		ctx:            context.Background(),
 		activeRequests: make(chan chan int, MAXCONNECTIONS),
 		activeOps:      make(chan interface{}, MAXNETOPS),
+		config:         config,
 	}
 	return gb, nil
 }
@@ -266,6 +268,7 @@ type GBucket struct {
 	// mutex is needed to lock repo2bucket
 	mutex     sync.Mutex
 	projectid string
+	config    dvid.StoreConfig
 }
 
 // ---- HELPER FUNCTIONS ----
@@ -2002,6 +2005,8 @@ func (db *GBucket) DeleteAll(ctx storage.Context) error {
 	return nil
 }
 
+// --- dvid.Store interface ----
+
 func (db *GBucket) Close() {
 	if db == nil {
 		dvid.Errorf("Can't call Close() on nil Google Bucket")
@@ -2022,6 +2027,10 @@ func (db *GBucket) Equal(c dvid.StoreConfig) bool {
 		return true
 	}
 	return false
+}
+
+func (db *GBucket) GetStoreConfig() dvid.StoreConfig {
+	return db.config
 }
 
 // --- Batcher interface ----

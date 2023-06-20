@@ -31,26 +31,6 @@ type Backend struct {
 	Groupcache  GroupcacheConfig
 }
 
-// StoreConfig returns a data specifier's assigned store configuration.
-// The DataSpecifier can be "default" or "metadata" as well as datatype names
-// and data instance specifications.
-func (b Backend) StoreConfig(d dvid.DataSpecifier) (config dvid.StoreConfig, found bool) {
-	if d == "default" {
-		config, found = b.Stores[b.DefaultKVDB]
-		return
-	}
-	if d == "metadata" {
-		config, found = b.Stores[b.Metadata]
-		return
-	}
-	alias, ok := b.KVAssign[d]
-	if !ok {
-		return
-	}
-	config, found = b.Stores[alias]
-	return
-}
-
 // Requirements lists required backend interfaces for a type.
 type Requirements struct {
 	BulkIniter bool

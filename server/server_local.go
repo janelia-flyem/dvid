@@ -521,8 +521,8 @@ func LoadConfig(filename string) error {
 	return nil
 }
 
-// GetBackend returns a backend from current configuration.
-func GetBackend() (backend *storage.Backend, err error) {
+// InitBackend creates a new backend from current configuration.
+func InitBackend() (backend *storage.Backend, err error) {
 	// Get all defined stores.
 	backend = new(storage.Backend)
 	backend.Groupcache = tc.Groupcache
