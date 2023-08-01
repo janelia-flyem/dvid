@@ -1963,7 +1963,14 @@ func (d *Data) SendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 
 			var value []byte
 			if gridStore != nil {
-				if value, err = gridStore.GridGet(d.ScaleLevel, chunkPt); err != nil || value == nil {
+				value, err = gridStore.GridGet(d.ScaleLevel, chunkPt)
+				if err != nil {
+					dvid.Infof("gridStore GET on scale %d, chunk %s had err: %v", d.ScaleLevel, chunkPt, err)
+					err = nil
+					return
+				}
+				if value == nil {
+					dvid.Infof("gridStore GET on scale %d, chunk %s had nil value\n", d.ScaleLevel, chunkPt)
 					return
 				}
 				mutex.Lock()
