@@ -9,12 +9,9 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
-	io "io"
 	"io/ioutil"
 	"math"
 	"net/http"
-	"os"
-	"path/filepath"
 	reflect "reflect"
 	"sort"
 	"strconv"
@@ -91,7 +88,8 @@ $ dvid -stdin node <UUID> <data name> put <key> < data
 
 $ dvid node <UUID> <dataname> import-kv <keyvalue instance name>
 
-	Imports the data from a keyvalue instance within the same repo.
+	Imports the data from a keyvalue instance within the same repo into a
+	new neuronjson instance.
 
 	Example:
 
@@ -599,7 +597,9 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	if err != nil {
 		return nil, err
 	}
-	return &Data{Data: basedata}, nil
+	data := &Data{Data: basedata}
+	data.Initialize()
+	return data, nil
 }
 
 func (dtype *Type) Help() string {
@@ -617,129 +617,6 @@ func GetByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 		return nil, fmt.Errorf("instance '%s' is not a neuronjson datatype", name)
 	}
 	return data, nil
-}
-
-////////////
-
-type Fields uint8
-
-const (
-	ShowBasic Fields = iota
-	ShowUsers
-	ShowTime
-	ShowAll
-)
-
-func (f Fields) Bools() (showUser, showTime bool) {
-	switch f {
-	case ShowBasic:
-		return false, false
-	case ShowUsers:
-		return true, false
-	case ShowTime:
-		return false, true
-	case ShowAll:
-		return true, true
-	default:
-		return false, false
-	}
-}
-
-// parse query string "show" parameter into a Fields value.
-func showFields(r *http.Request) Fields {
-	switch r.URL.Query().Get("show") {
-	case "user":
-		return ShowUsers
-	case "time":
-		return ShowTime
-	case "all":
-		return ShowAll
-	default:
-		return ShowBasic
-	}
-}
-
-// parse query string "fields" parameter into a list of field names
-func fieldList(r *http.Request) (fields []string) {
-	fieldsString := r.URL.Query().Get("fields")
-	if fieldsString != "" {
-		fields = strings.Split(fieldsString, ",")
-	}
-	return
-}
-
-// get a map of fields (none if all) from query string "fields"
-func fieldMap(r *http.Request) (fields map[string]struct{}) {
-	fields = make(map[string]struct{})
-	for _, field := range fieldList(r) {
-		fields[field] = struct{}{}
-	}
-	return
-}
-
-// Remove any fields that have underscore prefix.
-func removeReservedFields(data NeuronJSON, showFields Fields) NeuronJSON {
-	var showUser, showTime bool
-	switch showFields {
-	case ShowBasic:
-		// don't show either user or time -- default values
-	case ShowUsers:
-		showUser = true
-	case ShowTime:
-		showTime = true
-	case ShowAll:
-		return data
-	}
-	out := data.copy()
-	for field := range data {
-		if (!showUser && strings.HasSuffix(field, "_user")) || (!showTime && strings.HasSuffix(field, "_time")) {
-			delete(out, field)
-		}
-	}
-	return out
-}
-
-// Return a subset of fields where
-//
-//	onlyFields is a map of field names to include
-//	hideSuffixes is a map of fields suffixes (e.g., "_user") to exclude
-func selectFields(data NeuronJSON, fieldMap map[string]struct{}, showUser, showTime bool) NeuronJSON {
-	out := data.copy()
-	if len(fieldMap) > 0 {
-		for field := range data {
-			if field == "bodyid" {
-				continue
-			}
-			if _, found := fieldMap[field]; found {
-				if !showUser {
-					delete(out, field+"_user")
-				}
-				if !showTime {
-					delete(out, field+"_time")
-				}
-			} else {
-				delete(out, field)
-				delete(out, field+"_time")
-				delete(out, field+"_user")
-			}
-		}
-	} else {
-		if !showUser {
-			for field := range data {
-				if strings.HasSuffix(field, "_user") {
-					delete(out, field)
-				}
-			}
-		}
-		if !showTime {
-			for field := range data {
-				if strings.HasSuffix(field, "_time") {
-					delete(out, field)
-				}
-			}
-		}
-	}
-	return out
 }
 
 // Parses keys as body ids, including things like 'a' that might be used in keyrange/0/a.
@@ -790,7 +667,7 @@ func (nj *NeuronJSON) UnmarshalJSON(jsonText []byte) error {
 	// NOTE: An incoming JSON integer could be uint64, int64, or float64 and we
 	//  test in that order. We could force all integers to be int64, but then
 	//  any field for body IDs would be int64 instead of uint64.
-	//  Since we store as JSON and only the in-memory HEAD makes these distinctions,
+	//  Since we persist as JSON and only the in-memory HEAD makes these distinctions,
 	//  we just need to make sure queries on in-memory NeuronJSONs are consistent.
 	for key, val := range raw {
 		s := string(val)
@@ -939,7 +816,7 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 	return string(m), nil
 }
 
-// ----- Low-level ingestion of data from various sources -----
+// -----
 
 // putCmd handles a PUT command-line request.
 func (d *Data) putCmd(cmd datastore.Request, reply *datastore.Response) error {
@@ -972,289 +849,6 @@ func (d *Data) putCmd(cmd datastore.Request, reply *datastore.Response) error {
 
 	reply.Output = []byte(fmt.Sprintf("Put %d bytes into key %q for neuronjson %q, uuid %s\n",
 		len(cmd.Input), keyStr, d.DataName(), uuidStr))
-	return nil
-}
-
-// versionChanges writes JSON file for all changes by versions, including tombstones.
-func (d *Data) versionChanges(request datastore.Request, reply *datastore.Response) error {
-	if len(request.Command) < 5 {
-		return fmt.Errorf("path to output file must be specified after 'versionchanges'")
-	}
-	var uuidStr, dataName, cmdStr, filePath string
-	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &filePath)
-
-	go d.writeVersions(filePath)
-
-	reply.Output = []byte(fmt.Sprintf("Started writing version changes of neuronjson instance %q into %s ...\n",
-		d.DataName(), filePath))
-	return nil
-}
-
-type versionFiles struct {
-	fmap map[dvid.UUID]*os.File
-	path string
-}
-
-func initVersionFiles(path string) (vf *versionFiles, err error) {
-	if _, err = os.Stat(path); os.IsNotExist(err) {
-		dvid.Infof("creating path for version files: %s\n", path)
-		if err = os.MkdirAll(path, 0744); err != nil {
-			err = fmt.Errorf("can't make directory at %s: %v", path, err)
-			return
-		}
-	} else if err != nil {
-		err = fmt.Errorf("error initializing version files directory: %v", err)
-		return
-	}
-	vf = &versionFiles{
-		fmap: make(map[dvid.UUID]*os.File),
-		path: path,
-	}
-	return
-}
-
-func (vf *versionFiles) write(uuid dvid.UUID, data string) (err error) {
-	f, found := vf.fmap[uuid]
-	if !found {
-		path := filepath.Join(vf.path, string(uuid)+".json")
-		f, err = os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0755)
-		if err != nil {
-			return
-		}
-		vf.fmap[uuid] = f
-		data = "[" + data
-	} else {
-		data = "," + data
-	}
-	_, err = f.Write([]byte(data))
-	return
-}
-
-func (vf *versionFiles) close() {
-	for uuid, f := range vf.fmap {
-		if _, err := f.Write([]byte("]")); err != nil {
-			dvid.Errorf("unable to close list for uuid %s version file: %v\n", uuid, err)
-		}
-		f.Close()
-	}
-}
-
-// writeVersions creates a file per version with all changes, including tombstones, for that version.
-// Because the data is streamed to appropriate files during full database scan, very little has to
-// be kept in memory.
-func (d *Data) writeVersions(filePath string) error {
-	timedLog := dvid.NewTimeLog()
-	db, err := datastore.GetOrderedKeyValueDB(d)
-	if err != nil {
-		return err
-	}
-
-	vf, err := initVersionFiles(filePath)
-	if err != nil {
-		return err
-	}
-	wg := new(sync.WaitGroup)
-	wg.Add(1)
-	ch := make(chan *storage.KeyValue, 100)
-
-	var numAnnotations, numTombstones uint64
-	go func(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
-		for {
-			kv := <-ch
-			if kv == nil {
-				wg.Done()
-				break
-			}
-
-			_, versionID, _, err := storage.DataKeyToLocalIDs(kv.K)
-			if err != nil {
-				dvid.Errorf("GetAllVersions error trying to parse data key %x: %v\n", kv.K, err)
-				continue
-			}
-			uuid, err := datastore.UUIDFromVersion(versionID)
-			if err != nil {
-				dvid.Errorf("GetAllVersions error trying to get UUID from version %d: %v", versionID, err)
-				continue
-			}
-
-			// append to the appropriate uuid in map of annotations by version
-			if kv.K.IsTombstone() {
-				numTombstones++
-				tk, err := storage.TKeyFromKey(kv.K)
-				if err != nil {
-					dvid.Errorf("GetAllVersions error trying to parse tombstone key %x: %v\n", kv.K, err)
-					continue
-				}
-				bodyid, err := DecodeTKey(tk)
-				if err != nil {
-					dvid.Errorf("GetAllVersions error trying to decode tombstone key %x: %v\n", kv.K, err)
-					continue
-				}
-				vf.write(uuid, fmt.Sprintf(`{"bodyid":%s, "tombstone":true}`, bodyid))
-			} else {
-				numAnnotations++
-				vf.write(uuid, string(kv.V))
-			}
-
-			if (numTombstones+numAnnotations)%10000 == 0 {
-				timedLog.Infof("Getting all neuronjson versions, instance %q, %d annotations, %d tombstones across %d versions",
-					d.DataName(), numAnnotations, numTombstones, len(vf.fmap))
-			}
-		}
-		vf.close()
-	}(wg, ch)
-
-	ctx := storage.NewDataContext(d, 0)
-	begKey := ctx.ConstructKeyVersion(MinAnnotationTKey, 0)
-	endKey := ctx.ConstructKeyVersion(MaxAnnotationTKey, 0) // version doesn't matter due to max prefix
-	if err := db.RawRangeQuery(begKey, endKey, false, ch, nil); err != nil {
-		return err
-	}
-	wg.Wait()
-
-	timedLog.Infof("Finished GetAllVersions for neuronjson %q, %d annotations, %d tombstones across %d versions",
-		d.DataName(), numAnnotations, numTombstones, len(vf.fmap))
-	return nil
-}
-
-// Metadata key-value support (all non-neuron annotations)
-
-func (d *Data) loadMetadata(ctx storage.VersionedCtx, meta Schema) (val []byte, err error) {
-	var tkey storage.TKey
-	if tkey, err = getMetadataKey(meta); err != nil {
-		return
-	}
-	var db storage.KeyValueDB
-	if db, err = datastore.GetKeyValueDB(d); err != nil {
-		return
-	}
-	var byteVal []byte
-	if byteVal, err = db.Get(ctx, tkey); err != nil {
-		return
-	}
-	return byteVal, nil
-}
-
-// gets metadata from either in-memory db if HEAD or from store
-func (d *Data) getMetadata(ctx storage.VersionedCtx, meta Schema) (val []byte, err error) {
-	if ctx.Head() {
-		d.metadataMu.RLock()
-		defer d.metadataMu.RUnlock()
-		if val, found := d.metadata[meta]; found {
-			return val, nil
-		} else {
-			return nil, nil
-		}
-	}
-	return d.loadMetadata(ctx, meta)
-}
-
-// get fully compiled JSON schema for use -- TODO
-func (d *Data) getJSONSchema(ctx storage.VersionedCtx) (sch *jsonschema.Schema, err error) {
-	if ctx.Head() {
-		d.metadataMu.RLock()
-		sch = d.compiledSchema
-		d.metadataMu.RUnlock()
-		if sch != nil {
-			return
-		}
-	}
-
-	var tkey storage.TKey
-	if tkey, err = getMetadataKey(JSONSchema); err != nil {
-		return
-	}
-	var db storage.KeyValueDB
-	if db, err = datastore.GetKeyValueDB(d); err != nil {
-		return
-	}
-	var byteVal []byte
-	if byteVal, err = db.Get(ctx, tkey); err != nil {
-		return
-	}
-	if len(byteVal) == 0 {
-		return nil, fmt.Errorf("no JSON Schema available")
-	}
-	if ctx.Head() {
-		d.metadataMu.RLock()
-		d.metadata[JSONSchema] = byteVal
-		d.metadataMu.RUnlock()
-	}
-
-	sch, err = jsonschema.CompileString("schema.json", string(byteVal))
-	if err != nil {
-		return
-	}
-	if sch == nil {
-		return nil, fmt.Errorf("no JSON Schema available")
-	}
-	return
-}
-
-func (d *Data) putMetadata(ctx storage.VersionedCtx, val []byte, meta Schema) (err error) {
-	var tkey storage.TKey
-	if tkey, err = getMetadataKey(meta); err != nil {
-		return
-	}
-	var db storage.KeyValueDB
-	if db, err = datastore.GetKeyValueDB(d); err != nil {
-		return
-	}
-	if err = db.Put(ctx, tkey, val); err != nil {
-		return
-	}
-
-	// If we could persist metadata, add it to in-memory db if head.
-	if ctx.Head() {
-		d.metadataMu.Lock()
-		d.metadata[meta] = val
-		if meta == JSONSchema {
-			d.compiledSchema, err = jsonschema.CompileString("schema.json", string(val))
-			if err != nil {
-				d.compiledSchema = nil
-				dvid.Errorf("Unable to compile json schema: %v\n", err)
-			}
-		}
-		d.metadataMu.Unlock()
-	}
-	return nil
-}
-
-func (d *Data) metadataExists(ctx storage.VersionedCtx, meta Schema) (exists bool, err error) {
-	if ctx.Head() {
-		d.metadataMu.RLock()
-		defer d.metadataMu.RUnlock()
-		_, found := d.metadata[meta]
-		return found, nil
-	}
-	var tkey storage.TKey
-	if tkey, err = getMetadataKey(meta); err != nil {
-		return
-	}
-	var db storage.KeyValueDB
-	if db, err = datastore.GetKeyValueDB(d); err != nil {
-		return
-	}
-	return db.Exists(ctx, tkey)
-}
-
-func (d *Data) deleteMetadata(ctx storage.VersionedCtx, meta Schema) (err error) {
-	var tkey storage.TKey
-	if tkey, err = getMetadataKey(meta); err != nil {
-		return
-	}
-	var db storage.KeyValueDB
-	if db, err = datastore.GetKeyValueDB(d); err != nil {
-		return
-	}
-	if err = db.Delete(ctx, tkey); err != nil {
-		return
-	}
-	if ctx.Head() {
-		d.metadataMu.Lock()
-		defer d.metadataMu.Unlock()
-		delete(d.metadata, meta)
-	}
 	return nil
 }
 
@@ -1372,54 +966,50 @@ func (d *Data) processStoreRange(ctx storage.Context, f func(key string, value m
 }
 
 // Initialize loads mutable properties of the neuronjson data instance,
-// which in this case is the in-memory neuron json map for the HEAD version.
+// which in this case is the in-memory neuron json map for the specified versions.
 func (d *Data) Initialize() {
 	leafMain := string(d.RootUUID()) + ":master"
 	leafUUID, leafV, err := datastore.MatchingUUID(leafMain)
 	if err != nil {
-		dvid.Criticalf("Can't find the leaf node of the main/master branch: %v", err)
-		return
+		dvid.Infof("Can't find the leaf node of the main/master branch... skipping neuronjson initialization\n")
+		leafUUID = dvid.NilUUID
 	}
-	dvid.Infof("Loading neuron annotations JSON into memory for neuronjson %q ...\n", d.DataName())
 
 	d.metadata = make(map[Schema][]byte, 3)
 
-	// Load all the data into memory.
-
-	ctx := datastore.NewVersionedCtx(d, leafV)
-	if sch, err := d.getJSONSchema(ctx); err == nil {
-		if sch != nil {
-			d.compiledSchema = sch
+	if leafUUID != dvid.NilUUID {
+		// Load the metadata
+		ctx := datastore.NewVersionedCtx(d, leafV)
+		if sch, err := d.getJSONSchema(ctx); err == nil {
+			if sch != nil {
+				d.compiledSchema = sch
+			}
+		} else {
+			dvid.Criticalf("Can't load JSON schema for neuronjson %q: %v\n", d.DataName(), err)
 		}
-	} else {
-		dvid.Criticalf("Can't load JSON schema for neuronjson %q: %v\n", d.DataName(), err)
-	}
-	if value, err := d.loadMetadata(ctx, NeuSchema); err == nil {
-		dvid.Infof("Metadata load of neutu/neu3 JSON schema for %s: %d bytes\n", leafUUID[:6], len(value))
-		if value != nil {
-			d.metadata[NeuSchema] = value
+		if value, err := d.loadMetadata(ctx, NeuSchema); err == nil {
+			dvid.Infof("Metadata load of neutu/neu3 JSON schema for %s: %d bytes\n", leafUUID[:6], len(value))
+			if value != nil {
+				d.metadata[NeuSchema] = value
+			}
+		} else {
+			dvid.Criticalf("Can't load neutu/neu3 schema for neuronjson %q: %v\n", d.DataName(), err)
 		}
-	} else {
-		dvid.Criticalf("Can't load neutu/neu3 schema for neuronjson %q: %v\n", d.DataName(), err)
-	}
-	if value, err := d.loadMetadata(ctx, NeuSchemaBatch); err == nil {
-		dvid.Infof("Metadata load of neutu/neu3 JSON batch schema for %s: %d bytes\n", leafUUID[:6], len(value))
-		if value != nil {
-			d.metadata[NeuSchemaBatch] = value
+		if value, err := d.loadMetadata(ctx, NeuSchemaBatch); err == nil {
+			dvid.Infof("Metadata load of neutu/neu3 JSON batch schema for %s: %d bytes\n", leafUUID[:6], len(value))
+			if value != nil {
+				d.metadata[NeuSchemaBatch] = value
+			}
+		} else {
+			dvid.Criticalf("Can't load neutu/neu3 batch schema for neuronjson %q: %v\n", d.DataName(), err)
 		}
-	} else {
-		dvid.Criticalf("Can't load neutu/neu3 batch schema for neuronjson %q: %v\n", d.DataName(), err)
 	}
-}
 
-// --- DataInitializer interface ---
-
-// InitDataHandlers initializes ephemeral data for this instance, which is the
-// in-memory databases holding JSON static and mutable data for given versions/branches.
-func (d *Data) InitDataHandlers() error {
+	// Load the in-memory databases for specified versions or branch HEADs
 	store, err := storage.GetAssignedStore(d)
 	if err != nil {
-		return err
+		dvid.Criticalf("Can't get assigned store for neuronjson %q: %v\n", d.DataName(), err)
+		return
 	}
 
 	storeConfig := store.GetStoreConfig()
@@ -1431,110 +1021,28 @@ func (d *Data) InitDataHandlers() error {
 		var ok bool
 		uuidList, ok = uuidListI.([]string)
 		if !ok {
-			return fmt.Errorf("configuration for inmemory dbs for neuronjson %q not a list of UUIDs: %v",
+			dvid.Criticalf("configuration for inmemory dbs for neuronjson %q not a list of UUIDs: %v",
 				d.DataName(), uuidListI)
-		}
-	}
-	return d.initMemoryDB(uuidList)
-}
-
-func (d *Data) queryInMemory(w http.ResponseWriter, queryL ListQueryJSON, fieldMap map[string]struct{}, showFields Fields) (err error) {
-	d.dbMu.RLock()
-	defer d.dbMu.RUnlock()
-
-	showUser, showTime := showFields.Bools()
-	numMatches := 0
-	var jsonBytes []byte
-	for _, bodyid := range d.ids {
-		value := d.db[bodyid]
-		var matches bool
-		if matches, err = queryMatch(queryL, value); err != nil {
-			return
-		} else if matches {
-			out := selectFields(value, fieldMap, showUser, showTime)
-			if jsonBytes, err = json.Marshal(out); err != nil {
-				break
-			}
-			if numMatches > 0 {
-				fmt.Fprint(w, ",")
-			}
-			fmt.Fprint(w, string(jsonBytes))
-			numMatches++
-		}
-	}
-	return
-}
-
-func (d *Data) queryBackingStore(ctx storage.VersionedCtx, w http.ResponseWriter,
-	queryL ListQueryJSON, fieldMap map[string]struct{}, showFields Fields) (err error) {
-
-	numMatches := 0
-	process_func := func(key string, value map[string]interface{}) {
-		if matches, err := queryMatch(queryL, value); err != nil {
-			dvid.Errorf("error in matching process: %v\n", err) // TODO: alter d.processRange to allow return of err
-			return
-		} else if !matches {
-			return
-		}
-		out := removeReservedFields(value, showFields)
-		jsonBytes, err := json.Marshal(out)
-		if err != nil {
-			dvid.Errorf("error in JSON encoding: %v\n", err)
-			return
-		}
-		if numMatches > 0 {
-			fmt.Fprint(w, ",")
-		}
-		fmt.Fprint(w, string(jsonBytes))
-		numMatches++
-	}
-	return d.processStoreRange(ctx, process_func)
-}
-
-// Query reads POSTed data and returns JSON.
-func (d *Data) Query(ctx *datastore.VersionedCtx, w http.ResponseWriter, uuid dvid.UUID, onlyid bool, fieldMap map[string]struct{}, showFields Fields, in io.ReadCloser) (err error) {
-	var queryBytes []byte
-	if queryBytes, err = io.ReadAll(in); err != nil {
-		return
-	}
-	// Try to parse as list of queries and if fails, try as object and make it a one-item list.
-	var queryL ListQueryJSON
-	if err = json.Unmarshal(queryBytes, &queryL); err != nil {
-		var queryObj QueryJSON
-		if err = queryObj.UnmarshalJSON(queryBytes); err != nil {
-			err = fmt.Errorf("unable to parse JSON query: %s", string(queryBytes))
-			return
-		}
-		queryL = ListQueryJSON{queryObj}
-	}
-
-	// Perform the query
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprint(w, "[")
-	if ctx.Head() {
-		if err = d.queryInMemory(w, queryL, fieldMap, showFields); err != nil {
-			return
-		}
-	} else {
-		if err = d.queryBackingStore(ctx, w, queryL, fieldMap, showFields); err != nil {
 			return
 		}
 	}
-	fmt.Fprint(w, "]")
-	return
+	if err := d.initMemoryDB(uuidList); err != nil {
+		dvid.Criticalf("Can't initialize in-memory databases for neuronjson %q: %v\n", d.DataName(), err)
+	}
 }
 
 // KeyExists returns true if a key is found.
 func (d *Data) KeyExists(ctx storage.VersionedCtx, keyStr string) (found bool, err error) {
-	if ctx.Head() {
+	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
+	if found {
 		var bodyid uint64
 		bodyid, err = strconv.ParseUint(keyStr, 10, 64)
 		if err != nil {
 			return false, err
 		}
-		d.dbMu.RLock()
-		_, found = d.db[bodyid]
-		d.dbMu.RUnlock()
+		mdb.mu.RLock()
+		_, found = mdb.data[bodyid]
+		mdb.mu.RUnlock()
 		return found, nil
 	}
 	db, err := datastore.GetKeyValueDB(d)
@@ -1558,11 +1066,12 @@ func (d *Data) GetKeysInRange(ctx storage.VersionedCtx, keyBeg, keyEnd string) (
 	if bodyidEnd, err = parseKeyStr(keyEnd); err != nil {
 		return
 	}
-	if ctx.Head() {
-		d.dbMu.RLock()
-		defer d.dbMu.RUnlock()
-		begI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] >= bodyidBeg })
-		endI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] > bodyidEnd })
+	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
+	if found {
+		mdb.mu.RLock()
+		defer mdb.mu.RUnlock()
+		begI := sort.Search(len(mdb.ids), func(i int) bool { return mdb.ids[i] >= bodyidBeg })
+		endI := sort.Search(len(mdb.ids), func(i int) bool { return mdb.ids[i] > bodyidEnd })
 		size := endI - begI
 		if size <= 0 {
 			keys = []string{}
@@ -1571,7 +1080,7 @@ func (d *Data) GetKeysInRange(ctx storage.VersionedCtx, keyBeg, keyEnd string) (
 		keys = make([]string, size)
 		pos := 0
 		for i := begI; i < endI; i++ {
-			bodyid := d.ids[i]
+			bodyid := mdb.ids[i]
 			keys[pos] = strconv.FormatUint(bodyid, 10)
 			pos++
 		}
@@ -1600,15 +1109,16 @@ func (d *Data) GetAll(ctx storage.VersionedCtx, fieldMap map[string]struct{}, sh
 	showUser, showTime := showFields.Bools()
 
 	var all ListNeuronJSON
-	if ctx.Head() {
-		d.dbMu.RLock()
-		for _, value := range d.db {
+	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
+	if found {
+		mdb.mu.RLock()
+		for _, value := range mdb.data {
 			out := selectFields(value, fieldMap, showUser, showTime)
 			if len(out) > 1 {
 				all = append(all, out)
 			}
 		}
-		d.dbMu.RUnlock()
+		mdb.mu.RUnlock()
 	} else {
 		process_func := func(key string, value map[string]interface{}) {
 			out := selectFields(value, fieldMap, showUser, showTime)
@@ -1624,13 +1134,14 @@ func (d *Data) GetAll(ctx storage.VersionedCtx, fieldMap map[string]struct{}, sh
 }
 
 func (d *Data) GetKeys(ctx storage.VersionedCtx) (out []string, err error) {
-	if ctx.Head() {
-		d.dbMu.RLock()
-		out = make([]string, len(d.ids))
-		for i, bodyid := range d.ids {
+	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
+	if found {
+		mdb.mu.RLock()
+		out = make([]string, len(mdb.ids))
+		for i, bodyid := range mdb.ids {
 			out[i] = strconv.FormatUint(bodyid, 10)
 		}
-		d.dbMu.RUnlock()
+		mdb.mu.RUnlock()
 	} else {
 		process_func := func(key string) {
 			out = append(out, key)
@@ -1642,15 +1153,19 @@ func (d *Data) GetKeys(ctx storage.VersionedCtx) (out []string, err error) {
 	return out, nil
 }
 
-func (d *Data) GetFields() ([]string, error) {
-	d.dbMu.RLock()
-	fields := make([]string, len(d.fields))
+func (d *Data) GetFields(ctx storage.VersionedCtx) ([]string, error) {
+	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
+	if !found {
+		return nil, fmt.Errorf("unable to get fields because no in-memory db for neuronjson %q, version %d", d.DataName(), ctx.VersionID())
+	}
+	mdb.mu.RLock()
+	fields := make([]string, len(mdb.fields))
 	i := 0
-	for field := range d.fields {
+	for field := range mdb.fields {
 		fields[i] = field
 		i++
 	}
-	d.dbMu.RUnlock()
+	mdb.mu.RUnlock()
 	return fields, nil
 }
 
@@ -1683,10 +1198,11 @@ func (d *Data) GetData(ctx storage.VersionedCtx, keyStr string, fieldMap map[str
 	}
 	var value map[string]interface{}
 	var found bool
-	if ctx.Head() {
-		d.dbMu.RLock()
-		value, found = d.db[bodyid]
-		d.dbMu.RUnlock()
+	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
+	if found {
+		mdb.mu.RLock()
+		value, found = mdb.data[bodyid]
+		mdb.mu.RUnlock()
 		if !found {
 			return nil, false, nil
 		}
@@ -1774,14 +1290,15 @@ func (d *Data) storeAndUpdate(ctx *datastore.VersionedCtx, keyStr string, newDat
 		d.DataName(), ctx.User, conditionals, replace, origData, newData)
 
 	// write result
-	if mdb, found := d.getMemDB(ctx); found {
-		d.dbMu.Lock()
-		d.db[bodyid] = newData
+	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
+	if found {
+		mdb.mu.Lock()
+		mdb.data[bodyid] = newData
 		for field := range newData {
-			d.fields[field] = struct{}{}
+			mdb.fields[field] = struct{}{}
 		}
-		d.addBodyID(bodyid)
-		d.dbMu.Unlock()
+		mdb.addBodyID(bodyid)
+		mdb.mu.Unlock()
 	}
 	return d.putStoreData(ctx, keyStr, newData)
 }
@@ -1869,14 +1386,15 @@ func (d *Data) DeleteData(ctx storage.VersionedCtx, keyStr string) error {
 	if err != nil {
 		return err
 	}
-	if ctx.Head() {
-		d.dbMu.Lock()
-		_, found := d.db[bodyid]
+	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
+	if found {
+		mdb.mu.Lock()
+		_, found := mdb.data[bodyid]
 		if found {
-			delete(d.db, bodyid)
-			d.deleteBodyID(bodyid)
+			delete(mdb.data, bodyid)
+			mdb.deleteBodyID(bodyid)
 		}
-		d.dbMu.Unlock()
+		mdb.mu.Unlock()
 	}
 	return d.deleteStoreData(ctx, keyStr)
 }
@@ -2011,8 +1529,9 @@ func (d *Data) sendOldJSONValuesInRange(ctx storage.VersionedCtx, w http.Respons
 func (d *Data) sendJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWriter,
 	r *http.Request, keyBeg, keyEnd string, fieldMap map[string]struct{}, showFields Fields) (numKeys int, err error) {
 
-	if !ctx.Head() {
-		return 0, fmt.Errorf("cannot use range query on non-head version at this time")
+	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
+	if !found {
+		return 0, fmt.Errorf("cannot use range query on non-memory database at this time")
 	}
 	if len(keyBeg) == 0 || len(keyEnd) == 0 {
 		return 0, fmt.Errorf("must specify non-empty beginning and ending key")
@@ -2047,20 +1566,20 @@ func (d *Data) sendJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWr
 	if err != nil {
 		return 0, err
 	}
-	d.dbMu.RLock()
-	begI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] >= bodyidBeg })
-	endI := sort.Search(len(d.ids), func(i int) bool { return d.ids[i] > bodyidEnd })
-	d.dbMu.RUnlock()
+	mdb.mu.RLock()
+	begI := sort.Search(len(mdb.ids), func(i int) bool { return mdb.ids[i] >= bodyidBeg })
+	endI := sort.Search(len(mdb.ids), func(i int) bool { return mdb.ids[i] > bodyidEnd })
+	mdb.mu.RUnlock()
 
 	// Collect JSON values in range
 	var kvs proto.KeyValues
 	var wroteVal bool
 	showUser, showTime := showFields.Bools()
 	for i := begI; i < endI; i++ {
-		d.dbMu.RLock()
-		bodyid := d.ids[i]
-		jsonData, ok := d.db[bodyid]
-		d.dbMu.RUnlock()
+		mdb.mu.RLock()
+		bodyid := mdb.ids[i]
+		jsonData, ok := mdb.data[bodyid]
+		mdb.mu.RUnlock()
 		if !ok {
 			dvid.Errorf("inconsistent neuronjson DB: bodyid %d at pos %d is not in db cache... skipping", bodyid, i)
 			continue
@@ -2492,7 +2011,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		comment = "HTTP GET keys"
 
 	case "fields":
-		fieldList, err := d.GetFields()
+		fieldList, err := d.GetFields(ctx)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return

@@ -558,7 +558,7 @@ func NewDataService(t TypeService, rootUUID dvid.UUID, id dvid.InstanceID, name 
 	// Make sure we generate a valid UUID for the data instance.
 	dataUUID := dvid.NewUUID()
 	if dataUUID == dvid.NilUUID {
-		return nil, fmt.Errorf("Unable to generate new UUID for data %q creation", name)
+		return nil, fmt.Errorf("unable to generate new UUID for data %q creation", name)
 	}
 
 	// Setup the basic data instance structure.

@@ -116,6 +116,9 @@ func checkBasicAndAll(t *testing.T, basicJSON string, allJSON []byte, user strin
 	if err := json.Unmarshal(allJSON, &allList); err != nil {
 		t.Fatalf("Couldn't unmarshal all JSON: %s\n", string(allJSON))
 	}
+	if len(allList) != 1 {
+		t.Fatalf("Can't check allJSON without 1 element, received:\n%s\n", string(allJSON))
+	}
 	all := allList[0]
 	for field, value := range basic {
 		if _, found := all[field+"_user"]; !found {
@@ -723,12 +726,12 @@ func TestKeyvalueRequests(t *testing.T) {
 
 	expectedValue = []byte("[" + value2 + "," + value3 + "]")
 	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
-		t.Errorf("Bad GET query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+		t.Fatalf("Bad GET query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
-		t.Errorf("Bad POST query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+		t.Fatalf("Bad POST query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	query = `{"a string": ["moo", "goo"], "a number": 2345}`
@@ -742,7 +745,7 @@ func TestKeyvalueRequests(t *testing.T) {
 
 	expectedValue = []byte("[" + value2 + "," + value3 + "]")
 	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
-		t.Errorf("Bad query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+		t.Fatalf("Bad query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	query = `{"unused field": "foo"}`
@@ -751,7 +754,7 @@ func TestKeyvalueRequests(t *testing.T) {
 
 	expectedValue = []byte("[]")
 	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
-		t.Errorf("Bad query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+		t.Fatalf("Bad query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	query = `{"a string": "moo", "unused field": "foo"}`
@@ -760,7 +763,7 @@ func TestKeyvalueRequests(t *testing.T) {
 
 	expectedValue = []byte("[]")
 	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
-		t.Errorf("Bad query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+		t.Fatalf("Bad query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	// Check regex query
@@ -770,7 +773,7 @@ func TestKeyvalueRequests(t *testing.T) {
 
 	expectedValue = []byte("[" + value1 + "," + value2 + "]")
 	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
-		t.Errorf("Bad regex query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+		t.Fatalf("Bad regex query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	query = `{"a string": "re/^(f|m)oo", "a list": "mom"}`
@@ -779,7 +782,7 @@ func TestKeyvalueRequests(t *testing.T) {
 
 	expectedValue = []byte("[" + value2 + "]")
 	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
-		t.Errorf("Bad regex query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+		t.Fatalf("Bad regex query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	query = `{"a string": "re/^(f|m)oo", "a list": ["re/.*x", "re/om"]}`
@@ -788,7 +791,7 @@ func TestKeyvalueRequests(t *testing.T) {
 
 	expectedValue = []byte("[" + value2 + "]")
 	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
-		t.Errorf("Bad regex query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+		t.Fatalf("Bad regex query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	// Check if keys are re-POSTed using default update or replace=true.

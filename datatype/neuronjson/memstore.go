@@ -24,12 +24,39 @@ type memdbs struct {
 	mu     sync.RWMutex
 }
 
+func (d *Data) getMemDBbyVersion(v dvid.VersionID) (db *memdb, found bool) {
+	dvid.Infof("Looking for memdb for version %d in in-memory dbs: %v\n", v, d.dbs)
+	if d.dbs == nil {
+		return
+	}
+	d.dbs.mu.RLock()
+	defer d.dbs.mu.RUnlock()
+	uuid, err := datastore.UUIDFromVersion(v)
+	if err != nil {
+		return
+	}
+	dvid.Infof("Looking for memdb for version %d, uuid %s\n", v, uuid)
+	db, found = d.dbs.static[uuid]
+	if found {
+		dvid.Infof("Found static memdb for version %d, uuid %s\n", v, uuid)
+		return
+	}
+	for branch := range d.dbs.head {
+		_, branchV, err := datastore.GetBranchHead(d.RootUUID(), branch)
+		if err == nil && branchV == v {
+			dvid.Infof("Found head memdb for branch %s, version %d, uuid %s\n", branch, v, uuid)
+			return d.dbs.head[branch], true
+		}
+	}
+	return
+}
+
 // in-memory neuron annotations with sorted body id list for optional sorted iteration.
 type memdb struct {
-	db     map[uint64]NeuronJSON
+	data   map[uint64]NeuronJSON
 	ids    []uint64            // sorted list of body ids
 	fields map[string]struct{} // list of all fields among the annotations
-	dbMu   sync.RWMutex
+	mu     sync.RWMutex
 }
 
 // initializes the in-memory dbs for the given list of UUIDs + branch names in
@@ -40,29 +67,32 @@ func (d *Data) initMemoryDB(versions []string) error {
 		head:   make(map[string]*memdb),
 	}
 	versions = append(versions, ":main")
+	dvid.Infof("Initializing in-memory dbs for neuronjson %q with versions %v\n", d.DataName(), versions)
 	for _, versionSpec := range versions {
+		mdb := &memdb{
+			data:   make(map[uint64]NeuronJSON),
+			fields: make(map[string]struct{}),
+			ids:    []uint64{},
+		}
 		if strings.HasPrefix(versionSpec, ":") {
 			branch := strings.TrimPrefix(versionSpec, ":")
+			dbs.head[branch] = mdb
 			_, v, err := datastore.GetBranchHead(d.RootUUID(), branch)
 			if err != nil {
-				return fmt.Errorf("could not find branch %q specified for neuronjson %q in-memory db: %v",
+				dvid.Infof("could not find branch %q specified for neuronjson %q in-memory db: %v",
 					branch, d.DataName(), err)
-			}
-			newdb, err := newMemDB(d, v)
-			if err != nil {
+			} else if err := d.loadMemDB(v, mdb); err != nil {
 				return err
 			}
-			dbs.head[branch] = newdb
 		} else {
 			uuid, v, err := datastore.MatchingUUID(versionSpec)
 			if err != nil {
 				return err
 			}
-			newdb, err := newMemDB(d, v)
-			if err != nil {
+			if err := d.loadMemDB(v, mdb); err != nil {
 				return err
 			}
-			dbs.static[uuid] = newdb
+			dbs.static[uuid] = mdb
 		}
 	}
 	d.dbsMu.Lock()
@@ -71,18 +101,11 @@ func (d *Data) initMemoryDB(versions []string) error {
 	return nil
 }
 
-func newMemDB(d dvid.Data, v dvid.VersionID) (*memdb, error) {
-	mdb := &memdb{
-		db:     make(map[uint64]NeuronJSON),
-		fields: make(map[string]struct{}),
-		ids:    []uint64{},
-	}
-
+func (d *Data) loadMemDB(v dvid.VersionID, mdb *memdb) error {
 	ctx := datastore.NewVersionedCtx(d, v)
-
 	db, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
-		return nil, fmt.Errorf("can't setup ordered keyvalue db for neuronjson %q: %v", d.DataName(), err)
+		return fmt.Errorf("can't setup ordered keyvalue db for neuronjson %q: %v", d.DataName(), err)
 	}
 
 	tlog := dvid.NewTimeLog()
@@ -119,13 +142,13 @@ func newMemDB(d dvid.Data, v dvid.VersionID) (*memdb, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("error loading neuron annotations into in-memory db for neuronjson %q, version id %d: %v",
+		return fmt.Errorf("error loading neuron annotations into in-memory db for neuronjson %q, version id %d: %v",
 			d.DataName(), v, err)
 	}
 	sort.Slice(mdb.ids, func(i, j int) bool { return mdb.ids[i] < mdb.ids[j] })
 	tlog.Infof("Completed loading of %d annotations into neuronjson instance %q version %s in-memory db",
 		numLoaded, d.DataName(), v)
-	return mdb, nil
+	return nil
 }
 
 // add bodyid to sorted in-memory list of bodyids
@@ -150,7 +173,7 @@ func (mdb *memdb) deleteBodyID(bodyid uint64) {
 
 // add an annotation to the in-memory DB in batch mode assuming ids are sorted later
 func (mdb *memdb) addAnnotation(bodyid uint64, annotation NeuronJSON) {
-	mdb.db[bodyid] = annotation
+	mdb.data[bodyid] = annotation
 	mdb.ids = append(mdb.ids, bodyid)
 	for field := range annotation {
 		mdb.fields[field] = struct{}{}
@@ -187,7 +210,7 @@ type kvType interface {
 	StreamKV(v dvid.VersionID) (chan storage.KeyValue, error)
 }
 
-// goroutine-friendly ingest from a keyvalue instance
+// goroutine-friendly ingest from a keyvalue instance into main HEAD of neuronjson.
 func (d *Data) loadFromKV(v dvid.VersionID, kvData kvType) {
 	tlog := dvid.NewTimeLog()
 
@@ -196,13 +219,9 @@ func (d *Data) loadFromKV(v dvid.VersionID, kvData kvType) {
 		dvid.Criticalf("unable to get keyvalue database: %v", err)
 		return
 	}
-	uuid, err := datastore.UUIDFromVersion(v)
-	if err != nil {
-		dvid.Criticalf("unable to get UUID from version %d: %v", v, err)
-		return
-	}
-	if d.dbs[uuid], err = newMemDB(d, v); err != nil {
-		dvid.Criticalf("unable to initialize in-memory database: %v", err)
+	mdb, found := d.getMemDBbyVersion(v)
+	if !found {
+		dvid.Criticalf("unable to get in-memory database for neuronjson %q, version %d", d.DataName(), v)
 		return
 	}
 
@@ -267,14 +286,14 @@ func (d *Data) loadFromKV(v dvid.VersionID, kvData kvType) {
 			dvid.Errorf("Unable to decode annotation for bodyid %d, skipping: %v\n", bodyid, err)
 			continue
 		}
-		d.addAnnotation(bodyid, annotation)
+		mdb.addAnnotation(bodyid, annotation)
 
 		numLoaded++
 		if numLoaded%1000 == 0 {
 			tlog.Infof("Loaded %d annotations into neuronjson instance %q", numLoaded, d.DataName())
 		}
 	}
-	sort.Slice(d.ids, func(i, j int) bool { return d.ids[i] < d.ids[j] })
+	sort.Slice(mdb.ids, func(i, j int) bool { return mdb.ids[i] < mdb.ids[j] })
 	errored := numFromKV - numLoaded
 	tlog.Infof("Completed loading of %d annotations into neuronjson instance %q (%d skipped)",
 		numLoaded, d.DataName(), errored)

@@ -68,6 +68,7 @@ type Config struct {
 
 // Initialize creates a repositories manager that is handled through package functions.
 func Initialize(initMetadata bool, iconfig Config) error {
+	dvid.Infof("Initializing datastore with config: %v\n", iconfig)
 	m := &repoManager{
 		repoToUUID:      make(map[dvid.RepoID]dvid.UUID),
 		versionToUUID:   make(map[dvid.VersionID]dvid.UUID),
@@ -119,7 +120,7 @@ func Initialize(initMetadata bool, iconfig Config) error {
 		// Load the repo metadata
 		dvid.TimeInfof("Loading metadata from storage (read-only %t)\n", m.readOnly)
 		if err = m.loadMetadata(); err != nil {
-			return fmt.Errorf("Error loading metadata: %v", err)
+			return fmt.Errorf("error loading metadata: %v", err)
 		}
 		dvid.TimeInfof("Finished loading metadata from storage (read-only %t)\n", m.readOnly)
 	}
@@ -128,6 +129,9 @@ func Initialize(initMetadata bool, iconfig Config) error {
 
 	// Add ephemeral data instances if a store wants it.
 	stores, err := storage.AllStores()
+	if err != nil {
+		return err
+	}
 	for alias, store := range stores {
 		istore, ok := store.(dvid.AutoInstanceStore)
 		dvid.Infof("Store %q auto instance store %t\n", store, ok)
@@ -178,7 +182,7 @@ func Initialize(initMetadata bool, iconfig Config) error {
 		}
 	}
 
-	// Allow data instance to initialize if desired.
+	// Allow data instance to initialize after preliminary setup/syncs established.
 	for _, data := range m.iids {
 		if data.IsDeleted() {
 			continue

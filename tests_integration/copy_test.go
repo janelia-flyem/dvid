@@ -33,6 +33,10 @@ func (db *mockDB) Equal(cfg dvid.StoreConfig) bool {
 	return db.name == cfg.Engine
 }
 
+func (db *mockDB) GetStoreConfig() dvid.StoreConfig {
+	return dvid.StoreConfig{Engine: db.name}
+}
+
 // -- function so mockDB fulfills datastore.rawQueryDB interface
 func (db *mockDB) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out chan *storage.KeyValue, cancel <-chan struct{}) error {
 	for i, kv := range db.kvs {

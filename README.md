@@ -59,7 +59,7 @@ Developers should consult the [install README](https://github.com/janelia-flyem/
 where our conda-based process is described.
 
 DVID has been tested on MacOS X, Linux (Fedora 16, CentOS 6, Ubuntu), and 
-[Windows 10+ Bash Shell](https://msdn.microsoft.com/en-us/commandline/wsl/about). 
+[Windows Subsystem for Linux (WSL2)](https://msdn.microsoft.com/en-us/commandline/wsl/about). 
 It comes out-of-the-box with several embedded key-value databases (Badger, Basho's leveldb)
 for storage although you can configure other storage backends.
 

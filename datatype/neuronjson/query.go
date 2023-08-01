@@ -3,12 +3,16 @@ package neuronjson
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	reflect "reflect"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 type QueryJSON map[string]interface{}
@@ -109,6 +113,18 @@ func checkIntMatch(query int64, field []int64) bool {
 	return false
 }
 
+func checkFloatMatch(query float64, field []float64) bool {
+	if len(field) == 0 {
+		return false
+	}
+	for _, fieldValue := range field {
+		if fieldValue == query {
+			return true
+		}
+	}
+	return false
+}
+
 func checkStrMatch(query string, field []string) bool {
 	if len(field) == 0 {
 		return false
@@ -142,6 +158,7 @@ func checkField(queryValue, fieldValue interface{}) bool {
 	// if field value is string, make it []string.
 	// Field can be (single or list of) number, string, other.
 	var fieldNumList []int64
+	var fieldFloatList []float64
 	var fieldStrList []string
 	switch v := fieldValue.(type) {
 	case int64:
@@ -159,12 +176,18 @@ func checkField(queryValue, fieldValue interface{}) bool {
 		fieldStrList = []string{v}
 	case []string:
 		fieldStrList = v
+	case float64:
+		if v == float64(int(v)) {
+			fieldNumList = []int64{int64(v)}
+		} else {
+			fieldFloatList = []float64{v}
+		}
 
 	default:
 		dvid.Errorf("Unknown field value of type %s: %v\n", reflect.TypeOf(v), v)
 		return false
 	}
-	if len(fieldNumList) == 0 && len(fieldStrList) == 0 {
+	if len(fieldNumList) == 0 && len(fieldStrList) == 0 && len(fieldFloatList) == 0 {
 		return false
 	}
 
@@ -213,6 +236,12 @@ func checkField(queryValue, fieldValue interface{}) bool {
 					return true
 				}
 			}
+		case float64:
+			for _, val := range v {
+				if checkFloatMatch(val.(float64), fieldFloatList) {
+					return true
+				}
+			}
 		case string, *regexp.Regexp:
 			for _, val := range v {
 				switch query := val.(type) {
@@ -247,6 +276,8 @@ func fieldMatch(queryValue, fieldValue interface{}) bool {
 	return checkField(queryValue, fieldValue)
 }
 
+// --- Data Query support ---
+
 // returns true if at least one query on the list matches the value.
 func queryMatch(queryList ListQueryJSON, value map[string]interface{}) (matches bool, err error) {
 	if len(queryList) == 0 {
@@ -280,4 +311,93 @@ func queryMatch(queryList ListQueryJSON, value map[string]interface{}) (matches 
 		}
 	}
 	return false, nil
+}
+
+func (d *Data) queryInMemory(mdb *memdb, w http.ResponseWriter, queryL ListQueryJSON, fieldMap map[string]struct{}, showFields Fields) (err error) {
+	mdb.mu.RLock()
+	defer mdb.mu.RUnlock()
+
+	dvid.Infof("in-memory query using mdb with queryL: %v\n", queryL)
+	showUser, showTime := showFields.Bools()
+	numMatches := 0
+	var jsonBytes []byte
+	for _, bodyid := range mdb.ids {
+		value := mdb.data[bodyid]
+		var matches bool
+		if matches, err = queryMatch(queryL, value); err != nil {
+			return
+		} else if matches {
+			out := selectFields(value, fieldMap, showUser, showTime)
+			if jsonBytes, err = json.Marshal(out); err != nil {
+				break
+			}
+			if numMatches > 0 {
+				fmt.Fprint(w, ",")
+			}
+			fmt.Fprint(w, string(jsonBytes))
+			numMatches++
+		}
+	}
+	return
+}
+
+func (d *Data) queryBackingStore(ctx storage.VersionedCtx, w http.ResponseWriter,
+	queryL ListQueryJSON, fieldMap map[string]struct{}, showFields Fields) (err error) {
+
+	dvid.Infof("store query using mdb with queryL: %v\n", queryL)
+	numMatches := 0
+	process_func := func(key string, value map[string]interface{}) {
+		if matches, err := queryMatch(queryL, value); err != nil {
+			dvid.Errorf("error in matching process: %v\n", err) // TODO: alter d.processRange to allow return of err
+			return
+		} else if !matches {
+			return
+		}
+		out := removeReservedFields(value, showFields)
+		jsonBytes, err := json.Marshal(out)
+		if err != nil {
+			dvid.Errorf("error in JSON encoding: %v\n", err)
+			return
+		}
+		if numMatches > 0 {
+			fmt.Fprint(w, ",")
+		}
+		fmt.Fprint(w, string(jsonBytes))
+		numMatches++
+	}
+	return d.processStoreRange(ctx, process_func)
+}
+
+// Query reads POSTed data and returns JSON.
+func (d *Data) Query(ctx *datastore.VersionedCtx, w http.ResponseWriter, uuid dvid.UUID, onlyid bool, fieldMap map[string]struct{}, showFields Fields, in io.ReadCloser) (err error) {
+	var queryBytes []byte
+	if queryBytes, err = io.ReadAll(in); err != nil {
+		return
+	}
+	// Try to parse as list of queries and if fails, try as object and make it a one-item list.
+	var queryL ListQueryJSON
+	if err = json.Unmarshal(queryBytes, &queryL); err != nil {
+		var queryObj QueryJSON
+		if err = queryObj.UnmarshalJSON(queryBytes); err != nil {
+			err = fmt.Errorf("unable to parse JSON query: %s", string(queryBytes))
+			return
+		}
+		queryL = ListQueryJSON{queryObj}
+	}
+
+	// Perform the query
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprint(w, "[")
+	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
+	if found {
+		if err = d.queryInMemory(mdb, w, queryL, fieldMap, showFields); err != nil {
+			return
+		}
+	} else {
+		if err = d.queryBackingStore(ctx, w, queryL, fieldMap, showFields); err != nil {
+			return
+		}
+	}
+	fmt.Fprint(w, "]")
+	return
 }
