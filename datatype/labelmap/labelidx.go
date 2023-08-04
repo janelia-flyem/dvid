@@ -1200,14 +1200,16 @@ func (d *Data) constrainLabelIndex(ctx *datastore.VersionedCtx, label uint64, sc
 		return
 	}
 	blockMeta.supervoxels = idx.GetSupervoxels()
+	var supervoxel uint64
 	if isSupervoxel {
-		if _, exists = blockMeta.supervoxels[label]; !exists {
+		supervoxel = label
+		if _, exists = blockMeta.supervoxels[supervoxel]; !exists {
 			return
 		}
-		blockMeta.supervoxels = labels.Set{label: struct{}{}}
+		blockMeta.supervoxels = labels.Set{supervoxel: struct{}{}}
 	}
 
-	if blockMeta.sortedBlocks, err = idx.GetProcessedBlockIndices(scale, bounds); err != nil {
+	if blockMeta.sortedBlocks, err = idx.GetProcessedBlockIndices(scale, bounds, supervoxel); err != nil {
 		return
 	}
 	if len(blockMeta.sortedBlocks) == 0 { // if no blocks are within bounds, regardless of scale
@@ -1437,8 +1439,10 @@ func (d *Data) GetSparseCoarseVol(ctx *datastore.VersionedCtx, label uint64, bou
 	if idx == nil || len(idx.Blocks) == 0 {
 		return nil, nil
 	}
+	var supervoxel uint64
 	if isSupervoxel {
-		idx, err = idx.LimitToSupervoxel(label)
+		supervoxel = label
+		idx, err = idx.LimitToSupervoxel(supervoxel)
 		if err != nil {
 			return nil, err
 		}
@@ -1446,7 +1450,7 @@ func (d *Data) GetSparseCoarseVol(ctx *datastore.VersionedCtx, label uint64, bou
 			return nil, nil
 		}
 	}
-	blocks, err := idx.GetProcessedBlockIndices(0, bounds)
+	blocks, err := idx.GetProcessedBlockIndices(0, bounds, supervoxel)
 	if err != nil {
 		return nil, err
 	}
@@ -1521,7 +1525,7 @@ func (d *Data) WriteSparseCoarseVols(ctx *datastore.VersionedCtx, w io.Writer, b
 			if err := pb.Unmarshal(val, &idx); err != nil {
 				return err
 			}
-			blocks, err := idx.GetProcessedBlockIndices(0, bounds)
+			blocks, err := idx.GetProcessedBlockIndices(0, bounds, 0)
 			if err != nil {
 				return err
 			}

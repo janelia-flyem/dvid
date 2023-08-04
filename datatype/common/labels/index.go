@@ -296,9 +296,11 @@ func (idx *Index) LimitToSupervoxel(supervoxel uint64) (*Index, error) {
 	return sidx, nil
 }
 
-// GetProcessedBlockIndices returns the blocks for an index, possibly bounded and with
-// down-res applied by the given scale.
-func (idx *Index) GetProcessedBlockIndices(scale uint8, bounds dvid.Bounds) (dvid.IZYXSlice, error) {
+// GetProcessedBlockIndices returns the blocks for an index, possibly bounded in and with
+// down-res applied by the given scale.  If supervoxel is 0, assumes that all blocks
+// should be returned after the other restrictions, otherwise it screens for only
+// blocks that contain the given supervoxel id.
+func (idx *Index) GetProcessedBlockIndices(scale uint8, bounds dvid.Bounds, supervoxel uint64) (dvid.IZYXSlice, error) {
 	if idx == nil {
 		return nil, nil
 	}
@@ -313,16 +315,23 @@ func (idx *Index) GetProcessedBlockIndices(scale uint8, bounds dvid.Bounds) (dvi
 			dvid.Debugf("ignoring block %s for label %d because of nil Counts\n", izyx, idx.Label)
 			continue
 		}
-		var ok bool
-		for _, count := range svc.Counts {
-			if count > 0 {
-				ok = true
-				break
+		if supervoxel != 0 {
+			count, found := svc.Counts[supervoxel]
+			if !found || count == 0 {
+				continue // filter any blocks not containing given supervoxel id
 			}
-		}
-		if !ok {
-			dvid.Debugf("ignoring block %s for label %d because all counts are zero: %v\n", izyx, idx.Label, svc.Counts)
-			continue
+		} else {
+			var ok bool
+			for _, count := range svc.Counts {
+				if count > 0 {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				dvid.Debugf("ignoring block %s for label %d because all counts are zero: %v\n", izyx, idx.Label, svc.Counts)
+				continue
+			}
 		}
 		indices[totBlocks] = izyx
 		totBlocks++

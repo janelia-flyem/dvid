@@ -212,7 +212,7 @@ func TestIndexOps(t *testing.T) {
 	bounds.Block.SetMinX(2)
 	bounds.Block.SetMinY(2)
 	bounds.Block.SetMaxZ(3800)
-	blockIndices, err = idx.GetProcessedBlockIndices(0, bounds)
+	blockIndices, err = idx.GetProcessedBlockIndices(0, bounds, 0)
 	if err != nil {
 		t.Error(err)
 	}
