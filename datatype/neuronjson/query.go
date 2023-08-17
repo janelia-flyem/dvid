@@ -346,7 +346,8 @@ func (d *Data) queryBackingStore(ctx storage.VersionedCtx, w http.ResponseWriter
 
 	dvid.Infof("store query using mdb with queryL: %v\n", queryL)
 	numMatches := 0
-	process_func := func(key string, value map[string]interface{}) {
+	process_func := func(key string, value NeuronJSON) {
+		value = NeuronJSON(value)
 		if matches, err := queryMatch(queryL, value); err != nil {
 			dvid.Errorf("error in matching process: %v\n", err) // TODO: alter d.processRange to allow return of err
 			return

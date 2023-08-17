@@ -936,7 +936,7 @@ func (d *Data) processStoreKeysInRange(ctx storage.Context, minTKey, maxTKey sto
 }
 
 // process a range of key-value pairs using supplied function.
-func (d *Data) processStoreRange(ctx storage.Context, f func(key string, value map[string]interface{})) error {
+func (d *Data) processStoreRange(ctx storage.Context, f func(key string, value NeuronJSON)) error {
 	db, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return err
@@ -955,8 +955,8 @@ func (d *Data) processStoreRange(ctx storage.Context, f func(key string, value m
 		if err != nil {
 			return err
 		}
-		var value map[string]interface{}
-		if err := json.Unmarshal(kv.V, &value); err != nil {
+		var value NeuronJSON
+		if err := value.UnmarshalJSON(kv.V); err != nil {
 			return err
 		}
 		f(key, value)
@@ -1120,7 +1120,7 @@ func (d *Data) GetAll(ctx storage.VersionedCtx, fieldMap map[string]struct{}, sh
 		}
 		mdb.mu.RUnlock()
 	} else {
-		process_func := func(key string, value map[string]interface{}) {
+		process_func := func(key string, value NeuronJSON) {
 			out := selectFields(value, fieldMap, showUser, showTime)
 			if len(out) > 1 {
 				all = append(all, out)
