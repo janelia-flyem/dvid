@@ -223,7 +223,7 @@ GET  <api URL>/node/<UUID>/<data name>/keyrange/<key1>/<key2>
 
 GET  <api URL>/node/<UUID>/<data name>/keyrangevalues/<key1>/<key2>?<options>
 
-	This has the same response as the GET /neuronjsons endpoint but a different way of
+	This has the same response as the GET /keyvalues endpoint but a different way of
 	specifying the keys.  In this endpoint, you specify a range of keys.  In the other
 	endpoint, you must explicitly send the keys in a GET payload, which may not be
 	fully supported.
@@ -1401,163 +1401,142 @@ func (d *Data) DeleteData(ctx storage.VersionedCtx, keyStr string) error {
 
 // ----- Support functions for endpoint handlers -----
 
-func (d *Data) sendOldJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWriter,
-	r *http.Request, keyBeg, keyEnd string, showFields Fields) (numKeys int, err error) {
+type writeParams struct {
+	w          http.ResponseWriter
+	ch         chan writeData
+	fieldMap   map[string]struct{}
+	showFields Fields
+	checkVal   bool
+}
 
-	tarOut := (r.URL.Query().Get("jsontar") == "true") || (r.URL.Query().Get("tar") == "true")
-	jsonOut := r.URL.Query().Get("json") == "true"
-	checkVal := r.URL.Query().Get("check") == "true"
-	if tarOut && jsonOut {
-		err = fmt.Errorf("can only specify tar or json output, not both")
-		return
-	}
-	db, err := datastore.GetOrderedKeyValueDB(d)
-	if err != nil {
-		return 0, err
-	}
+type writeData struct {
+	bodyid   uint64
+	jsonData NeuronJSON
+}
 
-	var kvs proto.KeyValues
-	var tw *tar.Writer
-
-	switch {
-	case tarOut:
-		w.Header().Set("Content-type", "application/tar")
-		tw = tar.NewWriter(w)
-	case jsonOut:
-		w.Header().Set("Content-type", "application/json")
-		if _, err = w.Write([]byte("{")); err != nil {
-			return
-		}
-	default:
-	}
-
-	// Compute first and last key for range
-	first, err := NewTKey(keyBeg)
-	if err != nil {
-		return 0, err
-	}
-	last, err := NewTKey(keyEnd)
-	if err != nil {
-		return 0, err
-	}
-
-	var wroteVal bool
-	err = db.ProcessRange(ctx, first, last, &storage.ChunkOp{}, func(c *storage.Chunk) error {
-		if c == nil || c.TKeyValue == nil {
-			return nil
-		}
-		kv := c.TKeyValue
-		if kv.V == nil {
-			return nil
-		}
-		key, err := DecodeTKey(kv.K)
-		if err != nil {
-			return err
-		}
-		var jsonData NeuronJSON
-		if err := json.Unmarshal(kv.V, &jsonData); err != nil {
-			return err
-		}
-		out := removeReservedFields(jsonData, showFields)
-		jsonBytes, err := json.Marshal(out)
-		if err != nil {
-			return err
-		}
-		switch {
-		case tarOut:
-			hdr := &tar.Header{
-				Name: key,
-				Size: int64(len(jsonBytes)),
-				Mode: 0755,
-			}
-			if err = tw.WriteHeader(hdr); err != nil {
-				return err
-			}
-			if _, err = tw.Write(jsonBytes); err != nil {
-				return err
-			}
-		case jsonOut:
-			if wroteVal {
-				if _, err = w.Write([]byte(",")); err != nil {
-					return err
-				}
-			}
-			if len(jsonBytes) == 0 {
-				jsonBytes = []byte("{}")
-			} else if checkVal && !json.Valid(jsonBytes) {
-				return fmt.Errorf("bad JSON for key %q", key)
-			}
-			out := fmt.Sprintf(`"%s":`, key)
-			if _, err = w.Write([]byte(out)); err != nil {
-				return err
-			}
-			if _, err = w.Write(jsonBytes); err != nil {
-				return err
-			}
-			wroteVal = true
-		default:
-			kv := &proto.KeyValue{
-				Key:   key,
-				Value: jsonBytes,
-			}
-			kvs.Kvs = append(kvs.Kvs, kv)
-		}
-
-		return nil
-	})
-	switch {
-	case tarOut:
-		tw.Close()
-	case jsonOut:
-		if _, err = w.Write([]byte("}")); err != nil {
-			return
-		}
-	default:
-		numKeys = len(kvs.Kvs)
-		var serialization []byte
-		if serialization, err = pb.Marshal(&kvs); err != nil {
-			return
-		}
-		w.Header().Set("Content-type", "application/octet-stream")
-		if _, err = w.Write(serialization); err != nil {
-			return
-		}
-	}
+func selectData(data writeData, params *writeParams) (key string, jsonBytes []byte, err error) {
+	showUser, showTime := params.showFields.Bools()
+	out := selectFields(data.jsonData, params.fieldMap, showUser, showTime)
+	key = strconv.FormatUint(data.bodyid, 10)
+	jsonBytes, err = json.Marshal(out)
 	return
 }
 
+func streamJSONtar(params *writeParams) (numKeys int, err error) {
+	params.w.Header().Set("Content-type", "application/tar")
+
+	tw := tar.NewWriter(params.w)
+
+	var key string
+	var jsonBytes []byte
+	for data := range params.ch {
+		key, jsonBytes, err = selectData(data, params)
+		if err != nil {
+			return 0, err
+		}
+
+		hdr := &tar.Header{
+			Name: key,
+			Size: int64(len(jsonBytes)),
+			Mode: 0755,
+		}
+		if err = tw.WriteHeader(hdr); err != nil {
+			return
+		}
+		if _, err = tw.Write(jsonBytes); err != nil {
+			return
+		}
+		numKeys++
+	}
+	tw.Close()
+	return numKeys, nil
+}
+
+func streamJSON(params *writeParams) (numKeys int, err error) {
+	params.w.Header().Set("Content-type", "application/json")
+	if _, err = params.w.Write([]byte("{")); err != nil {
+		return
+	}
+
+	var wroteVal bool
+	var key string
+	var jsonBytes []byte
+	for data := range params.ch {
+		key, jsonBytes, err = selectData(data, params)
+		if err != nil {
+			return 0, err
+		}
+
+		if wroteVal {
+			if _, err = params.w.Write([]byte(",")); err != nil {
+				return
+			}
+		}
+		if len(jsonBytes) == 0 {
+			jsonBytes = []byte("{}")
+		} else if params.checkVal && !json.Valid(jsonBytes) {
+			return 0, fmt.Errorf("bad JSON for key %q", key)
+		}
+		out := fmt.Sprintf(`"%s":`, key)
+		if _, err = params.w.Write([]byte(out)); err != nil {
+			return
+		}
+		if _, err = params.w.Write(jsonBytes); err != nil {
+			return
+		}
+		wroteVal = true
+	}
+	if _, err = params.w.Write([]byte("}")); err != nil {
+		return
+	}
+	return numKeys, nil
+}
+
+func streamProtobuf(params *writeParams) (numKeys int, err error) {
+	var kvs proto.KeyValues
+
+	var key string
+	var jsonBytes []byte
+	for data := range params.ch {
+		key, jsonBytes, err = selectData(data, params)
+		if err != nil {
+			return 0, err
+		}
+
+		kv := &proto.KeyValue{
+			Key:   key,
+			Value: jsonBytes,
+		}
+		kvs.Kvs = append(kvs.Kvs, kv)
+	}
+	numKeys = len(kvs.Kvs)
+	var serialization []byte
+	if serialization, err = pb.Marshal(&kvs); err != nil {
+		return
+	}
+	params.w.Header().Set("Content-type", "application/octet-stream")
+	if _, err = params.w.Write(serialization); err != nil {
+		return
+	}
+
+	return numKeys, nil
+}
+
+// writes JSON values in given format for a range of keys with given beginning & end.
 func (d *Data) sendJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWriter,
 	r *http.Request, keyBeg, keyEnd string, fieldMap map[string]struct{}, showFields Fields) (numKeys int, err error) {
 
-	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
-	if !found {
-		return 0, fmt.Errorf("cannot use range query on non-memory database at this time")
-	}
 	if len(keyBeg) == 0 || len(keyEnd) == 0 {
 		return 0, fmt.Errorf("must specify non-empty beginning and ending key")
 	}
 	tarOut := (r.URL.Query().Get("jsontar") == "true") || (r.URL.Query().Get("tar") == "true")
 	jsonOut := r.URL.Query().Get("json") == "true"
-	checkVal := r.URL.Query().Get("check") == "true"
 	if tarOut && jsonOut {
 		err = fmt.Errorf("can only specify tar or json output, not both")
 		return
 	}
 
-	var tw *tar.Writer
-	switch {
-	case tarOut:
-		w.Header().Set("Content-type", "application/tar")
-		tw = tar.NewWriter(w)
-	case jsonOut:
-		w.Header().Set("Content-type", "application/json")
-		if _, err = w.Write([]byte("{")); err != nil {
-			return
-		}
-	default:
-	}
-
-	// Accept arbitrary strings for first and last key for range
+	// Check range keys are valid for either in-memory or on-disk store.
 	bodyidBeg, err := parseKeyStr(keyBeg)
 	if err != nil {
 		return 0, err
@@ -1566,93 +1545,95 @@ func (d *Data) sendJSONValuesInRange(ctx storage.VersionedCtx, w http.ResponseWr
 	if err != nil {
 		return 0, err
 	}
-	mdb.mu.RLock()
-	begI := sort.Search(len(mdb.ids), func(i int) bool { return mdb.ids[i] >= bodyidBeg })
-	endI := sort.Search(len(mdb.ids), func(i int) bool { return mdb.ids[i] > bodyidEnd })
-	mdb.mu.RUnlock()
 
-	// Collect JSON values in range
-	var kvs proto.KeyValues
-	var wroteVal bool
-	showUser, showTime := showFields.Bools()
-	for i := begI; i < endI; i++ {
-		mdb.mu.RLock()
-		bodyid := mdb.ids[i]
-		jsonData, ok := mdb.data[bodyid]
-		mdb.mu.RUnlock()
-		if !ok {
-			dvid.Errorf("inconsistent neuronjson DB: bodyid %d at pos %d is not in db cache... skipping", bodyid, i)
-			continue
-		}
-		out := selectFields(jsonData, fieldMap, showUser, showTime)
-		key := strconv.FormatUint(bodyid, 10)
-		var jsonBytes []byte
-		jsonBytes, err = json.Marshal(out)
-		if err != nil {
-			return 0, err
-		}
-		switch {
-		case tarOut:
-			hdr := &tar.Header{
-				Name: key,
-				Size: int64(len(jsonBytes)),
-				Mode: 0755,
-			}
-			if err = tw.WriteHeader(hdr); err != nil {
-				return
-			}
-			if _, err = tw.Write(jsonBytes); err != nil {
-				return
-			}
-		case jsonOut:
-			if wroteVal {
-				if _, err = w.Write([]byte(",")); err != nil {
-					return
-				}
-			}
-			if len(jsonBytes) == 0 {
-				jsonBytes = []byte("{}")
-			} else if checkVal && !json.Valid(jsonBytes) {
-				return 0, fmt.Errorf("bad JSON for key %q", key)
-			}
-			out := fmt.Sprintf(`"%s":`, key)
-			if _, err = w.Write([]byte(out)); err != nil {
-				return
-			}
-			if _, err = w.Write(jsonBytes); err != nil {
-				return
-			}
-			wroteVal = true
-		default:
-			kv := &proto.KeyValue{
-				Key:   key,
-				Value: jsonBytes,
-			}
-			kvs.Kvs = append(kvs.Kvs, kv)
-		}
+	first, err := NewTKey(keyBeg)
+	if err != nil {
+		return 0, err
+	}
+	last, err := NewTKey(keyEnd)
+	if err != nil {
+		return 0, err
+	}
+	db, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return 0, err
 	}
 
+	// Create goroutine to read NeuronJSONs from either in-memory or on-disk store.
+	writeCh := make(chan writeData, 1000)
+	params := writeParams{
+		w:          w,
+		ch:         writeCh,
+		fieldMap:   fieldMap,
+		showFields: showFields,
+		checkVal:   r.URL.Query().Get("check") == "true",
+	}
+
+	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
+	if found {
+		go func() {
+			mdb.mu.RLock()
+			begI := sort.Search(len(mdb.ids), func(i int) bool { return mdb.ids[i] >= bodyidBeg })
+			endI := sort.Search(len(mdb.ids), func(i int) bool { return mdb.ids[i] > bodyidEnd })
+			mdb.mu.RUnlock()
+
+			for i := begI; i < endI; i++ {
+				mdb.mu.RLock()
+				bodyid := mdb.ids[i]
+				jsonData, ok := mdb.data[bodyid]
+				mdb.mu.RUnlock()
+				if !ok {
+					dvid.Errorf("inconsistent neuronjson DB: bodyid %d at pos %d is not in db cache... skipping", bodyid, i)
+					continue
+				}
+				writeCh <- writeData{bodyid, jsonData}
+			}
+			close(writeCh)
+		}()
+	} else { // Handle on-disk store.
+		go func() {
+			err = db.ProcessRange(ctx, first, last, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+				if c == nil || c.TKeyValue == nil {
+					return nil
+				}
+				kv := c.TKeyValue
+				if kv.V == nil {
+					return nil
+				}
+				key, err := DecodeTKey(kv.K)
+				if err != nil {
+					return err
+				}
+				var jsonData NeuronJSON
+				if err := json.Unmarshal(kv.V, &jsonData); err != nil {
+					return err
+				}
+				out := removeReservedFields(jsonData, showFields)
+				bodyid, err := parseKeyStr(key)
+				if err != nil {
+					return err
+				}
+				writeCh <- writeData{bodyid, out}
+				return nil
+			})
+			close(writeCh)
+		}()
+	}
+
+	// Output requested format.
 	switch {
 	case tarOut:
-		tw.Close()
+		numKeys, err = streamJSONtar(&params)
 	case jsonOut:
-		if _, err = w.Write([]byte("}")); err != nil {
-			return
-		}
+		numKeys, err = streamJSON(&params)
 	default:
-		numKeys = len(kvs.Kvs)
-		var serialization []byte
-		if serialization, err = pb.Marshal(&kvs); err != nil {
-			return
-		}
-		w.Header().Set("Content-type", "application/octet-stream")
-		if _, err = w.Write(serialization); err != nil {
-			return
-		}
+		numKeys, err = streamProtobuf(&params)
 	}
+
 	return
 }
 
+// writes JSON data for the given keys
 func (d *Data) sendJSONKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys []string, checkVal bool,
 	fieldMap map[string]struct{}, showFields Fields) (writtenBytes int, err error) {
 
@@ -1697,6 +1678,7 @@ func (d *Data) sendJSONKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys 
 	return
 }
 
+// writes tarred JSON data for the given keys
 func (d *Data) sendTarKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys []string,
 	fieldMap map[string]struct{}, showFields Fields) (writtenBytes int, err error) {
 
@@ -1729,6 +1711,7 @@ func (d *Data) sendTarKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys [
 	return
 }
 
+// writes protobuf-encoded keyvalues for the given keys
 func (d *Data) sendProtobufKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys *proto.Keys,
 	fieldMap map[string]struct{}, showFields Fields) (writtenBytes int, err error) {
 	var kvs proto.KeyValues
@@ -1761,6 +1744,8 @@ func (d *Data) sendProtobufKV(ctx storage.VersionedCtx, w http.ResponseWriter, k
 	return
 }
 
+// writes JSON values in given format for keys sent in the request body.
+// Uses random reads since we assume keys aren't ordered.
 func (d *Data) handleKeyValues(ctx storage.VersionedCtx, w http.ResponseWriter, r *http.Request,
 	uuid dvid.UUID, fieldMap map[string]struct{}, showFields Fields) (numKeys, writtenBytes int, err error) {
 
@@ -2070,21 +2055,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		keyBeg := parts[4]
 		keyEnd := parts[5]
 		w.Header().Set("Content-Type", "application/json")
-		if ctx.Head() {
-			numKeys, err := d.sendJSONValuesInRange(ctx, w, r, keyBeg, keyEnd, fieldMap(r), showFields(r))
-			if err != nil {
-				server.BadRequest(w, r, err)
-				return
-			}
-			comment = fmt.Sprintf("HTTP GET keyrangevalues sent %d values for [%q, %q]", numKeys, keyBeg, keyEnd)
-		} else {
-			numKeys, err := d.sendOldJSONValuesInRange(ctx, w, r, keyBeg, keyEnd, showFields(r))
-			if err != nil {
-				server.BadRequest(w, r, err)
-				return
-			}
-			comment = fmt.Sprintf("HTTP GET keyrangevalues sent %d values for [%q, %q]", numKeys, keyBeg, keyEnd)
+
+		numKeys, err := d.sendJSONValuesInRange(ctx, w, r, keyBeg, keyEnd, fieldMap(r), showFields(r))
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
 		}
+		comment = fmt.Sprintf("HTTP GET keyrangevalues sent %d values for [%q, %q]", numKeys, keyBeg, keyEnd)
 
 	case "keyvalues":
 		switch action {
