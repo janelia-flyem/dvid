@@ -837,10 +837,11 @@ func TestKeyvalueRequests(t *testing.T) {
 
 	// Check if we replace or keep old _user and _time while changing and reusing value
 	value3modA := fmt.Sprintf(`{"a string": "goo modified", "a string_user": "bill", "a string_time": "%s", "a number_user": "donald", "a 2nd list": [26]}`, responseJSON["a string_time"])
-	key3modAreq := fmt.Sprintf("%snode/%s/%s/key/%s?u=frank&show=user", server.WebAPIPath, uuid, name, key3)
+	key3modAreq := fmt.Sprintf("%snode/%s/%s/key/%s?u=frank&show=all", server.WebAPIPath, uuid, name, key3)
 	server.TestHTTP(t, "POST", key3modAreq, strings.NewReader(value3modA))
 
 	returnValue = server.TestHTTP(t, "GET", key3modAreq, nil)
+	dvid.Infof("After 1st mod got back: %s\n", string(returnValue))
 
 	expectedValue = []byte(fmt.Sprintf(`{"a string": "goo modified", "a string_user": "bill", "a string_time": "%s", "a number": 3456, "a list": [23], "a 2nd list": [26]}`, responseJSON["a string_time"]))
 	if err := json.Unmarshal(expectedValue, &expectedJSON); err != nil {
@@ -861,6 +862,7 @@ func TestKeyvalueRequests(t *testing.T) {
 	if value, found := responseJSON["a number_user"]; !found || value != "donald" {
 		t.Fatalf("Bad response: %v\n", responseJSON)
 	}
+	old_time := responseJSON["a number_time"]
 	if value, found := responseJSON["a list"]; !found || !reflect.DeepEqual(value, []int64{23}) {
 		t.Fatalf("Bad response (type %s): %v\n", reflect.TypeOf(value), responseJSON)
 	}
@@ -874,12 +876,13 @@ func TestKeyvalueRequests(t *testing.T) {
 		t.Fatalf("Bad response: %v\n", responseJSON)
 	}
 
-	// Check if keys are re-POSTed using replace=true.
-	value3mod = `{"a string": "goo replaced", "only list": [1, 2]}`
-	key3modreq = fmt.Sprintf("%snode/%s/%s/key/%s?u=sandra&show=user&replace=true", server.WebAPIPath, uuid, name, key3)
+	// Check if keys are re-POSTed using replace=true. Don't modify "a number" field.
+	value3mod = `{"a string": "goo replaced", "only list": [1, 2], "a number": 3456}`
+	key3modreq = fmt.Sprintf("%snode/%s/%s/key/%s?u=sandra&show=all&replace=true", server.WebAPIPath, uuid, name, key3)
 	server.TestHTTP(t, "POST", key3modreq, strings.NewReader(value3mod))
 
 	returnValue = server.TestHTTP(t, "GET", key3modreq, nil)
+	dvid.Infof("After replace=true, got back: %s\n", string(returnValue))
 
 	expectedValue = []byte(value3mod)
 	if err := json.Unmarshal(expectedValue, &expectedJSON); err != nil {
@@ -888,8 +891,14 @@ func TestKeyvalueRequests(t *testing.T) {
 	if err := json.Unmarshal(returnValue, &responseJSON); err != nil {
 		t.Fatalf("Couldn't unmarshal response JSON: %s\n", string(returnValue))
 	}
-	if len(responseJSON) != 4 {
-		t.Fatalf("Expected only 4 fields in response after replace, got: %v\n", responseJSON)
+	if value, found := responseJSON["a number"]; !found || !reflect.DeepEqual(value, uint64(3456)) {
+		t.Fatalf("Bad response for number (type %s): %v\n", reflect.TypeOf(value), responseJSON)
+	}
+	if value, found := responseJSON["a number_user"]; !found || value != "donald" {
+		t.Fatalf("Bad response: %v\n", responseJSON)
+	}
+	if value, found := responseJSON["a number_time"]; !found || value != old_time {
+		t.Fatalf("Bad response: %v\n", responseJSON)
 	}
 	if value, found := responseJSON["a string"]; !found || value != "goo replaced" {
 		t.Fatalf("Bad response: %v\n", responseJSON)
@@ -902,6 +911,9 @@ func TestKeyvalueRequests(t *testing.T) {
 	}
 	if value, found := responseJSON["only list_user"]; !found || value != "sandra" {
 		t.Fatalf("Bad response: %v\n", responseJSON)
+	}
+	if len(responseJSON) != 9 {
+		t.Fatalf("Expected 9 fields in response after replace, got: %v\n", responseJSON)
 	}
 }
 

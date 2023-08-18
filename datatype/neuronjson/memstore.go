@@ -34,8 +34,6 @@ func (d *Data) getMemDBbyVersion(v dvid.VersionID) (db *memdb, found bool) {
 	if err != nil {
 		return
 	}
-	metadata, _ := datastore.MarshalJSON()
-	dvid.Infof("Metadata:\n%s\n", string(metadata))
 
 	db, found = d.dbs.static[uuid]
 	if found {

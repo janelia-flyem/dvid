@@ -1221,7 +1221,8 @@ func (d *Data) GetData(ctx storage.VersionedCtx, keyStr string, fieldMap map[str
 // update _user and _time fields for any fields newly set or modified.
 func updateJSON(origData, newData NeuronJSON, user string, conditionals []string, replace bool) {
 	// determine if any fields are being set for the first time or modified
-	newlySet := make(map[string]struct{}, len(newData))
+	newlySet := make(map[string]struct{}, len(newData))  // fields that aren't same as old data
+	newFields := make(map[string]struct{}, len(newData)) // fields that are not _user or _time
 	if origData == nil {
 		for field := range newData {
 			newlySet[field] = struct{}{}
@@ -1230,6 +1231,9 @@ func updateJSON(origData, newData NeuronJSON, user string, conditionals []string
 		for field, value := range newData {
 			if origValue, found := origData[field]; !found || !reflect.DeepEqual(value, origValue) {
 				newlySet[field] = struct{}{}
+			}
+			if !strings.HasSuffix(field, "_user") && !strings.HasSuffix(field, "_time") {
+				newFields[field] = struct{}{}
 			}
 		}
 
@@ -1267,6 +1271,24 @@ func updateJSON(origData, newData NeuronJSON, user string, conditionals []string
 		}
 		if _, foundTime := newlySet[field+"_time"]; !foundTime {
 			newData[field+"_time"] = timeStr
+		}
+	}
+	if replace { // keep _user and _time fields for unchanged fields
+		for field := range newFields {
+			if _, foundUser := newData[field+"_user"]; !foundUser {
+				oldUser, found := origData[field+"_user"]
+				if !found {
+					oldUser = user
+				}
+				newData[field+"_user"] = oldUser
+			}
+			if _, foundTime := newData[field+"_time"]; !foundTime {
+				oldTime, found := origData[field+"_time"]
+				if !found {
+					oldTime = timeStr
+				}
+				newData[field+"_time"] = oldTime
+			}
 		}
 	}
 }
