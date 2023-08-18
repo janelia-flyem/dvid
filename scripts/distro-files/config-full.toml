@@ -166,6 +166,8 @@ blobstore = "raid6"
     engine = "badger"
     path = "/path/to/badger"
     inmemory = ["83698c997b214365abd479cfc7744049", ":mybranch"] # in-memory DBs in addition to main HEAD.
+    # The above can contain committed UUIDs (static) or ":branch" that always resolve to branch HEAD.
+    # By default, the HEAD of the master branch is always in memory.
 
     [store.ng]
     engine = "ngprecomputed"

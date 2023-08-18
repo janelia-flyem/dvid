@@ -183,6 +183,7 @@ func Initialize(initMetadata bool, iconfig Config) error {
 	}
 
 	// Allow data instance to initialize after preliminary setup/syncs established.
+	dvid.Infof("Initializing data instances: %v\n", m.iids)
 	for _, data := range m.iids {
 		if data.IsDeleted() {
 			continue
@@ -244,7 +245,7 @@ func ReloadMetadata() error {
 	// Load the repo metadata
 	dvid.TimeInfof("Reloading metadata from storage...\n")
 	if err = m.loadMetadata(); err != nil {
-		return fmt.Errorf("Error loading metadata: %v", err)
+		return fmt.Errorf("error loading metadata: %v", err)
 	}
 
 	// Swap the manager out.  This is dangerous and is why no requests should be ongoing
@@ -484,13 +485,13 @@ func (m *repoManager) putCaches() error {
 func (m *repoManager) loadVersion0() error {
 	// Load the maps
 	if _, err := m.loadData(repoToUUIDKey, &(m.repoToUUID)); err != nil {
-		return fmt.Errorf("Error loading repo to UUID map: %s", err)
+		return fmt.Errorf("error loading repo to UUID map: %s", err)
 	}
 	if _, err := m.loadData(versionToUUIDKey, &(m.versionToUUID)); err != nil {
-		return fmt.Errorf("Error loading version to UUID map: %s", err)
+		return fmt.Errorf("error loading version to UUID map: %s", err)
 	}
 	if err := m.loadNewIDs(); err != nil {
-		return fmt.Errorf("Error loading new local ids: %s", err)
+		return fmt.Errorf("error loading new local ids: %s", err)
 	}
 
 	// Generate the inverse UUID to VersionID mapping.
@@ -523,7 +524,7 @@ func (m *repoManager) loadVersion0() error {
 		// Load each repo
 		rootUUID, found := m.repoToUUID[repoID]
 		if !found {
-			return fmt.Errorf("Retrieved repo with id %d that is not in map.  Corrupt DB?", repoID)
+			return fmt.Errorf("retrieved repo with id %d that is not in map.  Corrupt DB?", repoID)
 		}
 		r := &repoT{
 			log:        []string{},
@@ -531,7 +532,7 @@ func (m *repoManager) loadVersion0() error {
 			data:       make(map[dvid.InstanceName]DataService),
 		}
 		if err = dvid.Deserialize(kv.V, r); err != nil {
-			return fmt.Errorf("Error gob decoding repo %d: %v", repoID, err)
+			return fmt.Errorf("error gob decoding repo %d: %v", repoID, err)
 		}
 
 		// Cache all UUID from nodes into our high-level cache
@@ -759,11 +760,12 @@ func (m *repoManager) loadMetadata() error {
 	case 0, 1:
 		err = m.loadVersion0()
 	default:
-		err = fmt.Errorf("Unknown metadata format %d", m.formatVersion)
+		err = fmt.Errorf("unknown metadata format %d", m.formatVersion)
 	}
 	if err != nil {
 		return err
 	}
+	dvid.Infof("Going through all the repoToUUID: %v\n", m.repoToUUID)
 	for repoID, root := range m.repoToUUID {
 		r, found := m.repos[root]
 		if !found {
@@ -1128,7 +1130,13 @@ func (m *repoManager) newRepo(alias, description string, assign *dvid.UUID, pass
 
 	m.repoMutex.Lock()
 	m.repos[uuid] = r
+	m.versionToUUID[v] = uuid
+	m.uuidToVersion[uuid] = v
 	m.repoMutex.Unlock()
+
+	m.branchMutex.Lock()
+	m.branchToUUID[string(uuid)+"master"] = uuid
+	m.branchMutex.Unlock()
 
 	r.alias = alias
 	r.description = description
@@ -1287,9 +1295,13 @@ func (m *repoManager) getBranchVersion(uuid dvid.UUID, name string) (dvid.UUID, 
 	} else {
 		var found bool
 		m.branchMutex.RLock()
+		if name == "" {
+			name = "master"
+		}
 		branchUUID, found = m.branchToUUID[string(r.uuid)+name]
 		m.branchMutex.RUnlock()
 		if !found {
+			dvid.Infof("Branch map: %v\n", m.branchToUUID)
 			return dvid.NilUUID, 0, fmt.Errorf("branch %q not found in repo %q", name, uuid)
 		}
 	}

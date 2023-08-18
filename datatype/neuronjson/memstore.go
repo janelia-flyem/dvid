@@ -25,7 +25,6 @@ type memdbs struct {
 }
 
 func (d *Data) getMemDBbyVersion(v dvid.VersionID) (db *memdb, found bool) {
-	dvid.Infof("Looking for memdb for version %d in in-memory dbs: %v\n", v, d.dbs)
 	if d.dbs == nil {
 		return
 	}
@@ -35,18 +34,21 @@ func (d *Data) getMemDBbyVersion(v dvid.VersionID) (db *memdb, found bool) {
 	if err != nil {
 		return
 	}
-	dvid.Infof("Looking for memdb for version %d, uuid %s\n", v, uuid)
+	metadata, _ := datastore.MarshalJSON()
+	dvid.Infof("Metadata:\n%s\n", string(metadata))
+
 	db, found = d.dbs.static[uuid]
 	if found {
 		dvid.Infof("Found static memdb for version %d, uuid %s\n", v, uuid)
 		return
 	}
 	for branch := range d.dbs.head {
-		_, branchV, err := datastore.GetBranchHead(d.RootUUID(), branch)
+		_, branchV, err := datastore.GetBranchHead(uuid, branch)
 		if err == nil && branchV == v {
 			dvid.Infof("Found head memdb for branch %s, version %d, uuid %s\n", branch, v, uuid)
 			return d.dbs.head[branch], true
 		}
+		dvid.Infof("Didn't find memdb for branch %s, version %d, uuid %s, found branch %d %t\n", branch, v, uuid, branchV, found)
 	}
 	return
 }
@@ -66,7 +68,7 @@ func (d *Data) initMemoryDB(versions []string) error {
 		static: make(map[dvid.UUID]*memdb),
 		head:   make(map[string]*memdb),
 	}
-	versions = append(versions, ":main")
+	versions = append(versions, ":master")
 	dvid.Infof("Initializing in-memory dbs for neuronjson %q with versions %v\n", d.DataName(), versions)
 	for _, versionSpec := range versions {
 		mdb := &memdb{

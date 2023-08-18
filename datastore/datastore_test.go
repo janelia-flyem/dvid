@@ -98,6 +98,22 @@ func TestBranching(t *testing.T) {
 		t.Fatalf("For master branch expected versions %v, got %v\n", masterUUIDs, expectedUUIDs)
 	}
 
+	masterHEAD, masterV, err := GetBranchHead(root, "")
+	if err != nil {
+		t.Fatalf("couldn't get branch head: %v\n", err)
+	}
+	if masterHEAD != master3 {
+		t.Fatalf("For master branch expected HEAD %s, got %s, version %d\n", master3, masterHEAD, masterV)
+	}
+
+	otherHEAD, otherV, err := GetBranchHead(root, "other")
+	if err != nil {
+		t.Fatalf("couldn't get branch head: %v\n", err)
+	}
+	if otherHEAD != other2 {
+		t.Fatalf("For master branch expected HEAD %s, got %s, version %d\n", other2, otherHEAD, otherV)
+	}
+
 	otherUUIDs, err := GetBranchVersions(root, "other")
 	if err != nil {
 		t.Fatalf("couldn't get branch versions: %v\n", err)

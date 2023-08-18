@@ -598,6 +598,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 		return nil, err
 	}
 	data := &Data{Data: basedata}
+	dvid.Infof("Creating new neuronjson %q with UUID %s\n", name, uuid)
 	data.Initialize()
 	return data, nil
 }
@@ -968,8 +969,7 @@ func (d *Data) processStoreRange(ctx storage.Context, f func(key string, value N
 // Initialize loads mutable properties of the neuronjson data instance,
 // which in this case is the in-memory neuron json map for the specified versions.
 func (d *Data) Initialize() {
-	leafMain := string(d.RootUUID()) + ":master"
-	leafUUID, leafV, err := datastore.MatchingUUID(leafMain)
+	leafUUID, leafV, err := datastore.GetBranchHead(d.RootUUID(), "master")
 	if err != nil {
 		dvid.Infof("Can't find the leaf node of the main/master branch... skipping neuronjson initialization\n")
 		leafUUID = dvid.NilUUID
