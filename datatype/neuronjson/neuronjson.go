@@ -1018,12 +1018,18 @@ func (d *Data) Initialize() {
 	if found {
 		dvid.Infof("Found configuration for additional in-memory UUIDs for neuronjson %q: %v\n",
 			d.DataName(), uuidListI)
-		var ok bool
-		uuidList, ok = uuidListI.([]string)
-		if !ok {
-			dvid.Criticalf("configuration for inmemory dbs for neuronjson %q not a list of UUIDs: %v",
-				d.DataName(), uuidListI)
-			return
+		switch v := uuidListI.(type) {
+		case []string:
+			uuidList = v
+		case []interface{}:
+			for i, version := range v {
+				versionStr, ok := version.(string)
+				if ok {
+					uuidList = append(uuidList, versionStr)
+				} else {
+					dvid.Criticalf("can't parse neuronjson inmemory config for %dth version: %v\n", i, version)
+				}
+			}
 		}
 	}
 	if err := d.initMemoryDB(uuidList); err != nil {

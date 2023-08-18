@@ -146,7 +146,7 @@ func (d *Data) loadMemDB(v dvid.VersionID, mdb *memdb) error {
 			d.DataName(), v, err)
 	}
 	sort.Slice(mdb.ids, func(i, j int) bool { return mdb.ids[i] < mdb.ids[j] })
-	tlog.Infof("Completed loading of %d annotations into neuronjson instance %q version %s in-memory db",
+	tlog.Infof("Completed loading of %d annotations into neuronjson instance %q version %d in-memory db",
 		numLoaded, d.DataName(), v)
 	return nil
 }
