@@ -1506,7 +1506,7 @@ func (d *Data) handleMaxlabel(ctx *datastore.VersionedCtx, w http.ResponseWriter
 			}
 			jsonmsg, _ := json.Marshal(msginfo)
 			if err = d.PublishKafkaMsg(jsonmsg); err != nil {
-				dvid.Errorf("error on sending split op to kafka: %v", err)
+				dvid.Errorf("error on sending maxlabel op to kafka: %v", err)
 			}
 		}
 
@@ -1555,14 +1555,58 @@ func (d *Data) handleNextlabel(ctx *datastore.VersionedCtx, w http.ResponseWrite
 		}
 		jsonmsg, _ := json.Marshal(msginfo)
 		if err = d.PublishKafkaMsg(jsonmsg); err != nil {
-			dvid.Errorf("error on sending split op to kafka: %v", err)
+			dvid.Errorf("error on sending nextlabel op to kafka: %v", err)
 		}
 		return
 	default:
 		server.BadRequest(w, r, "Unknown action %q requested: %s\n", r.Method, r.URL)
 		return
 	}
-	timedLog.Infof("HTTP maxlabel request (%s)", r.URL)
+	timedLog.Infof("HTTP nextlabel request (%s)", r.URL)
+}
+
+func (d *Data) handleSetNextlabel(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
+	// POST <api URL>/node/<UUID>/<data name>/set-nextlabel/<label>
+	timedLog := dvid.NewTimeLog()
+	switch strings.ToLower(r.Method) {
+	case "post":
+		if len(parts) < 5 {
+			server.BadRequest(w, r, "DVID requires a label ID to follow POST /set-nextlabel")
+			return
+		}
+		label, err := strconv.ParseUint(parts[4], 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if label == 0 {
+			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as next label.\n")
+			return
+		}
+		d.mlMu.Lock()
+		defer d.mlMu.Unlock()
+
+		d.NextLabel = label
+		if err := d.persistNextLabel(); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+
+		versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
+		msginfo := map[string]interface{}{
+			"Action":     "setnextlabel",
+			"Next Label": label,
+			"UUID":       string(versionuuid),
+			"Timestamp":  time.Now().String(),
+		}
+		jsonmsg, _ := json.Marshal(msginfo)
+		if err = d.PublishKafkaMsg(jsonmsg); err != nil {
+			dvid.Errorf("error on sending set-nextlabel to kafka: %v", err)
+		}
+	default:
+		server.BadRequest(w, r, "Unknown action %q requested for %s\n", r.Method, r.URL)
+	}
+	timedLog.Infof("HTTP set-nextabel request (%s)", r.URL)
 }
 
 func (d *Data) handleSplitSupervoxel(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {

@@ -2915,6 +2915,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "nextlabel":
 		d.handleNextlabel(ctx, w, r, parts)
 
+	case "set-nextlabel":
+		d.handleSetNextlabel(ctx, w, r, parts)
+
 	case "split-supervoxel":
 		d.handleSplitSupervoxel(ctx, w, r, parts)
 

@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -2940,5 +2941,13 @@ func TestNextLabels(t *testing.T) {
 	}
 	if n != expectedLabel {
 		t.Errorf("Expected next label to be %d, got %d\n", expectedLabel, n)
+	}
+
+	resp := server.TestHTTPResponse(t, "POST", fmt.Sprintf("%snode/%s/mylabels/set-nextlabel/42", server.WebAPIPath, uuid), nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("bad status code on set-nextlabel: %d\n", resp.Code)
+	}
+	if lbls.NextLabel != 42 {
+		t.Fatalf("Expected next label to be 42, got %d\n", lbls.NextLabel)
 	}
 }
