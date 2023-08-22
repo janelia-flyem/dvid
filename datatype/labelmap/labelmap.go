@@ -883,6 +883,21 @@ POST <api URL>/node/<UUID>/<data name>/nextlabel/<desired # of labels>
 		"Timestamp":   time.Now().String(),
 	}
 
+POST <api URL>/node/<UUID>/<data name>/set-nextlabel/<label>
+
+	POST allows the client to request some # of labels that will be reserved.
+	This is used if the client wants to introduce new labels.
+
+	Returns status code 200 (OK) if the next label was successfully set.
+
+	If Kafka is enabled, a log message will be posted:
+	{
+		"Action":    "post-setnextlabel",
+		"Label":     label,
+		"UUID":      uuid,
+		"Timestamp": time.Now().String(),
+	}
+
 
 -------------------------------------------------------------------------------------------------------
 --- The following endpoints require the labelmap data instance to have IndexedLabels set to true. ---
