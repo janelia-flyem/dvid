@@ -2432,6 +2432,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "%q must be followed by shape/size/offset", parts[3])
 			return
 		}
+		if d.GridStore != "" {
+			server.BadRequest(w, r, "Data %q does not support /raw endpoint since it is proxying data", d.DataName())
+			return
+		}
 		var isotropic bool = (parts[3] == "isotropic")
 		shapeStr, sizeStr, offsetStr := parts[4], parts[5], parts[6]
 		planeStr := dvid.DataShapeString(shapeStr)
