@@ -37,16 +37,16 @@ func (d *Data) getMemDBbyVersion(v dvid.VersionID) (db *memdb, found bool) {
 
 	db, found = d.dbs.static[uuid]
 	if found {
-		dvid.Infof("Found static memdb for version %d, uuid %s\n", v, uuid)
+		// dvid.Infof("Found static memdb for version %d, uuid %s\n", v, uuid)
 		return
 	}
 	for branch := range d.dbs.head {
 		_, branchV, err := datastore.GetBranchHead(uuid, branch)
 		if err == nil && branchV == v {
-			dvid.Infof("Found head memdb for branch %s, version %d, uuid %s\n", branch, v, uuid)
+			// dvid.Infof("Found head memdb for branch %s, version %d, uuid %s\n", branch, v, uuid)
 			return d.dbs.head[branch], true
 		}
-		dvid.Infof("Didn't find memdb for branch %s, version %d, uuid %s, found branch %d %t\n", branch, v, uuid, branchV, found)
+		// dvid.Infof("Didn't find memdb for branch %s, version %d, uuid %s, found branch %d %t\n", branch, v, uuid, branchV, found)
 	}
 	return
 }
