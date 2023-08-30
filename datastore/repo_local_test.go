@@ -1,3 +1,4 @@
+//go:build !clustered && !gcloud
 // +build !clustered,!gcloud
 
 package datastore
@@ -417,9 +418,9 @@ func TestHemibrainDAG(t *testing.T) {
 	}
 
 	okVersions := map[dvid.VersionID]struct{}{
-		1:  struct{}{}, // 28841c8277e044a7b187dda03e18da13
-		20: struct{}{}, // a0dfa4f260244946b7abbab4dcd2cc86
-		42: struct{}{}, // 52a13328874c4bb7b15dc4280da26576
+		1:  {}, // 28841c8277e044a7b187dda03e18da13
+		20: {}, // a0dfa4f260244946b7abbab4dcd2cc86
+		42: {}, // 52a13328874c4bb7b15dc4280da26576
 	}
 	dup := dag.duplicate(okVersions)
 	expected := map[dvid.VersionID]nodeT{
@@ -457,6 +458,25 @@ func TestHemibrainDAG(t *testing.T) {
 				t.Errorf("Expected version %d to agree but didn't.\nDup: %s\nExp: %s", v, node, &expectedNode)
 			}
 		}
+	}
+	seq, err := dag.getSequenceUUID(2, 11)
+	if err != nil {
+		t.Fatalf("Error getting sequence: %v\n", err)
+	}
+	expectedSeq := []dvid.UUID{
+		"305b514e13d0411c8fe6c789935e7030",
+		"137de8281d33406aa6d7b5b1c90db1e0",
+		"ff53bf786cc6423b9954f0e7c3d800e9",
+		"54f76775738e44fbba476d1a87a9194a",
+		"9847cd138b1a4051b5c0670bdccdcfa3",
+		"5d42b907299449d1ad5428210c72f00e",
+		"d59e3fefce7b443ab476be77b8e7d15a",
+		"93208e2d71354ca9bfd1a76184d20aed",
+		"ec21b712e508451eacb9a4a4f694f7d5",
+		"ef1da1a01c4941b6876ab77502843d0c",
+	}
+	if !reflect.DeepEqual(seq, expectedSeq) {
+		t.Errorf("Expected sequence %v, got %v\n", expectedSeq, seq)
 	}
 }
 

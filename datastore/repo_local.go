@@ -2995,6 +2995,33 @@ func newDAG(uuid dvid.UUID, v dvid.VersionID) *dagT {
 	}
 }
 
+// returns the sequence of UUIDs from start node (closest to root) to end node.
+func (d *dagT) getSequenceUUID(startV, endV dvid.VersionID) (sequence []dvid.UUID, err error) {
+	d.RLock()
+	defer d.RUnlock()
+
+	cur, found := d.nodes[endV]
+	if !found {
+		err = fmt.Errorf("node version %d doesn't exist", endV)
+		return
+	}
+	sequence = []dvid.UUID{}
+	for {
+		sequence = append(sequence, cur.uuid)
+		if len(cur.parents) == 0 || cur.version == startV {
+			break
+		}
+		parentV := cur.parents[0]
+		cur, found = d.nodes[parentV]
+		if !found {
+			err = fmt.Errorf("node %s has parent version %d that doesn't exist", cur.uuid, parentV)
+			dvid.Criticalf(err.Error())
+			return
+		}
+	}
+	return
+}
+
 func (d *dagT) getAncestryByBranch(branch string) (ancestry []dvid.UUID, err error) {
 	d.RLock()
 	defer d.RUnlock()
@@ -3075,9 +3102,6 @@ func editVersionSlice(orig []dvid.VersionID, replace dvid.VersionID, subst []dvi
 		return
 	}
 	edited = make([]dvid.VersionID, len(orig)-1+len(subst))
-	dvid.Infof(" orig: %v\n", orig)
-	dvid.Infof("subst: %v\n", subst)
-	dvid.Infof("replace: %d\n", replace)
 	j := 0
 	for _, v := range orig {
 		if v != replace {
@@ -3089,7 +3113,6 @@ func editVersionSlice(orig []dvid.VersionID, replace dvid.VersionID, subst []dvi
 		edited[j] = v
 		j++
 	}
-	dvid.Infof("edited: %v\n", edited)
 	return
 }
 
