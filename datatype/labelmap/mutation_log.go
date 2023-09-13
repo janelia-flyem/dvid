@@ -83,10 +83,10 @@ func (d *Data) DumpMutations(startUUID, endUUID dvid.UUID, filename string) (com
 	return
 }
 
-// GetMutationHistory writes JSON of the mutations that were done to the given label at toUUID version,
+// GetLabelMutationHistory writes JSON of the mutations that were done to the given label at toUUID version,
 // where we delimit the time range of interest to [fromUUID, toUUID] versions.  The mutations are written
 // backwards in time toUUID -> fromUUID.
-func (d *Data) GetMutationHistory(w http.ResponseWriter, fromUUID, toUUID dvid.UUID, target uint64) error {
+func (d *Data) GetLabelMutationHistory(w http.ResponseWriter, fromUUID, toUUID dvid.UUID, target uint64) error {
 	fromV, err := datastore.VersionFromUUID(fromUUID)
 	if err != nil {
 		return err

@@ -154,6 +154,61 @@ func ReadJSONMutations(w io.Writer, versionID, dataID dvid.UUID) error {
 	return err
 }
 
+func sendVersionMutations(ch chan []byte, uuid, dataID dvid.UUID) (numMutations int, err error) {
+	lf, err := getJSONLogFile(uuid, dataID)
+	if err != nil {
+		return 0, err
+	}
+	if lf == nil {
+		return 0, fmt.Errorf("got nil mutation log for data %s, version %s", dataID, uuid)
+	}
+	lf.RLock()
+	defer func() {
+		lf.RUnlock()
+		if _, err := lf.f.Seek(0, 2); err != nil {
+			dvid.Criticalf("unable to seek to end of file for data %s, version %s: %v", dataID, uuid, err)
+		}
+	}()
+	if _, err := lf.f.Seek(0, 0); err != nil {
+		return 0, fmt.Errorf("unable to seek to beginning of file for data %s, version %s: %v", dataID, uuid, err)
+	}
+	r := protolog.NewReader(lf.f)
+
+	for {
+		typeID, jsondata, err := r.Next()
+		if err == io.EOF {
+			break
+		}
+		if typeID != jsonMsgTypeID {
+			dvid.Criticalf("Unknown message type in mutation log: %s\n", string(jsondata))
+		} else {
+			ch <- jsondata
+		}
+		numMutations++
+	}
+	return numMutations, nil
+}
+
+// SendMutations sends JSON mutation records from the UUIDs (in descending DAG order)
+// down channel.
+func SendMutations(ch chan []byte, dataID dvid.UUID, sequence []dvid.UUID) error {
+	if tc.Mutations.Jsonstore == "" {
+		return fmt.Errorf("no jsonstore configured in [mutations] section of TOML config")
+	}
+
+	numMutations := 0
+	for _, uuid := range sequence {
+		num, err := sendVersionMutations(ch, uuid, dataID)
+		if err != nil {
+			return err
+		}
+		numMutations += num
+	}
+
+	dvid.Infof("Read %d JSON mutations for data %s\n", numMutations, dataID)
+	return nil
+}
+
 // LogHTTPMutation logs a HTTP mutation request to the mutation log specific in the config.
 func LogHTTPMutation(versionID, dataID dvid.UUID, r *http.Request, data []byte) (err error) {
 	if tc.Mutations.Blobstore == "" || tc.Mutations.Httpstore == "" {

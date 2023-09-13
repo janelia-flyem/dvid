@@ -151,6 +151,15 @@ func GetRepoJSON(uuid dvid.UUID) (string, error) {
 	return manager.getRepoJSON(uuid)
 }
 
+// GetVersionSequence returns a slice of UUIDs giving the version sequence
+// between the given UUIDs, inclusive.
+func GetVersionSequence(begUUID, endUUID dvid.UUID) ([]dvid.UUID, error) {
+	if manager == nil {
+		return nil, ErrManagerNotInitialized
+	}
+	return manager.getSequenceUUID(begUUID, endUUID)
+}
+
 func GetBranchVersionsJSON(uuid dvid.UUID, name string) (string, error) {
 	if manager == nil {
 		return "", ErrManagerNotInitialized

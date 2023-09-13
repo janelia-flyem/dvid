@@ -725,7 +725,7 @@ func (d *Data) handleHistory(ctx *datastore.VersionedCtx, w http.ResponseWriter,
 		return
 	}
 
-	if err := d.GetMutationHistory(w, fromUUID, toUUID, label); err != nil {
+	if err := d.GetLabelMutationHistory(w, fromUUID, toUUID, label); err != nil {
 		server.BadRequest(w, r, "unable to get mutation history: %v", err)
 	}
 	timedLog.Infof("HTTP GET history (%s)", r.URL)

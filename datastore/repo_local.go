@@ -1581,6 +1581,22 @@ func (m *repoManager) getChildrenByVersion(v dvid.VersionID) ([]dvid.VersionID, 
 	return r.dag.getChildren(v)
 }
 
+func (m *repoManager) getSequenceUUID(startUUID, endUUID dvid.UUID) ([]dvid.UUID, error) {
+	startV, err := m.versionFromUUID(startUUID)
+	if err != nil {
+		return nil, err
+	}
+	endV, err := m.versionFromUUID(endUUID)
+	if err != nil {
+		return nil, err
+	}
+	r, err := m.repoFromVersion(startV)
+	if err != nil {
+		return nil, err
+	}
+	return r.dag.getSequenceUUID(startV, endV)
+}
+
 func (m *repoManager) lockedUUID(uuid dvid.UUID) (bool, error) {
 	v, err := m.versionFromUUID(uuid)
 	if err != nil {
