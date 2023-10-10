@@ -529,19 +529,6 @@ GET <api URL>/node/<UUID>/<data name>/labels[?queryopts]
 	                of previous level.  Level 0 is the highest resolution.
     hash          MD5 hash of request body content in hexidecimal string format.
 
-GET <api URL>/node/<UUID>/<data name>/history/<label>/<from UUID>/<to UUID>
-
-	Returns JSON for mutations involving labels in "from UUID" version that correspond to the
-	supervoxels in the "to UUID" target label.
-	
-    Arguments:
-    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
-    data name     Name of labelmap instance.
-	label     	  The label ID as exists in the later version specified by <to UUID>.
-	from UUID     The UUID of the earlier version in time range.
-	to UUID       The UUID of the later version in time range.
-
-
 GET <api URL>/node/<UUID>/<data name>/mapping[?queryopts]
 
 	Returns JSON for mapped uint64 identifiers (labels). The mapping holds not only the
@@ -1626,6 +1613,19 @@ GET <api URL>/node/<UUID>/<data name>/mutations-range/<beg>/<end>?rangefmt=<form
 		"timestamps":  The range is in the form of RFC 3339 timestamps.
 
 
+GET <api URL>/node/<UUID>/<data name>/history/<label>/<from UUID>/<to UUID>
+
+	Returns JSON for mutations involving labels in "from UUID" version that correspond to the
+	supervoxels in the "to UUID" target label.
+	
+	Arguments:
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of labelmap instance.
+	label     	  The label ID as exists in the later version specified by <to UUID>.
+	from UUID     The UUID of the earlier version in time range.
+	to UUID       The UUID of the later version in time range.
+	
+	
 GET <api URL>/node/<UUID>/<data name>/mappings[?queryopts]
 
 	Streams space-delimited mappings for the given UUID, one mapping per line:
@@ -2982,6 +2982,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 	case "mutations":
 		d.handleMutations(ctx, w, r)
+
+	case "mutations-range":
+		d.handleMutationsRange(ctx, w, r, parts)
 
 	default:
 		server.BadAPIRequest(w, r, d)

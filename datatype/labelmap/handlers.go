@@ -682,13 +682,53 @@ func (d *Data) handleMutations(ctx *datastore.VersionedCtx, w http.ResponseWrite
 
 	switch strings.ToLower(r.Method) {
 	case "get":
-		if err := server.ReadJSONMutations(w, ctx.VersionUUID(), d.DataUUID()); err != nil {
+		if err := server.StreamMutationsForVersion(w, ctx.VersionUUID(), d.DataUUID()); err != nil {
 			server.BadRequest(w, r, "unable to write mutaions: %v", err)
 		}
 		timedLog.Infof("HTTP GET mutations (%s)", r.URL)
 
 	default:
 		server.BadRequest(w, r, "only POST action allowed for /mappings endpoint")
+	}
+}
+
+func (d *Data) handleMutationsRange(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
+	// GET <api URL>/node/<UUID>/<data name>/mutations-range/<beg>/<end>?rangefmt=<format>
+	timedLog := dvid.NewTimeLog()
+
+	queryStrings := r.URL.Query()
+	if throttle := queryStrings.Get("throttle"); throttle == "on" || throttle == "true" {
+		if server.ThrottledHTTP(w) {
+			return
+		}
+		defer server.ThrottledOpDone()
+	}
+	if strings.ToLower(r.Method) != "get" {
+		server.BadRequest(w, r, "only GET action allowed for /mutations-range endpoint")
+		return
+	}
+
+	rangefmt := queryStrings.Get("rangefmt")
+	switch rangefmt {
+	default:
+		begUUID, _, err := datastore.MatchingUUID(parts[4])
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		endUUID, _, err := datastore.MatchingUUID(parts[5])
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		uuidSeq, err := datastore.GetVersionSequence(begUUID, endUUID)
+		if err != nil {
+			server.BadRequest(w, r, err)
+		}
+		if err := server.StreamMutationsForSequence(w, d.DataUUID(), uuidSeq); err != nil {
+			server.BadRequest(w, r, "unable to write mutaions: %v", err)
+		}
+		timedLog.Infof("HTTP GET mutations-range (%s)", r.URL)
 	}
 }
 

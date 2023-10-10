@@ -103,17 +103,17 @@ func LogJSONMutation(versionID, dataID dvid.UUID, jsondata []byte) error {
 	return err
 }
 
-// ReadJSONMutations streams a JSON of mutation records to the writer
-func ReadJSONMutations(w io.Writer, versionID, dataID dvid.UUID) error {
+// StreamMutationsForVersion streams a JSON of mutation records for a particular version to the writer
+func StreamMutationsForVersion(w io.Writer, versionID, dataID dvid.UUID) error {
 	if tc.Mutations.Jsonstore == "" {
-		return fmt.Errorf("No jsonstore configured in [mutations] section of TOML config")
+		return fmt.Errorf("no jsonstore configured in [mutations] section of TOML config")
 	}
 	lf, err := getJSONLogFile(versionID, dataID)
 	if err != nil {
 		return err
 	}
 	if lf == nil {
-		return fmt.Errorf("Got nil mutation log for data %s, version %s", dataID, versionID)
+		return fmt.Errorf("got nil mutation log for data %s, version %s", dataID, versionID)
 	}
 	lf.RLock()
 	defer func() {
@@ -154,6 +154,35 @@ func ReadJSONMutations(w io.Writer, versionID, dataID dvid.UUID) error {
 	return err
 }
 
+// StreamMutationsForSequence streams a JSON of mutation records for a sequence of versions to the writer
+func StreamMutationsForSequence(w io.Writer, dataID dvid.UUID, sequence []dvid.UUID) error {
+	// Create a channel for streaming mutations to writer.
+	ch := make(chan []byte, 100000)
+	go sendMutations(ch, dataID, sequence)
+
+	// Read stream of mutations and write to writer.
+	if _, err := w.Write([]byte("[")); err != nil {
+		return err
+	}
+	numMutations := 0
+	for data := range ch {
+		if numMutations != 0 {
+			if _, err := w.Write([]byte(",")); err != nil {
+				return err
+			}
+		}
+		if _, err := w.Write(data); err != nil {
+			return err
+		}
+		numMutations++
+	}
+	_, err := w.Write([]byte("]"))
+	dvid.Infof("Read %d JSON mutations for data %s, version sequence from %s to %s\n",
+		numMutations, dataID, sequence[0], sequence[len(sequence)-1])
+	return err
+}
+
+// sends JSON mutation records from one UUID to the channel.
 func sendVersionMutations(ch chan []byte, uuid, dataID dvid.UUID) (numMutations int, err error) {
 	lf, err := getJSONLogFile(uuid, dataID)
 	if err != nil {
@@ -189,9 +218,8 @@ func sendVersionMutations(ch chan []byte, uuid, dataID dvid.UUID) (numMutations 
 	return numMutations, nil
 }
 
-// SendMutations sends JSON mutation records from the UUIDs (in descending DAG order)
-// down channel.
-func SendMutations(ch chan []byte, dataID dvid.UUID, sequence []dvid.UUID) error {
+// sends JSON mutation records from the UUIDs (in descending DAG order) down channel.
+func sendMutations(ch chan []byte, dataID dvid.UUID, sequence []dvid.UUID) error {
 	if tc.Mutations.Jsonstore == "" {
 		return fmt.Errorf("no jsonstore configured in [mutations] section of TOML config")
 	}
@@ -204,6 +232,7 @@ func SendMutations(ch chan []byte, dataID dvid.UUID, sequence []dvid.UUID) error
 		}
 		numMutations += num
 	}
+	close(ch)
 
 	dvid.Infof("Read %d JSON mutations for data %s\n", numMutations, dataID)
 	return nil
