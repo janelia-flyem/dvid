@@ -1608,6 +1608,7 @@ GET <api URL>/node/<UUID>/<data name>/mutations-range/<beg>/<end>?rangefmt=<form
 		default:  If no query string is given, the range is in the form of
 					version UUIDs.
 
+		--- The following are not yet implemented ---
 		"mutids":  The range is in the form of mutation IDs (uint64).
 
 		"timestamps":  The range is in the form of RFC 3339 timestamps.

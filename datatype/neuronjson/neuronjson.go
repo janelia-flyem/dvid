@@ -1175,6 +1175,30 @@ func (d *Data) GetFields(ctx storage.VersionedCtx) ([]string, error) {
 	return fields, nil
 }
 
+// GetByBodyID returns the JSON for a given body ID.
+func (d *Data) GetByBodyID(ctx storage.VersionedCtx, bodyid uint64, fieldMap map[string]struct{}, showFields Fields) (jsonData []byte, found bool, err error) {
+	var value map[string]interface{}
+	mdb, foundMemDB := d.getMemDBbyVersion(ctx.VersionID())
+	if foundMemDB {
+		mdb.mu.RLock()
+		value, found = mdb.data[bodyid]
+		mdb.mu.RUnlock()
+		if !found {
+			return
+		}
+	} else {
+		keyStr := strconv.FormatUint(bodyid, 10)
+		value, found, err = d.getStoreData(ctx, keyStr)
+		if !found || err != nil {
+			return
+		}
+	}
+	showUser, showTime := showFields.Bools()
+	out := selectFields(value, fieldMap, showUser, showTime)
+	jsonData, err = json.Marshal(out)
+	return
+}
+
 // GetData gets a byte value using a key
 func (d *Data) GetData(ctx storage.VersionedCtx, keyStr string, fieldMap map[string]struct{}, showFields Fields) ([]byte, bool, error) {
 	// Allow "schema" and "schema_batch" on /key endpoint for backwards compatibility with DVID keyvalue instances.
@@ -1202,26 +1226,7 @@ func (d *Data) GetData(ctx storage.VersionedCtx, keyStr string, fieldMap map[str
 	if err != nil {
 		return nil, false, err
 	}
-	var value map[string]interface{}
-	var found bool
-	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
-	if found {
-		mdb.mu.RLock()
-		value, found = mdb.data[bodyid]
-		mdb.mu.RUnlock()
-		if !found {
-			return nil, false, nil
-		}
-	} else {
-		value, found, err = d.getStoreData(ctx, keyStr)
-		if !found || err != nil {
-			return nil, false, err
-		}
-	}
-	showUser, showTime := showFields.Bools()
-	out := selectFields(value, fieldMap, showUser, showTime)
-	data, err := json.Marshal(out)
-	return data, true, err
+	return d.GetByBodyID(ctx, bodyid, fieldMap, showFields)
 }
 
 // update _user and _time fields for any fields newly set or modified.
@@ -1703,6 +1708,35 @@ func (d *Data) sendJSONKV(ctx storage.VersionedCtx, w http.ResponseWriter, keys 
 		foundKeys = true
 	}
 	_, err = w.Write([]byte("}"))
+	return
+}
+
+// writes JSON data for the given bodyids
+func (d *Data) sendJSONforBodyIDs(ctx storage.VersionedCtx, w http.ResponseWriter, bodyids []uint64,
+	fieldMap map[string]struct{}, showFields Fields) (err error) {
+
+	w.Header().Set("Content-type", "application/json")
+	fmt.Fprint(w, "[")
+	foundBodies := 0
+	for _, bodyid := range bodyids {
+		var jsonData []byte
+		var found bool
+		if jsonData, found, err = d.GetByBodyID(ctx, bodyid, fieldMap, showFields); err != nil {
+			return
+		}
+		if !found {
+			continue
+		}
+		if foundBodies > 0 {
+			fmt.Fprint(w, ",")
+		}
+		foundBodies++
+		if len(jsonData) == 0 {
+			jsonData = []byte("{}")
+		}
+		fmt.Fprint(w, jsonData)
+	}
+	fmt.Fprint(w, "]")
 	return
 }
 

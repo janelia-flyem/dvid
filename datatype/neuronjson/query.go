@@ -278,6 +278,33 @@ func fieldMatch(queryValue, fieldValue interface{}) bool {
 
 // --- Data Query support ---
 
+// if only bodyids are queried, return them as separate list.
+func queryJustBodyIDs(queryList ListQueryJSON) (bodyids []uint64, onlyBodyIDs bool) {
+	bodyids = []uint64{}
+	onlyBodyIDs = true
+	for _, query := range queryList {
+		for queryKey, queryValue := range query { // all query keys must be present and match
+			if queryKey == "bodyid" {
+				switch v := queryValue.(type) {
+				case uint64:
+					bodyids = append(bodyids, v)
+				case []uint64:
+					bodyids = append(bodyids, v...)
+				default:
+					dvid.Errorf("query on bodyid expected to be int64 or []int64, not %v: %v\n",
+						reflect.TypeOf(v), v)
+					onlyBodyIDs = false
+					break
+				}
+			} else {
+				onlyBodyIDs = false
+				break
+			}
+		}
+	}
+	return bodyids, onlyBodyIDs
+}
+
 // returns true if at least one query on the list matches the value.
 func queryMatch(queryList ListQueryJSON, value map[string]interface{}) (matches bool, err error) {
 	if len(queryList) == 0 {
@@ -387,6 +414,16 @@ func (d *Data) Query(ctx *datastore.VersionedCtx, w http.ResponseWriter, uuid dv
 	}
 
 	// Perform the query
+	if len(queryL) == 0 {
+		err = fmt.Errorf("no query provided")
+		return
+	}
+	if bodyids, onlyBodyIDs := queryJustBodyIDs(queryL); onlyBodyIDs {
+		// simplified query for just body IDs
+		if err = d.sendJSONforBodyIDs(ctx, w, bodyids, fieldMap, showFields); err != nil {
+			return
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, "[")
 	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
