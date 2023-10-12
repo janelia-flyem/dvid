@@ -17,7 +17,7 @@ THIS_SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd ${THIS_SCRIPT_DIR}
 
 # Note: Make sure this matches meta.yaml
-GO_VERSION=1.18
+GO_VERSION=1.21
 
 if [[ $(uname) == "Darwin" ]]; then
     COMPILER_PACKAGE=clangxx_osx-64
