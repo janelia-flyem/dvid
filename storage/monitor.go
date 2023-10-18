@@ -1,5 +1,5 @@
 /*
-	Thie file implements a monitor for various operations.  It exposes channels
+	This file implements a monitor for various operations.  It exposes channels
 	that can be used to track I/O bandwidth.
 */
 

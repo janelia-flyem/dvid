@@ -24,7 +24,7 @@ TODO
 * Refactor datatype code to use standard key value interface (not bufferable interface).
 Throttling is done by gbucket but datatype code can also implement independent throttling.
 * Implement functionality to support lowel-level operations.
-* Allow datatypes to provid PUT with a likely exists hint.
+* Allow datatypes to provide PUT with a likely exists hint.
 * Move version encoding to the beginning of the key to potentially accelerate range
 queries and distribution.
 */

@@ -26,7 +26,7 @@ func init() {
 	gob.Register(&IndexCZYX{})
 }
 
-// Index provides partioning of the data, typically in spatiotemporal ways.
+// Index provides partitioning of the data, typically in spatiotemporal ways.
 // In the case of voxels, this could be an IndexZYX implementation that uses a
 // 3d coordinate packed into a slice of bytes.  It can be used to fill a TKey.
 type Index interface {
@@ -48,7 +48,7 @@ type Index interface {
 	String() string
 }
 
-// Hashable is a type that provies a function to hash itself to an integer range.
+// Hashable is a type that provides a function to hash itself to an integer range.
 type Hashable interface {
 	// Hash provides a consistent mapping from an Index to an integer (0,n]
 	Hash(n int) int

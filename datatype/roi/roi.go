@@ -166,7 +166,7 @@ GET <api URL>/node/<UUID>/<data name>/partition?batchsize=8
     Query-string Options:
 
     batchsize	Number of blocks along each axis to batch to make one subvolume (default = 8)
-    optimized   If "true" or "on", partioning returns non-fixed sized subvolumes where the coverage
+    optimized   If "true" or "on", partitioning returns non-fixed sized subvolumes where the coverage
                   is better in terms of subvolumes having more active blocks.
 
 TODO (API endpoints that are planned in near future)
