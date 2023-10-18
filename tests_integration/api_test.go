@@ -228,7 +228,7 @@ func TestCommitAndBranch(t *testing.T) {
 
 	// We should also be able to write to the repo-wide log.
 	logReq := fmt.Sprintf("%srepo/%s/log", server.WebAPIPath, uuid)
-	server.TestHTTP(t, "POST", logReq, bytes.NewBufferString(`{"log": ["a log mesage"]}`))
+	server.TestHTTP(t, "POST", logReq, bytes.NewBufferString(`{"log": ["a log message"]}`))
 }
 
 func TestReloadMetadata(t *testing.T) {

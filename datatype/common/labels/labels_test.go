@@ -219,7 +219,7 @@ func TestMergeCache(t *testing.T) {
 
 	constituents = mapping.ConstituentLabels(4)
 	if len(constituents) != 4 {
-		t.Errorf("Stoped merge %v for iv %v, but found weird constituents: %s\n", op2, iv, constituents)
+		t.Errorf("Stopped merge %v for iv %v, but found weird constituents: %s\n", op2, iv, constituents)
 	}
 	for _, label := range []uint64{4, 1000, 1001, 1002} {
 		_, found := constituents[label]
@@ -250,7 +250,7 @@ func TestMergeCache(t *testing.T) {
 
 	constituents = mapping.ConstituentLabels(4)
 	if len(constituents) != 1 {
-		t.Errorf("Stoped merge %v for iv %v, but found weird constituents: %s\n", op1, iv, constituents)
+		t.Errorf("Stopped merge %v for iv %v, but found weird constituents: %s\n", op1, iv, constituents)
 	}
 	_, found := constituents[4]
 	if !found {

@@ -383,7 +383,7 @@ func (db *BigTable) GetRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) ([]
 			}
 
 			fullKey := storage.MergeKey(unvKeyRow, verKey)
-			// dvid.Infof("colum key= %v , timestamp = %v", verKey, readItem.Timestamp)
+			// dvid.Infof("column key= %v , timestamp = %v", verKey, readItem.Timestamp)
 			tkey, err := storage.TKeyFromKey(fullKey)
 			if err != nil {
 				dvid.Errorf("Error in GetRange() storage.TKeyFromKey(fullKey): %v\n", err)
@@ -876,7 +876,7 @@ func (db *BigTable) DeleteAll(ctx storage.Context) error {
 		return fmt.Errorf("Received nil context in DeleteAll()")
 	}
 
-	//Row range corresponde to all keys corresponding to this data instace.
+	//Row range corresponde to all keys corresponding to this data instance.
 	min, max := ctx.KeyRange()
 	rr := api.NewRange(encodeKey(min), encodeKey(max))
 

@@ -53,7 +53,7 @@ func NewStorageContext(r *http.Request, ancestors []DataAncestors) *Context {
 	return &GAEContext{ancestors, c}
 }
 
-// ---- Context inteface ------
+// ---- Context interface ------
 
 func (c *GAEContext) Depth() int {
 	return len(c.ancestors)

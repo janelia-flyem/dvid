@@ -572,7 +572,7 @@ func (ctx *DataContext) ValidKV(kv *KeyValue, versions map[dvid.VersionID]struct
 	return found
 }
 
-// Versioned returns false.  This can be overriden by embedding DataContext in structures
+// Versioned returns false.  This can be overridden by embedding DataContext in structures
 // that will support the VersionedCtx interface.
 func (ctx *DataContext) Versioned() bool {
 	return false

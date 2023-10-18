@@ -208,7 +208,7 @@ GET  <api URL>/node/<UUID>/<data name>/exists
 
     Query-string Options:
 
-    hash          MD5 hash of request body content in hexidecimal string format.
+    hash          MD5 hash of request body content in hexadecimal string format.
     
 POST <api URL>/node/<UUID>/<data name>/load
 

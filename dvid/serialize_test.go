@@ -91,7 +91,7 @@ func TestSerialization(t *testing.T) {
 					s[i] = s[i] ^ 0x04
 				}
 				if err = Deserialize(s, &returnComplexObj); err == nil {
-					t.Errorf("for format %s, checksum %s, compresion %s: %v\n", format, checksum, compression, err)
+					t.Errorf("for format %s, checksum %s, compression %s: %v\n", format, checksum, compression, err)
 				}
 			}
 		}

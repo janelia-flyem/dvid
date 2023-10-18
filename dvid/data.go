@@ -30,7 +30,7 @@ const (
 )
 
 // Bytes returns a sequence of bytes encoding this LocalID.  Binary representation
-// will be big-endian to make integers lexigraphically ordered.
+// will be big-endian to make integers lexicographically ordered.
 func (id LocalID) Bytes() []byte {
 	buf := make([]byte, LocalIDSize, LocalIDSize)
 	binary.BigEndian.PutUint16(buf, uint16(id))
@@ -58,7 +58,7 @@ func LocalID32FromBytes(b []byte) (id LocalID32, length int) {
 
 // ---- Base identifiers of data within DVID -----
 
-// UUID is a 32 character hexidecimal string (a RFC4122 version 4 UUID) that uniquely identifies
+// UUID is a 32 character hexadecimal string (a RFC4122 version 4 UUID) that uniquely identifies
 // nodes in a datastore's DAG.  We need universally unique identifiers to prevent collisions
 // during creation of child nodes by distributed DVIDs:
 // http://en.wikipedia.org/wiki/Universally_unique_identifier
@@ -77,7 +77,7 @@ const NilUUID = UUID("")
 func StringToUUID(s string) (UUID, error) {
 	var err error
 	if len(s) != 32 {
-		err = fmt.Errorf("UUID must be 32 character hexidecimal string")
+		err = fmt.Errorf("UUID must be 32 character hexadecimal string")
 	} else {
 		_, err = hex.DecodeString(s)
 	}

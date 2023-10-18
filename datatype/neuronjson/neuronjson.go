@@ -457,7 +457,7 @@ GET <api URL>/node/<UUID>/<data name>/keyvalues[?query-options]
 POST <api URL>/node/<UUID>/<data name>/keyvalues[?query-options]
 
 	Allows batch ingest of data. Each POSTed neuron annotation is handled in same
-	was as decribed in POST /key.
+	was as described in POST /key.
 	
 	The POST body must include a KeyValues serialization as defined by the following
 	protobuf3 definitions:

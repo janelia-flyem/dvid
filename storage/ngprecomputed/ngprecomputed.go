@@ -852,7 +852,7 @@ func (ng *ngStore) GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) (val []
 	}
 }
 
-// GridGetVolume calls the given function with the results of retrived block data in an ordered or
+// GridGetVolume calls the given function with the results of retrieved block data in an ordered or
 // unordered fashion.  Missing blocks in the subvolume are not processed.
 func (ng *ngStore) GridGetVolume(scaleLevel int, minBlock, maxBlock dvid.ChunkPoint3d, ordered bool, op *storage.BlockOp, f storage.BlockFunc) error {
 	if ordered {

@@ -697,7 +697,7 @@ func TestKeyvalueRequests(t *testing.T) {
 		t.Errorf("Bad keyvalues request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
-	// Make sure non-existant keys return appropriately
+	// Make sure non-existent keys return appropriately
 	jsonIds = `["23910", "23", "2000", "14", "3000", "10000"]`
 	returnValue = server.TestHTTP(t, "GET", kvreq, strings.NewReader(jsonIds))
 	if !equalObjectJSON(returnValue, expectedValue, ShowBasic) {
@@ -1104,7 +1104,7 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 		server.TestHTTP(t, "POST", keyreq[i], strings.NewReader(testData[i].val))
 	}
 
-	// Check field existance query
+	// Check field existence query
 	query := `{"a number": "exists/0"}`
 	queryreq := fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
 	returnValue := server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))

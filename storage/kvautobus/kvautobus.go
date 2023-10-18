@@ -327,7 +327,7 @@ func (db *KVAutobus) getKVRange(ctx storage.Context, kStart, kEnd storage.Key) (
 	return mkvs, nil
 }
 
-// call KVAutobus keyvalue_range API and covert to slice of storage.KeyValue
+// call KVAutobus keyvalue_range API and convert to slice of storage.KeyValue
 func (db *KVAutobus) getRange(ctx storage.Context, kStart, kEnd storage.Key) ([]*storage.KeyValue, error) {
 	mkvs, err := db.getKVRange(ctx, kStart, kEnd)
 	if err != nil {

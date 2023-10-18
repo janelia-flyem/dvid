@@ -64,7 +64,7 @@ $ dvid repo <UUID> new annotation <data name> <settings...>
 	
 $ dvid node <UUID> <data name> reload <settings...>
 
-	Forces asynchornous denormalization of all annotations for labels and tags.  Because
+	Forces asynchronous denormalization of all annotations for labels and tags.  Because
 	this is a special request for mass mutations that require static "normalized" data
 	(only verifies and changes the label and tag denormalizations), any POST requests
 	while this is running results in an error.
@@ -2210,7 +2210,7 @@ func (d *Data) StoreBlocks(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff bo
 	}
 
 	if !kafkaOff {
-		// store synapse info into blob store for kakfa reference
+		// store synapse info into blob store for kafka reference
 		var postRef string
 		if postRef, err = d.PutBlob(jsonBytes); err != nil {
 			dvid.Errorf("storing block posted synapse data %q to kafka: %v", d.DataName(), err)
@@ -2310,7 +2310,7 @@ func (d *Data) StoreElements(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff 
 	}
 
 	if !kafkaOff {
-		// store synapse info into blob store for kakfa reference
+		// store synapse info into blob store for kafka reference
 		var postRef string
 		if postRef, err = d.PutBlob(jsonBytes); err != nil {
 			dvid.Errorf("storing posted synapse data %q to kafka: %v", d.DataName(), err)

@@ -210,7 +210,7 @@ func (i *IndexUint8) IndexFromBytes(b []byte) error {
 // sequential access of negative/positive coordinates.
 // The binary representation of an index must behave reasonably for both negative and
 // positive coordinates, e.g., when moving from -1 to 0 the binary representation isn't
-// discontinous so the lexicographical ordering switches.  The simplest way to achieve
+// discontinuous so the lexicographical ordering switches.  The simplest way to achieve
 // this is to convert to an unsigned (positive) integer space where all coordinates are
 // greater or equal to (0,0,...).
 type IndexZYX ChunkPoint3d

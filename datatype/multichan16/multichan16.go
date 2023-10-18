@@ -10,7 +10,7 @@
 	Specific channels of multichan16 data are addressed by adding a numerical suffix to the
 	data name.  For example, if we have "mydata" multichan16 data, we reference channel 1
 	as "mydata1" and channel 2 as "mydata2".  Up to the first 3 channels are composited
-	into a RGBA volume that is addressible using "mydata" or "mydata0".
+	into a RGBA volume that is addressable using "mydata" or "mydata0".
 
 	NOTE: This data type has not been actively maintained and was writtern earlier to
 */

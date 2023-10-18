@@ -55,7 +55,7 @@ func (d *Data) NewArbSliceFromStrings(tlStr, trStr, blStr, resStr, sep string) (
 // NewArbSlice returns an image with arbitrary 3D orientation.
 // The 3d points are in real world space definited by resolution, e.g., nanometer space.
 func (d *Data) NewArbSlice(topLeft, topRight, bottomLeft dvid.Vector3d, res float64) (*ArbSlice, error) {
-	// Compute the increments in x,y and number of pixes in each direction.
+	// Compute the increments in x,y and number of pixels in each direction.
 	dx := topRight.Distance(topLeft)
 	dy := bottomLeft.Distance(topLeft)
 	nxFloat := math.Floor(dx / res)

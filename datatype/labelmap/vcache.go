@@ -174,7 +174,7 @@ func (vc *VCache) getMappedVersionsDist(v dvid.VersionID) distFromRoot {
 	return dist
 }
 
-// goroutine-safe function for intializing the in-memory mapping with a version's mutations log
+// goroutine-safe function for initializing the in-memory mapping with a version's mutations log
 // and caching the mapped versions with the distance from the root.
 func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.InstanceName, ch chan storage.LogMessage, wg *sync.WaitGroup) {
 	if len(ancestors) == 0 {

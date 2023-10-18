@@ -152,7 +152,7 @@ func SetSyncByJSON(d dvid.Data, uuid dvid.UUID, replace bool, in io.ReadCloser) 
 	return nil
 }
 
-// SetSyncData modfies the manager sync graphs and data instance's sync list.
+// SetSyncData modifies the manager sync graphs and data instance's sync list.
 // If replace is false (default), the new sync is appended to the current syncs.
 func SetSyncData(data dvid.Data, syncs dvid.UUIDSet, replace bool) error {
 	if manager == nil {

@@ -508,7 +508,7 @@ ns3.put(name, "m2", "newdata")
 
 @benchmark
 def bench_checkbranch_undelete():
-    """Retrieves a value that ovewrites a previous deletion.
+    """Retrieves a value that overwrites a previous deletion.
     """
     return check_keyvalue(ns3, name, "m2", "newdata")
 bench_checkbranch_undelete()

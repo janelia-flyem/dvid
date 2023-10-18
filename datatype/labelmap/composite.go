@@ -117,7 +117,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 		// After processing a chunk, return the token.
 		server.HandlerToken <- 1
 
-		// Notify the requestor that this chunk is done.
+		// Notify the requester that this chunk is done.
 		if chunk.Wg != nil {
 			chunk.Wg.Done()
 		}
