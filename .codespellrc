@@ -1,4 +1,4 @@
 [codespell]
-skip = .git,*.pdf,*.svg
-#
-# ignore-words-list =
+skip = .git,*.pdf,*.svg,go.sum
+# some shortformed variables etc
+ignore-words-list = tage,nd,te,bu,ser,writet,kafka,openend
