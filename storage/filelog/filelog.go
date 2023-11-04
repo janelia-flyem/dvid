@@ -248,14 +248,14 @@ func (flogs *fileLogs) ReadAll(dataID, version dvid.UUID) ([]storage.LogMessage,
 
 	msgs := []storage.LogMessage{}
 	if len(data) > 0 {
-		var pos uint32
+		var pos int64
 		for {
-			if len(data) < int(pos+6) {
+			if int64(len(data)) < pos+6 {
 				dvid.Criticalf("malformed filelog %q at position %d\n", filename, pos)
 				break
 			}
 			entryType := binary.LittleEndian.Uint16(data[pos : pos+2])
-			size := binary.LittleEndian.Uint32(data[pos+2 : pos+6])
+			size := int64(binary.LittleEndian.Uint32(data[pos+2 : pos+6]))
 			pos += 6
 			databuf := data[pos : pos+size]
 			pos += size
