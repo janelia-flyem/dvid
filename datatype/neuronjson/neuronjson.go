@@ -1286,6 +1286,9 @@ func updateJSON(origData, newData NeuronJSON, user string, conditionals []string
 	}
 	if replace { // keep _user and _time fields for unchanged fields
 		for field := range newFields {
+			if field == "bodyid" {
+				continue
+			}
 			if _, foundUser := newData[field+"_user"]; !foundUser {
 				oldUser, found := origData[field+"_user"]
 				if !found {
@@ -1317,6 +1320,12 @@ func (d *Data) storeAndUpdate(ctx *datastore.VersionedCtx, keyStr string, newDat
 	}
 	if !found {
 		origData = nil
+	}
+	if _, found := newData["bodyid_user"]; found {
+		return fmt.Errorf("'bodyid_user' field not allowed")
+	}
+	if _, found := newData["bodyid_time"]; found {
+		return fmt.Errorf("'bodyid_time' field not allowed")
 	}
 	updateJSON(origData, newData, ctx.User, conditionals, replace)
 	dvid.Infof("neuronjson %s put by user %q, conditionals %v, replace %t:\nOrig: %v\n New: %v\n",

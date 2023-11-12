@@ -975,6 +975,53 @@ func TestStressConcurrentRW(t *testing.T) {
 	}
 }
 
+func TestBodyidUserTime(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+
+	payload := bytes.NewBufferString(`{"typename": "neuronjson", "dataname": "neurons"}`)
+	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, payload)
+
+	// Post a neuron's JSON
+	keyreq := fmt.Sprintf("%snode/%s/neurons/key/%s?u=foo&replace=true", server.WebAPIPath, uuid, testData[0].key)
+	server.TestHTTP(t, "POST", keyreq, strings.NewReader(testData[0].val))
+
+	// Post again same neuron's JSON
+	keyreq = fmt.Sprintf("%snode/%s/neurons/key/%s?u=moo&replace=true", server.WebAPIPath, uuid, testData[0].key)
+	server.TestHTTP(t, "POST", keyreq, strings.NewReader(testData[0].val))
+
+	// Get all neuronjson
+	allreq := fmt.Sprintf("%snode/%s/neurons/all?show=all", server.WebAPIPath, uuid)
+	returnValue := server.TestHTTP(t, "GET", allreq, nil)
+	var neurons ListNeuronJSON
+	if err := json.Unmarshal(returnValue, &neurons); err != nil {
+		t.Fatalf("Unable to parse return from /all request: %s\nError: %v\n", string(returnValue), err)
+	}
+	if len(neurons) != 1 {
+		t.Fatalf("Expected only 1 neuron, got %d\n", len(neurons))
+	}
+	if _, found := neurons[0]["bodyid_user"]; found {
+		t.Errorf("Expected no bodyid_user field, got %v\n", neurons[0]["bodyid_user"])
+	}
+	if _, found := neurons[0]["bodyid_time"]; found {
+		t.Errorf("Expected no bodyid_time field, got %v\n", neurons[0]["bodyid_time"])
+	}
+
+	// Post with bodyid_user or bodyid_time should not be allowed
+	neuron := `{"bodyid": 1000, "bodyid_user": "zoo", "a number": 3456, "position": [150,250,380], "baz": ""}`
+	keyreq = fmt.Sprintf("%snode/%s/neurons/key/%s?u=moo&replace=true", server.WebAPIPath, uuid, "1000")
+	server.TestBadHTTP(t, "POST", keyreq, strings.NewReader(neuron))
+
+	neuron = `{"bodyid": 1000, "bodyid_time": "2023-11-11T22:44:50-05:00", "a number": 3456, "position": [150,250,380], "baz": ""}`
+	keyreq = fmt.Sprintf("%snode/%s/neurons/key/%s?u=moo&replace=true", server.WebAPIPath, uuid, "1000")
+	server.TestBadHTTP(t, "POST", keyreq, strings.NewReader(neuron))
+}
+
 func TestAll(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
