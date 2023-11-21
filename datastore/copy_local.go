@@ -155,7 +155,7 @@ func FlattenMetadata(uuid dvid.UUID, configFName string) error {
 		return ErrManagerNotInitialized
 	}
 
-	// Get flatened metadata configuration from optional JSON file
+	// Get flattened metadata configuration from optional JSON file
 	fc, err := getFlattenMetaCfg(configFName)
 	if err != nil {
 		return err

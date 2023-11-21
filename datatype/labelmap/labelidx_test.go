@@ -82,7 +82,7 @@ func TestIngest(t *testing.T) {
 		}
 		_, ok := supervoxels[label]
 		if !ok {
-			t.Errorf("Expeced index for label %d to have supervoxel %d, but wasn't present", label, label)
+			t.Errorf("Expected index for label %d to have supervoxel %d, but wasn't present", label, label)
 		}
 
 		indexURL += "?metadata-only=true"

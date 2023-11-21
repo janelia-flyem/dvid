@@ -101,7 +101,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		return
 	}
 	if mergeIdx == nil {
-		err = fmt.Errorf("can't renumber non-existant merge bodies with labels: %s", op.Merged)
+		err = fmt.Errorf("can't renumber non-existent merge bodies with labels: %s", op.Merged)
 		return
 	}
 	delta.MergedVoxels = mergeIdx.NumVoxels()
@@ -250,7 +250,7 @@ func (d *Data) RenumberLabels(v dvid.VersionID, origLabel, newLabel uint64, info
 		dvid.Criticalf("unable to add mutid %d index, renumber %d -> %d: %v\n", mutID, origLabel, newLabel, err)
 	}
 	if mergeIdx == nil {
-		err = fmt.Errorf("can't renumber non-existant body with label %d", origLabel)
+		err = fmt.Errorf("can't renumber non-existent body with label %d", origLabel)
 		return
 	}
 	delta.MergedVoxels = mergeIdx.NumVoxels()

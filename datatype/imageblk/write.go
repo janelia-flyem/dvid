@@ -323,7 +323,7 @@ func (d *Data) putChunk(chunk *storage.Chunk, hasbuffer bool, finishedRequests c
 		if !hasbuffer {
 			server.HandlerToken <- 1
 		}
-		// Notify the requestor that this chunk is done.
+		// Notify the requester that this chunk is done.
 		if chunk.Wg != nil {
 			chunk.Wg.Done()
 		}

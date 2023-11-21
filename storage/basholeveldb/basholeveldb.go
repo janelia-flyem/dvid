@@ -75,7 +75,7 @@ const (
 	// Read Options
 
 	// If true, all data read from underlying storage will be verified
-	// against coresponding checksums, thereby making reads slower.
+	// against corresponding checksums, thereby making reads slower.
 	DefaultVerifyChecksums = false
 
 	// If true, iteration caching will be disabled.  This might be of

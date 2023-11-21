@@ -26,7 +26,7 @@ func init() {
 	gob.Register(&IndexCZYX{})
 }
 
-// Index provides partioning of the data, typically in spatiotemporal ways.
+// Index provides partitioning of the data, typically in spatiotemporal ways.
 // In the case of voxels, this could be an IndexZYX implementation that uses a
 // 3d coordinate packed into a slice of bytes.  It can be used to fill a TKey.
 type Index interface {
@@ -48,7 +48,7 @@ type Index interface {
 	String() string
 }
 
-// Hashable is a type that provies a function to hash itself to an integer range.
+// Hashable is a type that provides a function to hash itself to an integer range.
 type Hashable interface {
 	// Hash provides a consistent mapping from an Index to an integer (0,n]
 	Hash(n int) int
@@ -210,7 +210,7 @@ func (i *IndexUint8) IndexFromBytes(b []byte) error {
 // sequential access of negative/positive coordinates.
 // The binary representation of an index must behave reasonably for both negative and
 // positive coordinates, e.g., when moving from -1 to 0 the binary representation isn't
-// discontinous so the lexicographical ordering switches.  The simplest way to achieve
+// discontinuous so the lexicographical ordering switches.  The simplest way to achieve
 // this is to convert to an unsigned (positive) integer space where all coordinates are
 // greater or equal to (0,0,...).
 type IndexZYX ChunkPoint3d

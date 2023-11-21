@@ -247,7 +247,7 @@ func ReportPanic(msg, sendingServer string) {
 	os.Stderr.WriteString(msg + stackTrace)
 	LogImmediately(msg + stackTrace) // bypass log channels.
 	if err := SendEmail("DVID panic report", msg+stackTrace, nil, ""); err != nil {
-		os.Stderr.WriteString(fmt.Sprintf("Couldn't send email notifcation: %v\n", err))
+		os.Stderr.WriteString(fmt.Sprintf("Couldn't send email notification: %v\n", err))
 	}
 }
 
@@ -273,7 +273,7 @@ func SendHTTP(w http.ResponseWriter, r *http.Request, name string, data []byte) 
 	}
 }
 
-// SupportsGzipEncoding returns true if the http requestor can accept gzip encoding.
+// SupportsGzipEncoding returns true if the http requester can accept gzip encoding.
 func SupportsGzipEncoding(r *http.Request) bool {
 	for _, v1 := range r.Header["Accept-Encoding"] {
 		for _, v2 := range strings.Split(v1, ",") {
@@ -286,7 +286,7 @@ func SupportsGzipEncoding(r *http.Request) bool {
 }
 
 // WriteGzip will write already gzip-encoded data to the ResponseWriter unless
-// the requestor cannot support it.  In that case, the gzip data is uncompressed
+// the requester cannot support it.  In that case, the gzip data is uncompressed
 // and sent uncompressed.
 func WriteGzip(gzipData []byte, w http.ResponseWriter, r *http.Request) error {
 	if SupportsGzipEncoding(r) {
@@ -295,7 +295,7 @@ func WriteGzip(gzipData []byte, w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 	} else {
-		Debugf("Requestor (%s) not accepting gzip for request (%s), uncompressing %d bytes.\n",
+		Debugf("Requester (%s) not accepting gzip for request (%s), uncompressing %d bytes.\n",
 			r.RemoteAddr, r.Method, len(gzipData))
 		gzipBuf := bytes.NewBuffer(gzipData)
 		gzipReader, err := gzip.NewReader(gzipBuf)

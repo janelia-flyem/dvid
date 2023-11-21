@@ -532,7 +532,7 @@ references to "B:master" now return the data from "D".
 
 	GETs or POSTs data into a blob store associated with the given data instance.
 	The reference is a URL-friendly content hash (FNV-128) of the blob data.
-	The POST will store data and return the folloing JSON:
+	The POST will store data and return the following JSON:
 
 	{ "reference": "<the content hash of blob data>" }
 

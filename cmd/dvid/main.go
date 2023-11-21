@@ -192,7 +192,7 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
-	// Determine numer of logical CPUs on local machine and unless overridden, use
+	// Determine number of logical CPUs on local machine and unless overridden, use
 	// all of them.
 	numCPU := runtime.NumCPU()
 	if *useCPU != 0 {

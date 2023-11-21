@@ -27,7 +27,7 @@ type Batch struct {
 	puts map[string][]byte // Maps a Swift object name to its content.
 
 	// The "delete" operations.
-	deletes map[string]struct{} // A set of Swift objet names.
+	deletes map[string]struct{} // A set of Swift object names.
 }
 
 // newBatch returns a new batch.

@@ -167,7 +167,7 @@ func (checksum Checksum) String() string {
 }
 
 // SerializationFormat combines both compression and checksum methods.
-// First 3 bits specifies compression, next 2 bits is the checkum, and
+// First 3 bits specifies compression, next 2 bits is the checksum, and
 // the final 3 bits is reserved for future use.
 type SerializationFormat uint8
 

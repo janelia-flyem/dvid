@@ -573,7 +573,7 @@ type Block struct {
 	Labels []uint64     // labels in Block.
 	Size   dvid.Point3d // # voxels in each dimension for this block
 
-	// The folloing exported properties are only non-nil if len(Labels) > 1
+	// The following exported properties are only non-nil if len(Labels) > 1
 
 	NumSBLabels []uint16 // # of labels for each sub-block
 	SBIndices   []uint32 // indices into Labels array

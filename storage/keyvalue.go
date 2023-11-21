@@ -317,7 +317,7 @@ type KeyValueDB interface {
 	KeyValueSetter
 }
 
-// OrderedKeyValueDB addes range queries and range puts to a base KeyValueDB.
+// OrderedKeyValueDB adds range queries and range puts to a base KeyValueDB.
 type OrderedKeyValueDB interface {
 	dvid.Store
 	OrderedKeyValueGetter

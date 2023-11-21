@@ -187,7 +187,7 @@ func (values DataValues) BytesPerValue() (int32, error) {
 	return bytesPerValue, nil
 }
 
-// ValueBytes returnes the size of the nth value in an element.
+// ValueBytes returns the size of the nth value in an element.
 func (values DataValues) ValueBytes(n int) int32 {
 	if n < 0 || n >= len(values) {
 		return 0

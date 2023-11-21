@@ -441,7 +441,7 @@ GET <api URL>/node/<UUID>/<data name>/labels[?queryopts]
 
     scale         A number from 0 up to MaxDownresLevel where each level beyond 0 has 1/2 resolution
 	                of previous level.  Level 0 is the highest resolution.
-    hash          MD5 hash of request body content in hexidecimal string format.
+    hash          MD5 hash of request body content in hexadecimal string format.
 
 GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
 

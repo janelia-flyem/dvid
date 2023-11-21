@@ -158,7 +158,7 @@ func (d *Data) putChunk(op *putOperation, wg *sync.WaitGroup, putbuffer storage.
 		// After processing a chunk, return the token.
 		server.HandlerToken <- 1
 
-		// Notify the requestor that this chunk is done.
+		// Notify the requester that this chunk is done.
 		wg.Done()
 	}()
 

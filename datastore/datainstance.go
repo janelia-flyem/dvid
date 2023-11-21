@@ -84,7 +84,7 @@ func NewVersionedCtxMasterLeaf(data dvid.Data) (*VersionedCtx, error) {
 
 // VersionedKeyValue returns the key-value pair corresponding to this key's version
 // given a list of key-value pairs across many versions.  If no suitable key-value
-// pair is found or a tombstone is encounterd closest to version, nil is returned.
+// pair is found or a tombstone is encountered closest to version, nil is returned.
 //
 // TODO: This function doesn't rely on the values being pre-sorted by version because
 // any storage backend could be used. If we want to optimize this, we could require
@@ -357,7 +357,7 @@ type dataUpdater interface {
 	Updating() bool
 }
 
-// MutationDumper is a dataservice that suppports the flatten-mutations command via
+// MutationDumper is a dataservice that supports the flatten-mutations command via
 // a DumpMutations() function.
 type MutationDumper interface {
 	DumpMutations(startUUID, endUUID dvid.UUID, filename string) (comment string, err error)
@@ -716,7 +716,7 @@ func (d *Data) SetLogStore(logStore dvid.Store) {
 
 func (d *Data) PersistMetadata() error {
 	if manager == nil {
-		return fmt.Errorf("cannot persist metadata change in data %q if maanger not initialized", d.DataName())
+		return fmt.Errorf("cannot persist metadata change in data %q if manager not initialized", d.DataName())
 	}
 	repo, err := manager.repoFromUUID(d.RootUUID())
 	if err != nil {
@@ -990,7 +990,7 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 }
 
 // DescribeTKeyClass returns a string explanation of what a particular TKeyClass
-// is used for.  This will be overriden in data types, but if not, this provides
+// is used for.  This will be overridden in data types, but if not, this provides
 // a fallback for all data types.
 func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
 	return fmt.Sprintf("generic %s key", d.TypeName())

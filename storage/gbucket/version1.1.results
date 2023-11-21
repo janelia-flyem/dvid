@@ -436,7 +436,7 @@ SUCCESS
 
 
 ##### bench_checkbranch_undelete #####
-Retrieves a value that ovewrites a previous deletion.
+Retrieves a value that overwrites a previous deletion.
     
 Runtime: 0.356387853622 seconds
 SUCCESS

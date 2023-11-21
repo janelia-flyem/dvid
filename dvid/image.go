@@ -365,7 +365,7 @@ func (img *Image) Serialize(compress Compression, checksum Checksum) ([]byte, er
 	return SerializeData(b, compress, checksum)
 }
 
-// Deserialze deserializes an Image from a possibly compressioned, checksummed byte slice.
+// Deserialize deserializes an Image from a possibly compressioned, checksummed byte slice.
 func (img *Image) Deserialize(b []byte) error {
 	if img == nil {
 		return fmt.Errorf("Error attempting to deserialize into nil Image")

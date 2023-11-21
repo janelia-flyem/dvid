@@ -355,7 +355,7 @@ GET <api URL>/node/<UUID>/<data name>/labels[?queryopts]
 
     Query-string Options:
 
-    hash          MD5 hash of request body content in hexidecimal string format.
+    hash          MD5 hash of request body content in hexadecimal string format.
 
 GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
 

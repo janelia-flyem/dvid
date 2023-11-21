@@ -527,7 +527,7 @@ GET <api URL>/node/<UUID>/<data name>/labels[?queryopts]
 	supervoxels   If "true", returns unmapped supervoxel label, disregarding any kind of merges.
     scale         A number from 0 up to MaxDownresLevel where each level beyond 0 has 1/2 resolution
 	                of previous level.  Level 0 is the highest resolution.
-    hash          MD5 hash of request body content in hexidecimal string format.
+    hash          MD5 hash of request body content in hexadecimal string format.
 
 GET <api URL>/node/<UUID>/<data name>/mapping[?queryopts]
 
@@ -556,11 +556,11 @@ GET <api URL>/node/<UUID>/<data name>/mapping[?queryopts]
 
 	nolookup      if "true", dvid won't verify that a supervoxel actually exists by looking up
 	                the label indices.  Only use this if supervoxels were known to exist at some time.
-    hash          MD5 hash of request body content in hexidecimal string format.
+    hash          MD5 hash of request body content in hexadecimal string format.
 
 GET <api URL>/node/<UUID>/<data name>/supervoxel-splits
 
-	Returns JSON for all supervoxel splits that have occured up to this version of the
+	Returns JSON for all supervoxel splits that have occurred up to this version of the
 	labelmap instance.  The returned JSON is of format:
 
 		[
@@ -954,7 +954,7 @@ GET <api URL>/node/<UUID>/<data name>/sizes[?supervoxels=true]
     Query-string Options:
 
 	supervoxels   If "true", interprets the given labels as a supervoxel ids.
-    hash          MD5 hash of request body content in hexidecimal string format.
+    hash          MD5 hash of request body content in hexadecimal string format.
 
 GET <api URL>/node/<UUID>/<data name>/supervoxel-sizes/<label>
 

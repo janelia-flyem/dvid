@@ -96,7 +96,7 @@ func TestIndexOps(t *testing.T) {
 	}
 	_, found := sidx.Blocks[block3]
 	if !found {
-		t.Errorf("didnt find expected block after LimitToSupervoxel()\n")
+		t.Errorf("didn't find expected block after LimitToSupervoxel()\n")
 	}
 
 	origCounts := idx.GetSupervoxelCounts()

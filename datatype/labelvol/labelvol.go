@@ -353,7 +353,7 @@ POST <api URL>/node/<UUID>/<data name>/split-coarse/<label>[?splitlabel=X]
 POST <api URL>/node/<UUID>/<data name>/resync/<label>
 
 	Regenerates the sparse volume for the given label from its synced labelblk.
-	This is used to repair databases that have been inadvertantly shutdown or
+	This is used to repair databases that have been inadvertently shutdown or
 	crashed while undergoing merges/splits.
 
 	This request requires a binary sparse volume in the POSTed body with the following 

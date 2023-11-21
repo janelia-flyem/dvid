@@ -219,7 +219,7 @@ GET <api URL>/node/<UUID>/<data name>/threshold/<T>/<index type>[?<options>]
 
 POST <api URL>/node/<UUID>/<data name>/reload
 
-	Forces asynchornous denormalization from its synced annotations instance.  Can be 
+	Forces asynchronous denormalization from its synced annotations instance.  Can be 
 	used to initialize a newly added instance.  Note that the labelsz will be locked until
 	the denormalization is finished with a log message.
 `
@@ -918,7 +918,7 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 		}()
 	}
 
-	// interate through all label annotations and pass to writer
+	// iterate through all label annotations and pass to writer
 	var totLabels uint64
 	err = annot.ProcessLabelAnnotations(ctx.VersionID(), func(label uint64, elems annotation.ElementsNR) {
 		var indexMap [AllSyn]uint32

@@ -24,7 +24,7 @@ TODO
 * Refactor datatype code to use standard key value interface (not bufferable interface).
 Throttling is done by gbucket but datatype code can also implement independent throttling.
 * Implement functionality to support lowel-level operations.
-* Allow datatypes to provid PUT with a likely exists hint.
+* Allow datatypes to provide PUT with a likely exists hint.
 * Move version encoding to the beginning of the key to potentially accelerate range
 queries and distribution.
 */
@@ -567,7 +567,7 @@ func (db *GBucket) updateValueVersion(ctx storage.Context, baseval []byte, newva
 			db.unDeleteValueVersion(baseprefix, currentmaster)
 		}
 
-		// concatentate data to value prefix
+		// concatenate data to value prefix
 		basevalmod := baseprefix
 		basevalmod = append(baseprefix, newval...)
 
@@ -607,7 +607,7 @@ func (db *GBucket) updateValueVersion(ctx storage.Context, baseval []byte, newva
 
 }
 
-// Extracts the base version encoded in the valeu
+// Extracts the base version encoded in the value
 func (db *GBucket) baseVersion(val []byte) dvid.VersionID {
 	return dvid.VersionID(binary.LittleEndian.Uint32(val[0:db.vsize]))
 }
@@ -1789,7 +1789,7 @@ func (db *GBucket) LockKey(k storage.Key) error {
 	var locktime time.Time
 	for true {
 		// post blank data
-		// try putting againt with a new generation id
+		// try putting against with a new generation id
 		err = db.putVhandle(obj_handle, []byte(""))
 		if err != ErrCondFail {
 			break
@@ -1907,7 +1907,7 @@ func (db *GBucket) Patch(ctx storage.Context, tk storage.TKey, f storage.PatchFu
 			}
 			obj_handletemp := obj_handle.If(conditions)
 
-			// try putting againt with a new generation id
+			// try putting against with a new generation id
 			err = db.putVhandle(obj_handletemp, val)
 			if err != ErrCondFail {
 				break
