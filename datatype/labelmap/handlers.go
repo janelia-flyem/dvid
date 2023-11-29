@@ -683,7 +683,7 @@ func (d *Data) handleMutations(ctx *datastore.VersionedCtx, w http.ResponseWrite
 	switch strings.ToLower(r.Method) {
 	case "get":
 		if err := server.StreamMutationsForVersion(w, ctx.VersionUUID(), d.DataUUID()); err != nil {
-			server.BadRequest(w, r, "unable to write mutaions: %v", err)
+			server.BadRequest(w, r, "unable to write mutations to client: %v", err)
 		}
 		timedLog.Infof("HTTP GET mutations (%s)", r.URL)
 
@@ -726,7 +726,7 @@ func (d *Data) handleMutationsRange(ctx *datastore.VersionedCtx, w http.Response
 			server.BadRequest(w, r, err)
 		}
 		if err := server.StreamMutationsForSequence(w, d.DataUUID(), uuidSeq); err != nil {
-			server.BadRequest(w, r, "unable to write mutaions: %v", err)
+			server.BadRequest(w, r, "unable to write mutations to client: %v", err)
 		}
 		timedLog.Infof("HTTP GET mutations-range (%s)", r.URL)
 	}
