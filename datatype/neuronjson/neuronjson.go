@@ -1232,15 +1232,18 @@ func (d *Data) GetData(ctx storage.VersionedCtx, keyStr string, fieldMap map[str
 // update _user and _time fields for any fields newly set or modified.
 func updateJSON(origData, newData NeuronJSON, user string, conditionals []string, replace bool) {
 
+	t := time.Now()
+	timeStr := t.Format(time.RFC3339)
+
 	// remove fields that are being set to null
+	deleted_fields := make(map[string]struct{})
 	for field, value := range newData {
 		if value == nil {
+			deleted_fields[field] = struct{}{}
 			delete(newData, field)
-			delete(newData, field+"_user")
-			delete(newData, field+"_time")
+			newData[field+"_user"] = user
+			newData[field+"_time"] = timeStr
 			delete(origData, field)
-			delete(origData, field+"_user")
-			delete(origData, field+"_time")
 		}
 	}
 
@@ -1268,6 +1271,9 @@ func updateJSON(origData, newData NeuronJSON, user string, conditionals []string
 				protectedFields[field] = struct{}{}
 			}
 			for field, origValue := range origData {
+				if _, found := deleted_fields[field]; found {
+					continue
+				}
 				if _, found := newData[field]; !found {
 					newData[field] = origValue
 					continue
@@ -1281,11 +1287,12 @@ func updateJSON(origData, newData NeuronJSON, user string, conditionals []string
 	}
 
 	// add _user and _time fields for newly set and not prevented via conditionals
-	t := time.Now()
-	timeStr := t.Format(time.RFC3339)
 	for field := range newlySet {
 		if field == "bodyid" || field == "user" {
 			continue // these fields shouldn't have _user or _time fields added
+		}
+		if _, found := deleted_fields[field]; found {
+			continue
 		}
 		if strings.HasSuffix(field, "_time") || strings.HasSuffix(field, "_user") {
 			continue // we will handle this with main field
@@ -1300,6 +1307,9 @@ func updateJSON(origData, newData NeuronJSON, user string, conditionals []string
 	if replace { // keep _user and _time fields for unchanged fields
 		for field := range newFields {
 			if field == "bodyid" {
+				continue
+			}
+			if _, found := deleted_fields[field]; found {
 				continue
 			}
 			if _, foundUser := newData[field+"_user"]; !foundUser {

@@ -1113,7 +1113,7 @@ func TestDeleteWithNull(t *testing.T) {
 	// Delete the "a number" field from key 3000.
 	deljson := `{"bodyid": 3000, "a number": null, "a list": [23], "somefield": ""}`
 	req := fmt.Sprintf("%snode/%s/neurons/key/3000", server.WebAPIPath, uuid)
-	server.TestHTTP(t, "POST", req, strings.NewReader(deljson))
+	server.TestHTTP(t, "POST", req+"?u=mrdeleter", strings.NewReader(deljson))
 
 	// Read the key and make sure "a number" is gone.
 	var expected, received NeuronJSON
@@ -1132,11 +1132,15 @@ func TestDeleteWithNull(t *testing.T) {
 	if err := json.Unmarshal(returnValue, &received); err != nil {
 		t.Fatalf("Unable to parse return: %v\n", err)
 	}
-	if _, found := received["a number_user"]; found {
-		t.Fatalf("Delete using null failed. Expected no 'a number_user' field, got: %v\n", received)
+	if user, found := received["a number_user"]; !found {
+		t.Fatalf("Delete using null failed. Expected 'a number_user' field, got: %v\n", received)
+	} else {
+		if user != "mrdeleter" {
+			t.Fatalf("Expected 'a number_user' to be 'mrdeleter', got %s\n", user)
+		}
 	}
-	if _, found := received["a number_time"]; found {
-		t.Fatalf("Delete using null failed. Expected no 'a number_time' field, got: %v\n", received)
+	if _, found := received["a number_time"]; !found {
+		t.Fatalf("Delete using null failed. Expected 'a number_time' field, got: %v\n", received)
 	}
 }
 
