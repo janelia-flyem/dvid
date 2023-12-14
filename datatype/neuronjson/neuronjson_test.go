@@ -907,8 +907,8 @@ var testData = []struct {
 	val string
 }{
 	{"1000", `{"bodyid": 1000, "a number": 3456, "position": [150,250,380], "baz": ""}`},
-	{"2000", `{"bodyid": 2000, "bar":"another string", "baz":[1, 2, 3], "nullfield": "im here"}`},
-	{"3000", `{"bodyid": 3000, "a number": 3456, "a list": [23], "nullfield": null}`},
+	{"2000", `{"bodyid": 2000, "bar":"another string", "baz":[1, 2, 3], "somefield": "im here"}`},
+	{"3000", `{"bodyid": 3000, "a number": 3456, "a list": [23], "somefield": ""}`},
 	{"4000", `{"position": [151, 251, 301], "bodyid": 4000, "soma_side": "LHS", "baz": "some string"}`},
 }
 
@@ -917,8 +917,8 @@ var testData2 = []struct {
 	val string
 }{
 	{"10000", `{"bodyid": 10000, "a number": 3456, "position": [150,250,380], "baz": ""}`},
-	{"20000", `{"bodyid": 20000, "bar":"another string", "baz":[1, 2, 3], "nullfield": "im here"}`},
-	{"30000", `{"bodyid": 30000, "a number": 3456, "a list": [23], "nullfield": null}`},
+	{"20000", `{"bodyid": 20000, "bar":"another string", "baz":[1, 2, 3], "somefield": "im here"}`},
+	{"30000", `{"bodyid": 30000, "a number": 3456, "a list": [23], "somefield": ""}`},
 	{"40000", `{"position": [151, 251, 301], "bodyid": 40000, "soma_side": "LHS", "baz": "some string"}`},
 }
 
@@ -1088,6 +1088,58 @@ func TestAll(t *testing.T) {
 	}
 }
 
+func TestDeleteWithNull(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+
+	payload := bytes.NewBufferString(`{"typename": "neuronjson", "dataname": "neurons"}`)
+	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, payload)
+
+	allNeurons := make(ListNeuronJSON, len(testData))
+	var keyreq = make([]string, len(testData))
+	for i := 0; i < len(testData); i++ {
+		keyreq[i] = fmt.Sprintf("%snode/%s/neurons/key/%s", server.WebAPIPath, uuid, testData[i].key)
+		server.TestHTTP(t, "POST", keyreq[i], strings.NewReader(testData[i].val))
+		if err := json.Unmarshal([]byte(testData[i].val), &(allNeurons[i])); err != nil {
+			t.Fatalf("Unable to parse test annotation %d: %v\n", i, err)
+		}
+	}
+
+	// Delete the "a number" field from key 3000.
+	deljson := `{"bodyid": 3000, "a number": null, "a list": [23], "somefield": ""}`
+	req := fmt.Sprintf("%snode/%s/neurons/key/3000", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", req, strings.NewReader(deljson))
+
+	// Read the key and make sure "a number" is gone.
+	var expected, received NeuronJSON
+	expectedJSON := `{"bodyid": 3000, "a list": [23], "somefield": ""}`
+	if err := json.Unmarshal([]byte(expectedJSON), &expected); err != nil {
+		t.Fatalf("Unable to parse return: %v\n", err)
+	}
+	returnValue := server.TestHTTP(t, "GET", req, nil)
+	if err := json.Unmarshal(returnValue, &received); err != nil {
+		t.Fatalf("Unable to parse return: %v\n", err)
+	}
+	if !reflect.DeepEqual(received, expected) {
+		t.Fatalf("Delete using null failed. Expected: %v, Got: %s\n", expected, string(returnValue))
+	}
+	returnValue = server.TestHTTP(t, "GET", req+"?show=all", nil)
+	if err := json.Unmarshal(returnValue, &received); err != nil {
+		t.Fatalf("Unable to parse return: %v\n", err)
+	}
+	if _, found := received["a number_user"]; found {
+		t.Fatalf("Delete using null failed. Expected no 'a number_user' field, got: %v\n", received)
+	}
+	if _, found := received["a number_time"]; found {
+		t.Fatalf("Delete using null failed. Expected no 'a number_time' field, got: %v\n", received)
+	}
+}
+
 func TestKeyvalueRange(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
@@ -1169,10 +1221,10 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 		t.Errorf("Bad existence query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
-	query = `{"nullfield": "exists/0"}`
+	query = `{"somefield": "exists/0"}`
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
-	expectedValue = []byte("[" + testData[0].val + "," + testData[2].val + "," + testData[3].val + "]")
+	expectedValue = []byte("[" + testData[0].val + "," + testData[3].val + "]")
 	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
 		t.Fatalf("Bad existence query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}

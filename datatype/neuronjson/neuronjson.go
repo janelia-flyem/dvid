@@ -1231,6 +1231,19 @@ func (d *Data) GetData(ctx storage.VersionedCtx, keyStr string, fieldMap map[str
 
 // update _user and _time fields for any fields newly set or modified.
 func updateJSON(origData, newData NeuronJSON, user string, conditionals []string, replace bool) {
+
+	// remove fields that are being set to null
+	for field, value := range newData {
+		if value == nil {
+			delete(newData, field)
+			delete(newData, field+"_user")
+			delete(newData, field+"_time")
+			delete(origData, field)
+			delete(origData, field+"_user")
+			delete(origData, field+"_time")
+		}
+	}
+
 	// determine if any fields are being set for the first time or modified
 	newlySet := make(map[string]struct{}, len(newData))  // fields that aren't same as old data
 	newFields := make(map[string]struct{}, len(newData)) // fields that are not _user or _time
@@ -1346,6 +1359,7 @@ func (d *Data) storeAndUpdate(ctx *datastore.VersionedCtx, keyStr string, newDat
 }
 
 // PutData puts a valid JSON []byte into a neuron key at a given uuid.
+// If a null value is given for a field, the field is deleted together with _user and _time fields.
 // If replace is true, will use given value instead of updating fields that were given.
 // If field values are given but do not change, the _user and _time fields will not be updated.
 func (d *Data) PutData(ctx *datastore.VersionedCtx, keyStr string, value []byte, conditionals []string, replace bool) error {
