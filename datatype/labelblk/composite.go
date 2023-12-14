@@ -1,5 +1,5 @@
 /*
-	Functinos that support compositing label and image blocks into a pseudo-color representation.
+	Functions that support compositing label and image blocks into a pseudo-color representation.
 */
 
 package labelblk

@@ -428,7 +428,7 @@ func (s *Store) Delete(context storage.Context, typeKey storage.TKey) error {
 
 	// Delete the given key.
 	if err := s.RawDelete(key); err != nil {
-		return fmt.Errorf(`Coult not delete key: %s`, err)
+		return fmt.Errorf(`Could not delete key: %s`, err)
 	}
 
 	// If the context is unversioned, we're done.

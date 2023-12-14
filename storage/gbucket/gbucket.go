@@ -786,7 +786,7 @@ func (db *GBucket) versionedgetV(ctx storage.Context, tk storage.TKey) ([]byte, 
 	} else if relevantver > 0 {
 		// TODO: if a non-head node, the value should probably always exist
 		// so could continue to poll
-		// if match exists but not base, do tradional get
+		// if match exists but not base, do traditional get
 		// (if it doesn't exist here, should be from legitimate delete)
 		speckey := ctx.ConstructKeyVersion(tk, relevantver)
 		val, err = db.getV(ctx, speckey)
@@ -905,7 +905,7 @@ func (db *GBucket) putV(ctx storage.Context, k storage.Key, value []byte) (err e
     if put failed
 	-2 ops (fetch generation id and then basevalue) -- TODO should be one op
 	-1 op write evicted/non-base value (if necessary), run before basevalue update unless
-	overwriting old data -- TODO paralelize with basevalue update if evicted data is from
+	overwriting old data -- TODO parallelize with basevalue update if evicted data is from
 	a locked node, this requires the GET routine to be slightly smarter
 	-1 op update basevalue (if a change exist for current keys)
 */
@@ -1848,7 +1848,7 @@ func (db *GBucket) Patch(ctx storage.Context, tk storage.TKey, f storage.PatchFu
 		// cost: >=1 object meta request,
 		// cost: >=1 request for data if object exists
 		// cost: >=1 put data
-		// Each write will cost at least 3 back-and-forth reqeuests, and
+		// Each write will cost at least 3 back-and-forth requests, and
 		// a key search for the current versioning approach
 		// Note: finding proper version to get can be slow
 		for true {
