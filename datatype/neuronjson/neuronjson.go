@@ -13,6 +13,7 @@ import (
 	"math"
 	"net/http"
 	reflect "reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1397,7 +1398,8 @@ func (d *Data) PutData(ctx *datastore.VersionedCtx, keyStr string, value []byte,
 		}
 		for err = sch.Validate(v); err != nil; {
 			if verr, ok := err.(*jsonschema.ValidationError); ok {
-				if !strings.HasSuffix(verr.Error(), "expected integer, but got string") {
+				match, _ := regexp.MatchString(`.*expected integer.* but got string.*`, verr.Error())
+				if !match {
 					return err
 				}
 				// Try to convert string to integer for fields that need conversion.
