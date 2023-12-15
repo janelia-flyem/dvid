@@ -1398,7 +1398,7 @@ func (d *Data) PutData(ctx *datastore.VersionedCtx, keyStr string, value []byte,
 		}
 		for err = sch.Validate(v); err != nil; {
 			if verr, ok := err.(*jsonschema.ValidationError); ok {
-				match, _ := regexp.MatchString(`.*expected integer.* but got string.*`, verr.Error())
+				match, _ := regexp.MatchString(`.*expected .*integer.* but got string.*`, verr.Error())
 				if !match {
 					return err
 				}
