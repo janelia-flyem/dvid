@@ -324,6 +324,41 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 
 	check		If json=true, setting check=false will tell server to trust that the
 					values will be valid JSON instead of parsing it as a check.
+
+GET <api URL>/node/<UUID>/<data name>/mutations[?queryopts]
+
+	Returns JSON list of the successfully completed mutations for the given version 
+	for this data instance.  Each mutation record format is equivalent to the JSON 
+	provided to the Kafka mutation log.  For example, a POST mutation would be:
+
+	{
+		"Action": "postkv",
+		"Key": "20",
+		"Bytes": 4039,
+		"UUID": "28841c8277e044a7b187dda03e18da13",
+		"Timestamp": <string>
+	}
+
+	Query-string options:
+
+		userid: Limit returned mutations to the given User ID.  Note that
+				this should be distinguished from the "u" query string which
+				is the requester's User ID (not necessarily the same as the
+				User ID whose mutations are being requested).
+
+GET <api URL>/node/<UUID>/<data name>/mutations-range/<beg>/<end>?rangefmt=<format>
+
+	Returns JSON list of the successfully completed mutations across a given
+	range. The range format of parameters <beg> and <end> is specified by the 
+	value of the "rangefmt" query string:
+
+		default:  If no query string is given, the range is in the form of
+					version UUIDs.
+
+		--- The following are not yet implemented ---
+		"mutids":  The range is in the form of mutation IDs (uint64).
+
+		"timestamps":  The range is in the form of RFC 3339 timestamps.
 `
 
 func init() {
@@ -634,6 +669,12 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, jsonStr)
 		return
+
+	case "mutations":
+		d.handleMutations(ctx, w, r)
+
+	case "mutations-range":
+		d.handleMutationsRange(ctx, w, r, parts)
 
 	case "tags":
 		if action == "post" {
@@ -1170,4 +1211,68 @@ func (d *Data) handleIngest(r *http.Request, uuid dvid.UUID, ctx *datastore.Vers
 		}
 	}
 	return nil
+}
+
+func (d *Data) handleMutations(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+	// GET <api URL>/node/<UUID>/<data name>/mutations
+	timedLog := dvid.NewTimeLog()
+
+	queryStrings := r.URL.Query()
+	if throttle := queryStrings.Get("throttle"); throttle == "on" || throttle == "true" {
+		if server.ThrottledHTTP(w) {
+			return
+		}
+		defer server.ThrottledOpDone()
+	}
+
+	switch strings.ToLower(r.Method) {
+	case "get":
+		if err := server.StreamMutationsForVersion(w, ctx.VersionUUID(), d.DataUUID()); err != nil {
+			server.BadRequest(w, r, "unable to write mutations to client: %v", err)
+		}
+		timedLog.Infof("HTTP GET mutations (%s)", r.URL)
+
+	default:
+		server.BadRequest(w, r, "only POST action allowed for /mappings endpoint")
+	}
+}
+
+func (d *Data) handleMutationsRange(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
+	// GET <api URL>/node/<UUID>/<data name>/mutations-range/<beg>/<end>?rangefmt=<format>
+	timedLog := dvid.NewTimeLog()
+
+	queryStrings := r.URL.Query()
+	if throttle := queryStrings.Get("throttle"); throttle == "on" || throttle == "true" {
+		if server.ThrottledHTTP(w) {
+			return
+		}
+		defer server.ThrottledOpDone()
+	}
+	if strings.ToLower(r.Method) != "get" {
+		server.BadRequest(w, r, "only GET action allowed for /mutations-range endpoint")
+		return
+	}
+
+	rangefmt := queryStrings.Get("rangefmt")
+	switch rangefmt {
+	default:
+		begUUID, _, err := datastore.MatchingUUID(parts[4])
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		endUUID, _, err := datastore.MatchingUUID(parts[5])
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		uuidSeq, err := datastore.GetVersionSequence(begUUID, endUUID)
+		if err != nil {
+			server.BadRequest(w, r, err)
+		}
+		if err := server.StreamMutationsForSequence(w, d.DataUUID(), uuidSeq); err != nil {
+			server.BadRequest(w, r, "unable to write mutations to client: %v", err)
+		}
+		timedLog.Infof("HTTP GET mutations-range (%s)", r.URL)
+	}
 }
