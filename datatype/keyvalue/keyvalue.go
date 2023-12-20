@@ -1,5 +1,5 @@
 /*
-	Package keyvalue implements DVID support for data using generic key-value.
+Package keyvalue implements DVID support for data using generic key-value.
 */
 package keyvalue
 
@@ -9,7 +9,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -365,7 +365,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 }
 
 func (dtype *Type) Help() string {
-	return fmt.Sprintf(helpMessage)
+	return helpMessage
 }
 
 // GetByUUIDName returns a pointer to labelblk data given a UUID and data name.
@@ -376,7 +376,7 @@ func GetByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	}
 	data, ok := source.(*Data)
 	if !ok {
-		return nil, fmt.Errorf("Instance '%s' is not a keyvalue datatype!", name)
+		return nil, fmt.Errorf("instance '%s' is not a keyvalue datatype", name)
 	}
 	return data, nil
 }
@@ -497,7 +497,7 @@ func (d *Data) GetData(ctx storage.Context, keyStr string) ([]byte, bool, error)
 	}
 	data, err := db.Get(ctx, tk)
 	if err != nil {
-		return nil, false, fmt.Errorf("Error in retrieving key '%s': %v", keyStr, err)
+		return nil, false, fmt.Errorf("error in retrieving key '%s': %v", keyStr, err)
 	}
 	if data == nil {
 		return nil, false, nil
@@ -505,7 +505,7 @@ func (d *Data) GetData(ctx storage.Context, keyStr string) ([]byte, bool, error)
 	uncompress := true
 	value, _, err := dvid.DeserializeData(data, uncompress)
 	if err != nil {
-		return nil, false, fmt.Errorf("Unable to deserialize data for key '%s': %v\n", keyStr, err)
+		return nil, false, fmt.Errorf("unable to deserialize data for key '%s': %v", keyStr, err)
 	}
 	return value, true, nil
 }
@@ -518,7 +518,7 @@ func (d *Data) PutData(ctx storage.Context, keyStr string, value []byte) error {
 	}
 	serialization, err := dvid.SerializeData(value, d.Compression(), d.Checksum())
 	if err != nil {
-		return fmt.Errorf("Unable to serialize data: %v\n", err)
+		return fmt.Errorf("unable to serialize data: %v", err)
 	}
 	tk, err := NewTKey(keyStr)
 	if err != nil {
@@ -543,10 +543,10 @@ func (d *Data) DeleteData(ctx storage.Context, keyStr string) error {
 // put handles a PUT command-line request.
 func (d *Data) put(cmd datastore.Request, reply *datastore.Response) error {
 	if len(cmd.Command) < 5 {
-		return fmt.Errorf("The key name must be specified after 'put'")
+		return fmt.Errorf("the key name must be specified after 'put'")
 	}
 	if len(cmd.Input) == 0 {
-		return fmt.Errorf("No data was passed into standard input")
+		return fmt.Errorf("no data was passed into standard input")
 	}
 	var uuidStr, dataName, cmdStr, keyStr string
 	cmd.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &keyStr)
@@ -566,7 +566,7 @@ func (d *Data) put(cmd datastore.Request, reply *datastore.Response) error {
 	}
 	ctx := datastore.NewVersionedCtx(d, versionID)
 	if err = d.PutData(ctx, keyStr, cmd.Input); err != nil {
-		return fmt.Errorf("Error on put to key %q for keyvalue %q: %v\n", keyStr, d.DataName(), err)
+		return fmt.Errorf("error on put to key %q for keyvalue %q: %v", keyStr, d.DataName(), err)
 	}
 
 	reply.Output = []byte(fmt.Sprintf("Put %d bytes into key %q for keyvalue %q, uuid %s\n",
@@ -586,7 +586,7 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 // --- DataService interface ---
 
 func (d *Data) Help() string {
-	return fmt.Sprintf(helpMessage)
+	return helpMessage
 }
 
 // DoRPC acts as a switchboard for RPC commands.
@@ -595,7 +595,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	case "put":
 		return d.put(request, reply)
 	default:
-		return fmt.Errorf("Unknown command.  Data '%s' [%s] does not support '%s' command.",
+		return fmt.Errorf("unknown command.  Data '%s' [%s] does not support '%s' command",
 			d.DataName(), d.TypeName(), request.TypeCommand())
 	}
 }
@@ -632,7 +632,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, jsonStr)
+		fmt.Fprint(w, jsonStr)
 		return
 
 	case "tags":
@@ -649,7 +649,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintf(w, string(jsonBytes))
+			fmt.Fprint(w, string(jsonBytes))
 		}
 
 	case "keys":
@@ -664,7 +664,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, string(jsonBytes))
+		fmt.Fprint(w, string(jsonBytes))
 		comment = "HTTP GET keys"
 
 	case "keyrange":
@@ -687,7 +687,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, string(jsonBytes))
+		fmt.Fprint(w, string(jsonBytes))
 		comment = fmt.Sprintf("HTTP GET keyrange [%q, %q]", keyBeg, keyEnd)
 
 	case "keyrangevalues":
@@ -774,34 +774,49 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				server.BadRequest(w, r, err)
 				return
 			}
+			msginfo := map[string]interface{}{
+				"Action":    "delete",
+				"Key":       keyStr,
+				"UUID":      string(uuid),
+				"Timestamp": time.Now().String(),
+			}
+			jsonmsg, _ := json.Marshal(msginfo)
+			if err := d.PublishKafkaMsg(jsonmsg); err != nil {
+				dvid.Errorf("Error on sending keyvalue DELETE op to kafka: %v\n", err)
+			}
+			if err := server.LogJSONMutation(uuid, d.DataUUID(), jsonmsg); err != nil {
+				dvid.Criticalf("can't log delete to data %q, version %s: %s\n", d.DataName(), uuid, jsonmsg)
+			}
 			comment = fmt.Sprintf("HTTP DELETE data with key %q of keyvalue %q (%s)", keyStr, d.DataName(), url)
 
 		case "post":
-			data, err := ioutil.ReadAll(r.Body)
+			data, err := io.ReadAll(r.Body)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
-
-			go func() {
-				msginfo := map[string]interface{}{
-					"Action":    "postkv",
-					"Key":       keyStr,
-					"Bytes":     len(data),
-					"UUID":      string(uuid),
-					"Timestamp": time.Now().String(),
-				}
-				jsonmsg, _ := json.Marshal(msginfo)
-				if err = d.PublishKafkaMsg(jsonmsg); err != nil {
-					dvid.Errorf("Error on sending keyvalue POST op to kafka: %v\n", err)
-				}
-			}()
 
 			err = d.PutData(ctx, keyStr, data)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
+
+			msginfo := map[string]interface{}{
+				"Action":    "postkv",
+				"Key":       keyStr,
+				"Bytes":     len(data),
+				"UUID":      string(uuid),
+				"Timestamp": time.Now().String(),
+			}
+			jsonmsg, _ := json.Marshal(msginfo)
+			if err = d.PublishKafkaMsg(jsonmsg); err != nil {
+				dvid.Errorf("Error on sending keyvalue POST op to kafka: %v\n", err)
+			}
+			if err := server.LogJSONMutation(uuid, d.DataUUID(), jsonmsg); err != nil {
+				dvid.Criticalf("can't log ingest to data %q, version %s: %s\n", d.DataName(), uuid, jsonmsg)
+			}
+
 			comment = fmt.Sprintf("HTTP POST keyvalue '%s': %d bytes (%s)", d.DataName(), len(data), url)
 		default:
 			server.BadRequest(w, r, "key endpoint does not support %q HTTP verb", action)
@@ -916,7 +931,7 @@ func (d *Data) sendJSONValuesInRange(w http.ResponseWriter, r *http.Request, ctx
 		uncompress := true
 		val, _, err := dvid.DeserializeData(kv.V, uncompress)
 		if err != nil {
-			return fmt.Errorf("Unable to deserialize data for key %q: %v\n", key, err)
+			return fmt.Errorf("unable to deserialize data for key %q: %v", key, err)
 		}
 		switch {
 		case tarOut:
@@ -1094,7 +1109,7 @@ func (d *Data) handleKeyValues(w http.ResponseWriter, r *http.Request, uuid dvid
 		return
 	}
 	var data []byte
-	data, err = ioutil.ReadAll(r.Body)
+	data, err = io.ReadAll(r.Body)
 	if err != nil {
 		return
 	}
@@ -1125,7 +1140,7 @@ func (d *Data) handleKeyValues(w http.ResponseWriter, r *http.Request, uuid dvid
 }
 
 func (d *Data) handleIngest(r *http.Request, uuid dvid.UUID, ctx *datastore.VersionedCtx) error {
-	data, err := ioutil.ReadAll(r.Body)
+	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		return err
 	}
@@ -1149,6 +1164,9 @@ func (d *Data) handleIngest(r *http.Request, uuid dvid.UUID, ctx *datastore.Vers
 		jsonmsg, _ := json.Marshal(msginfo)
 		if err = d.PublishKafkaMsg(jsonmsg); err != nil {
 			dvid.Errorf("Error on sending keyvalue POST op to kafka: %v\n", err)
+		}
+		if err := server.LogJSONMutation(uuid, d.DataUUID(), jsonmsg); err != nil {
+			dvid.Criticalf("can't log ingest to data %q, version %s: %s\n", d.DataName(), uuid, jsonmsg)
 		}
 	}
 	return nil
