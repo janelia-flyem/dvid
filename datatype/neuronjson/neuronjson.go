@@ -1250,20 +1250,27 @@ func updateJSON(origData, newData NeuronJSON, user string, conditionals []string
 
 	// determine if any fields are being set for the first time or modified
 	newlySet := make(map[string]struct{}, len(newData))  // fields that aren't same as old data
-	newFields := make(map[string]struct{}, len(newData)) // fields that are not _user or _time
+	newFields := make(map[string]struct{}, len(newData)) // fields that aren't _user or _time
 	if origData == nil {
 		for field := range newData {
 			newlySet[field] = struct{}{}
+			if strings.HasSuffix(field, "_user") { // setting _user means we should set _time
+				newlySet[field[:len(field)-5]] = struct{}{}
+			}
 		}
 	} else {
 		for field, value := range newData {
 			if origValue, found := origData[field]; !found || !reflect.DeepEqual(value, origValue) {
 				newlySet[field] = struct{}{}
+				if strings.HasSuffix(field, "_user") { // setting _user means we should set _time
+					newlySet[field[:len(field)-5]] = struct{}{}
+				}
 			}
 			if !strings.HasSuffix(field, "_user") && !strings.HasSuffix(field, "_time") {
 				newFields[field] = struct{}{}
 			}
 		}
+		fmt.Printf("newlySet: %v\n", newlySet)
 
 		// carry forward any fields not being modified if replace option is not set
 		if !replace {

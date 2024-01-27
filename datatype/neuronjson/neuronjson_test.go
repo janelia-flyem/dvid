@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	pb "google.golang.org/protobuf/proto"
 
@@ -1020,6 +1021,85 @@ func TestBodyidUserTime(t *testing.T) {
 	neuron = `{"bodyid": 1000, "bodyid_time": "2023-11-11T22:44:50-05:00", "a number": 3456, "position": [150,250,380], "baz": ""}`
 	keyreq = fmt.Sprintf("%snode/%s/neurons/key/%s?u=moo&replace=true", server.WebAPIPath, uuid, "1000")
 	server.TestBadHTTP(t, "POST", keyreq, strings.NewReader(neuron))
+}
+
+// TestUserTime tests that user and time are properly recorded.
+func TestUserTime(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+
+	payload := bytes.NewBufferString(`{"typename": "neuronjson", "dataname": "neurons"}`)
+	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, payload)
+
+	// Test JSON to be posted.
+	neuron1 := `{"bodyid": 1, "number": 1234, "string": "foo"}`
+	neuron2 := `{"bodyid": 2, "number": 3456, "hash": "0x1234567890abcdef"}`
+
+	// POST the annotations
+	keyreq := fmt.Sprintf("%snode/%s/neurons/key/1?u=user1", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", keyreq, strings.NewReader(neuron1))
+	keyreq = fmt.Sprintf("%snode/%s/neurons/key/2?u=user2", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", keyreq, strings.NewReader(neuron2))
+
+	// Get all neuronjson
+	allreq := fmt.Sprintf("%snode/%s/neurons/all?show=all", server.WebAPIPath, uuid)
+	returnValue := server.TestHTTP(t, "GET", allreq, nil)
+	var neurons ListNeuronJSON
+	if err := json.Unmarshal(returnValue, &neurons); err != nil {
+		t.Fatalf("Unable to parse return from /all request: %s\nError: %v\n", string(returnValue), err)
+	}
+	sort.Sort(&neurons)
+	fmt.Printf("Got neurons: %v\n", string(returnValue))
+
+	// Test that user and time were recorded correctly
+	if len(neurons) != 2 {
+		t.Fatalf("Expected 2 neuron, got %d\n", len(neurons))
+	}
+	if value, found := neurons[0]["number_user"]; !found || value != "user1" {
+		t.Errorf("Expected 'user1', got %v\n", value)
+	}
+	ival, found := neurons[0]["number_time"]
+	if !found {
+		t.Errorf("Expected number_time field but got none\n")
+	}
+	neuron1_number_time, ok := ival.(string)
+	if !ok {
+		t.Errorf("Expected string for number_time, got %v\n", reflect.TypeOf(ival))
+	}
+	if value, found := neurons[1]["number_user"]; !found || value != "user2" {
+		t.Errorf("Expected 'user2', got %v\n", value)
+	}
+	if _, found := neurons[1]["number_time"]; !found {
+		t.Errorf("Expected number_time field but got none\n")
+	}
+
+	// Sleep for a second so we know the timestamps will be different.
+	time.Sleep(1 * time.Second)
+
+	// Test update of neuron1
+	neuron1a := `{"bodyid": 1, "number_user": "user1a", "string": "moo"}`
+	keyreq = fmt.Sprintf("%snode/%s/neurons/key/1?u=user3", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", keyreq, strings.NewReader(neuron1a))
+	keyreq = fmt.Sprintf("%snode/%s/neurons/key/1?show=all", server.WebAPIPath, uuid)
+	returnValue = server.TestHTTP(t, "GET", keyreq, nil)
+	var neuron NeuronJSON
+	if err := json.Unmarshal(returnValue, &neuron); err != nil {
+		t.Fatalf("Unable to parse return: %s\nError: %v\n", string(returnValue), err)
+	}
+	if value, found := neuron["number_user"]; !found || value != "user1a" {
+		t.Errorf("Expected 'user1a', got %v\n", value)
+	}
+	if value, found := neuron["number_time"]; !found || value == neuron1_number_time {
+		t.Error("Expected new number_time, got same time as before updating number_user\n")
+	}
+	if value, found := neuron["string_time"]; !found || value == neuron1_number_time {
+		t.Error("Expected new string_time, got same time as before updating string field\n")
+	}
 }
 
 func TestAll(t *testing.T) {
