@@ -1054,7 +1054,6 @@ func TestUserTime(t *testing.T) {
 		t.Fatalf("Unable to parse return from /all request: %s\nError: %v\n", string(returnValue), err)
 	}
 	sort.Sort(&neurons)
-	fmt.Printf("Got neurons: %v\n", string(returnValue))
 
 	// Test that user and time were recorded correctly
 	if len(neurons) != 2 {

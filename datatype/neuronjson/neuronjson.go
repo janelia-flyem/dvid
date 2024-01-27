@@ -1270,7 +1270,6 @@ func updateJSON(origData, newData NeuronJSON, user string, conditionals []string
 				newFields[field] = struct{}{}
 			}
 		}
-		fmt.Printf("newlySet: %v\n", newlySet)
 
 		// carry forward any fields not being modified if replace option is not set
 		if !replace {
