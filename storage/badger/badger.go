@@ -10,6 +10,7 @@ import (
 	"hash/fnv"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -103,6 +104,19 @@ func parseConfig(config dvid.StoreConfig) (path string, testing bool, err error)
 	return
 }
 
+// Periodically sync to prevent too many writes from being buffered
+// if server crashes.
+func syncPeriodically(db *badger.DB) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			db.Sync()
+		}
+	}
+}
+
 // newDB returns a Badger backend, creating one at path if it doesn't exist.
 func (e Engine) newDB(config dvid.StoreConfig) (*BadgerDB, bool, error) {
 	path, _, err := parseConfig(config)
@@ -145,6 +159,8 @@ func (e Engine) newDB(config dvid.StoreConfig) (*BadgerDB, bool, error) {
 		return nil, false, err
 	}
 	badgerDB.bdp = bdp
+
+	go syncPeriodically(bdp)
 
 	// if we know it's newly created, just return.
 	if created {
@@ -226,6 +242,7 @@ func (db *BadgerDB) Close() {
 	if db != nil {
 		if db.bdp != nil {
 			db.bdp.Close()
+			dvid.Infof("Closed Badger DB @ %s\n", db.directory)
 		}
 		db.bdp = nil
 		db.options = nil

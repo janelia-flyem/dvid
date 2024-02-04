@@ -375,6 +375,7 @@ func Shutdown() {
 	}
 	datastore.Shutdown()
 	dvid.BlockOnActiveCgo()
+	storage.Shutdown()
 	rpc.Shutdown()
 	dvid.Shutdown()
 	shutdownCh <- struct{}{}
