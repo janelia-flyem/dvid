@@ -106,13 +106,16 @@ func parseConfig(config dvid.StoreConfig) (path string, testing bool, err error)
 
 // Periodically sync to prevent too many writes from being buffered
 // if server crashes.
-func syncPeriodically(db *badger.DB) {
+func syncPeriodically(db *BadgerDB) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
+		case <-db.stopSyncCh:
+			dvid.Infof("Stopping sync goroutine for badger @ %s\n", db.directory)
+			return
 		case <-ticker.C:
-			db.Sync()
+			db.bdp.Sync()
 		}
 	}
 }
@@ -148,9 +151,10 @@ func (e Engine) newDB(config dvid.StoreConfig) (*BadgerDB, bool, error) {
 	opts.ValueThreshold = 100
 
 	badgerDB := &BadgerDB{
-		directory: path,
-		config:    config,
-		options:   opts,
+		directory:  path,
+		config:     config,
+		options:    opts,
+		stopSyncCh: make(chan bool),
 	}
 
 	dvid.TimeInfof("Opening badger @ path %s\n", path)
@@ -160,7 +164,7 @@ func (e Engine) newDB(config dvid.StoreConfig) (*BadgerDB, bool, error) {
 	}
 	badgerDB.bdp = bdp
 
-	go syncPeriodically(bdp)
+	go syncPeriodically(badgerDB)
 
 	// if we know it's newly created, just return.
 	if created {
@@ -235,6 +239,9 @@ type BadgerDB struct {
 
 	options *badger.Options
 	bdp     *badger.DB
+
+	// stopSyncCh is used to signal the sync goroutine to stop.
+	stopSyncCh chan bool
 }
 
 // Close closes the BadgerDB
