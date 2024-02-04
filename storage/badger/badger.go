@@ -248,6 +248,7 @@ type BadgerDB struct {
 func (db *BadgerDB) Close() {
 	if db != nil {
 		if db.bdp != nil {
+			db.stopSyncCh <- true
 			db.bdp.Close()
 			dvid.Infof("Closed Badger DB @ %s\n", db.directory)
 		}
