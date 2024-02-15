@@ -2248,6 +2248,13 @@ func TestMergeCleave(t *testing.T) {
 		t.Errorf("Expected supervoxel 4 original voxels to remain.  Instead some were removed.\n")
 	}
 
+	// Verify using existing label streaming endpoint.
+	reqStr = fmt.Sprintf("%snode/%s/labels/existing-labels", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
+	if string(r) != "[1,2,4]" {
+		t.Errorf("expected [1,2,4] from /existing-labels but got %s\n", string(r))
+	}
+
 	// Cleave supervoxel 3 out of label 4.
 	reqStr = fmt.Sprintf("%snode/%s/labels/cleave/4?u=mrsmith&app=myapp", server.WebAPIPath, uuid)
 	r = server.TestHTTP(t, "POST", reqStr, bytes.NewBufferString("[3]"))

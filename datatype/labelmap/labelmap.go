@@ -1484,6 +1484,15 @@ POST <api URL>/node/<UUID>/<data name>/index/<label>
 		   a 404 not found is returned.
 
 	
+GET <api URL>/node/<UUID>/<data name>/existing-labels
+
+	Streams JSON list of all existing labels in the most computationally efficient manner,
+	particularly when backed by a Badger key-value store or other backend that has fast
+	key scans.
+
+	Note that because the data is streamed over HTTP, an error code cannot be sent once data is 
+	in flight.
+
 GET <api URL>/node/<UUID>/<data name>/listlabels[?queryopts]
 
 	Streams labels and optionally their voxel counts in numerical order up to a maximum
@@ -2885,6 +2894,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 	case "labels":
 		d.handleLabels(ctx, w, r)
+
+	case "existing-labels":
+		d.handleExistingLabels(ctx, w, r)
 
 	case "listlabels":
 		d.handleListLabels(ctx, w, r)

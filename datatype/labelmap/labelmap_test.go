@@ -1261,10 +1261,17 @@ func TestMultiscaleIngest(t *testing.T) {
 	server.TestBadHTTP(t, "GET", reqStr, nil)
 
 	reqStr = fmt.Sprintf("%snode/%s/labels/sizes", server.WebAPIPath, uuid)
-	bodystr := "[1, 2, 3, 13, 209, 311]"
+	bodystr := "[1,2,3,13,209,311]"
 	r := server.TestHTTP(t, "GET", reqStr, bytes.NewBufferString(bodystr))
 	if string(r) != "[64000,64000,0,64000,64000,64000]" {
 		t.Errorf("bad batch sizes result.  got: %s\n", string(r))
+	}
+
+	// Verify the existing label streaming endpoint.
+	reqStr = fmt.Sprintf("%snode/%s/labels/existing-labels", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
+	if string(r) != "[1,2,13,209,311]" {
+		t.Errorf("expected [1,2,13,209,311] from /existing-labels but got %s\n", string(r))
 	}
 
 	// Verify the label streaming endpoint.

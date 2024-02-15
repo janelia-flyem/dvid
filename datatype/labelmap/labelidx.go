@@ -1765,6 +1765,62 @@ func (d *Data) indexThread(f *os.File, mu *sync.Mutex, wg *sync.WaitGroup, chunk
 	}
 }
 
+// scan all label indices for the presence of its key, writing existing key's body id
+// into a stream and/or setting it in an internal map.
+func (d *Data) writeExistingIndices(ctx *datastore.VersionedCtx, w http.ResponseWriter, bodymap map[uint64]struct{}) error {
+	timedLog := dvid.NewTimeLog()
+
+	store, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return fmt.Errorf("problem getting store for data %q: %v", d.DataName(), err)
+	}
+
+	minTKey := NewLabelIndexTKey(0)
+	maxTKey := NewLabelIndexTKey(math.MaxUint64)
+	keyChan := make(storage.KeyChan)
+	go func() {
+		store.SendKeysInRange(ctx, minTKey, maxTKey, keyChan)
+		close(keyChan)
+	}()
+
+	if w != nil {
+		w.Header().Set("Content-type", "application/json")
+		fmt.Fprintf(w, "[")
+	}
+
+	var numExist uint64
+	for key := range keyChan {
+		if key != nil {
+			tkey, err := storage.TKeyFromKey(key)
+			if err != nil {
+				dvid.Errorf("Unable to get TKey from key %v for data %q: %v\n", key, d.DataName(), err)
+				continue
+			}
+			label, err := DecodeLabelIndexTKey(tkey)
+			if err != nil {
+				dvid.Errorf("Couldn't decode label index key %v for data %q\n", key, d.DataName())
+				continue
+			}
+			if bodymap != nil {
+				bodymap[label] = struct{}{}
+			}
+			if w != nil {
+				if numExist > 0 {
+					fmt.Fprintf(w, ",")
+				}
+				fmt.Fprintf(w, "%d", label)
+			}
+			numExist++
+		}
+	}
+	if w != nil {
+		fmt.Fprintf(w, "]")
+	}
+
+	timedLog.Infof("Finished writing %d existing label indices.", numExist)
+	return nil
+}
+
 // scan all label indices in this labelmap instance, writing Blocks data into a given file
 func (d *Data) writeIndices(f *os.File, outPath string, v dvid.VersionID) {
 	timedLog := dvid.NewTimeLog()

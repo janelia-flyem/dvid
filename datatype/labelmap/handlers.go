@@ -433,6 +433,19 @@ func (d *Data) handleIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 	timedLog.Infof("HTTP %s index for label %d (%s)", r.Method, label, r.URL)
 }
 
+func (d *Data) handleExistingLabels(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+	// GET <api URL>/node/<UUID>/<data name>/existing-labels
+
+	if strings.ToLower(r.Method) != "get" {
+		server.BadRequest(w, r, "only GET action allowed for /existing-labels endpoint")
+		return
+	}
+
+	if err := d.writeExistingIndices(ctx, w, nil); err != nil {
+		dvid.Errorf("unable to write existing labels: %v", err)
+	}
+}
+
 func (d *Data) handleListLabels(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	// GET <api URL>/node/<UUID>/<data name>/listlabels
 	const MaxReturnedLabels = 10000000
