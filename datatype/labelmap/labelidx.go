@@ -1777,7 +1777,7 @@ func (d *Data) writeExistingIndices(ctx *datastore.VersionedCtx, w http.Response
 
 	minTKey := NewLabelIndexTKey(0)
 	maxTKey := NewLabelIndexTKey(math.MaxUint64)
-	keyChan := make(storage.KeyChan)
+	keyChan := make(storage.KeyChan, 1000)
 	go func() {
 		store.SendKeysInRange(ctx, minTKey, maxTKey, keyChan)
 		close(keyChan)
@@ -1811,6 +1811,9 @@ func (d *Data) writeExistingIndices(ctx *datastore.VersionedCtx, w http.Response
 				fmt.Fprintf(w, "%d", label)
 			}
 			numExist++
+			if numExist%10000 == 0 {
+				timedLog.Infof("Found %d existing labels, currently at %d", numExist, label)
+			}
 		}
 	}
 	if w != nil {
