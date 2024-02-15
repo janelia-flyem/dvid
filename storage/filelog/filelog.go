@@ -441,10 +441,10 @@ func (flogs *fileLogs) TopicClose(topic string) error {
 
 func (flogs *fileLogs) Close() {
 	flogs.Lock()
-	for _, flogs := range flogs.files {
-		err := flogs.Close()
+	for _, flog := range flogs.files {
+		err := flog.Close()
 		if err != nil {
-			dvid.Errorf("closing log file %q: %v\n", flogs.Name(), err)
+			dvid.Errorf("closing log file %q: %v\n", flog.Name(), err)
 		}
 	}
 	flogs.Unlock()
