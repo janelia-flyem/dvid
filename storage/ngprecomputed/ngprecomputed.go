@@ -10,7 +10,6 @@ import (
 	"image"
 	"image/jpeg"
 	"io"
-	"io/ioutil"
 	"math"
 	"strings"
 	"sync"
@@ -150,12 +149,10 @@ func (e Engine) newStore(config dvid.StoreConfig) (*ngStore, bool, error) {
 	var bucket *blob.Bucket
 
 	if strings.HasPrefix(ref, "s3://") {
-		// This relies on the non-GCS-specific blob API
-		// This relies on the non-GCS-specific blob API
-		// and requires that the user:
+		// S3 handler contributed by Flatiron (pgunn)
+		// This relies on the non-GCS-specific blob API and requires that the user:
 		// A: Have set up AWS credentials in ways gocloud can find them (see the "aws config" command)
 		// B: Have set the AWS_REGION environment variable (usually to us-east-2)
-		var err error
 		bucket, err = blob.OpenBucket(ctx, ref)
 		if err != nil {
 			dvid.Errorf("Can't open NG precomputed @ %q: %v\n", ref, err)
@@ -164,11 +161,36 @@ func (e Engine) newStore(config dvid.StoreConfig) (*ngStore, bool, error) {
 		pathpart := strings.TrimPrefix(ref, "s3://")
 		pathpart = strings.SplitN(pathpart, "/", 2)[1] // Remove the bucket name
 		bucket = blob.PrefixedBucket(bucket, pathpart)
+
+	} else if strings.HasPrefix(ref, "vast://") {
+		// VAST S3-compatible storage
+		// The ref should be of form "vast://<endpoint>/<bucket>" where
+		// <endpoint> is the VAST endpoint and <bucket> is the bucket name.
+		// The following endpoints must be set:
+		//  AWS_REGION: ignored but must be set for this cross-cloud library
+		//  AWS_SHARED_CREDENTIALS_FILE: path to a file with AWS credentials that
+		//     should be in form:
+		//	 [default]
+		//	 aws_access_key_id = <access key>
+		//	 aws_secret_access_key = <secret key>
+		ref := strings.TrimPrefix(ref, "vast://")
+		ref_parts := strings.SplitN(ref, "/", 2)
+		if len(ref_parts) != 2 {
+			return nil, false, fmt.Errorf("vast ref must be of form 'vast://<endpoint>/<bucket>'")
+		}
+		endpoint := ref_parts[0]
+		bucketname := ref_parts[1]
+		url := fmt.Sprintf("s3://%s?endpoint=%s&s3ForcePathStyle=true", bucketname, endpoint)
+		bucket, err = blob.OpenBucket(ctx, url)
+		if err != nil {
+			dvid.Errorf("Can't open NG precomputed @ %q: %v\n", ref, err)
+			return nil, false, err
+		}
+
 	} else {
 		// In this case default to Google Store authentication as DVID did before
 		// See https://cloud.google.com/docs/authentication/production
 		// for more info on alternatives.
-		var err error
 		creds, err := gcp.DefaultCredentials(ctx)
 		if err != nil {
 			return nil, false, err
@@ -231,7 +253,7 @@ func gzipUncompress(in []byte) (out []byte, err error) {
 		err = fmt.Errorf("can't uncompress gzip data: %v", err)
 		return
 	}
-	out, err = ioutil.ReadAll(zr)
+	out, err = io.ReadAll(zr)
 	if err != nil {
 		err = fmt.Errorf("can't read gzip data: %v", err)
 		return
@@ -368,19 +390,6 @@ type valueLoc struct {
 	size uint64 // size of value in bytes
 }
 
-// log2 returns the power of 2 necessary to cover the given value.
-func log2(value int32) uint8 {
-	var exp uint8
-	pow := int32(1)
-	for {
-		if pow >= value {
-			return exp
-		}
-		pow *= 2
-		exp++
-	}
-}
-
 func (ng *ngStore) initialize() error {
 	//if ng.vol.StoreType != "neuroglancer_multiscale_volume" {
 	//	return fmt.Errorf("NG Store volume type %q != neuroglancer_multiscale_volume", ng.vol.StoreType)
@@ -425,7 +434,7 @@ func (ng *ngStore) initialize() error {
 			dvid.Infof("Scale %d minishard mask: %0*x\n", n, 16, ng.vol.Scales[n].minishardMask)
 			dvid.Infof("Scale %d     shard mask: %0*x\n", n, 16, ng.vol.Scales[n].shardMask)
 		default:
-			return fmt.Errorf("Scale %d has unexpected shard type: %s", n, scale.Sharding.FormatType)
+			return fmt.Errorf("scale %d has unexpected shard type: %s", n, scale.Sharding.FormatType)
 		}
 	}
 	return nil
@@ -443,7 +452,7 @@ func (ng *ngStore) read(key string) (data []byte, err error) {
 		return nil, err
 	}
 	defer r.Close()
-	return ioutil.ReadAll(r)
+	return io.ReadAll(r)
 }
 
 // returns nil/nil if key does not exist.
@@ -735,7 +744,7 @@ func (ng *ngStore) loadMinishardMap(scale *ngScale, shardFile string, shard *sha
 // GridProperties returns properties of a GridStore.
 func (ng *ngStore) GridProperties(scaleLevel int) (props storage.GridProps, err error) {
 	if scaleLevel < 0 || scaleLevel >= len(ng.vol.Scales) {
-		err = fmt.Errorf("Cannot get grid properties for bad scale %d (only %d scales)", scaleLevel, len(ng.vol.Scales))
+		err = fmt.Errorf("cannot get grid properties for bad scale %d (only %d scales)", scaleLevel, len(ng.vol.Scales))
 		return
 	}
 	scaleProps := ng.vol.Scales[scaleLevel]
@@ -794,7 +803,7 @@ func (ng *ngStore) GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) (val []
 			return
 		}
 		if minishardMap == nil {
-			return nil, fmt.Errorf("No minishard map found in shard %q for minishard %d\n", shardFile, minishard)
+			return nil, fmt.Errorf("no minishard map found in shard %q for minishard %d", shardFile, minishard)
 		}
 
 		loc, found := minishardMap[chunkID]
