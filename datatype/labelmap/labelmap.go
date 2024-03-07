@@ -1608,19 +1608,12 @@ GET <api URL>/node/<UUID>/<data name>/mutations[?queryopts]
 				 is the requester's User ID (not necessarily the same as the
 				 User ID whose mutations are being requested).
 
-GET <api URL>/node/<UUID>/<data name>/mutations-range/<beg>/<end>?rangefmt=<format>
 
-	Returns JSON list of the successfully completed mutations across a given
-	range. The range format of parameters <beg> and <end> is specified by the 
-	value of the "rangefmt" query string:
+GET <api URL>/node/<UUID>/<data name>/mutations-range/<beg>/<end>
 
-		default:  If no query string is given, the range is in the form of
-					version UUIDs.
-
-		--- The following are not yet implemented ---
-		"mutids":  The range is in the form of mutation IDs (uint64).
-
-		"timestamps":  The range is in the form of RFC 3339 timestamps.
+	Returns JSON list of the successfully completed mutations across the given
+	range of UUIDs.  Each mutation record format is equivalent to the JSON
+	provided to the Kafka mutation log as in the /mutations endpoint. 
 
 
 GET <api URL>/node/<UUID>/<data name>/history/<label>/<from UUID>/<to UUID>

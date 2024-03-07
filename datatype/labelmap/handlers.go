@@ -706,7 +706,14 @@ func (d *Data) handleMutations(ctx *datastore.VersionedCtx, w http.ResponseWrite
 }
 
 func (d *Data) handleMutationsRange(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
-	// GET <api URL>/node/<UUID>/<data name>/mutations-range/<beg>/<end>?rangefmt=<format>
+	// GET <api URL>/node/<UUID>/<data name>/mutations-range/<beg>/<end>
+	// TODO: If feedback requests it, add querystring ?rangefmt=<format>
+	//       The range format of parameters <beg> and <end> is specified by the
+	//		 value of the "rangefmt" query string:
+	// 		 	default:  If no query string is given, the range is in the form of version UUIDs.
+	// 			"mutids":  The range is in the form of mutation IDs (uint64).
+	// 			"timestamps":  The range is in the form of RFC 3339 timestamps.
+
 	timedLog := dvid.NewTimeLog()
 
 	queryStrings := r.URL.Query()
