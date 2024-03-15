@@ -141,7 +141,7 @@ func SetSyncByJSON(d dvid.Data, uuid dvid.UUID, replace bool, in io.ReadCloser) 
 	for _, name := range syncedNames {
 		data, err := GetDataByUUIDName(uuid, dvid.InstanceName(name))
 		if err != nil {
-			return err
+			return fmt.Errorf("issue with requested sync name %q: %v", name, err)
 		}
 		syncs[data.DataUUID()] = struct{}{}
 	}
