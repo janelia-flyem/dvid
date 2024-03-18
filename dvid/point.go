@@ -116,16 +116,14 @@ type ChunkPoint interface {
 func NewPoint(values []int32) (Point, error) {
 	switch len(values) {
 	case 0, 1:
-		return nil, fmt.Errorf("No Point implementation for 0 or 1-d slice")
+		return nil, fmt.Errorf("no Point implementation for 0 or 1-d slice")
 	case 2:
 		return Point2d{values[0], values[1]}, nil
 	case 3:
 		return Point3d{values[0], values[1], values[2]}, nil
 	default:
 		p := make(PointNd, len(values))
-		for i, value := range values {
-			p[i] = value
-		}
+		copy(p, values)
 		return p, nil
 	}
 }
@@ -158,10 +156,6 @@ func BlockAligned(geom Bounder, blockSize Point) bool {
 
 const CoordinateBits = 32
 
-// The middle value of a 32 bit space.  This should match the # of bits
-// used for coordinates.
-var middleValue int64 = 1 << (CoordinateBits - 1)
-
 // Point2d is a 2d point.
 type Point2d [2]int32
 
@@ -192,7 +186,7 @@ func (p Point2d) Value(dim uint8) int32 {
 // CheckedValue returns the point's value for the specified dimension and checks dim bounds.
 func (p Point2d) CheckedValue(dim uint8) (int32, error) {
 	if dim >= 2 {
-		return 0, fmt.Errorf("Cannot return dimension %d of 2d point!", dim)
+		return 0, fmt.Errorf("cannot return dimension %d of 2d point", dim)
 	}
 	return p[dim], nil
 }
@@ -460,7 +454,7 @@ func (p Point3d) Value(dim uint8) int32 {
 // CheckedValue returns the point's value for the specified dimension and checks dim bounds.
 func (p Point3d) CheckedValue(dim uint8) (int32, error) {
 	if dim >= 3 {
-		return 0, fmt.Errorf("Cannot return dimension %d of 3d point!", dim)
+		return 0, fmt.Errorf("cannot return dimension %d of 3d point", dim)
 	}
 	return p[dim], nil
 }
@@ -693,7 +687,7 @@ func GetPoint3dFrom2d(plane DataShape, p2d Point2d, fill int32) (Point3d, error)
 		p[1] = p2d[0]
 		p[2] = p2d[1]
 	default:
-		return Point3d{}, fmt.Errorf("Invalid 2d plane: %s", plane)
+		return Point3d{}, fmt.Errorf("invalid 2d plane: %s", plane)
 	}
 	return p, nil
 }
@@ -712,7 +706,7 @@ func (p Point3d) Expand2d(plane DataShape, size Point2d) (Point3d, error) {
 		p[1] += size[0]
 		p[2] += size[1]
 	default:
-		return Point3d{}, fmt.Errorf("Can't expand 3d point by %s", plane)
+		return Point3d{}, fmt.Errorf("can't expand 3d point by %s", plane)
 	}
 	return pt, nil
 }
@@ -752,7 +746,7 @@ func (p Point3d) ToZYXBytes() []byte {
 // FromZYXBytes sets a point from an encoded slice.
 func (p *Point3d) FromZYXBytes(zyx []byte) error {
 	if len(zyx) != 12 {
-		return fmt.Errorf("Illegal byte length (%d) for ZYXString", len(zyx))
+		return fmt.Errorf("illegal byte length (%d) for ZYXString", len(zyx))
 	}
 	z := int32(int64(binary.BigEndian.Uint32(zyx[0:4])) + math.MinInt32)
 	y := int32(int64(binary.BigEndian.Uint32(zyx[4:8])) + math.MinInt32)
@@ -852,7 +846,7 @@ func (p PointNd) Value(dim uint8) int32 {
 // CheckedValue returns the point's value for the specified dimension and checks dim bounds.
 func (p PointNd) CheckedValue(dim uint8) (int32, error) {
 	if int(dim) >= len(p) {
-		return 0, fmt.Errorf("Cannot return dimension %d of %d-d point!", dim, len(p))
+		return 0, fmt.Errorf("cannot return dimension %d of %d-d point", dim, len(p))
 	}
 	return p[dim], nil
 }
@@ -1200,7 +1194,7 @@ func (c ChunkPoint3d) MaxPoint(size Point) Point {
 func StringToChunkPoint3d(str, separator string) (pt ChunkPoint3d, err error) {
 	elems := strings.Split(str, separator)
 	if len(elems) != 3 {
-		err = fmt.Errorf("Cannot convert %q into a ChunkPoint3d", str)
+		err = fmt.Errorf("cannot convert %q into a ChunkPoint3d", str)
 		return
 	}
 	return NdString(elems).ChunkPoint3d()
@@ -1254,7 +1248,7 @@ func (c ChunkPointNd) MaxPoint(size Point) Point {
 func SliceToPoint(coord []int32) (p Point, err error) {
 	switch len(coord) {
 	case 0, 1:
-		return nil, fmt.Errorf("Cannot convert 0 or 1 integers into a Point")
+		return nil, fmt.Errorf("cannot convert 0 or 1 integers into a Point")
 	case 2:
 		return Point2d{coord[0], coord[1]}, nil
 	case 3:
@@ -1287,7 +1281,7 @@ func StringToPoint(str, separator string) (p Point, err error) {
 	elems := strings.Split(str, separator)
 	switch len(elems) {
 	case 0, 1:
-		return nil, fmt.Errorf("Cannot convert '%s' into a Point.", str)
+		return nil, fmt.Errorf("cannot convert '%s' into a Point.", str)
 	case 2:
 		p, err = NdString(elems).Point2d()
 	case 3:
@@ -1306,7 +1300,7 @@ type Vector3d [3]float64
 func StringToVector3d(str, separator string) (Vector3d, error) {
 	elems := strings.Split(str, separator)
 	if len(elems) != 3 {
-		return Vector3d{}, fmt.Errorf("Can't convert string '%s' (length %d) to Vector3d", str, len(elems))
+		return Vector3d{}, fmt.Errorf("can't convert string '%s' (length %d) to Vector3d", str, len(elems))
 	}
 	var v Vector3d
 	var err error
@@ -1372,7 +1366,7 @@ func (n NdFloat32) Equals(n2 NdFloat32) bool {
 
 // GetMin returns the minimum element of the N-dimensional float.
 func (n NdFloat32) GetMin() float32 {
-	if n == nil || len(n) == 0 {
+	if len(n) == 0 {
 		Criticalf("GetMin() called on bad ndfloat32!")
 		return 0.0
 	}
@@ -1387,7 +1381,7 @@ func (n NdFloat32) GetMin() float32 {
 
 // GetMax returns the maximum element of the N-dimensional float.
 func (n NdFloat32) GetMax() float32 {
-	if n == nil || len(n) == 0 {
+	if len(n) == 0 {
 		Criticalf("GetMax() called on bad ndfloat32!")
 		return 0.0
 	}
@@ -1434,7 +1428,7 @@ func StringToNdString(str, separator string) (nd NdString, err error) {
 
 func (n NdString) Point2d() (p Point2d, err error) {
 	if len(n) != 2 {
-		err = fmt.Errorf("Cannot parse into a 2d point")
+		err = fmt.Errorf("cannot parse into a 2d point")
 		return
 	}
 	var i, j int64
@@ -1451,7 +1445,7 @@ func (n NdString) Point2d() (p Point2d, err error) {
 
 func (n NdString) Point3d() (p Point3d, err error) {
 	if len(n) != 3 {
-		err = fmt.Errorf("Cannot parse into a 3d point")
+		err = fmt.Errorf("cannot parse into a 3d point")
 		return
 	}
 	var i, j, k int64
@@ -1472,7 +1466,7 @@ func (n NdString) Point3d() (p Point3d, err error) {
 
 func (n NdString) ChunkPoint3d() (p ChunkPoint3d, err error) {
 	if len(n) != 3 {
-		err = fmt.Errorf("Cannot parse into a 3d chunk point")
+		err = fmt.Errorf("cannot parse into a 3d chunk point")
 		return
 	}
 	var i, j, k int64
@@ -1931,20 +1925,18 @@ func (s Spans) MarshalBinary() ([]byte, error) {
 	if err := binary.Write(buf, binary.LittleEndian, uint32(len(s))); err != nil {
 		return nil, err
 	}
-	if s != nil {
-		for _, span := range s {
-			if err := binary.Write(buf, binary.LittleEndian, span[2]); err != nil {
-				return nil, err
-			}
-			if err := binary.Write(buf, binary.LittleEndian, span[1]); err != nil {
-				return nil, err
-			}
-			if err := binary.Write(buf, binary.LittleEndian, span[0]); err != nil {
-				return nil, err
-			}
-			if err := binary.Write(buf, binary.LittleEndian, span[3]-span[2]+1); err != nil {
-				return nil, err
-			}
+	for _, span := range s {
+		if err := binary.Write(buf, binary.LittleEndian, span[2]); err != nil {
+			return nil, err
+		}
+		if err := binary.Write(buf, binary.LittleEndian, span[1]); err != nil {
+			return nil, err
+		}
+		if err := binary.Write(buf, binary.LittleEndian, span[0]); err != nil {
+			return nil, err
+		}
+		if err := binary.Write(buf, binary.LittleEndian, span[3]-span[2]+1); err != nil {
+			return nil, err
 		}
 	}
 	return buf.Bytes(), nil
@@ -1961,7 +1953,7 @@ func (s *Spans) UnmarshalBinary(b []byte) error {
 		*s = Spans{}
 		return nil
 	}
-	*s = make(Spans, int(numSpans), int(numSpans))
+	*s = make(Spans, int(numSpans))
 	for i := uint32(0); i < numSpans; i++ {
 		if err := binary.Read(buf, binary.LittleEndian, &((*s)[i][2])); err != nil {
 			return err
@@ -1998,7 +1990,7 @@ func (s Spans) Less(i, j int) bool {
 // Normalize returns a sorted and merged list of Span.  Spans are in z, y, then x order.
 // Any adjacent spans are merged into a larger span.
 func (s Spans) Normalize() Spans {
-	if s == nil || len(s) == 0 {
+	if len(s) == 0 {
 		return Spans{}
 	}
 
@@ -2036,7 +2028,7 @@ type Resolution struct {
 }
 
 // Set3dNanometers sets a resolution to the given pt with "nanometers" units
-func (r Resolution) Set3dNanometers(pt Point3d) {
+func (r *Resolution) Set3dNanometers(pt Point3d) {
 	r.VoxelSize = make(NdFloat32, 3)
 	r.VoxelUnits = make(NdString, 3)
 	for i := 0; i < 3; i++ {
@@ -2046,7 +2038,7 @@ func (r Resolution) Set3dNanometers(pt Point3d) {
 }
 
 // Set3dNanometers sets a resolution to the given pt with "nanometers" units
-func (r Resolution) Set3dNanometersFloat(res [3]float64) {
+func (r *Resolution) Set3dNanometersFloat(res [3]float64) {
 	r.VoxelSize = make(NdFloat32, 3)
 	r.VoxelUnits = make(NdString, 3)
 	for i := 0; i < 3; i++ {
