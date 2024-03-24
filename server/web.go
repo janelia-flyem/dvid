@@ -1516,7 +1516,7 @@ func latenciesHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, string(m))
 }
 
-func serverStorageHandler(c *web.C, w http.ResponseWriter, r *http.Request) {
+func serverStorageHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	adminPriv := c.Env["adminPriv"].(bool)
 	if !adminPriv {
 		BadRequest(w, r, "Storage summary takes considerable resources and is only available to admin users.")
