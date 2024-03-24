@@ -852,10 +852,11 @@ func GetStorageSummary() (string, error) {
 	}
 
 	// Convert data to JSON string
-	m, err := json.Marshal(breakdown)
+	m, err := json.MarshalIndent(breakdown, "", "  ")
 	if err != nil {
 		return "", err
 	}
+	dvid.Infof("Key usage:\n%s\n", string(m))
 	return string(m), nil
 }
 

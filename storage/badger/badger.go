@@ -301,6 +301,7 @@ func (db *BadgerDB) GetKeyUsage(ranges []storage.KeyRange) (hitsPerInstance []ma
 		opts.PrefetchValues = false
 		it := txn.NewIterator(opts)
 		defer it.Close()
+		dvid.Infof("Checking key usage for Badger @ %s ...\n", db.directory)
 		for i, kr := range ranges {
 			// Allocate histogram for this key range (i.e., a data instance)
 			hitsPerInstance[i] = make(map[int]int)
@@ -316,9 +317,7 @@ func (db *BadgerDB) GetKeyUsage(ranges []storage.KeyRange) (hitsPerInstance []ma
 
 				// Add version to the stats for this key.
 				if bytes.Compare(kv.K, maxVersionKey) > 0 {
-					if storage.Key(kv.K).IsDataKey() {
-						maxVersionKey = storage.MaxVersionDataKeyFromKey(kr.Start)
-					}
+					maxVersionKey = storage.MaxVersionDataKeyFromKey(kv.K)
 					hitsPerInstance[i][numVersions]++
 					numVersions = 0
 				}
@@ -331,6 +330,7 @@ func (db *BadgerDB) GetKeyUsage(ranges []storage.KeyRange) (hitsPerInstance []ma
 
 			}
 		}
+		dvid.Infof("Key usage for Badger @ %s:\n  %v\n", db.directory, hitsPerInstance)
 		return nil
 	})
 	return
