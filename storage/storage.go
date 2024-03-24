@@ -159,13 +159,55 @@ func NewStore(c dvid.StoreConfig) (db dvid.Store, created bool, err error) {
 func Repair(name, path string) error {
 	e := GetEngine(name)
 	if e == nil {
-		return fmt.Errorf("Could not find engine with name %q", name)
+		return fmt.Errorf("could not find engine with name %q", name)
 	}
 	repairer, ok := e.(RepairableEngine)
 	if !ok {
-		return fmt.Errorf("Engine %q has no capability to be repaired.", name)
+		return fmt.Errorf("engine %q has no capability to be repaired", name)
 	}
 	return repairer.Repair(path)
+}
+
+// KeyUsageViewer stores can return how many keys are stored and a histogram of the
+// number of versions per key for each data instance given by the key ranges.
+type KeyUsageViewer interface {
+	GetKeyUsage(ranges []KeyRange) (histPerInstance []map[int]int, err error)
+}
+
+// GetStoreKeyUsage returns a histogram of the number of versions per key for each
+// data instance in the store.
+func GetStoreKeyUsage(store dvid.Store) (map[dvid.InstanceID]map[int]int, error) {
+	db, ok := store.(OrderedKeyValueGetter)
+	if !ok {
+		dvid.Infof("Cannot get data sizes for store %s, which is not an OrderedKeyValueGetter store\n", db)
+		return nil, nil
+	}
+	viewer, ok := store.(KeyUsageViewer)
+	if !ok {
+		dvid.Infof("Cannot get key usage for store %s, which is not a KeyUsageViewer store\n", db)
+		return nil, nil
+	}
+
+	// Scan store and get all instances.
+	var ids []dvid.InstanceID
+	var curID dvid.InstanceID
+	for {
+		var done bool
+		var err error
+		curID, done, err = getNextInstance(db, curID)
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			break
+		}
+		ids = append(ids, curID)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	return getKeyUsage(viewer, ids)
 }
 
 // SizeViewer stores are able to return the size in bytes stored for a given range of Key.
@@ -182,12 +224,12 @@ type SizeViewer interface {
 func GetDataSizes(store dvid.Store, instances []dvid.InstanceID) (map[dvid.InstanceID]uint64, error) {
 	db, ok := store.(OrderedKeyValueGetter)
 	if !ok {
-		dvid.Infof("Cannot get data sizes for store %s, which is not an OrderedKeyValueGetter store", db)
+		dvid.Infof("Cannot get data sizes for store %s, which is not an OrderedKeyValueGetter store\n", db)
 		return nil, nil
 	}
 	sv, ok := db.(SizeViewer)
 	if !ok {
-		dvid.Infof("Cannot get data sizes for store %s, which is not an SizeViewer store", db)
+		dvid.Infof("Cannot get data sizes for store %s, which is not an SizeViewer store\n", db)
 		return nil, nil
 	}
 	// Handle prespecified instance IDs.

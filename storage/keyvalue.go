@@ -1,47 +1,47 @@
 /*
-	Package storage provides a unified interface to a number of storage engines.
-	Since each storage engine has different capabilities, this package defines a
-	number of interfaces in addition to the core Engine interface, which all
-	storage engines should satisfy.
+Package storage provides a unified interface to a number of storage engines.
+Since each storage engine has different capabilities, this package defines a
+number of interfaces in addition to the core Engine interface, which all
+storage engines should satisfy.
 
-	Keys are specified as a combination of Context and a datatype-specific byte slice,
-	typically called an "type-specific key" (TKey) in DVID docs and code.  The Context
-	provides DVID-wide namespacing and as such, must use one of the Context implementations
-	within the storage package.  (This is enforced by making Context a Go opaque interface.)
-	The type-specific key formatting is entirely up to the datatype designer, although
-	use of dvid.Index is suggested.
+Keys are specified as a combination of Context and a datatype-specific byte slice,
+typically called an "type-specific key" (TKey) in DVID docs and code.  The Context
+provides DVID-wide namespacing and as such, must use one of the Context implementations
+within the storage package.  (This is enforced by making Context a Go opaque interface.)
+The type-specific key formatting is entirely up to the datatype designer, although
+use of dvid.Index is suggested.
 
-	Initially we are concentrating on key-value backends but expect to support
-	graph and perhaps relational databases, either using specialized databases
-	or software layers on top of an ordered key-value store.
+Initially we are concentrating on key-value backends but expect to support
+graph and perhaps relational databases, either using specialized databases
+or software layers on top of an ordered key-value store.
 
-	Although we assume lexicographically ordering for range queries, there is some
-	variation in how variable size keys are treated.  We assume all storage engines,
-	after appropriate DVID drivers, use the following definition of ordering:
+Although we assume lexicographically ordering for range queries, there is some
+variation in how variable size keys are treated.  We assume all storage engines,
+after appropriate DVID drivers, use the following definition of ordering:
 
-		A string s precedes a string t in lexicographic order if:
+	A string s precedes a string t in lexicographic order if:
 
-		* s is a prefix of t, or
-		* if c and d are respectively the first character of s and t in which s and t differ,
-		  then c precedes d in character order.
-		* if s and t are equivalent for all of s, but t is longer
+	* s is a prefix of t, or
+	* if c and d are respectively the first character of s and t in which s and t differ,
+	  then c precedes d in character order.
+	* if s and t are equivalent for all of s, but t is longer
 
-		Note: For the characters that are alphabetical letters, the character order coincides
-		with the alphabetical order. Digits precede letters, and uppercase letters precede
-		lowercase ones.
+	Note: For the characters that are alphabetical letters, the character order coincides
+	with the alphabetical order. Digits precede letters, and uppercase letters precede
+	lowercase ones.
 
-		Examples:
+	Examples:
 
-		composer precedes computer
-		house precedes household
-		Household precedes house
-		H2O precedes HOTEL
-		mydex precedes mydexterity
+	composer precedes computer
+	house precedes household
+	Household precedes house
+	H2O precedes HOTEL
+	mydex precedes mydexterity
 
-		Note that the above is different than shortlex order, which would group strings
-		based on length first.
+	Note that the above is different than shortlex order, which would group strings
+	based on length first.
 
-	The above lexicographical ordering is used by default for levedb variants.
+The above lexicographical ordering is used by default for levedb variants.
 */
 package storage
 
@@ -446,4 +446,25 @@ func getInstanceSizes(sv SizeViewer, instances []dvid.InstanceID) (map[dvid.Inst
 		sizes[curID] = s[i]
 	}
 	return sizes, nil
+}
+
+func getKeyUsage(vw KeyUsageViewer, instances []dvid.InstanceID) (map[dvid.InstanceID]map[int]int, error) {
+	ranges := make([]KeyRange, len(instances))
+	for i, curID := range instances {
+		beg := constructDataKey(curID, 0, 0, minTKey)
+		end := constructDataKey(curID+1, 0, 0, minTKey)
+		ranges[i] = KeyRange{Start: beg, OpenEnd: end}
+	}
+	s, err := vw.GetKeyUsage(ranges)
+	if err != nil {
+		return nil, err
+	}
+	if len(s) != len(instances) {
+		return nil, fmt.Errorf("only got back %d instance key usages, not the requested %d instances", len(s), len(instances))
+	}
+	keyUsage := make(map[dvid.InstanceID]map[int]int, len(instances))
+	for i, curID := range instances {
+		keyUsage[curID] = s[i]
+	}
+	return keyUsage, nil
 }

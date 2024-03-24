@@ -657,3 +657,17 @@ func MaxVersionDataKey(d dvid.InstanceID, tk TKey) (Key, error) {
 	key = append(key, dvid.ClientID(dvid.MaxClientID).Bytes()...)
 	return append(key, 0xFF), nil
 }
+
+// MaxVersionDataKeyFromKey returns upper bound key from a full key..
+func MaxVersionDataKeyFromKey(key Key) Key {
+	maxKey := make([]byte, len(key))
+	copy(maxKey, key)
+
+	// Set version and client ids to max
+	start := len(maxKey) - dvid.VersionIDSize - dvid.ClientIDSize - 1
+	copy(maxKey[start:start+dvid.VersionIDSize], dvid.VersionID(dvid.MaxVersionID).Bytes())
+	start += dvid.VersionIDSize
+	copy(maxKey[start:start+dvid.ClientIDSize], dvid.ClientID(dvid.MaxClientID).Bytes())
+	maxKey[len(maxKey)-1] = 0xFF
+	return Key(maxKey)
+}

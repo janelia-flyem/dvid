@@ -784,6 +784,15 @@ func GetStorageDetails() (map[string]StorageStats, error) {
 	return statsByStore, nil
 }
 
+type StorageSummary struct {
+	InstanceName string
+	DataType     string
+	DataUUID     string
+	RootUUID     string
+	Bytes        uint64
+	KeyUsage     map[int]int
+}
+
 // GetStorageSummary returns JSON for all the data instances in the stores.
 func GetStorageSummary() (string, error) {
 	stores, err := storage.AllStores()
@@ -791,39 +800,53 @@ func GetStorageSummary() (string, error) {
 		return "", err
 	}
 
-	breakdown := make(map[string]map[uint32]interface{}, len(stores))
+	breakdown := make(map[string]map[dvid.InstanceID]StorageSummary, len(stores))
 	for alias, store := range stores {
-		s, err := storage.GetDataSizes(store, nil)
+		sizes, err := storage.GetDataSizes(store, nil)
 		if err != nil {
 			return "", err
 		}
-		if s == nil {
+		keyUsage, err := storage.GetStoreKeyUsage(store)
+		if err != nil {
+			return "", err
+		}
+		if sizes == nil && keyUsage == nil {
 			continue
 		}
 
-		// For each instance ID, populate the instance info if available.
-		sdata := make(map[uint32]interface{}, len(s))
-		for instanceID, size := range s {
-			idata := struct {
-				Name     string
-				DataType string
-				DataUUID string
-				RootUUID string
-				Bytes    uint64
-			}{
-				Bytes: size,
-			}
+		// For each instance ID, populate the storage data.
+		sdata := make(map[dvid.InstanceID]StorageSummary)
+		for instanceID, size := range sizes {
+			var idata StorageSummary
 			d, err := getDataByInstanceID(instanceID)
 			if err != nil {
 				// we have no data instance so use placeholders.
-				idata.Name = fmt.Sprintf("unknown-%d", instanceID)
+				idata.InstanceName = fmt.Sprintf("unknown-%d", instanceID)
 			} else {
-				idata.Name = string(d.DataName())
+				idata.InstanceName = string(d.DataName())
 				idata.DataType = string(d.TypeName())
 				idata.DataUUID = string(d.DataUUID())
 				idata.RootUUID = string(d.RootUUID())
 			}
-			sdata[uint32(instanceID)] = idata
+			idata.Bytes = size
+			sdata[instanceID] = idata
+		}
+		for instanceID, usage := range keyUsage {
+			idata, found := sdata[instanceID]
+			if !found {
+				d, err := getDataByInstanceID(instanceID)
+				if err != nil {
+					// we have no data instance so use placeholders.
+					idata.InstanceName = fmt.Sprintf("unknown-%d", instanceID)
+				} else {
+					idata.InstanceName = string(d.DataName())
+					idata.DataType = string(d.TypeName())
+					idata.DataUUID = string(d.DataUUID())
+					idata.RootUUID = string(d.RootUUID())
+				}
+			}
+			idata.KeyUsage = usage
+			sdata[instanceID] = idata
 		}
 		breakdown[string(alias)] = sdata
 	}

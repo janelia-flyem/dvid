@@ -288,6 +288,54 @@ func (db *BadgerDB) metadataExists() (bool, error) {
 	return found, nil
 }
 
+// ---- KeyUsageViewer interface ------
+
+func (db *BadgerDB) GetKeyUsage(ranges []storage.KeyRange) (hitsPerInstance []map[int]int, err error) {
+	if db == nil {
+		err = fmt.Errorf("can't call GetKeyUsage on nil BadgerDB")
+		return
+	}
+	hitsPerInstance = make([]map[int]int, len(ranges))
+	err = db.bdp.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		for i, kr := range ranges {
+			// Allocate histogram for this key range (i.e., a data instance)
+			hitsPerInstance[i] = make(map[int]int)
+
+			// Iterate and get all kv across versions for each key.
+			maxVersionKey := storage.MaxVersionDataKeyFromKey(kr.Start)
+			numVersions := 1
+			for it.Seek(kr.Start); it.Valid(); it.Next() {
+				kv := new(storage.KeyValue)
+				item := it.Item()
+				kv.K = item.KeyCopy(nil)
+				storage.StoreKeyBytesRead <- len(kv.K)
+
+				// Add version to the stats for this key.
+				if bytes.Compare(kv.K, maxVersionKey) > 0 {
+					if storage.Key(kv.K).IsDataKey() {
+						maxVersionKey = storage.MaxVersionDataKeyFromKey(kr.Start)
+					}
+					hitsPerInstance[i][numVersions]++
+					numVersions = 0
+				}
+				numVersions++
+
+				// Did we pass the final key?
+				if bytes.Compare(kv.K, kr.OpenEnd) > 0 {
+					break
+				}
+
+			}
+		}
+		return nil
+	})
+	return
+}
+
 // ---- KeyValueGetter interface ------
 
 // Get returns a value given a key.
