@@ -790,25 +790,28 @@ type StorageSummary struct {
 	DataUUID     string
 	RootUUID     string
 	Bytes        uint64
-	KeyUsage     map[int]int
+	KeyUsage     storage.KeyUsage
 }
 
 // GetStorageSummary returns JSON for all the data instances in the stores.
-func GetStorageSummary() (string, error) {
+func GetStorageSummary() {
 	stores, err := storage.AllStores()
 	if err != nil {
-		return "", err
+		dvid.Errorf("Error getting all stores: %v\n", err)
+		return
 	}
 
 	breakdown := make(map[string]map[dvid.InstanceID]StorageSummary, len(stores))
 	for alias, store := range stores {
 		sizes, err := storage.GetDataSizes(store, nil)
 		if err != nil {
-			return "", err
+			dvid.Errorf("Error getting data sizes for store %s: %v\n", store, err)
+			continue
 		}
 		keyUsage, err := storage.GetStoreKeyUsage(store)
 		if err != nil {
-			return "", err
+			dvid.Errorf("Error getting key usage for store %s: %v\n", store, err)
+			continue
 		}
 		if sizes == nil && keyUsage == nil {
 			continue
@@ -854,10 +857,11 @@ func GetStorageSummary() (string, error) {
 	// Convert data to JSON string
 	m, err := json.MarshalIndent(breakdown, "", "  ")
 	if err != nil {
-		return "", err
+		dvid.Errorf("Error marshalling storage summary to JSON: %v\n", err)
+		dvid.Infof("Storage summary:\n%s\n", string(m))
+	} else {
+		dvid.Infof("Storage summary:\n%v\n", breakdown)
 	}
-	dvid.Infof("Key usage:\n%s\n", string(m))
-	return string(m), nil
 }
 
 // LogRepoOpToKafka logs a repo operation to kafka

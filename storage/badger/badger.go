@@ -290,12 +290,17 @@ func (db *BadgerDB) metadataExists() (bool, error) {
 
 // ---- KeyUsageViewer interface ------
 
-func (db *BadgerDB) GetKeyUsage(ranges []storage.KeyRange) (hitsPerInstance []map[int]int, err error) {
+type versionTracker struct {
+	versions   int
+	tombstones int
+}
+
+func (db *BadgerDB) GetKeyUsage(ranges []storage.KeyRange) (hitsPerInstance []storage.KeyUsage, err error) {
 	if db == nil {
 		err = fmt.Errorf("can't call GetKeyUsage on nil BadgerDB")
 		return
 	}
-	hitsPerInstance = make([]map[int]int, len(ranges))
+	hitsPerInstance = make([]storage.KeyUsage, len(ranges))
 	err = db.bdp.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchValues = false
@@ -303,25 +308,31 @@ func (db *BadgerDB) GetKeyUsage(ranges []storage.KeyRange) (hitsPerInstance []ma
 		defer it.Close()
 		dvid.Infof("Checking key usage for Badger @ %s ...\n", db.directory)
 		for i, kr := range ranges {
-			// Allocate histogram for this key range (i.e., a data instance)
-			hitsPerInstance[i] = make(map[int]int)
-
 			// Iterate and get all kv across versions for each key.
 			maxVersionKey := storage.MaxVersionDataKeyFromKey(kr.Start)
-			numVersions := 1
+			keyUsage := make(storage.KeyUsage)
+			versions := 0
+			tombstones := 0
 			for it.Seek(kr.Start); it.Valid(); it.Next() {
 				kv := new(storage.KeyValue)
 				item := it.Item()
 				kv.K = item.KeyCopy(nil)
 				storage.StoreKeyBytesRead <- len(kv.K)
 
-				// Add version to the stats for this key.
+				// If we now are in another TKey, record stats and reset version histogram.
 				if bytes.Compare(kv.K, maxVersionKey) > 0 {
+					tKeyClass := uint8(kv.K[5])
+					keyUsage.Add(tKeyClass, versions, tombstones)
+
 					maxVersionKey = storage.MaxVersionDataKeyFromKey(kv.K)
-					hitsPerInstance[i][numVersions]++
-					numVersions = 0
+					keyUsage = make(storage.KeyUsage)
+					versions = 0
+					tombstones = 0
 				}
-				numVersions++
+				versions++
+				if kv.K.IsTombstone() {
+					tombstones++
+				}
 
 				// Did we pass the final key?
 				if bytes.Compare(kv.K, kr.OpenEnd) > 0 {
@@ -329,6 +340,7 @@ func (db *BadgerDB) GetKeyUsage(ranges []storage.KeyRange) (hitsPerInstance []ma
 				}
 
 			}
+			hitsPerInstance[i] = keyUsage
 		}
 		dvid.Infof("Key usage for Badger @ %s:\n  %v\n", db.directory, hitsPerInstance)
 		return nil

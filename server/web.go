@@ -1516,14 +1516,15 @@ func latenciesHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, string(m))
 }
 
-func serverStorageHandler(w http.ResponseWriter, r *http.Request) {
-	jsonStr, err := datastore.GetStorageSummary()
-	if err != nil {
-		BadRequest(w, r, err)
+func serverStorageHandler(c *web.C, w http.ResponseWriter, r *http.Request) {
+	adminPriv := c.Env["adminPriv"].(bool)
+	if !adminPriv {
+		BadRequest(w, r, "Storage summary takes considerable resources and is only available to admin users.")
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprint(w, jsonStr)
+
+	go datastore.GetStorageSummary()
+	fmt.Fprint(w, "Storage summary requested.  Check log for details.\n")
 }
 
 func serverInfoHandler(w http.ResponseWriter, r *http.Request) {

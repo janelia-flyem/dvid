@@ -168,18 +168,51 @@ func Repair(name, path string) error {
 	return repairer.Repair(path)
 }
 
+// VersionHistogram is a map of # versions to # keys that have that many versions.
+type VersionHistogram map[int]int
+
+func (vh VersionHistogram) Clone() VersionHistogram {
+	clone := make(VersionHistogram, len(vh))
+	for k, v := range vh {
+		clone[k] = v
+	}
+	return clone
+}
+
+// KeyUsage is a map of TKeyClass to VersionHistogram.
+type KeyUsage map[uint8]VersionHistogram
+
+func (ku KeyUsage) Clone() KeyUsage {
+	clone := make(KeyUsage, len(ku))
+	for k, v := range ku {
+		clone[k] = v.Clone()
+	}
+	return clone
+}
+
+// Add adds a key with the # versions and tombstones.
+func (ku KeyUsage) Add(class uint8, versions int, tombstones int) {
+	vh, found := ku[class]
+	if !found {
+		vh = make(VersionHistogram)
+		ku[class] = vh
+	}
+	vh[versions]++
+	vh[0] += tombstones
+}
+
 // KeyUsageViewer stores can return how many keys are stored and a histogram of the
 // number of versions per key for each data instance given by the key ranges.
 type KeyUsageViewer interface {
-	GetKeyUsage(ranges []KeyRange) (histPerInstance []map[int]int, err error)
+	GetKeyUsage(ranges []KeyRange) (histPerInstance []KeyUsage, err error)
 }
 
-// GetStoreKeyUsage returns a histogram of the number of versions per key for each
+// GetStoreKeyUsage returns a histogram map[# versions][# keys] for each
 // data instance in the store.
-func GetStoreKeyUsage(store dvid.Store) (map[dvid.InstanceID]map[int]int, error) {
+func GetStoreKeyUsage(store dvid.Store) (map[dvid.InstanceID]KeyUsage, error) {
 	db, ok := store.(OrderedKeyValueGetter)
 	if !ok {
-		dvid.Infof("Cannot get data sizes for store %s, which is not an OrderedKeyValueGetter store\n", db)
+		dvid.Infof("Cannot get key usage for store %s, which is not an OrderedKeyValueGetter store\n", db)
 		return nil, nil
 	}
 	viewer, ok := store.(KeyUsageViewer)

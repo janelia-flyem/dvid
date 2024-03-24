@@ -448,7 +448,7 @@ func getInstanceSizes(sv SizeViewer, instances []dvid.InstanceID) (map[dvid.Inst
 	return sizes, nil
 }
 
-func getKeyUsage(vw KeyUsageViewer, instances []dvid.InstanceID) (map[dvid.InstanceID]map[int]int, error) {
+func getKeyUsage(vw KeyUsageViewer, instances []dvid.InstanceID) (map[dvid.InstanceID]KeyUsage, error) {
 	ranges := make([]KeyRange, len(instances))
 	for i, curID := range instances {
 		beg := constructDataKey(curID, 0, 0, minTKey)
@@ -462,7 +462,7 @@ func getKeyUsage(vw KeyUsageViewer, instances []dvid.InstanceID) (map[dvid.Insta
 	if len(s) != len(instances) {
 		return nil, fmt.Errorf("only got back %d instance key usages, not the requested %d instances", len(s), len(instances))
 	}
-	keyUsage := make(map[dvid.InstanceID]map[int]int, len(instances))
+	keyUsage := make(map[dvid.InstanceID]KeyUsage, len(instances))
 	for i, curID := range instances {
 		keyUsage[curID] = s[i]
 	}
