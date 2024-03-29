@@ -128,7 +128,7 @@ func checkBasicAndAll(t *testing.T, basicJSON string, allJSON []byte, user strin
 	}
 	all := allList[0]
 	for field, value := range basic {
-		if field == "bodyid" || field == "user" {
+		if field == "bodyid" {
 			continue
 		}
 		if _, found := all[field+"_user"]; !found {
