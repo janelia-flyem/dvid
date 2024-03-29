@@ -1398,14 +1398,19 @@ func (d *Data) PutData(ctx *datastore.VersionedCtx, keyStr string, value []byte,
 		return nil
 	}
 
-	// validate if we have a JSON schema
+	// validate if we have a JSON schema and autoconvert string->int for fields that need it.
 	if sch, err := d.getJSONSchema(ctx); err == nil {
 		var v interface{}
-		if err = json.Unmarshal(value, &v); err != nil {
-			return err
-		}
-		for err = sch.Validate(v); err != nil; {
-			if verr, ok := err.(*jsonschema.ValidationError); ok {
+		for {
+			if err = json.Unmarshal(value, &v); err != nil {
+				return err
+			}
+			err = sch.Validate(v)
+			if err != nil {
+				verr, found := err.(*jsonschema.ValidationError)
+				if !found {
+					return err
+				}
 				match, _ := regexp.MatchString(`.*expected .*integer.* but got string.*`, verr.Error())
 				if !match {
 					return err
@@ -1428,7 +1433,7 @@ func (d *Data) PutData(ctx *datastore.VersionedCtx, keyStr string, value []byte,
 					return err
 				}
 			} else {
-				return err
+				break
 			}
 		}
 	} else {
@@ -1438,6 +1443,21 @@ func (d *Data) PutData(ctx *datastore.VersionedCtx, keyStr string, value []byte,
 	var newData NeuronJSON
 	if err := json.Unmarshal(value, &newData); err != nil {
 		return err
+	}
+	if bodyidI, found := newData["bodyid"]; !found {
+		return fmt.Errorf("neuronjson data must have 'bodyid' field")
+	} else {
+		bodyid, ok := bodyidI.(uint64)
+		if !ok {
+			return fmt.Errorf("neuronjson 'bodyid' field must be uint64")
+		}
+		keyid, err := strconv.ParseUint(keyStr, 10, 64)
+		if err != nil {
+			return fmt.Errorf("key %q must be a valid uint64: %v", keyStr, err)
+		}
+		if bodyid != keyid {
+			return fmt.Errorf("neuronjson 'bodyid' field %d must match key %d", bodyid, keyid)
+		}
 	}
 	return d.storeAndUpdate(ctx, keyStr, newData, conditionals, replace)
 }

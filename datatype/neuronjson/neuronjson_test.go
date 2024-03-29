@@ -75,7 +75,28 @@ var testJsonSchema = `
             "items": {"type": "integer"},
             "minItems": 3,
             "maxItems": 3
-        }
+        },
+		"manc_bodyid": {
+			"description": "the matching body id in MANC",
+			"type": [
+				"integer",
+				"null"
+			]
+		},
+		"manc_type": {
+			"description": "the type of matching body in MANC",
+			"type": [
+				"string",
+				"null"
+			]
+		},
+		"manc_group": {
+			"description": "the matching group id in MANC",
+			"type": [
+				"integer",
+				"null"
+			]
+		}
     }
 }`
 
@@ -107,6 +128,9 @@ func checkBasicAndAll(t *testing.T, basicJSON string, allJSON []byte, user strin
 	}
 	all := allList[0]
 	for field, value := range basic {
+		if field == "bodyid" || field == "user" {
+			continue
+		}
 		if _, found := all[field+"_user"]; !found {
 			t.Fatalf("Couldn't find %q field\n", field+"_user")
 		}
@@ -326,7 +350,7 @@ func TestNeuronjsonRoundTrip(t *testing.T) {
 	ctx := datastore.NewVersionedCtx(dataservice, versionID)
 
 	keyStr := "1234"
-	value := []byte(`{"a string": "foo", "a number": 1234, "a list": [1, 2, 3]}`)
+	value := []byte(`{"bodyid": 1234, "a string": "foo", "a number": 1234, "a list": [1, 2, 3]}`)
 
 	if err = kvdata.PutData(ctx, keyStr, value, nil, true); err != nil {
 		t.Errorf("Could not put neuronjson data: %v\n", err)
@@ -479,23 +503,38 @@ func TestValidation(t *testing.T) {
 		t.Fatalf("Returned new data instance is not neuronjson.Data\n")
 	}
 
-	// Before json schema is installed, bad values should be permitted
+	// bodyid field must be present and must match key
 	key1 := "1000"
 	key1req := fmt.Sprintf("%snode/%s/%s/key/%s?u=frank", server.WebAPIPath, uuid, data.DataName(), key1)
 	badValue := `
 	{
+		"bodyid": 13087493,
 		"group": 130911,
 		"status": "Anchor",
 		"root_position": [15, 15, 15],
 		"something_else": "foo"
 	}`
 	resp := server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(badValue))
+	if resp.Code == http.StatusOK {
+		t.Errorf("POST on %s returned %d, not error for bad bodyid\n", key1req, resp.Code)
+	}
+
+	// Before json schema is installed, bad values should be permitted
+	badValue = `
+	{
+		"bodyid": 1000,
+		"group": 130911,
+		"status": "Anchor",
+		"root_position": [15, 15, 15],
+		"something_else": "foo"
+	}`
+	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(badValue))
 	if resp.Code != http.StatusOK {
 		t.Errorf("POST on %s returned %d, not 200: %s\n", key1req, resp.Code, resp.Body.String())
 	}
 	badValue = `
 	{
-		"bodyid": 13087493,
+		"bodyid": 1000,
 		"group": 130911,
 		"status": "Anchor",
 		"position": [23,23]
@@ -511,18 +550,25 @@ func TestValidation(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Errorf("POST on %s returned %d, not 200: %s\n", schemaReq, resp.Code, resp.Body.String())
 	}
+	resp = server.TestHTTPResponse(t, "GET", schemaReq, strings.NewReader(testJsonSchema))
+	if resp.Code != http.StatusOK {
+		t.Errorf("GET on %s returned %d, not 200: %s\n", schemaReq, resp.Code, resp.Body.String())
+	}
+	dvid.Infof("Schema: %s\n", resp.Body.String())
 
 	// PUT a value that should conform to schema set.
 	okValue := `
 	{
-		"bodyid": 13087493,
+		"bodyid": 1000,
 		"group": 130911,
 		"status": "Anchor",
 		"position": [23,23,32],
 		"soma_position": [30, 30, 30],
 		"tosoma_position": [14, 1000, 1000],
 		"root_position": [15, 15, 15],
-		"something_else": "foo"
+		"something_else": "foo",
+		"manc_bodyid": 12345,
+		"manc_group": 12345
 	}`
 	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(okValue))
 	if resp.Code != http.StatusOK {
@@ -530,7 +576,7 @@ func TestValidation(t *testing.T) {
 	}
 	okValue = `
 	{
-		"bodyid": 13087493,
+		"bodyid": 1000,
 		"root_position": [15, 15, 15],
 		"something_else": "foo"
 	}`
@@ -553,7 +599,7 @@ func TestValidation(t *testing.T) {
 	}
 	badValue = `
 	{
-		"bodyid": 13087493,
+		"bodyid": 1000,
 		"group": 130911,
 		"status": "Anchor",
 		"position": [23,23]
@@ -573,18 +619,41 @@ func TestValidation(t *testing.T) {
 	if resp.Code == http.StatusOK {
 		t.Errorf("POST on %s returned 200 when it shouldn't have been validated\n", key1req)
 	}
-	// test auto-convert from string to int
+	// test auto-convert from string to int using multiple fields
 	badValue = `
 	{
-		"bodyid": 13087493,
+		"bodyid": 1000,
 		"group": "130911",
 		"status": "Anchor",
 		"root_position": [15, 15, 15],
-		"something_else": "foo"
-	}` // group is string, not int
+		"something_else": "foo",
+		"manc_bodyid": "12345",
+		"manc_group": "12345"
+	}`
 	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(badValue))
 	if resp.Code != http.StatusOK {
 		t.Errorf("POST on %s should have been ok after auto-conversion\n", key1req)
+	}
+	dvid.Infof("resp: %s\n", resp.Body.String())
+
+	// Make sure the autoconversion actually worked.
+	expectedValue := `
+	{
+		"bodyid": 1000,
+		"group": 130911,
+		"status": "Anchor",
+		"position": [23,23,32],
+		"soma_position": [30, 30, 30],
+		"tosoma_position": [14, 1000, 1000],
+		"root_position": [15, 15, 15],
+		"something_else": "foo",
+		"manc_bodyid": 12345,
+		"manc_group": 12345
+	}`
+	req := fmt.Sprintf("%snode/%s/%s/key/1000?u=frank", server.WebAPIPath, uuid, data.DataName())
+	returnValue := server.TestHTTP(t, "GET", req, nil)
+	if !equalObjectJSON(returnValue, []byte(expectedValue), ShowBasic) {
+		t.Errorf("Error on autoconversion: expected %s\ngot %s\n", expectedValue, string(returnValue))
 	}
 }
 
@@ -611,7 +680,7 @@ func TestKeyvalueRequests(t *testing.T) {
 	}
 
 	// PUT a value
-	value1 := `{"a string": "foo", "a number": 1234, "a list": [1, 2, 3]}`
+	value1 := `{"bodyid": 1000, "a string": "foo", "a number": 1234, "a list": [1, 2, 3]}`
 	server.TestHTTP(t, "POST", key1req, strings.NewReader(value1))
 
 	// Expect error if key 0 is used
@@ -643,7 +712,7 @@ func TestKeyvalueRequests(t *testing.T) {
 		t.Errorf("HEAD on %s did not return 404 (File Not Found).  Status = %d\n", key2req, resp.Code)
 	}
 
-	value2 := `{"a string": "moo", "a number": 2345, "a list": ["mom", "pop"]}`
+	value2 := `{"bodyid": 2000, "a string": "moo", "a number": 2345, "a list": ["mom", "pop"]}`
 	server.TestHTTP(t, "POST", key2req, strings.NewReader(value2))
 
 	resp = server.TestHTTPResponse(t, "HEAD", key2req, nil)
@@ -653,7 +722,7 @@ func TestKeyvalueRequests(t *testing.T) {
 
 	// Add 3rd k/v
 	key3 := "3000"
-	value3 := `{"a string": "goo", "a number": 3456, "a list": [23]}`
+	value3 := `{"bodyid": 3000, "a string": "goo", "a number": 3456, "a list": [23]}`
 	key3req := fmt.Sprintf("%snode/%s/%s/key/%s?u=shawna", server.WebAPIPath, uuid, name, key3)
 	server.TestHTTP(t, "POST", key3req, strings.NewReader(value3))
 
@@ -781,13 +850,13 @@ func TestKeyvalueRequests(t *testing.T) {
 	}
 
 	// Check if keys are re-POSTed using default update or replace=true.
-	value3mod := `{"a string": "goo modified", "a 2nd list": [26]}`
+	value3mod := `{"bodyid": 3000, "a string": "goo modified", "a 2nd list": [26]}`
 	key3modreq := fmt.Sprintf("%snode/%s/%s/key/%s?u=bill&show=all", server.WebAPIPath, uuid, name, key3)
 	server.TestHTTP(t, "POST", key3modreq, strings.NewReader(value3mod))
 
 	returnValue = server.TestHTTP(t, "GET", key3modreq, nil)
 
-	expectedValue = []byte(`{"a string": "goo modified", "a number": 3456, "a list": [23], "a 2nd list": [26]}`)
+	expectedValue = []byte(`{"bodyid": 3000, "a string": "goo modified", "a number": 3456, "a list": [23], "a 2nd list": [26]}`)
 	var expectedJSON NeuronJSON
 	if err := json.Unmarshal(expectedValue, &expectedJSON); err != nil {
 		t.Fatalf("Couldn't unmarshal expected basic JSON: %s\n", expectedJSON)
@@ -822,14 +891,14 @@ func TestKeyvalueRequests(t *testing.T) {
 	}
 
 	// Check if we replace or keep old _user and _time while changing and reusing value
-	value3modA := fmt.Sprintf(`{"a string": "goo modified", "a string_user": "bill", "a string_time": "%s", "a number_user": "donald", "a 2nd list": [26]}`, responseJSON["a string_time"])
+	value3modA := fmt.Sprintf(`{"bodyid": 3000, "a string": "goo modified", "a string_user": "bill", "a string_time": "%s", "a number_user": "donald", "a 2nd list": [26]}`, responseJSON["a string_time"])
 	key3modAreq := fmt.Sprintf("%snode/%s/%s/key/%s?u=frank&show=all", server.WebAPIPath, uuid, name, key3)
 	server.TestHTTP(t, "POST", key3modAreq, strings.NewReader(value3modA))
 
 	returnValue = server.TestHTTP(t, "GET", key3modAreq, nil)
 	dvid.Infof("After 1st mod got back: %s\n", string(returnValue))
 
-	expectedValue = []byte(fmt.Sprintf(`{"a string": "goo modified", "a string_user": "bill", "a string_time": "%s", "a number": 3456, "a list": [23], "a 2nd list": [26]}`, responseJSON["a string_time"]))
+	expectedValue = []byte(fmt.Sprintf(`{"bodyid": 3000, "a string": "goo modified", "a string_user": "bill", "a string_time": "%s", "a number": 3456, "a list": [23], "a 2nd list": [26]}`, responseJSON["a string_time"]))
 	if err := json.Unmarshal(expectedValue, &expectedJSON); err != nil {
 		t.Fatalf("Couldn't unmarshal expected basic JSON: %s\n", expectedJSON)
 	}
@@ -863,7 +932,7 @@ func TestKeyvalueRequests(t *testing.T) {
 	}
 
 	// Check if keys are re-POSTed using replace=true. Don't modify "a number" field.
-	value3mod = `{"a string": "goo replaced", "only list": [1, 2], "a number": 3456}`
+	value3mod = `{"bodyid": 3000, "a string": "goo replaced", "only list": [1, 2], "a number": 3456}`
 	key3modreq = fmt.Sprintf("%snode/%s/%s/key/%s?u=sandra&show=all&replace=true", server.WebAPIPath, uuid, name, key3)
 	server.TestHTTP(t, "POST", key3modreq, strings.NewReader(value3mod))
 
@@ -898,8 +967,8 @@ func TestKeyvalueRequests(t *testing.T) {
 	if value, found := responseJSON["only list_user"]; !found || value != "sandra" {
 		t.Fatalf("Bad response: %v\n", responseJSON)
 	}
-	if len(responseJSON) != 9 {
-		t.Fatalf("Expected 9 fields in response after replace, got: %v\n", responseJSON)
+	if len(responseJSON) != 10 {
+		t.Fatalf("Expected 10 fields in response after replace, got: %v\n", responseJSON)
 	}
 }
 
