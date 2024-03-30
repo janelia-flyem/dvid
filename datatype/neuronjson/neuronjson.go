@@ -1357,11 +1357,12 @@ func (d *Data) storeAndUpdate(ctx *datastore.VersionedCtx, keyStr string, newDat
 	if _, found := newData["bodyid_time"]; found {
 		return fmt.Errorf("'bodyid_time' field not allowed")
 	}
+	rcvJSON, _ := json.Marshal(newData)
 	updateJSON(origData, newData, ctx.User, conditionals, replace)
 	origJSON, _ := json.Marshal(origData)
 	newJSON, _ := json.Marshal(newData)
-	dvid.Infof("neuronjson %s put by user %q, conditionals %v, replace %t:\nOrig: %s\n New: %s\n",
-		d.DataName(), ctx.User, conditionals, replace, origJSON, newJSON)
+	dvid.Infof("neuronjson %s put by user %q, conditionals %v, replace %t:\nOrig: %s\n Rcv: %s\n New: %s\n",
+		d.DataName(), ctx.User, conditionals, replace, origJSON, rcvJSON, newJSON)
 
 	// write result
 	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
