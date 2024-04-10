@@ -945,6 +945,11 @@ func TestMergeLabels(t *testing.T) {
 	if err := retrieved.equals(expected); err != nil {
 		t.Errorf("Merged label volume: %v\n", err)
 	}
+
+	// Make sure we can't merge the previously merged body again.
+	if err := testMerge.sendErr(t, uuid, "labels"); err == nil {
+		t.Fatalf("Expected error on re-merge of bodies, got none\n")
+	}
 }
 
 func TestSplitLabel(t *testing.T) {

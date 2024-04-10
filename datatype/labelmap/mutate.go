@@ -105,6 +105,10 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		return
 	}
 	delta.MergedVoxels = mergeIdx.NumVoxels()
+	if delta.MergedVoxels == 0 {
+		err = fmt.Errorf("can't merge labels with no voxels: %s", op.Merged)
+		return
+	}
 
 	jsonBytes, _ := json.Marshal(msginfo)
 	if err := d.PublishKafkaMsg(jsonBytes); err != nil {
