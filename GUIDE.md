@@ -109,6 +109,10 @@ Then Install `conda` (specifically the [miniconda distribution][miniconda]) and 
 Build and Test
 --------------
 
+Note: as of May 2024, the [basho leveldb backend](https://github.com/basho/leveldb) is no longer included as a 
+default option because the project has not been actively developed for 5 years. You may add it back by exporting 
+an environment variable `DVID_BACKENDS` that includes the "basholeveldb" keyword.
+
     $ make dvid
 
     $ make test

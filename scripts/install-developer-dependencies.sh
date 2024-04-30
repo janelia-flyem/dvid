@@ -25,7 +25,8 @@ else
     COMPILER_PACKAGE=gxx_linux-64
 fi
 
-CMD="conda install -y -c flyem-forge -c conda-forge snappy basholeveldb lz4-c go-cgo=${GO_VERSION} pkg-config ${COMPILER_PACKAGE}"
+CMD="conda install -y -c flyem-forge -c conda-forge snappy lz4-c go-cgo=${GO_VERSION} pkg-config ${COMPILER_PACKAGE}"
+# CMD="conda install -y -c flyem-forge -c conda-forge snappy basholeveldb lz4-c go-cgo=${GO_VERSION} pkg-config ${COMPILER_PACKAGE}"
 echo ${CMD}
 ${CMD}
 
