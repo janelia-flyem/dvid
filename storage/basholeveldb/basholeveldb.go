@@ -21,9 +21,12 @@ import (
 )
 
 // These constants were guided by Basho documentation and their tuning of leveldb:
-//   https://github.com/basho/leveldb/blob/develop/README
+//
+//	https://github.com/basho/leveldb/blob/develop/README
+//
 // See video on "Optimizing LevelDB for Performance and Scale" here:
-//   http://www.youtube.com/watch?v=vo88IdglU_8
+//
+//	http://www.youtube.com/watch?v=vo88IdglU_8
 const (
 	// Default size of LRU cache that caches frequently used uncompressed blocks.
 	DefaultCacheSize = 536870912
@@ -1118,6 +1121,7 @@ func (db *LevelDB) DeleteAll(ctx storage.Context) error {
 
 	var err error
 	var minKey, maxKey storage.Key
+	var name string
 
 	vctx, versioned := ctx.(storage.VersionedCtx)
 	if versioned {
@@ -1132,8 +1136,10 @@ func (db *LevelDB) DeleteAll(ctx storage.Context) error {
 		if err != nil {
 			return err
 		}
+		name = string(vctx.Data().DataName())
 	} else {
 		minKey, maxKey = ctx.KeyRange()
+		name = ctx.String()
 	}
 
 	const BATCH_SIZE = 10000
@@ -1167,7 +1173,7 @@ func (db *LevelDB) DeleteAll(ctx storage.Context) error {
 					return fmt.Errorf("Error on batch commit of DeleteAll at key-value pair %d: %v", numKV, err)
 				}
 				batch = db.NewBatch(ctx).(*goBatch)
-				dvid.Debugf("Deleted %d key-value pairs in ongoing DELETE ALL for %s.\n", numKV+1, ctx)
+				dvid.Debugf("Deleted %d key-value pairs in ongoing DELETE ALL for %s.\n", numKV+1, name)
 			}
 			numKV++
 			it.Next()
@@ -1181,7 +1187,7 @@ func (db *LevelDB) DeleteAll(ctx storage.Context) error {
 			return fmt.Errorf("Error on last batch commit of DeleteAll: %v", err)
 		}
 	}
-	dvid.Debugf("Deleted %d key-value pairs via DELETE ALL for %s.\n", numKV, ctx)
+	dvid.Debugf("Deleted %d key-value pairs via DELETE ALL for %s.\n", numKV, name)
 	return nil
 }
 

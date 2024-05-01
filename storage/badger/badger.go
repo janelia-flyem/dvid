@@ -1019,6 +1019,7 @@ func (db *BadgerDB) DeleteAll(ctx storage.Context) error {
 
 	var err error
 	var minKey, maxKey storage.Key
+	var name string
 	vctx, versioned := ctx.(storage.VersionedCtx)
 	if versioned {
 		// Don't have to worry about tombstones.  Delete all keys from all versions for this instance id.
@@ -1032,8 +1033,10 @@ func (db *BadgerDB) DeleteAll(ctx storage.Context) error {
 		if err != nil {
 			return err
 		}
+		name = vctx.Data().DataName()
 	} else {
 		minKey, maxKey = ctx.KeyRange()
+		name = ctx.String()
 	}
 
 	const BATCH_SIZE = 10000
@@ -1062,7 +1065,7 @@ func (db *BadgerDB) DeleteAll(ctx storage.Context) error {
 					return fmt.Errorf("Error on flush of DeleteAll at key-value pair %d: %v", numKV, err)
 				}
 				wb = db.bdp.NewWriteBatch()
-				dvid.Debugf("Deleted %d key-value pairs in ongoing DELETE ALL for %s.\n", numKV+1, vctx)
+				dvid.Debugf("Deleted %d key-value pairs in ongoing DELETE ALL for %s.\n", numKV+1, name)
 			}
 			numKV++
 		}
@@ -1078,7 +1081,7 @@ func (db *BadgerDB) DeleteAll(ctx storage.Context) error {
 		return err
 	}
 
-	dvid.Debugf("Deleted %d key-value pairs via DELETE ALL for %s.\n", numKV, vctx)
+	dvid.Debugf("Deleted %d key-value pairs via DELETE ALL for %s.\n", numKV, name)
 	return nil
 }
 
