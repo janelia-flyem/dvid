@@ -1033,7 +1033,7 @@ func (db *BadgerDB) DeleteAll(ctx storage.Context) error {
 		if err != nil {
 			return err
 		}
-		name = vctx.Data().DataName()
+		name = string(vctx.Data().DataName())
 	} else {
 		minKey, maxKey = ctx.KeyRange()
 		name = ctx.String()

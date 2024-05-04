@@ -143,12 +143,12 @@ blobstore = "raid6"
 
 [store]
     [store.raid6]
-    engine = "basholeveldb"
-    path = "/data/dbs/basholeveldb"
+    engine = "badger"
+    path = "/data/dbs/badgerdb"
  
     [store.ssd]
-    engine = "basholeveldb"
-    path = "/datassd/dbs/basholeveldb"
+    engine = "badger"
+    path = "/datassd/dbs/badgerdb"
  
     [store.badger]
     engine = "badger"

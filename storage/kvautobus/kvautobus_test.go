@@ -1,3 +1,4 @@
+//go:build kvautobus
 // +build kvautobus
 
 package kvautobus
@@ -15,12 +16,12 @@ import (
 const testConfig = `
 [store]
     [store.raid6]
-    engine = "basholeveldb"
-    path = "/data/dbs/basholeveldb"
+    engine = "badger"
+    path = "/data/dbs/badgerdb"
  
     [store.ssd]
-    engine = "basholeveldb"
-    path = "/datassd/dbs/basholeveldb"
+    engine = "badger"
+    path = "/datassd/dbs/badgerdb"
  
     [store.kvautobus]
     engine = "kvautobus"

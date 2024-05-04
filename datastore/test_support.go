@@ -38,7 +38,7 @@ func openStores(create bool, datamap ...DataStorageMap) {
 	if len(datamap) > 1 {
 		log.Fatalf("can't have more than one data mapping in opening stores")
 	}
-	dvid.Infof("Opening test datastore.  Create = %v\n", create)
+	dvid.Infof("Opening test datastore.  Create (%t), Datamap: %v\n", create, datamap)
 	if create {
 		var err error
 		if len(datamap) == 1 {

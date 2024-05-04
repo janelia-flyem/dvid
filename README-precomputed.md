@@ -34,12 +34,12 @@ max_log_age = 30
 
 [store]
     [store.mainstore]
-    engine = "basholeveldb"
-    path = "/data/dvid/db/leveldb"
+    engine = "badger"
+    path = "/data/dvid/db/mydb"
 
     [store.mutationlog]
     engine = "filelog"
-    path = "/data/dvid/db/mlog-leveldb"
+    path = "/data/dvid/db/mutationlog"
 
     [store.mystorage]
     engine = "ngprecomputed"

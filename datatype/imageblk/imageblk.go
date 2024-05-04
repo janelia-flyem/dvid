@@ -523,7 +523,7 @@ func NewType(values dvid.DataValues, interpolable bool) Type {
 
 // NewData returns a pointer to a new Voxels with default values.
 func (dtype *Type) NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
-	dvid.Infof("NewData on name %q\n", name)
+	dvid.Infof("NewData on imageblk name %q with config: %v\n", name, c)
 	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
 	if err != nil {
 		return nil, err

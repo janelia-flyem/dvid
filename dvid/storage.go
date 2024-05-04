@@ -36,7 +36,7 @@ type AutoInstanceStore interface {
 type StoreConfig struct {
 	Config
 
-	// Engine is a simple name describing the engine, e.g., "basholeveldb"
+	// Engine is a simple name describing the engine, e.g., "badger"
 	Engine string
 }
 

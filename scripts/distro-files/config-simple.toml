@@ -41,8 +41,8 @@ max_log_age = 30   # days
 
 [store]
     [store.instancedata]
-    engine = "basholeveldb"
-    path = "/tmp/basholeveldb"
+    engine = "badger"
+    path = "/tmp/badgerdb"
 
     [store.mutationlog]
     engine = "filelog"

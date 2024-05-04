@@ -5,9 +5,9 @@ webClient = "/console"
 
 [backend]
     [backend.default]
-        store = "mutable"
-            log = "mutationlog"
+    store = "mutable"
+    log = "mutationlog"
 [store]
     [store.mutable]
-        engine = "basholeveldb"
-            path = "/data/dbs/dataset"
+    engine = "badger"
+    path = "/data/dbs/dataset"

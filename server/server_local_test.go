@@ -201,11 +201,11 @@ func TestTOMLConfigAbsolutePath(t *testing.T) {
 	c.Store = make(map[storage.Alias]storeConfig)
 
 	c.Store["foo"] = make(storeConfig)
-	c.Store["foo"]["engine"] = "basholeveldb"
+	c.Store["foo"]["engine"] = "badger"
 	c.Store["foo"]["path"] = "foo-storage-db"
 
 	c.Store["bar"] = make(storeConfig)
-	c.Store["bar"]["engine"] = "basholeveldb"
+	c.Store["bar"]["engine"] = "badger"
 	c.Store["bar"]["path"] = "/tmp/bar-storage-db" // Already absolute, should stay unchanged.
 
 	// Convert relative paths to absolute
@@ -227,7 +227,7 @@ func TestTOMLConfigAbsolutePath(t *testing.T) {
 	}
 
 	engine := foo["engine"]
-	if engine.(string) != "basholeveldb" {
+	if engine.(string) != "badger" {
 		t.Errorf("[store.foo].engine should not have been touched: %s", path)
 	}
 

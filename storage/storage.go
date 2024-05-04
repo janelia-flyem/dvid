@@ -48,7 +48,7 @@ type Requirements struct {
 type Engine interface {
 	fmt.Stringer
 
-	// GetName returns a simple driver identifier like "basholeveldb", "kvautobus" or "bigtable".
+	// GetName returns a simple driver identifier like "badger", "kvautobus" or "bigtable".
 	GetName() string
 
 	// IsDistributed returns whether the engine is a distributed DB (engine should manage request throttling)
@@ -129,6 +129,7 @@ func GetTestableBackend(kvMap, logMap DataMap) (map[Alias]TestableEngine, *Backe
 			if err != nil {
 				dvid.Errorf("checking engine %q: %v\n", e, err)
 			} else {
+				dvid.Infof("Found testable engine %q with alias %q\n", e, alias)
 				engines[alias] = tEng
 				found = true
 			}
@@ -136,6 +137,7 @@ func GetTestableBackend(kvMap, logMap DataMap) (map[Alias]TestableEngine, *Backe
 	}
 	backend.KVAssign = kvMap
 	backend.LogAssign = logMap
+	dvid.Infof("For new testable backend (%v) assigned KV: %v, Log: %v\n", backend, kvMap, logMap)
 	if !found {
 		return nil, nil, fmt.Errorf("could not find any testable storage configuration")
 	}

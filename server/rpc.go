@@ -120,7 +120,7 @@ EXPERIMENTAL COMMANDS
 						"SrcStore": "source store",
 						"DstStore": {
 							"Path": "/path/to/store",
-							"Engine": "basholeveldb"
+							"Engine": "badger"
 						}
 					},
 					{
@@ -157,7 +157,7 @@ EXPERIMENTAL COMMANDS
 				"Versions": ["2881e9","52a13","57e8d"],
 				"Exclusions": ["name1", "name2"],
 				"DstStore": {
-					"Engine": "basholeveldb",
+					"Engine": "badger",
 					"Path": "/path/to/new/metadata_db"
 				},
 				"Alias": "my new repo alias",
