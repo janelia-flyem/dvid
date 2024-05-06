@@ -108,7 +108,7 @@ func TestIndexOps(t *testing.T) {
 		t.Errorf("expected 635228 total voxels, got %d voxels in index supervoxel counts\n", totalVoxels)
 	}
 
-	cleavedSize, remainSize, cleaveIdx := idx.Cleave(200, []uint64{1001, 26029, 3829})
+	cleavedSize, remainSize, cleaveIdx := idx.Cleave(200, []uint64{1001, 26029, 3829}, dvid.MutInfo{})
 	expectedCleavedSize := uint64(6899 + 63560 + 10000)
 	if cleavedSize != expectedCleavedSize {
 		t.Errorf("expected cleaved size to be %d, got %d\n", expectedCleavedSize, cleavedSize)
@@ -174,7 +174,7 @@ func TestIndexOps(t *testing.T) {
 	if !reflect.DeepEqual(cleaveCounts, cleaveIdx.GetSupervoxelCounts()) {
 		t.Errorf("after cleave, remain index has incorrect counts:\nExpected %v\nGot %v\n", cleaveCounts, cleaveIdx.GetSupervoxelCounts())
 	}
-	if err := idx.Add(cleaveIdx); err != nil {
+	if err := idx.Add(cleaveIdx, dvid.MutInfo{}); err != nil {
 		t.Error(err)
 	}
 	if !reflect.DeepEqual(origCounts, idx.GetSupervoxelCounts()) {
@@ -297,7 +297,7 @@ func TestCleaveIndex(t *testing.T) {
 	}
 	idx.Blocks[block4] = svc
 
-	cleavedSize, remainSize, cleaveIdx := idx.Cleave(200, []uint64{87, 382, 1001, 3829, 673, 8763})
+	cleavedSize, remainSize, cleaveIdx := idx.Cleave(200, []uint64{87, 382, 1001, 3829, 673, 8763}, dvid.MutInfo{})
 	expectedTotalSize := uint64(73396)
 	if cleavedSize+remainSize != expectedTotalSize {
 		t.Errorf("cleaved %d + remain %d voxels != %d total voxels\n", cleavedSize, remainSize, expectedTotalSize)

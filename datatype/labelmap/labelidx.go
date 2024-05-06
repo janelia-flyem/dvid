@@ -656,10 +656,6 @@ func (d *Data) cleaveIndex(v dvid.VersionID, op labels.CleaveOp, info dvid.ModIn
 		err = fmt.Errorf("cannot cleave non-existent label %d", op.Target)
 		return
 	}
-	idx.LastMutId = op.MutID
-	idx.LastModUser = info.User
-	idx.LastModTime = info.Time
-	idx.LastModApp = info.App
 
 	if err := d.addMutcache(v, op.MutID, idx); err != nil {
 		dvid.Criticalf("unable to add cleaved mutid %d index %d: %v\n", op.MutID, op.Target, err)
@@ -681,11 +677,11 @@ func (d *Data) cleaveIndex(v dvid.VersionID, op labels.CleaveOp, info dvid.ModIn
 	// create a new label index to contain the cleaved supervoxels.
 	// we don't have to worry about mutex here because it's a new index.
 	var cidx *labels.Index
-	cleavedSize, remainSize, cidx = idx.Cleave(op.CleavedLabel, op.CleavedSupervoxels)
-	cidx.LastMutId = op.MutID
-	cidx.LastModUser = info.User
-	cidx.LastModTime = info.Time
-	cidx.LastModApp = info.App
+	mutInfo := dvid.MutInfo{
+		MutID:   op.MutID,
+		ModInfo: info,
+	}
+	cleavedSize, remainSize, cidx = idx.Cleave(op.CleavedLabel, op.CleavedSupervoxels, mutInfo)
 	if err = putCachedLabelIndex(d, v, cidx); err != nil {
 		return
 	}
@@ -721,7 +717,7 @@ func ChangeLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, delta labels.
 }
 
 // getMergedIndex gets index data for all labels in a set with possible bounds.
-func (d *Data) getMergedIndex(v dvid.VersionID, mutID uint64, lbls labels.Set, bounds dvid.Bounds) (*labels.Index, error) {
+func (d *Data) getMergedIndex(v dvid.VersionID, lbls labels.Set, mutInfo dvid.MutInfo, bounds dvid.Bounds) (*labels.Index, error) {
 	if len(lbls) == 0 {
 		return nil, nil
 	}
@@ -731,15 +727,15 @@ func (d *Data) getMergedIndex(v dvid.VersionID, mutID uint64, lbls labels.Set, b
 		if err != nil {
 			return nil, err
 		}
-		if err := d.addMutcache(v, mutID, idx2); err != nil {
-			dvid.Criticalf("unable to add merge mutid %d index %d: %v\n", mutID, label, err)
+		if err := d.addMutcache(v, mutInfo.MutID, idx2); err != nil {
+			dvid.Criticalf("unable to add merge mutid %d index %d: %v\n", mutInfo.MutID, label, err)
 		}
 		if bounds.Block != nil && bounds.Block.IsSet() {
 			if err := idx2.FitToBounds(bounds.Block); err != nil {
 				return nil, err
 			}
 		}
-		if err := idx.Add(idx2); err != nil {
+		if err := idx.Add(idx2, mutInfo); err != nil {
 			return nil, err
 		}
 	}

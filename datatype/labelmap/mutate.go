@@ -56,6 +56,10 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 	timedLog := dvid.NewTimeLog()
 	mutID = d.NewMutationID()
 	op.MutID = mutID
+	mutInfo := dvid.MutInfo{
+		MutID:   mutID,
+		ModInfo: info,
+	}
 
 	// send kafka merge event to instance-uuid topic
 	lbls := make([]uint64, 0, len(op.Merged))
@@ -96,7 +100,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		dvid.Criticalf("unable to add merge mutid %d target index %d: %v\n", mutID, op.Target, err)
 	}
 	delta.TargetVoxels = targetIdx.NumVoxels()
-	if mergeIdx, err = d.getMergedIndex(v, mutID, op.Merged, dvid.Bounds{}); err != nil {
+	if mergeIdx, err = d.getMergedIndex(v, op.Merged, mutInfo, dvid.Bounds{}); err != nil {
 		err = fmt.Errorf("can't get block indices of merge labels %s: %v", op.Merged, err)
 		return
 	}
@@ -127,19 +131,13 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		return
 	}
 
-	if mergeIdx != nil && len(mergeIdx.Blocks) != 0 {
-		err = targetIdx.Add(mergeIdx)
-		if err != nil {
-			return
-		}
-		targetIdx.LastMutId = mutID
-		targetIdx.LastModUser = info.User
-		targetIdx.LastModTime = info.Time
-		targetIdx.LastModApp = info.App
-		dvid.Infof("putting targetIdx with user %s\n", targetIdx.LastModUser)
-		if err = PutLabelIndex(d, v, op.Target, targetIdx); err != nil {
-			return
-		}
+	// Write the final merged index and also record surface_mutid since surface changed.
+	if err = targetIdx.Add(mergeIdx, mutInfo); err != nil {
+		return
+	}
+	dvid.Infof("putting targetIdx with user %s\n", targetIdx.LastModUser)
+	if err = PutLabelIndex(d, v, op.Target, targetIdx); err != nil {
+		return
 	}
 	for merged := range delta.Merged {
 		DeleteLabelIndex(d, v, merged)

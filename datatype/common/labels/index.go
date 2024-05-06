@@ -400,8 +400,9 @@ func (idx *Index) FitToBounds(bounds *dvid.OptionalBounds) error {
 	return nil
 }
 
-// Add adds the given Index to the receiver.
-func (idx *Index) Add(idx2 *Index) error {
+// Add adds the given Index to the receiver. Any blocks modified will result in
+// the surface_mutid being set since the surface in the block would have changed.
+func (idx *Index) Add(idx2 *Index, mutInfo dvid.MutInfo) error {
 	if idx == nil {
 		return fmt.Errorf("can't use Index.Add with nil receiver Index")
 	}
@@ -422,18 +423,32 @@ func (idx *Index) Add(idx2 *Index) error {
 			for sv2, c2 := range svc2.Counts {
 				svc.Counts[sv2] = c2
 			}
+			svc.SurfaceMutid = mutInfo.MutID
 		}
 	}
+	idx.LastMutId = mutInfo.MutID
+	idx.LastModTime = mutInfo.Time
+	idx.LastModUser = mutInfo.User
+	idx.LastModApp = mutInfo.App
 	return nil
 }
 
 // Cleave the given supervoxels from an index and returns a new index, modifying both receiver
 // and creating new cleaved index.
-func (idx *Index) Cleave(cleaveLabel uint64, toCleave []uint64) (cleavedSize, remainSize uint64, cidx *Index) {
+func (idx *Index) Cleave(cleaveLabel uint64, toCleave []uint64, mutInfo dvid.MutInfo) (cleavedSize, remainSize uint64, cidx *Index) {
+	idx.LastMutId = mutInfo.MutID
+	idx.LastModUser = mutInfo.User
+	idx.LastModTime = mutInfo.Time
+	idx.LastModApp = mutInfo.App
+
 	cleaveSet := NewSet(toCleave...)
 	cidx = new(Index)
 	cidx.Label = cleaveLabel
 	cidx.Blocks = make(map[uint64]*proto.SVCount)
+	cidx.LastMutId = mutInfo.MutID
+	cidx.LastModUser = mutInfo.User
+	cidx.LastModTime = mutInfo.Time
+	cidx.LastModApp = mutInfo.App
 
 	for zyx, svc := range idx.Blocks {
 		if svc != nil && svc.Counts != nil {
@@ -444,12 +459,13 @@ func (idx *Index) Cleave(cleaveLabel uint64, toCleave []uint64) (cleavedSize, re
 					cleavedSize += uint64(sz)
 					cleavedCounts[supervoxel] = sz
 					delete(svc.Counts, supervoxel)
+					svc.SurfaceMutid = mutInfo.MutID
 				} else {
 					remainSize += uint64(sz)
 				}
 			}
 			if len(cleavedCounts) > 0 {
-				cidx.Blocks[zyx] = &proto.SVCount{Counts: cleavedCounts}
+				cidx.Blocks[zyx] = &proto.SVCount{Counts: cleavedCounts, SurfaceMutid: mutInfo.MutID}
 			}
 		}
 	}

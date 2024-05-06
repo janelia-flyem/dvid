@@ -214,7 +214,7 @@ func TestIngest(t *testing.T) {
 	idx3 := body3.getIndex(t)
 	checkGetIndices(t, child1, idx1, idx2, idx3)
 
-	if err := idx1.Add(idx2); err != nil {
+	if err := idx1.Add(idx2, dvid.MutInfo{}); err != nil {
 		t.Fatal(err)
 	}
 	idx1.Label = 7

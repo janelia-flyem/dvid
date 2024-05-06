@@ -90,6 +90,12 @@ func MinInt32(a, b int32) int32 {
 	return b
 }
 
+// MutInfo gives mutation id and the associated ModInfo
+type MutInfo struct {
+	MutID uint64
+	ModInfo
+}
+
 // ModInfo gives a user, app and time for a modification
 type ModInfo struct {
 	User string
@@ -134,7 +140,8 @@ func RandomBytes(numBytes int32) []byte {
 // option or # cores) and/or the megabytes (MB) of memory needed for each goroutine.
 // A minimum of 1 goroutine is returned.
 // TODO: Actually use the required memory provided in argument.  For now,
-//  only returns percentage of maximum # of cores.
+//
+//	only returns percentage of maximum # of cores.
 func EstimateGoroutines(percentCPUs float64, goroutineMB int32) int {
 	goroutines := percentCPUs * float64(NumCPU)
 	if goroutines < 1.0 {
