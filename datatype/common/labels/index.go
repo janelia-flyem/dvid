@@ -94,7 +94,7 @@ func (idx Index) Equal(idx2 Index) bool {
 	if idx.Label != idx2.Label {
 		return false
 	}
-	if idx.LastMutId != idx2.LastMutId {
+	if idx.LastMutid != idx2.LastMutid {
 		return false
 	}
 	if idx.LastModTime != idx2.LastModTime {
@@ -143,7 +143,7 @@ func (idx Index) Equal(idx2 Index) bool {
 func (idx Index) StringDump(showMutationInfo bool) string {
 	s := fmt.Sprintf("\nLabel: %d\n", idx.Label)
 	if showMutationInfo {
-		s += fmt.Sprintf("Last Mutation ID: %d\n", idx.LastMutId)
+		s += fmt.Sprintf("Last Mutation ID: %d\n", idx.LastMutid)
 		s += fmt.Sprintf("Last Modification Time: %s\n", idx.LastModTime)
 		s += fmt.Sprintf("Last Modification User: %s\n", idx.LastModUser)
 		s += fmt.Sprintf("Last Modification App:  %s\n\n", idx.LastModApp)
@@ -274,7 +274,7 @@ func (idx *Index) LimitToSupervoxel(supervoxel uint64) (*Index, error) {
 	}
 	sidx := new(Index)
 	sidx.Label = idx.Label
-	sidx.LastMutId = idx.LastMutId
+	sidx.LastMutid = idx.LastMutid
 	sidx.LastModTime = idx.LastModTime
 	sidx.LastModUser = idx.LastModUser
 	sidx.Blocks = make(map[uint64]*proto.SVCount)
@@ -426,7 +426,7 @@ func (idx *Index) Add(idx2 *Index, mutInfo dvid.MutInfo) error {
 			svc.SurfaceMutid = mutInfo.MutID
 		}
 	}
-	idx.LastMutId = mutInfo.MutID
+	idx.LastMutid = mutInfo.MutID
 	idx.LastModTime = mutInfo.Time
 	idx.LastModUser = mutInfo.User
 	idx.LastModApp = mutInfo.App
@@ -436,7 +436,7 @@ func (idx *Index) Add(idx2 *Index, mutInfo dvid.MutInfo) error {
 // Cleave the given supervoxels from an index and returns a new index, modifying both receiver
 // and creating new cleaved index.
 func (idx *Index) Cleave(cleaveLabel uint64, toCleave []uint64, mutInfo dvid.MutInfo) (cleavedSize, remainSize uint64, cidx *Index) {
-	idx.LastMutId = mutInfo.MutID
+	idx.LastMutid = mutInfo.MutID
 	idx.LastModUser = mutInfo.User
 	idx.LastModTime = mutInfo.Time
 	idx.LastModApp = mutInfo.App
@@ -445,7 +445,7 @@ func (idx *Index) Cleave(cleaveLabel uint64, toCleave []uint64, mutInfo dvid.Mut
 	cidx = new(Index)
 	cidx.Label = cleaveLabel
 	cidx.Blocks = make(map[uint64]*proto.SVCount)
-	cidx.LastMutId = mutInfo.MutID
+	cidx.LastMutid = mutInfo.MutID
 	cidx.LastModUser = mutInfo.User
 	cidx.LastModTime = mutInfo.Time
 	cidx.LastModApp = mutInfo.App

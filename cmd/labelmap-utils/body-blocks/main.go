@@ -95,7 +95,7 @@ func main() {
 		fmt.Printf("couldn't unmarshal index: %v\n", err)
 	}
 	fmt.Printf("\nLabel: %d\n", idx.Label)
-	fmt.Printf("Last Mutation ID: %d\n", idx.LastMutId)
+	fmt.Printf("Last Mutation ID: %d\n", idx.LastMutid)
 	fmt.Printf("Last Modification Time: %s\n", idx.LastModTime)
 	fmt.Printf("Last Modification User: %s\n", idx.LastModUser)
 	fmt.Printf("Last Modification App:  %s\n\n", idx.LastModApp)

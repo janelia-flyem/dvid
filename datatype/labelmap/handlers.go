@@ -406,7 +406,7 @@ func (d *Data) handleIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 		if metadata {
 			w.Header().Set("Content-type", "application/json")
 			fmt.Fprintf(w, `{"num_voxels":%d,"last_mutid":%d,"last_mod_time":"%s","last_mod_user":"%s","last_mod_app":"%s"}`,
-				idx.NumVoxels(), idx.LastMutId, idx.LastModTime, idx.LastModUser, idx.LastModApp)
+				idx.NumVoxels(), idx.LastMutid, idx.LastModTime, idx.LastModUser, idx.LastModApp)
 		} else {
 			serialization, err := pb.Marshal(idx)
 			if err != nil {
@@ -1126,7 +1126,7 @@ func (d *Data) handleLabelmod(ctx *datastore.VersionedCtx, w http.ResponseWriter
 
 	w.Header().Set("Content-type", "application/json")
 	fmt.Fprintf(w, `{`)
-	fmt.Fprintf(w, `"mutation id": %d, `, idx.LastMutId)
+	fmt.Fprintf(w, `"mutation id": %d, `, idx.LastMutid)
 	fmt.Fprintf(w, `"last mod user": %q, `, idx.LastModUser)
 	fmt.Fprintf(w, `"last mod app": %q, `, idx.LastModApp)
 	fmt.Fprintf(w, `"last mod time": %q `, idx.LastModTime)

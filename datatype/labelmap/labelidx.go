@@ -794,7 +794,7 @@ func (d *Data) verifyMappings(ctx *datastore.VersionedCtx, supervoxels, mapped [
 // computes supervoxel split on a label index, returning the split index and the slice of blocks
 // that were modified.
 func (d *Data) splitSupervoxelIndex(v dvid.VersionID, info dvid.ModInfo, op labels.SplitSupervoxelOp, idx *labels.Index) (dvid.IZYXSlice, error) {
-	idx.LastMutId = op.MutID
+	idx.LastMutid = op.MutID
 	idx.LastModUser = info.User
 	idx.LastModTime = info.Time
 	idx.LastModApp = info.App
@@ -827,13 +827,13 @@ func (d *Data) splitSupervoxelIndex(v dvid.VersionID, info dvid.ModInfo, op labe
 
 // SplitIndex modifies the split label's index and creates a new index for the split portion.
 func (d *Data) splitIndex(v dvid.VersionID, info dvid.ModInfo, op labels.SplitOp, idx *labels.Index, splitMap dvid.BlockRLEs, blockSplits blockSplitsMap) error {
-	idx.LastMutId = op.MutID
+	idx.LastMutid = op.MutID
 	idx.LastModUser = info.User
 	idx.LastModTime = info.Time
 	idx.LastModApp = info.App
 
 	sidx := new(labels.Index)
-	sidx.LastMutId = op.MutID
+	sidx.LastMutid = op.MutID
 	sidx.LastModUser = info.User
 	sidx.LastModTime = info.Time
 	sidx.LastModApp = info.App

@@ -279,7 +279,7 @@ func (d *Data) RenumberLabels(v dvid.VersionID, origLabel, newLabel uint64, info
 
 	if mergeIdx != nil && len(mergeIdx.Blocks) != 0 {
 		targetIdx = mergeIdx
-		targetIdx.LastMutId = mutID
+		targetIdx.LastMutid = mutID
 		targetIdx.LastModUser = info.User
 		targetIdx.LastModTime = info.Time
 		targetIdx.LastModApp = info.App
