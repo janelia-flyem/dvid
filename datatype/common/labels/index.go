@@ -416,6 +416,7 @@ func (idx *Index) Add(idx2 *Index, mutInfo dvid.MutInfo) error {
 	for zyx, svc2 := range idx2.Blocks {
 		svc, found := idx.Blocks[zyx]
 		if !found || svc == nil || svc.Counts == nil {
+			svc2.SurfaceMutid = mutInfo.MutID
 			idx.Blocks[zyx] = svc2
 		} else {
 			// supervoxels cannot be in more than one set index, so if it's in idx2,
