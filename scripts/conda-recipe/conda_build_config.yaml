@@ -15,23 +15,23 @@ pin_run_as_build:
   lz4-c:
     max_pin: x.x.x
 
-CONDA_BUILD_SYSROOT:
-  # Most conda-forge packages are compatible with MacOSX 10.9,
-  # but golang-1.16 requires at least MacOSX 10.13.
-  # (See the download page: https://go.dev/dl/)
-  #
-  # You will have to install this SDK manually, via this project:
-  #
-  #   https://github.com/devernay/xcodelegacy
-  #
-  # Quick Instructions:
-  #
-  #   curl https://raw.githubusercontent.com/devernay/xcodelegacy/master/XcodeLegacy.sh > XcodeLegacy.sh
-  #   chmod +x XcodeLegacy.sh
-  #   sudo ./XcodeLegacy.sh -osx1013 buildpackages
-  #   sudo ./XcodeLegacy.sh -osx1013 install
-  #
-  - /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.13.sdk
+# CONDA_BUILD_SYSROOT:
+#   # Most conda-forge packages are compatible with MacOSX 10.9,
+#   # but golang-1.16 requires at least MacOSX 10.13.
+#   # (See the download page: https://go.dev/dl/)
+#   #
+#   # You will have to install this SDK manually, via this project:
+#   #
+#   #   https://github.com/devernay/xcodelegacy
+#   #
+#   # Quick Instructions:
+#   #
+#   #   curl https://raw.githubusercontent.com/devernay/xcodelegacy/master/XcodeLegacy.sh > XcodeLegacy.sh
+#   #   chmod +x XcodeLegacy.sh
+#   #   sudo ./XcodeLegacy.sh -osx1013 buildpackages
+#   #   sudo ./XcodeLegacy.sh -osx1013 install
+#   #
+#   - /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.13.sdk
 
-MACOSX_DEPLOYMENT_TARGET:
-  - 10.13
+# MACOSX_DEPLOYMENT_TARGET:
+#   - 10.13
