@@ -338,6 +338,7 @@ func Shutdown() {
 			store.Close()
 		}
 		manager.setup = false
+		dvid.Infof("Finished closing all stores.\n")
 	}
 	KafkaShutdown()
 	manager = managerT{}

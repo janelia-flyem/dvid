@@ -116,6 +116,9 @@ func KafkaShutdown() {
 		} else {
 			dvid.Infof("Successfully shut down kafka producer.\n")
 		}
+		dvid.Infof("Kafka closed.")
+	} else {
+		dvid.Infof("Kafka producer was nil so unnecessary to close.")
 	}
 }
 
