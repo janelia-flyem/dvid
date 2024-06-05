@@ -733,7 +733,7 @@ func (m *repoManager) loadVersion0() error {
 			}
 			for name, data := range r.data {
 				if data.IsDeleted() {
-					if err := r.deleteData(name); err != nil {
+					if err := r.deleteDataByName(name); err != nil {
 						dvid.TimeCriticalf("tried to restart deletion of data %q but failed: %v\n", name, err)
 					}
 				}
@@ -2320,20 +2320,19 @@ func (m *repoManager) renameDataByName(uuid dvid.UUID, oldname, newname dvid.Ins
 
 // deleteDataByName deletes all data associated with the data instance and removes
 // it from the Repo.
-func (m *repoManager) deleteDataByName(uuid dvid.UUID, name dvid.InstanceName, passcode string) error {
-	r, err := m.repoFromUUID(uuid)
+func (m *repoManager) deleteData(data DataService, passcode string) error {
+	r, err := m.repoFromUUID(data.RootUUID())
 	if err != nil {
 		return err
 	}
-	return r.deleteDataWithPasscode(name, passcode)
-}
+	if r.passcodeOK(passcode) {
+		data.SetDeleted(true)
+		go r.deleteData(data)
+	} else {
+		return fmt.Errorf("incorrect passcode for repo %s", r.uuid)
 
-func (m *repoManager) deleteDataByVersion(v dvid.VersionID, name dvid.InstanceName, passcode string) error {
-	r, err := m.repoFromVersion(v)
-	if err != nil {
-		return err
 	}
-	return r.deleteDataWithPasscode(name, passcode)
+	return nil
 }
 
 // modifyData modifies preexisting Data within a Repo.  Settings can be passed
@@ -2427,6 +2426,37 @@ func (r *repoT) branchHeads() map[string]dvid.UUID {
 	return branchToUUID
 }
 
+// For all data tiers of storage, remove data kv pairs associated with this data instance.
+// This can be called asynchronously since it can be time-consuming.
+func (r *repoT) deleteData(data DataService) {
+	if err := storage.DeleteDataInstance(data); err != nil {
+		dvid.Errorf("Error trying to do async data instance deletion: %v\n", err)
+	}
+
+	// Delete entries in the sync graph if this data needs to be synced with another data instance.
+	_, syncable := data.(Syncer)
+	if syncable {
+		r.deleteSyncGraph(data, false)
+	}
+
+	// Remove this data instance from the repository and persist.
+	r.Lock()
+	tm := time.Now()
+	r.updated = tm
+	msg := fmt.Sprintf("Delete data instance '%s' of type '%s'", data.DataName(), data.TypeName())
+	message := fmt.Sprintf("%s  %s", tm.Format(time.RFC3339), msg)
+	r.log = append(r.log, message)
+	delete(r.data, data.DataName())
+	r.Unlock()
+	r.save()
+}
+
+func (r *repoT) passcodeOK(passcode string) bool {
+	r.RLock()
+	defer r.RUnlock()
+	return r.passcode == "" || r.passcode == passcode
+}
+
 func (r *repoT) deleteDataWithPasscode(name dvid.InstanceName, passcode string) error {
 	r.RLock()
 	if r.passcode != "" && r.passcode != passcode {
@@ -2434,10 +2464,10 @@ func (r *repoT) deleteDataWithPasscode(name dvid.InstanceName, passcode string) 
 		return fmt.Errorf("incorrect passcode for repo %s", r.uuid)
 	}
 	r.RUnlock()
-	return r.deleteData(name)
+	return r.deleteDataByName(name)
 }
 
-func (r *repoT) deleteData(name dvid.InstanceName) error {
+func (r *repoT) deleteDataByName(name dvid.InstanceName) error {
 	r.RLock()
 	data, found := r.data[name]
 	r.RUnlock()
@@ -2446,30 +2476,13 @@ func (r *repoT) deleteData(name dvid.InstanceName) error {
 	}
 	data.SetDeleted(true)
 
-	// For all data tiers of storage, remove data kv pairs associated with this instance id.
-	go func() {
-		if err := storage.DeleteDataInstance(data); err != nil {
-			dvid.Errorf("Error trying to do async data instance deletion: %v\n", err)
-		}
+	go r.deleteData(data)
+	return nil
+}
 
-		// Delete entries in the sync graph if this data needs to be synced with another data instance.
-		_, syncable := data.(Syncer)
-		if syncable {
-			r.deleteSyncGraph(data, false)
-		}
-
-		// Remove this data instance from the repository and persist.
-		r.Lock()
-		tm := time.Now()
-		r.updated = tm
-		msg := fmt.Sprintf("Delete data instance '%s' of type '%s'", name, data.TypeName())
-		message := fmt.Sprintf("%s  %s", tm.Format(time.RFC3339), msg)
-		r.log = append(r.log, message)
-		delete(r.data, name)
-		r.Unlock()
-		r.save()
-	}()
-
+func (r *repoT) deleteDataByDataUUID(data DataService) error {
+	data.SetDeleted(true)
+	go r.deleteData(data)
 	return nil
 }
 

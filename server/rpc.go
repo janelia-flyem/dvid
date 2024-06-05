@@ -56,9 +56,10 @@ DANGEROUS COMMANDS (only available via command line)
 
 		Deletes an entire repo with the given root UUID.
 
-	repo <UUID> delete <data name> <repo passcode if any>
+	repo <UUID> delete <data name or UUID> <repo passcode if any>
 
-		Delete the given data instance.
+		Delete the given data instance. First checks by data UUID, and if a
+		data instance is not found, checks by name.
 
 	repo <UUID> make-master <old-master-branch-name>
 
@@ -674,24 +675,22 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			*/
 
 		case "delete":
-			var dataname, passcode string
-			cmd.CommandArgs(3, &dataname, &passcode)
+			var dataId string // either data name or data UUID
+			var passcode string
+			cmd.CommandArgs(3, &dataId, &passcode)
 
-			// Make sure this instance exists.
-			if _, err = datastore.GetDataByUUIDName(uuid, dvid.InstanceName(dataname)); err != nil {
-				err = fmt.Errorf("Error trying to delete %q for UUID %s: %v", dataname, uuid, err)
+			// Try to delete a data UUID first, and if doesn't work, try by name.
+			if err = datastore.DeleteDataByDataUUID(dvid.UUID(dataId), passcode); err != nil {
+				err = datastore.DeleteDataByName(uuid, dvid.InstanceName(dataId), passcode)
+			}
+			if err != nil {
+				err = fmt.Errorf("error deleting data instance %q: %v", dataId, err)
 				return
 			}
-
-			// Do the deletion.  Under hood, modifies metadata immediately and launches async k/v deletion.
-			if err = datastore.DeleteDataByName(uuid, dvid.InstanceName(dataname), passcode); err != nil {
-				err = fmt.Errorf("Error deleting data instance %q: %v", dataname, err)
-				return
-			}
-			reply.Text = fmt.Sprintf("Started deletion of data instance %q from repo with root %s\n", dataname, uuid)
+			reply.Text = fmt.Sprintf("Started deletion of data instance %q from repo with root %s\n", dataId, uuid)
 
 		default:
-			err = fmt.Errorf("Unknown command: %q", cmd)
+			err = fmt.Errorf("unknown command: %q", cmd)
 			return
 		}
 

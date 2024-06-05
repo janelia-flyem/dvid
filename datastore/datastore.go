@@ -406,12 +406,22 @@ func GetDataByVersionName(v dvid.VersionID, name dvid.InstanceName) (DataService
 	return manager.getDataByVersionName(v, name)
 }
 
-// DeleteDataByName returns a data service given an instance name and UUID.
+// DeleteDataByName deletes a data service given an instance name and UUID.
 func DeleteDataByName(uuid dvid.UUID, name dvid.InstanceName, passcode string) error {
-	if manager == nil {
-		return ErrManagerNotInitialized
+	data, err := GetDataByUUIDName(uuid, name)
+	if err != nil {
+		return err
 	}
-	return manager.deleteDataByName(uuid, name, passcode)
+	return manager.deleteData(data, passcode)
+}
+
+// DeleteDataByDataUUID deletes a data service given a data UUID
+func DeleteDataByDataUUID(dataUUID dvid.UUID, passcode string) error {
+	data, err := GetDataByDataUUID(dataUUID)
+	if err != nil {
+		return err
+	}
+	return manager.deleteData(data, passcode)
 }
 
 // RenameData renames a data service given an old instance name and UUID.
@@ -420,14 +430,6 @@ func RenameData(uuid dvid.UUID, oldname, newname dvid.InstanceName, passcode str
 		return ErrManagerNotInitialized
 	}
 	return manager.renameDataByName(uuid, oldname, newname, passcode)
-}
-
-// DeleteDataByVersion returns a data service given an instance name and UUID.
-func DeleteDataByVersion(v dvid.VersionID, name dvid.InstanceName, passcode string) error {
-	if manager == nil {
-		return ErrManagerNotInitialized
-	}
-	return manager.deleteDataByVersion(v, name, passcode)
 }
 
 func ModifyDataConfigByName(uuid dvid.UUID, name dvid.InstanceName, c dvid.Config) error {
