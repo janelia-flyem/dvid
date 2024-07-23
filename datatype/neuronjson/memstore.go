@@ -50,10 +50,11 @@ func (d *Data) getMemDBbyVersion(v dvid.VersionID) (db *memdb, found bool) {
 
 // in-memory neuron annotations with sorted body id list for optional sorted iteration.
 type memdb struct {
-	data   map[uint64]NeuronJSON
-	ids    []uint64            // sorted list of body ids
-	fields map[string]struct{} // list of all fields among the annotations
-	mu     sync.RWMutex
+	data       map[uint64]NeuronJSON
+	ids        []uint64            // sorted list of body ids
+	fields     map[string]struct{} // list of all fields among the annotations across versions
+	fieldTimes map[string]string   // timestamp of last update for each field in HEAD
+	mu         sync.RWMutex
 }
 
 // initializes the in-memory dbs for the given list of UUIDs + branch names in
@@ -67,9 +68,10 @@ func (d *Data) initMemoryDB(versions []string) error {
 	dvid.Infof("Initializing in-memory dbs for neuronjson %q with versions %v\n", d.DataName(), versions)
 	for _, versionSpec := range versions {
 		mdb := &memdb{
-			data:   make(map[uint64]NeuronJSON),
-			fields: make(map[string]struct{}),
-			ids:    []uint64{},
+			data:       make(map[uint64]NeuronJSON),
+			fields:     make(map[string]struct{}),
+			fieldTimes: make(map[string]string),
+			ids:        []uint64{},
 		}
 		if strings.HasPrefix(versionSpec, ":") {
 			branch := strings.TrimPrefix(versionSpec, ":")
@@ -81,6 +83,7 @@ func (d *Data) initMemoryDB(versions []string) error {
 			} else if err := d.loadMemDB(v, mdb); err != nil {
 				return err
 			}
+			d.initFieldTimes(mdb)
 		} else {
 			uuid, v, err := datastore.MatchingUUID(versionSpec)
 			if err != nil {
@@ -96,6 +99,25 @@ func (d *Data) initMemoryDB(versions []string) error {
 	d.dbs = dbs
 	d.dbsMu.Unlock()
 	return nil
+}
+
+// initialize the fieldTimes map for an already loaded memdb.
+func (d *Data) initFieldTimes(mdb *memdb) {
+	for _, neuronjson := range mdb.data {
+		for field := range neuronjson {
+			if strings.HasSuffix(field, "_time") {
+				rootField := field[:len(field)-5]
+				timestamp := neuronjson[field].(string)
+				if _, found := mdb.fieldTimes[rootField]; !found {
+					mdb.fieldTimes[rootField] = timestamp
+				} else {
+					if timestamp > mdb.fieldTimes[rootField] {
+						mdb.fieldTimes[rootField] = timestamp
+					}
+				}
+			}
+		}
+	}
 }
 
 func (d *Data) loadMemDB(v dvid.VersionID, mdb *memdb) error {

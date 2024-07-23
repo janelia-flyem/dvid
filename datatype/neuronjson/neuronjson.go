@@ -209,6 +209,12 @@ GET  <api URL>/node/<UUID>/<data name>/fields
 
 	["field1", "field2", ...]
 
+GET  <api URL>/node/<UUID>/<data name>/fieldtimes
+
+	Returns the RFC3339 timestamps for each field in the most recent version:
+
+	{"field1": "timestamp1", "field2": "timestamp2", ...}
+
 GET  <api URL>/node/<UUID>/<data name>/keyrange/<key1>/<key2>
 
 	Returns all keys between 'key1' and 'key2' for this data instance in JSON format:
@@ -1176,6 +1182,20 @@ func (d *Data) GetFields(ctx storage.VersionedCtx) ([]string, error) {
 	return fields, nil
 }
 
+func (d *Data) GetFieldTimes(ctx storage.VersionedCtx) (map[string]string, error) {
+	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
+	if !found {
+		return nil, fmt.Errorf("unable to get fields because no in-memory db for neuronjson %q, version %d", d.DataName(), ctx.VersionID())
+	}
+	mdb.mu.RLock()
+	fieldTimes := make(map[string]string, len(mdb.fieldTimes))
+	for field, timeStr := range mdb.fieldTimes {
+		fieldTimes[field] = timeStr
+	}
+	mdb.mu.RUnlock()
+	return fieldTimes, nil
+}
+
 // GetByBodyID returns the JSON for a given body ID.
 func (d *Data) GetByBodyID(ctx storage.VersionedCtx, bodyid uint64, fieldMap map[string]struct{}, showFields Fields) (jsonData []byte, found bool, err error) {
 	var value map[string]interface{}
@@ -1369,8 +1389,14 @@ func (d *Data) storeAndUpdate(ctx *datastore.VersionedCtx, keyStr string, newDat
 	if found {
 		mdb.mu.Lock()
 		mdb.data[bodyid] = newData
+
+		// cache updated field and field timestamps
 		for field := range newData {
 			mdb.fields[field] = struct{}{}
+			if strings.HasSuffix(field, "_time") {
+				rootField := field[:len(field)-5]
+				mdb.fieldTimes[rootField] = newData[field].(string)
+			}
 		}
 		mdb.addBodyID(bodyid)
 		mdb.mu.Unlock()
@@ -2135,6 +2161,21 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, string(jsonBytes))
 		comment = "HTTP GET fields"
+
+	case "fieldtimes":
+		fieldTimes, err := d.GetFieldTimes(ctx)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		jsonBytes, err := json.Marshal(fieldTimes)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, string(jsonBytes))
+		comment = "HTTP GET fieldtimes"
 
 	case "query":
 		if action != "post" && action != "get" {

@@ -932,6 +932,7 @@ func TestKeyvalueRequests(t *testing.T) {
 	}
 
 	// Check if keys are re-POSTed using replace=true. Don't modify "a number" field.
+	time.Sleep(2 * time.Second) // need to change timestamp for test
 	value3mod = `{"bodyid": 3000, "a string": "goo replaced", "only list": [1, 2], "a number": 3456}`
 	key3modreq = fmt.Sprintf("%snode/%s/%s/key/%s?u=sandra&show=all&replace=true", server.WebAPIPath, uuid, name, key3)
 	server.TestHTTP(t, "POST", key3modreq, strings.NewReader(value3mod))
@@ -955,9 +956,12 @@ func TestKeyvalueRequests(t *testing.T) {
 	if value, found := responseJSON["a number_time"]; !found || value != old_time {
 		t.Fatalf("Bad response: %v\n", responseJSON)
 	}
+
 	if value, found := responseJSON["a string"]; !found || value != "goo replaced" {
 		t.Fatalf("Bad response: %v\n", responseJSON)
 	}
+	new_time := responseJSON["a string_time"]
+
 	if value, found := responseJSON["only list"]; !found || !reflect.DeepEqual(value, []int64{1, 2}) {
 		t.Fatalf("Bad response (type %s): %v\n", reflect.TypeOf(value), responseJSON)
 	}
@@ -969,6 +973,16 @@ func TestKeyvalueRequests(t *testing.T) {
 	}
 	if len(responseJSON) != 10 {
 		t.Fatalf("Expected 10 fields in response after replace, got: %v\n", responseJSON)
+	}
+
+	// Check if fieldtimes endpoint has the newer times.
+	fieldtimeReq := fmt.Sprintf("%snode/%s/%s/fieldtimes", server.WebAPIPath, uuid, name)
+	returnValue = server.TestHTTP(t, "GET", fieldtimeReq, nil)
+	if err := json.Unmarshal(returnValue, &responseJSON); err != nil {
+		t.Fatalf("Couldn't unmarshal response JSON: %s\n", string(returnValue))
+	}
+	if value, found := responseJSON["a string"]; !found || value != new_time {
+		t.Fatalf("Bad timestamp response: %v\n", responseJSON)
 	}
 }
 
