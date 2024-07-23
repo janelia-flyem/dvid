@@ -36,7 +36,7 @@ func TestQueryBodyIDs(t *testing.T) {
 	server.TestHTTP(t, "POST", apiStr, payload)
 
 	for bodyid, jsonStr := range sampleData {
-		keyreq := fmt.Sprintf("%snode/%s/neurons/key/%d", server.WebAPIPath, uuid, bodyid)
+		keyreq := fmt.Sprintf("%snode/%s/neurons/key/%d?u=tester", server.WebAPIPath, uuid, bodyid)
 		server.TestHTTP(t, "POST", keyreq, strings.NewReader(jsonStr))
 	}
 
@@ -51,7 +51,6 @@ func TestQueryBodyIDs(t *testing.T) {
 	}
 
 	query = `[{"bodyid": [1000, 2000]}, {"bodyid": [3000]}]`
-	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, "neurons")
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte(fmt.Sprintf("[%s,%s,%s]", sampleData[1000], sampleData[2000], sampleData[3000]))
@@ -60,7 +59,6 @@ func TestQueryBodyIDs(t *testing.T) {
 	}
 
 	query = `{"bodyid": [3003], "position": [303, 301, 303]}`
-	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, "neurons")
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte(fmt.Sprintf("[%s]", sampleData[3003]))

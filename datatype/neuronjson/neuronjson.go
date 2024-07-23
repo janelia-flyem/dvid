@@ -337,6 +337,9 @@ POST <api URL>/node/<UUID>/<data name>/key/<key>
 	the entire annotation. The replace behavior can be explicitly set if desired
 	to match old keyvalue semantics.  
 
+	NOTE: A user query string in the form of ?u=someuserid *must* be present or an 
+	error will be returned.
+
 	For each field, a *_user and *_time field will be added to the annotation unless
 	one is already present.  The *_user field will be set to the user making the
 	request and the *_time field will be set to the current time. If the current
@@ -466,6 +469,9 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues[?query-options]
 	Allows batch ingest of data. Each POSTed neuron annotation is handled in same
 	was as described in POST /key.
 	
+	NOTE: A user query string in the form of ?u=someuserid *must* be present or an 
+	error will be returned.
+
 	The POST body must include a KeyValues serialization as defined by the following
 	protobuf3 definitions:
 
@@ -1409,6 +1415,11 @@ func (d *Data) storeAndUpdate(ctx *datastore.VersionedCtx, keyStr string, newDat
 // If replace is true, will use given value instead of updating fields that were given.
 // If field values are given but do not change, the _user and _time fields will not be updated.
 func (d *Data) PutData(ctx *datastore.VersionedCtx, keyStr string, value []byte, conditionals []string, replace bool) error {
+	// Don't permit putting data without a valid user set.
+	if ctx.User == "" {
+		return fmt.Errorf("cannot alter neuronjson data without a valid user")
+	}
+
 	// Allow "schema" and "schema_batch" on /key endpoint for backwards compatibility with DVID keyvalue instances.
 	switch keyStr {
 	case "0":

@@ -348,6 +348,7 @@ func TestNeuronjsonRoundTrip(t *testing.T) {
 	}
 
 	ctx := datastore.NewVersionedCtx(dataservice, versionID)
+	ctx.User = "tester"
 
 	keyStr := "1234"
 	value := []byte(`{"bodyid": 1234, "a string": "foo", "a number": 1234, "a list": [1, 2, 3]}`)
@@ -684,7 +685,7 @@ func TestKeyvalueRequests(t *testing.T) {
 	server.TestHTTP(t, "POST", key1req, strings.NewReader(value1))
 
 	// Expect error if key 0 is used
-	badrequest := fmt.Sprintf("%snode/%s/%s/key/0", server.WebAPIPath, uuid, name)
+	badrequest := fmt.Sprintf("%snode/%s/%s/key/0?u=tester", server.WebAPIPath, uuid, name)
 	server.TestBadHTTP(t, "POST", badrequest, strings.NewReader(`{"bodyid": 0, "data": "foo"}`))
 
 	// Check HEAD response
@@ -776,7 +777,7 @@ func TestKeyvalueRequests(t *testing.T) {
 
 	// Check query
 	query := `{"a string": ["moo", "goo"]}`
-	queryreq := fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, name)
+	queryreq := fmt.Sprintf("%snode/%s/%s/query?u=tester", server.WebAPIPath, uuid, name)
 	returnValue = server.TestHTTP(t, "GET", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte("[" + value2 + "," + value3 + "]")
@@ -790,12 +791,12 @@ func TestKeyvalueRequests(t *testing.T) {
 	}
 
 	query = `{"a string": ["moo", "goo"], "a number": 2345}`
-	queryreq = fmt.Sprintf("%snode/%s/%s/query?show=all", server.WebAPIPath, uuid, name)
+	queryreq = fmt.Sprintf("%snode/%s/%s/query?show=all&u=tester", server.WebAPIPath, uuid, name)
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 	checkBasicAndAll(t, value2, returnValue, "martha")
 
 	query = `{"a string": ["moo", "goo"], "a number": [2345, 3456]}`
-	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, name)
+	queryreq = fmt.Sprintf("%snode/%s/%s/query?u=tester", server.WebAPIPath, uuid, name)
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte("[" + value2 + "," + value3 + "]")
@@ -804,7 +805,6 @@ func TestKeyvalueRequests(t *testing.T) {
 	}
 
 	query = `{"unused field": "foo"}`
-	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, name)
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte("[]")
@@ -813,7 +813,6 @@ func TestKeyvalueRequests(t *testing.T) {
 	}
 
 	query = `{"a string": "moo", "unused field": "foo"}`
-	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, name)
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte("[]")
@@ -823,7 +822,6 @@ func TestKeyvalueRequests(t *testing.T) {
 
 	// Check regex query
 	query = `{"a string": "re/^(f|m)oo"}`
-	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, name)
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte("[" + value1 + "," + value2 + "]")
@@ -832,7 +830,6 @@ func TestKeyvalueRequests(t *testing.T) {
 	}
 
 	query = `{"a string": "re/^(f|m)oo", "a list": "mom"}`
-	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, name)
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte("[" + value2 + "]")
@@ -841,7 +838,6 @@ func TestKeyvalueRequests(t *testing.T) {
 	}
 
 	query = `{"a string": "re/^(f|m)oo", "a list": ["re/.*x", "re/om"]}`
-	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, name)
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte("[" + value2 + "]")
@@ -1023,7 +1019,7 @@ func TestStressConcurrentRW(t *testing.T) {
 			i := 0
 			for {
 				i++
-				keyreq := fmt.Sprintf("%snode/%s/neurons/key/%d", server.WebAPIPath, uuid, i)
+				keyreq := fmt.Sprintf("%snode/%s/neurons/key/%d?u=tester", server.WebAPIPath, uuid, i)
 				keyval := fmt.Sprintf(`{"bodyid": %d, "somedata": "value-%d"}`, i, i)
 				server.TestHTTP(t, "POST", keyreq, strings.NewReader(keyval))
 				select {
@@ -1202,7 +1198,7 @@ func TestAll(t *testing.T) {
 	allNeurons := make(ListNeuronJSON, len(testData))
 	var keyreq = make([]string, len(testData))
 	for i := 0; i < len(testData); i++ {
-		keyreq[i] = fmt.Sprintf("%snode/%s/neurons/key/%s", server.WebAPIPath, uuid, testData[i].key)
+		keyreq[i] = fmt.Sprintf("%snode/%s/neurons/key/%s?u=tester", server.WebAPIPath, uuid, testData[i].key)
 		server.TestHTTP(t, "POST", keyreq[i], strings.NewReader(testData[i].val))
 		if err := json.Unmarshal([]byte(testData[i].val), &(allNeurons[i])); err != nil {
 			t.Fatalf("Unable to parse test annotation %d: %v\n", i, err)
@@ -1268,7 +1264,7 @@ func TestDeleteWithNull(t *testing.T) {
 	allNeurons := make(ListNeuronJSON, len(testData))
 	var keyreq = make([]string, len(testData))
 	for i := 0; i < len(testData); i++ {
-		keyreq[i] = fmt.Sprintf("%snode/%s/neurons/key/%s", server.WebAPIPath, uuid, testData[i].key)
+		keyreq[i] = fmt.Sprintf("%snode/%s/neurons/key/%s?u=tester", server.WebAPIPath, uuid, testData[i].key)
 		server.TestHTTP(t, "POST", keyreq[i], strings.NewReader(testData[i].val))
 		if err := json.Unmarshal([]byte(testData[i].val), &(allNeurons[i])); err != nil {
 			t.Fatalf("Unable to parse test annotation %d: %v\n", i, err)
@@ -1325,7 +1321,7 @@ func TestKeyvalueRange(t *testing.T) {
 	}
 
 	// PUT a value
-	key1req := fmt.Sprintf("%snode/%s/unversiontest/key/%s", server.WebAPIPath, uuid, testData[0].key)
+	key1req := fmt.Sprintf("%snode/%s/unversiontest/key/%s?u=tester", server.WebAPIPath, uuid, testData[0].key)
 	server.TestHTTP(t, "POST", key1req, strings.NewReader(testData[0].val))
 
 	returnValue := server.TestHTTP(t, "GET", key1req, nil)
@@ -1334,7 +1330,7 @@ func TestKeyvalueRange(t *testing.T) {
 	}
 
 	// Add 2nd k/v
-	key2req := fmt.Sprintf("%snode/%s/unversiontest/key/%s", server.WebAPIPath, uuid, testData[1].key)
+	key2req := fmt.Sprintf("%snode/%s/unversiontest/key/%s?u=tester", server.WebAPIPath, uuid, testData[1].key)
 	server.TestHTTP(t, "POST", key2req, strings.NewReader(testData[1].val))
 
 	// Test
@@ -1368,13 +1364,13 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 	// Add the first 4 annotations
 	var keyreq = make([]string, len(testData))
 	for i := 0; i < len(testData); i++ {
-		keyreq[i] = fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), testData[i].key)
+		keyreq[i] = fmt.Sprintf("%snode/%s/%s/key/%s?u=tester", server.WebAPIPath, uuid, data.DataName(), testData[i].key)
 		server.TestHTTP(t, "POST", keyreq[i], strings.NewReader(testData[i].val))
 	}
 
 	// Check field existence query
 	query := `{"a number": "exists/0"}`
-	queryreq := fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
+	queryreq := fmt.Sprintf("%snode/%s/%s/query?u=tester", server.WebAPIPath, uuid, data.DataName())
 	returnValue := server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
 	expectedValue := []byte("[" + testData[1].val + "," + testData[3].val + "]")
@@ -1400,7 +1396,6 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 
 	// Check if field is missing or empty string.
 	query = `[{"baz": "exists/0"}, {"baz": ""}]`
-	queryreq = fmt.Sprintf("%snode/%s/%s/query", server.WebAPIPath, uuid, data.DataName())
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
 	expectedValue = []byte("[" + testData[0].val + "," + testData[2].val + "]")
@@ -1421,7 +1416,7 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("couldn't serialize keyvalues: %v\n", err)
 	}
-	kvsPostReq := fmt.Sprintf("%snode/%s/%s/keyvalues", server.WebAPIPath, uuid, data.DataName())
+	kvsPostReq := fmt.Sprintf("%snode/%s/%s/keyvalues?u=tester", server.WebAPIPath, uuid, data.DataName())
 	server.TestHTTP(t, "POST", kvsPostReq, bytes.NewReader(serialization))
 
 	// Commit current version
