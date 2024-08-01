@@ -71,6 +71,10 @@ $ dvid -stdin node <UUID> <data name> put <key> < data
 
 	Puts stdin data into the keyvalue data instance under the given key.
 
+$ dvid node <UUID> <data name> dump-cloud <bucket>
+
+	Dumps all key-value pairs in the keyvalue data instance to the cloud storage bucket.
+
 	
 	------------------
 
@@ -575,40 +579,6 @@ func (d *Data) DeleteData(ctx storage.Context, keyStr string) error {
 	return db.Delete(ctx, tk)
 }
 
-// put handles a PUT command-line request.
-func (d *Data) put(cmd datastore.Request, reply *datastore.Response) error {
-	if len(cmd.Command) < 5 {
-		return fmt.Errorf("the key name must be specified after 'put'")
-	}
-	if len(cmd.Input) == 0 {
-		return fmt.Errorf("no data was passed into standard input")
-	}
-	var uuidStr, dataName, cmdStr, keyStr string
-	cmd.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &keyStr)
-
-	_, versionID, err := datastore.MatchingUUID(uuidStr)
-	if err != nil {
-		return err
-	}
-
-	// Store data
-	if !d.Versioned() {
-		// Map everything to root version.
-		versionID, err = datastore.GetRepoRootVersion(versionID)
-		if err != nil {
-			return err
-		}
-	}
-	ctx := datastore.NewVersionedCtx(d, versionID)
-	if err = d.PutData(ctx, keyStr, cmd.Input); err != nil {
-		return fmt.Errorf("error on put to key %q for keyvalue %q: %v", keyStr, d.DataName(), err)
-	}
-
-	reply.Output = []byte(fmt.Sprintf("Put %d bytes into key %q for keyvalue %q, uuid %s\n",
-		len(cmd.Input), keyStr, d.DataName(), uuidStr))
-	return nil
-}
-
 // JSONString returns the JSON for this Data's configuration
 func (d *Data) JSONString() (jsonStr string, err error) {
 	m, err := json.Marshal(d)
@@ -629,6 +599,8 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	switch request.TypeCommand() {
 	case "put":
 		return d.put(request, reply)
+	case "dump-cloud":
+		return d.dumpCloud(request, reply)
 	default:
 		return fmt.Errorf("unknown command.  Data '%s' [%s] does not support '%s' command",
 			d.DataName(), d.TypeName(), request.TypeCommand())
