@@ -71,11 +71,12 @@ $ dvid -stdin node <UUID> <data name> put <key> < data
 
 	Puts stdin data into the keyvalue data instance under the given key.
 
-$ dvid node <UUID> <data name> dump-cloud <bucket>
+$ dvid node <UUID> <data name> dump-cloud <bucket> [optional # of workers]
 
 	Dumps all key-value pairs in the keyvalue data instance to the cloud storage bucket.
+	For authorization on cloud storage, the user must have set up the appropriate
+	credentials in environment variables.
 
-	
 	------------------
 
 HTTP API (Level 2 REST):
