@@ -145,6 +145,7 @@ func (e Engine) newStore(config dvid.StoreConfig) (*ngStore, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
+	dvid.Infof("Successfully opened bucket: %q\n", ref)
 
 	ctx := context.Background()
 	data, err := bucket.ReadAll(ctx, "info")

@@ -53,8 +53,8 @@ func (d *Data) dumpCloud(cmd datastore.Request, reply *datastore.Response) error
 	if len(cmd.Command) < 5 {
 		return fmt.Errorf("dump-cloud must be followed by <cloud path> <optional # workers>")
 	}
-	var uuidStr, dataName, cmdStr, refStr, workersStr string
-	cmd.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &refStr, &workersStr)
+	var uuidStr, dataName, cmdStr, ref, workersStr string
+	cmd.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &ref, &workersStr)
 
 	var workers int = 20
 	if workersStr != "" {
@@ -75,11 +75,19 @@ func (d *Data) dumpCloud(cmd datastore.Request, reply *datastore.Response) error
 			return err
 		}
 	}
-
-	bucket, err := storage.OpenBucket(refStr)
+	bucket, err := storage.OpenBucket(ref)
 	if err != nil {
 		return err
 	}
+
+	go d.dumpCloudInBackground(bucket, versionID, workers)
+
+	reply.Output = []byte(fmt.Sprintf("Dumping all key-values to cloud %q for keyvalue %q, uuid %s\n",
+		ref, d.DataName(), uuidStr))
+	return nil
+}
+
+func (d *Data) dumpCloudInBackground(bucket *blob.Bucket, versionID dvid.VersionID, workers int) {
 	defer bucket.Close()
 
 	// Start goroutines to write key-value pairs to cloud storage.
@@ -87,57 +95,74 @@ func (d *Data) dumpCloud(cmd datastore.Request, reply *datastore.Response) error
 	ch := make(chan *storage.TKeyValue, 1000)
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
-		go d.writeWorker(wg, bucket, ch)
+		go d.writeWorker(i+1, wg, bucket, ch)
 	}
 
 	// Send all key-values to the writer goroutines.
-	d.sendKVsToWriters(versionID, ch)
+	numKV, err := d.sendKVsToWriters(versionID, ch)
 	close(ch)
 	wg.Wait()
-
-	reply.Output = []byte(fmt.Sprintf("Dumped all key-values to cloud %q for keyvalue %q, uuid %s\n",
-		refStr, d.DataName(), uuidStr))
-	return nil
+	if err != nil {
+		dvid.Errorf("Background dump-cloud had error with %d key-values transferred: %v\n", numKV, err)
+	} else {
+		dvid.Infof("Background dump-cloud completed: %d key-values transferred\n", numKV)
+	}
 }
 
 // writeWorker writes key-value pairs to cloud storage.
-func (d *Data) writeWorker(wg *sync.WaitGroup, bucket *blob.Bucket, ch chan *storage.TKeyValue) {
+func (d *Data) writeWorker(workerNum int, wg *sync.WaitGroup, bucket *blob.Bucket, ch chan *storage.TKeyValue) {
+	ctx := context.Background()
+	written := 0
 	for kv := range ch {
 		key, err := DecodeTKey(kv.K)
 		if err != nil {
 			dvid.Errorf("Error decoding TKey: %v\n", err)
 			continue
 		}
-		w, err := bucket.NewWriter(context.Background(), key, nil)
+		value, _, err := dvid.DeserializeData(kv.V, true)
 		if err != nil {
-			dvid.Errorf("Error creating writer for key %q: %v\n", key, err)
+			dvid.Errorf("unable to deserialize data for key %q\n", string(key))
 			continue
 		}
-		if _, err := w.Write(kv.V); err != nil {
-			dvid.Errorf("Error writing key %q to cloud bucket: %v\n", key, err)
+		opts := blob.WriterOptions{
+			BufferSize: len(value),
+			//ContentType: "text/plain",
+		}
+		if err := bucket.WriteAll(ctx, key, value, &opts); err != nil {
+			dvid.Errorf("Error writing key %q (%d bytes) to cloud bucket: %v\n", string(key), len(kv.V), err)
 			continue
 		}
-		if err := w.Close(); err != nil {
-			dvid.Errorf("Error closing after key %q to cloud bucket: %v\n", key, err)
+		written++
+		if written % 1000 == 0 {
+			dvid.Infof("Worker %d has written %d kv\n", workerNum, written)
 		}
 	}
+	dvid.Infof("Worker %d wrote %d kv\n", workerNum, written)
 	wg.Done()
 }
 
 // iterate through all key-value pairs and send them to the writer channel.
-func (d *Data) sendKVsToWriters(versionID dvid.VersionID, ch chan *storage.TKeyValue) error {
+func (d *Data) sendKVsToWriters(versionID dvid.VersionID, ch chan *storage.TKeyValue) (numKV uint64, err error) {
 	ctx := datastore.NewVersionedCtx(d, versionID)
-	db, err := datastore.GetOrderedKeyValueDB(d)
-	if err != nil {
-		return err
+
+	var db storage.OrderedKeyValueDB
+	if db, err = datastore.GetOrderedKeyValueDB(d); err != nil {
+		return
 	}
 	first := storage.MinTKey(keyStandard)
 	last := storage.MaxTKey(keyStandard)
-	return db.ProcessRange(ctx, first, last, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+	err =  db.ProcessRange(ctx, first, last, &storage.ChunkOp{}, func(c *storage.Chunk) error {
 		if c == nil || c.TKeyValue == nil || c.TKeyValue.V == nil {
 			return nil
 		}
+
 		ch <- c.TKeyValue
+		numKV++
+		if numKV % 1000 == 0 {
+			dvid.Infof("Sent %d kv pairs from instance %q for cloud storage.\n", numKV, d.DataName())
+		}
 		return nil
 	})
+	dvid.Infof("Sent total of %d kv pairs from instance %q for cloud storage.\n", numKV, d.DataName())
+	return
 }

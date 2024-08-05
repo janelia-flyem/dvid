@@ -8,8 +8,6 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 
 	"gocloud.dev/blob"
-	"gocloud.dev/blob/gcsblob"
-	"gocloud.dev/gcp"
 )
 
 // OpenBucket returns a blob.Bucket for the given reference.
@@ -18,24 +16,25 @@ import (
 //	gcs://<bucketname>
 //	s3://<bucketname>
 //	vast://<endpoint>/<bucketname>
+//
+// If no service prefix is used, we assume GCS due to legacy support.
 func OpenBucket(ref string) (bucket *blob.Bucket, err error) {
 	ctx := context.Background()
 
-	if strings.HasPrefix(ref, "s3://") {
-		// S3 handler contributed by Flatiron (pgunn)
-		// This relies on the non-GCS-specific blob API and requires that the user:
-		// A: Have set up AWS credentials in ways gocloud can find them (see the "aws config" command)
-		// B: Have set the AWS_REGION environment variable (usually to us-east-2)
-		bucket, err = blob.OpenBucket(ctx, ref)
-		if err != nil {
-			dvid.Errorf("Can't open bucket reference @ %q: %v\n", ref, err)
-			return nil, err
-		}
-		pathpart := strings.TrimPrefix(ref, "s3://")
-		pathpart = strings.SplitN(pathpart, "/", 2)[1] // Remove the bucket name
-		bucket = blob.PrefixedBucket(bucket, pathpart)
+	dvid.Infof("Opening bucket for %q ...\n", ref)
+	var service string
+	var pathParts []string
+	serviceParts := strings.Split(ref, "//")
+	if len(serviceParts) == 1 {
+		service = "gs:"
+		pathParts = strings.SplitN(ref, "/", 2)
+	} else {
+		service = serviceParts[0]
+		pathParts = strings.SplitN(serviceParts[1], "/", 2)
+	}
 
-	} else if strings.HasPrefix(ref, "vast://") {
+	switch service {
+	case "vast:":
 		// VAST S3-compatible storage
 		// The ref should be of form "vast://<endpoint>/<bucket>" where
 		// <endpoint> is the VAST endpoint and <bucket> is the bucket name.
@@ -46,45 +45,30 @@ func OpenBucket(ref string) (bucket *blob.Bucket, err error) {
 		//	 [default]
 		//	 aws_access_key_id = <access key>
 		//	 aws_secret_access_key = <secret key>
-		ref := strings.TrimPrefix(ref, "vast://")
-		ref_parts := strings.SplitN(ref, "/", 2)
-		if len(ref_parts) != 2 {
+		if len(pathParts) != 2 {
 			return nil, fmt.Errorf("vast ref must be of form 'vast://<endpoint>/<bucket>'")
 		}
-		endpoint := ref_parts[0]
-		bucketname := ref_parts[1]
+		endpoint := pathParts[0]
+		bucketname := pathParts[1]
 		url := fmt.Sprintf("s3://%s?endpoint=%s&s3ForcePathStyle=true", bucketname, endpoint)
 		bucket, err = blob.OpenBucket(ctx, url)
-		if err != nil {
-			dvid.Errorf("Can't open bucket reference @ %q: %v\n", ref, err)
-			return nil, err
-		}
+		return
 
-	} else {
-		// In this case default to Google Store authentication as DVID did before
-		// See https://cloud.google.com/docs/authentication/production
-		// for more info on alternatives.
-		creds, err := gcp.DefaultCredentials(ctx)
+	case "gs:","s3:":
+		bucket, err = blob.OpenBucket(ctx, service+ "//" + pathParts[0])
 		if err != nil {
 			return nil, err
 		}
+		if len(pathParts) > 1 {
+			path := pathParts[1]
+			if len(path) == 0 || path[len(path)-1] != '/' {
+				path += "/"
+			}
+			bucket = blob.PrefixedBucket(bucket, path)
+		}
+		return
 
-		// Create an HTTP client.
-		// This example uses the default HTTP transport and the credentials
-		// created above.
-		client, err := gcp.NewHTTPClient(
-			gcp.DefaultTransport(),
-			gcp.CredentialsTokenSource(creds))
-		if err != nil {
-			return nil, err
-		}
-
-		// Create a *blob.Bucket.
-		bucket, err = gcsblob.OpenBucket(ctx, client, ref, nil)
-		if err != nil {
-			fmt.Printf("Can't open bucket reference @ %q: %v\n", ref, err)
-			return nil, err
-		}
+	default:
+		return nil, fmt.Errorf("unknown service (allow 's3:', 'gs:', 'vast:'): %s", service)
 	}
-	return bucket, nil
 }
