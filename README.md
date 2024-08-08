@@ -68,12 +68,12 @@ directory.
 
 ## Basic Usage
 
-Some documentation is available on the DVID wiki for how to start the DVID server.
-While the [wiki's User Guide](https://github.com/janelia-flyem/dvid/wiki)
-provides simple console-based toy examples, please note that
-how our team uses the DVID services is much more complex due to our variety of clients
-and script-based usage.  Please see the [neuclease python library](https://github.com/janelia-flyem/neuclease)
-for more realistic ways to use DVID at scale and, in particular, for larger image volumes.
+Some documentation is available on the DVID [wiki's User Guide](https://github.com/janelia-flyem/dvid/wiki).
+When using DVID at scale, our team writes scripts using the [neuclease python library](https://github.com/janelia-flyem/neuclease).
+There are also other [DVID access libraries](#known-clients-with-dvid-support) used by our collaborators.
+
+For simple scenarios like just using DVID as a versioned key-value store, you can use HTTP requests to 
+read and write data.
 
 ## More Information
 
@@ -83,7 +83,8 @@ Both high-level and detailed descriptions of DVID and its ecosystem can found he
 * [Paper on DVID](https://www.frontiersin.org/article/10.3389/fncir.2019.00005)
 describing its motivation and architecture, including how versioning works at the key-value
 level.  
-* The main place for DVID documentation and information is [dvid.io](http://dvid.io).  The [DVID Wiki](https://github.com/janelia-flyem/dvid/wiki) in this github repository will be updated and moved to the website.
+* The main place for DVID documentation and information is the [DVID Wiki](https://github.com/janelia-flyem/dvid/wiki) in this github repository.
+There is also some documentation and blog posts on [dvid.io](http://dvid.io) pertinent to published datasets like the hemibrain.
 
 DVID is easily extensible by adding custom *data types*, each of which fulfill a
 minimal interface (e.g., HTTP request handling), DVID's initial focus is on efficiently 
