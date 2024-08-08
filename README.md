@@ -24,8 +24,6 @@ How it's different from other forms of versioned data systems:
 * All versions are available for queries. There is no checkout to read committed data.
 * The high-level science API uses pluggable datatypes.  This allows clients to operate on domain-specific data and operations rather than operations on generic files.
 * Data can be flexibly assigned to different types of storage, so tera- to peta-scale immutable imaging data can be kept in cloud storage while smaller, frequently mutated label data can be kept on fast local NVMe SSDs. This also allows data to be partitioned across databases by data instance. Our recent datasets primarily hold local data in [Badger embedded databases](https://github.com/dgraph-io/badger), also written in the Go language.
-* (Work in progress) A newer storage backend (DAGStore) will allow "chained storage" such that data published at a particular version, say on AWS Open Data, could be reused for later versions with only new modifications stored locally.  This requires extending storage flexibility to versions of data across storage locations. DAGStore will greatly simplify "pull requests" where just the changes within a set of versions are transmitted between separate DVID servers.
-
 
 While much of the effort has been focused on the needs of the 
 [Janelia FlyEM Team](https://www.janelia.org/project-team/flyem), DVID can be used as a general-purpose
