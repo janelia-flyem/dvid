@@ -23,7 +23,7 @@ How it's different from other forms of versioned data systems:
 * DVID handles large-scale data as in billions or more discrete units of data. Once you get to this scale, storing so many files can be difficult on a local file system or impose a lot of load even on shared file systems.  Cloud storage is always an option (and available in some DVID backends) but that adds latency and doesn't reduce transfer time of such large numbers of files or data chunks. Database systems (including embedded ones) handle this by consolidating many bits of data into larger files. This can also be described as a [sharded data approach](https://github.com/google/neuroglancer/blob/master/src/neuroglancer/datasource/precomputed/sharded.md).
 * All versions are available for queries. There is no checkout to read committed data.
 * The high-level science API uses pluggable datatypes.  This allows clients to operate on domain-specific data and operations rather than operations on generic files.
-* Data can be flexibly assigned to different types of storage, so tera- to peta-scale immutable imaging data can be kept in cloud storage while smaller, frequently mutated label data can be kept on fast local NVMe SSDs. This also allows data to be partitioned across databases by data instance. Our recent datasets primarily hold local data in [Badger embedded databases](https://github.com/dgraph-io/badger), also written in the Go language.
+* Data can be flexibly assigned to different types of storage, so tera- to peta-scale immutable imaging data can be kept in cloud storage while smaller, frequently mutated label data can be kept on fast local NVMe SSDs. DVID allows data instances to be assigned to different datastores, so large datasets can be spread across multiple local embedded databases as well as cloud stores. Our recent datasets primarily hold local data in [Badger embedded databases](https://github.com/dgraph-io/badger), also written in the Go language.
 
 While much of the effort has been focused on the needs of the 
 [Janelia FlyEM Team](https://www.janelia.org/project-team/flyem), DVID can be used as a general-purpose
@@ -72,8 +72,8 @@ Some documentation is available on the DVID [wiki's User Guide](https://github.c
 When using DVID at scale, our team writes scripts using the [neuclease python library](https://github.com/janelia-flyem/neuclease).
 There are also other [DVID access libraries](#known-clients-with-dvid-support) used by our collaborators.
 
-For simple scenarios like just using DVID as a versioned key-value store, you can use HTTP requests to 
-read and write data.
+For simple scenarios like just using DVID for branched versioning of key-value data, reading and writing data can be done with
+a few simple HTTP requests.
 
 ## More Information
 
@@ -106,7 +106,7 @@ we typically use the generic *keyvalue* datatype and store JSON-encoded or binar
 until we understand the desired access patterns and API.  When we outgrow the *keyvalue* type's
 GET, POST, and DELETE operations, we create a custom datatype package with a specialized HTTP API.
 
-DVID allows you to assign different storage systems to data instances within a single repo, 
+DVID allows you to assign data instances in a repo to different storage systems, 
 which allows great flexibility in optimizing storage for particular use cases.  For example, easily 
 compressed label data can be store in fast, expensive SSDs while larger, 
 immutable grayscale image data can be stored in petabyte-scale read-optimized systems like
