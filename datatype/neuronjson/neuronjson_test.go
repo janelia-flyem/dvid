@@ -658,6 +658,69 @@ func TestValidation(t *testing.T) {
 	}
 }
 
+func TestKeyvalueUser(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+	name := dvid.InstanceName("annotations")
+
+	config := dvid.NewConfig()
+	_, err := datastore.NewData(uuid, jsontype, name, config)
+	if err != nil {
+		t.Fatalf("Error creating new neuronjson instance: %v\n", err)
+	}
+
+	// PUT a kv
+	value := `{"bodyid": 1000, "key1": "foo"}`
+	req := fmt.Sprintf("%snode/%s/%s/key/1000?u=frank", server.WebAPIPath, uuid, name)
+	server.TestHTTP(t, "POST", req, strings.NewReader(value))
+
+	// Change key1 value but force a user.
+	value = `{"bodyid": 1000, "key1": "moo", "key1_user": "frank"}`
+	req = fmt.Sprintf("%snode/%s/%s/key/1000?u=admin", server.WebAPIPath, uuid, name)
+	server.TestHTTP(t, "POST", req, strings.NewReader(value))
+
+	// Verify the key1_user is now "someone" and not "frank"
+	req = fmt.Sprintf("%snode/%s/%s/key/1000?show=user", server.WebAPIPath, uuid, name)
+	returnValue := server.TestHTTP(t, "GET", req, nil)
+	if !equalObjectJSON(returnValue, []byte(value), ShowUsers) {
+		t.Errorf("Error: expected %s, got %s\n", value, string(returnValue))
+	}
+
+	// Allow deletion of fields via null for non-replace POST
+	value = `{"bodyid": 1000, "key1": null, "key1_user": null}`
+	req = fmt.Sprintf("%snode/%s/%s/key/1000?u=deleter", server.WebAPIPath, uuid, name)
+	server.TestHTTP(t, "POST", req, strings.NewReader(value))
+
+	// Verify the both key1 and key1_user fields are deleted
+	req = fmt.Sprintf("%snode/%s/%s/key/1000?show=user", server.WebAPIPath, uuid, name)
+	returnValue = server.TestHTTP(t, "GET", req, nil)
+	if !equalObjectJSON(returnValue, []byte(`{"bodyid": 1000}`), ShowUsers) {
+		t.Errorf("Error: expected %s, got %s\n", `{"bodyid": 1000}`, string(returnValue))
+	}
+
+	// PUT back the kv
+	value = `{"bodyid": 1000, "key1": "foo"}`
+	req = fmt.Sprintf("%snode/%s/%s/key/1000?u=frank", server.WebAPIPath, uuid, name)
+	server.TestHTTP(t, "POST", req, strings.NewReader(value))
+
+	// Just delete the main field not the _user as well.
+	value = `{"bodyid": 1000, "key1": null}`
+	req = fmt.Sprintf("%snode/%s/%s/key/1000?u=deleter", server.WebAPIPath, uuid, name)
+	server.TestHTTP(t, "POST", req, strings.NewReader(value))
+
+	// Verify we deleted key1 but also recorded the deleter identity
+	req = fmt.Sprintf("%snode/%s/%s/key/1000?show=user", server.WebAPIPath, uuid, name)
+	returnValue = server.TestHTTP(t, "GET", req, nil)
+	expected := `{"bodyid": 1000, "key1_user": "deleter"}`
+	if !equalObjectJSON(returnValue, []byte(expected), ShowUsers) {
+		t.Errorf("Error: expected %s, got %s\n", expected, string(returnValue))
+	}
+}
+
 func TestKeyvalueRequests(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)

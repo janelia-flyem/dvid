@@ -49,6 +49,13 @@ backward-compatibility with clients that used to use the keyvalue datatype
 for these neuron JSON annotations. The values are assumed to be JSON data, 
 and the queries are similar to how Firestore handles queries.
 
+Any keys that end with _user or _time are considered metadata in describing
+by who and at what time that field's value was modified. So you must not
+create JSON field names ending with _user or _time unless they are used
+as metadata.
+Example: Do not use "my_user" as a field name. "myuser" or "myUser" is OK
+  and will have "myuser_user" and "myuser_time" fields auto-generated.
+
 Note: UUIDs referenced below are strings that may either be a unique prefix of a
 hexadecimal UUID string (e.g., 3FA22) or a branch leaf specification that adds
 a colon (":") followed by the case-dependent branch name.  In the case of a
@@ -333,7 +340,7 @@ POST <api URL>/node/<UUID>/<data name>/key/<key>
 
 	Updates a key-value pair, modifying the fields with the POSTed JSON fields.
 	Note that unlike POST /key in keyvalue datatype instances, this operation updates
-	fields by defaults (using old fields not overwritten) rather than replacing
+	fields by default (using old fields not overwritten) rather than replacing
 	the entire annotation. The replace behavior can be explicitly set if desired
 	to match old keyvalue semantics.  
 
@@ -1256,11 +1263,34 @@ func (d *Data) GetData(ctx storage.VersionedCtx, keyStr string, fieldMap map[str
 	return d.GetByBodyID(ctx, bodyid, fieldMap, showFields)
 }
 
+func isMetaField(field string) bool {
+	return strings.HasSuffix(field, "_user") || strings.HasSuffix(field, "_time")
+}
+
 // update _user and _time fields for any fields newly set or modified.
 func updateJSON(origData, newData NeuronJSON, user string, conditionals []string, replace bool) {
 
 	t := time.Now()
 	timeStr := t.Format(time.RFC3339)
+
+	// keep track of explicitly set _user and _time fields for each field
+	// where a null would be empty string
+	fieldUser := make(map[string]string)
+	fieldTime := make(map[string]string)
+	var notString bool
+	for field, value := range newData {
+		if strings.HasSuffix(field, "_user") {
+			fieldUser[field[:len(field)-5]], notString = value.(string)
+			if notString {
+				dvid.Errorf("bad field %q value (not string): %v\n", field, value)
+			}
+		} else if strings.HasSuffix(field, "_time") {
+			fieldTime[field[:len(field)-5]], notString = value.(string)
+			if notString {
+				dvid.Errorf("bad field %q value (not string): %v\n", field, value)
+			}
+		}
+	}
 
 	// remove fields that are being set to null
 	deleted_fields := make(map[string]struct{})
@@ -1268,8 +1298,24 @@ func updateJSON(origData, newData NeuronJSON, user string, conditionals []string
 		if value == nil {
 			deleted_fields[field] = struct{}{}
 			delete(newData, field)
-			newData[field+"_user"] = user
-			newData[field+"_time"] = timeStr
+			dvid.Infof("deleting field %q\n", field)
+			if !isMetaField(field) {
+				// allow _user and _time fields to be set explicitly
+				setUser, foundUser := fieldUser[field]
+				setTime, foundTime := fieldTime[field]
+				if !foundUser {
+					setUser = user
+				}
+				if !foundTime {
+					setTime = timeStr
+				}
+				if setUser != "" {
+					newData[field+"_user"] = setUser
+				}
+				if setTime != "" {
+					newData[field+"_time"] = setTime
+				}
+			}
 			delete(origData, field)
 		}
 	}
@@ -1286,13 +1332,10 @@ func updateJSON(origData, newData NeuronJSON, user string, conditionals []string
 		}
 	} else {
 		for field, value := range newData {
-			if origValue, found := origData[field]; !found || !reflect.DeepEqual(value, origValue) {
+			if origValue, found := origData[field]; !found || isMetaField(field) || !reflect.DeepEqual(value, origValue) {
 				newlySet[field] = struct{}{}
-				if strings.HasSuffix(field, "_user") { // setting _user means we should set _time
-					newlySet[field[:len(field)-5]] = struct{}{}
-				}
 			}
-			if !strings.HasSuffix(field, "_user") && !strings.HasSuffix(field, "_time") {
+			if !isMetaField(field) {
 				newFields[field] = struct{}{}
 			}
 		}
