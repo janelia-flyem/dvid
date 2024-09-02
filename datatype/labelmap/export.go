@@ -1,7 +1,7 @@
 package labelmap
 
 import (
-	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -15,9 +15,8 @@ import (
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/array"
-	"github.com/apache/arrow/go/v14/arrow/flight"
+	"github.com/apache/arrow/go/v14/arrow/ipc"
 	"github.com/apache/arrow/go/v14/arrow/memory"
-	"github.com/klauspost/compress/zstd"
 )
 
 type exportSpec struct {
@@ -157,46 +156,285 @@ func (ng *ngScale) computeShardID(blockX, blockY, blockZ int32) uint64 {
 }
 
 type BlockData struct {
-	MortonCode     uint64   `json:"morton_code"`
-	Labels         []uint64 `json:"labels"`
-	Supervoxels    []uint64 `json:"supervoxels"`
-	CompressedData []byte   `json:"compressed_data"`
+	ChunkCoord dvid.ChunkPoint3d
+	Data       []byte
 }
 
-// Arrow schema for each block record
+// getBlockSchema returns Arrow schema with chunk index metadata
+func getBlockSchema(chunkIndex map[string]uint64) *arrow.Schema {
+	// Convert chunk index to Arrow metadata format
+	metadata := arrow.NewMetadata([]string{}, []string{})
+	if len(chunkIndex) > 0 {
+		indexJSON, err := json.Marshal(chunkIndex)
+		if err == nil {
+			metadata = arrow.NewMetadata([]string{"chunk_index"}, []string{string(indexJSON)})
+		}
+	}
+	
+	return arrow.NewSchema([]arrow.Field{
+		{Name: "chunk_x", Type: arrow.PrimitiveTypes.Int32},
+		{Name: "chunk_y", Type: arrow.PrimitiveTypes.Int32},
+		{Name: "chunk_z", Type: arrow.PrimitiveTypes.Int32},
+		{Name: "labels", Type: arrow.ListOf(arrow.PrimitiveTypes.Uint64)},
+		{Name: "supervoxels", Type: arrow.ListOf(arrow.PrimitiveTypes.Uint64)},
+		{Name: "dvid_compressed_block", Type: arrow.BinaryTypes.Binary},
+	}, metadata)
+}
+
+// Basic schema without metadata for initial writing
 var blockSchema = arrow.NewSchema([]arrow.Field{
-	{Name: "morton_code", Type: arrow.PrimitiveTypes.Uint64},
+	{Name: "chunk_x", Type: arrow.PrimitiveTypes.Int32},
+	{Name: "chunk_y", Type: arrow.PrimitiveTypes.Int32},
+	{Name: "chunk_z", Type: arrow.PrimitiveTypes.Int32},
 	{Name: "labels", Type: arrow.ListOf(arrow.PrimitiveTypes.Uint64)},
 	{Name: "supervoxels", Type: arrow.ListOf(arrow.PrimitiveTypes.Uint64)},
 	{Name: "dvid_compressed_block", Type: arrow.BinaryTypes.Binary},
 }, nil)
+
+type shardWriter struct {
+	f         *os.File
+	ch        chan *BlockData   // Channel to receive block data for this shard
+	indexMap  map[string]uint64 // Map of chunk coordinates to Arrow record index
+	mapping   *VCache           // Cache for mapping supervoxels to agglomerated labels
+	version   dvid.VersionID    // Version ID for this export
+	wg        *sync.WaitGroup
+	writer    *ipc.Writer      // Arrow IPC writer
+	pool      memory.Allocator // Arrow memory allocator
+	recordNum uint64           // Counter for Arrow records written
+	mu        sync.Mutex       // Mutex to protect indexMap and recordNum
+}
+
+// Start a goroutine to listen on the channel and write incoming block data to the shard file
+func (w *shardWriter) start() {
+	w.wg = &sync.WaitGroup{}
+	w.wg.Add(1)
+
+	// Initialize Arrow writer
+	w.pool = memory.NewGoAllocator()
+	w.writer = ipc.NewWriter(w.f, ipc.WithSchema(blockSchema))
+
+	go func() {
+		defer w.wg.Done()
+		defer func() {
+			if w.writer != nil {
+				w.writer.Close()
+			}
+		}()
+
+		for block := range w.ch {
+			// Record the chunk index before writing
+			coordKey := fmt.Sprintf("%d_%d_%d", block.ChunkCoord[0], block.ChunkCoord[1], block.ChunkCoord[2])
+			
+			w.mu.Lock()
+			if w.indexMap == nil {
+				w.indexMap = make(map[string]uint64)
+			}
+			w.indexMap[coordKey] = w.recordNum
+			currentRecord := w.recordNum
+			w.recordNum++
+			w.mu.Unlock()
+			
+			// Write the block data to the shard file in Arrow format
+			if err := w.writeBlock(block); err != nil {
+				dvid.Errorf("Error writing block %s (record %d) to shard file %s: %v", block.ChunkCoord, currentRecord, w.f.Name(), err)
+			}
+		}
+	}()
+}
+
+// writeBlock writes a single block's data to the shard file in Arrow format.
+func (w *shardWriter) writeBlock(block *BlockData) error {
+	// Parse the block to extract labels and supervoxels
+	var b labels.Block
+	if err := b.UnmarshalBinary(block.Data); err != nil {
+		return fmt.Errorf("Failed to unmarshal block data for %s: %v\n", block.ChunkCoord, err)
+	}
+
+	// Get the list of agglomerated labels for the given version.
+	mappedVersions := w.mapping.getMappedVersionsDist(w.version)
+	aggloLabels := make([]uint64, len(b.Labels))
+	for i, sv := range b.Labels {
+		mapped, found := w.mapping.mapLabel(sv, mappedVersions)
+		if found {
+			aggloLabels[i] = mapped
+		} else {
+			aggloLabels[i] = sv // if no mapping, use supervoxel ID
+		}
+	}
+
+	// Create Arrow record builders
+	coordXBuilder := array.NewInt32Builder(w.pool)
+	coordYBuilder := array.NewInt32Builder(w.pool)
+	coordZBuilder := array.NewInt32Builder(w.pool)
+	labelsBuilder := array.NewListBuilder(w.pool, arrow.PrimitiveTypes.Uint64)
+	supervoxelsBuilder := array.NewListBuilder(w.pool, arrow.PrimitiveTypes.Uint64)
+	compressedBuilder := array.NewBinaryBuilder(w.pool, arrow.BinaryTypes.Binary)
+
+	defer func() {
+		coordXBuilder.Release()
+		coordYBuilder.Release()
+		coordZBuilder.Release()
+		labelsBuilder.Release()
+		supervoxelsBuilder.Release()
+		compressedBuilder.Release()
+	}()
+
+	// Append coordinate data
+	coordXBuilder.Append(block.ChunkCoord[0])
+	coordYBuilder.Append(block.ChunkCoord[1])
+	coordZBuilder.Append(block.ChunkCoord[2])
+
+	// Append labels list (agglomerated labels)
+	labelsBuilder.Append(true)
+	labelValues := labelsBuilder.ValueBuilder().(*array.Uint64Builder)
+	for _, label := range aggloLabels {
+		labelValues.Append(label)
+	}
+
+	// Append supervoxels list (original supervoxel IDs)
+	supervoxelsBuilder.Append(true)
+	supervoxelValues := supervoxelsBuilder.ValueBuilder().(*array.Uint64Builder)
+	for _, sv := range b.Labels {
+		supervoxelValues.Append(sv)
+	}
+
+	// Append compressed block data
+	compressedData, err := b.MarshalBinary()
+	if err != nil {
+		return fmt.Errorf("Failed to marshal block data for %s: %v\n", block.ChunkCoord, err)
+	}
+	compressedBuilder.Append(compressedData)
+
+	// Build arrays
+	coordXArray := coordXBuilder.NewArray()
+	coordYArray := coordYBuilder.NewArray()
+	coordZArray := coordZBuilder.NewArray()
+	labelsArray := labelsBuilder.NewArray()
+	supervoxelsArray := supervoxelsBuilder.NewArray()
+	compressedArray := compressedBuilder.NewArray()
+
+	defer func() {
+		coordXArray.Release()
+		coordYArray.Release()
+		coordZArray.Release()
+		labelsArray.Release()
+		supervoxelsArray.Release()
+		compressedArray.Release()
+	}()
+
+	// Create record batch
+	record := array.NewRecord(blockSchema, []arrow.Array{
+		coordXArray, coordYArray, coordZArray,
+		labelsArray, supervoxelsArray, compressedArray,
+	}, 1)
+	defer record.Release()
+
+	// Write record to Arrow IPC file
+	return w.writer.Write(record)
+}
+
+func (w *shardWriter) close() error {
+	close(w.ch)
+	w.wg.Wait()
+
+	// Close Arrow writer first (this finalizes the Arrow IPC format)
+	if w.writer != nil {
+		w.writer.Close()
+	}
+
+	// Now we need to append the chunk index as metadata to the file
+	// Since Arrow IPC doesn't allow modifying metadata after writing, 
+	// we'll append it as a custom footer with a magic marker
+	if err := w.writeChunkIndex(); err != nil {
+		dvid.Errorf("Error writing chunk index to %s: %v", w.f.Name(), err)
+	}
+
+	// close file after all data has been written
+	if err := w.f.Close(); err != nil {
+		return fmt.Errorf("error closing shard file %s: %v", w.f.Name(), err)
+	}
+	return nil
+}
+
+// writeChunkIndex appends the chunk index as JSON metadata to the end of the file
+// Python reading example:
+// ```python
+// import json, struct
+// with open('shard.arrow', 'rb') as f:
+//     f.seek(-16, 2)  # Seek to 16 bytes before end
+//     magic = f.read(8)
+//     if magic == b'CHUNKIDX':
+//         length_bytes = f.read(8)
+//         length = struct.unpack('<Q', length_bytes)[0]  # Little-endian uint64
+//         f.seek(-(16 + length), 2)
+//         index_json = f.read(length)
+//         chunk_index = json.loads(index_json)
+// ```
+func (w *shardWriter) writeChunkIndex() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	
+	// Serialize the chunk index to JSON
+	indexJSON, err := json.Marshal(w.indexMap)
+	if err != nil {
+		return fmt.Errorf("failed to marshal chunk index: %v", err)
+	}
+	
+	// Write a custom footer with magic marker for chunk index
+	// Format: [Arrow IPC Data][JSON_DATA][JSON_LENGTH:8bytes][MAGIC:"CHUNKIDX"]
+	magic := []byte("CHUNKIDX")
+	
+	// Write the JSON data
+	if _, err := w.f.Write(indexJSON); err != nil {
+		return fmt.Errorf("failed to write chunk index JSON: %v", err)
+	}
+	
+	// Write the length of JSON data (8 bytes, little-endian)
+	lenBytes := make([]byte, 8)
+	for i := 0; i < 8; i++ {
+		lenBytes[i] = byte(len(indexJSON) >> (8 * i))
+	}
+	if _, err := w.f.Write(lenBytes); err != nil {
+		return fmt.Errorf("failed to write chunk index length: %v", err)
+	}
+	
+	// Write the magic marker
+	if _, err := w.f.Write(magic); err != nil {
+		return fmt.Errorf("failed to write chunk index magic: %v", err)
+	}
+	
+	return nil
+}
 
 // Manage all shard files and channels
 type shardHandler struct {
 	path       string  // Path to the directory where shard files are stored
 	shardZSize []int32 // Size of each shard in Z direction at each scale
 	writers    map[uint64]*shardWriter
+	mapping    *VCache        // Cache for mapping supervoxels to agglomerated labels
+	version    dvid.VersionID // Version ID for this export
 	mu         sync.RWMutex
 }
 
-type shardWriter struct {
-	f  *os.File
-	ch chan *BlockData // Channel to receive block data for this shard
-	mu sync.RWMutex
-}
-
-func (s *shardHandler) Initialize(exportSpec exportSpec) {
+func (s *shardHandler) Initialize(ctx *datastore.VersionedCtx, exportSpec exportSpec) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Get the label mapping cache for this version
+	var err error
+	if s.mapping, err = getMapping(ctx.Data(), ctx.VersionID()); err != nil {
+		return fmt.Errorf("couldn't get label mapping for labelmap %q: %v", ctx.DataName(), err)
+	}
+	s.version = ctx.VersionID()
+
+	// Initialize the scale information and shard Z sizes
 	s.path = exportSpec.Directory
 	s.shardZSize = make([]int32, len(exportSpec.Scales))
 
 	for level := range exportSpec.Scales {
 		scale := &exportSpec.Scales[level]
 		if err := scale.initialize(); err != nil {
-			dvid.Errorf("Aborting export-shards after initializing neuroglancer scale %d: %v", level, err)
-			return
+			return fmt.Errorf("Aborting export-shards after initializing neuroglancer scale %d: %v", level, err)
 		}
 
 		// Determine shard size in Z based on block bits and morton code interleaving.
@@ -205,10 +443,12 @@ func (s *shardHandler) Initialize(exportSpec exportSpec) {
 		s.shardZSize[level] = int32(1) << shardSideBits
 		dvid.Infof("Exporting labelmap at scale %d with chunk size %v and shard Z size %d\n", level, scale.ChunkSizes[0], s.shardZSize[level])
 	}
+
 	// Set capacity of map to # of shards in XY in scale 0
 	hiresChunkSize := exportSpec.Scales[0].ChunkSizes[0]
 	minNumShards := (hiresChunkSize[0] * hiresChunkSize[1]) / (s.shardZSize[0] * s.shardZSize[0])
 	s.writers = make(map[uint64]*shardWriter, minNumShards)
+	return nil
 }
 
 // getLastShardZ computes the last Z coordinate covered by the shard containing blockZ
@@ -229,7 +469,9 @@ func (s *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.Ch
 
 	// If writer does not exist, create a file and channel for this shard.
 	w = &shardWriter{
-		ch: make(chan *BlockData, 100), // Buffered channel to hold block data for this shard
+		ch:      make(chan *BlockData, 100), // Buffered channel to hold block data for this shard
+		mapping: s.mapping,
+		version: s.version,
 	}
 
 	// Calculate shard voxel origin
@@ -249,6 +491,8 @@ func (s *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.Ch
 		return nil, fmt.Errorf("failed to open shard file %s: %v", filename, err)
 	}
 	s.writers[shardID] = w
+	w.start()
+	dvid.Infof("Created shard writer %d -> shard file %s\n", shardID, filename)
 	return w, nil
 }
 
@@ -283,10 +527,11 @@ func (s *shardHandler) close() error {
 	defer s.mu.Unlock()
 
 	for shardID, w := range s.writers {
-		if err := w.f.Close(); err != nil {
+		fname := w.f.Name()
+		if err := w.close(); err != nil {
 			dvid.Errorf("Error closing shard file %s: %v", w.f.Name(), err)
 		}
-		dvid.Infof("Closed shard id %d -> shard file %s\n", shardID, w.f.Name())
+		dvid.Infof("Closed shard id %d -> shard file %s\n", shardID, fname)
 		delete(s.writers, shardID)
 	}
 	return nil
@@ -295,14 +540,17 @@ func (s *shardHandler) close() error {
 // ExportData dumps the label blocks to local shard files corresponding to neuroglancer precomputed
 // volume specification. This is a goroutine that is called asynchronously so should provide feedback
 // via log and no response to client.
-func (d *Data) ExportData(ctx *datastore.VersionedCtx, spec exportSpec) {
+func (d *Data) ExportData(ctx *datastore.VersionedCtx, spec exportSpec) error {
 	var handler shardHandler
-	handler.Initialize(spec)
+	if err := handler.Initialize(ctx, spec); err != nil {
+		return fmt.Errorf("couldn't initialize shard handler for labelmap %q: %v", d.DataName(), err)
+	}
 
 	// Start the process to read blocks from storage and send them to the appropriate shard writers.
 	go d.readBlocksZYX(ctx, &handler, spec)
 
 	dvid.Infof("Beginning export of labelmap %q data to %s ...\n", d.DataName(), spec.Directory)
+	return nil
 }
 
 // goroutine to receive stream of block data over channel, decode, and write to shard file
@@ -350,23 +598,10 @@ func (d *Data) chunkHandler(ch <-chan *storage.Chunk, handler *shardHandler, exp
 			continue
 		}
 
-		// Parse the block to extract labels and supervoxels
-		var block labels.Block
-		if err := block.UnmarshalBinary(blockData); err != nil {
-			dvid.Errorf("Failed to unmarshal block data for %s: %v\n", indexZYX, err)
-			continue
-		}
-
-		// Compute Morton code for this chunk
 		chunkCoord := dvid.ChunkPoint3d{chunkX, chunkY, chunkZ}
-		mortonCode := scaleStruct.mortonCode(chunkCoord)
-
-		// Create BlockData structure for the shard writer
 		blockInfo := &BlockData{
-			MortonCode:     mortonCode,
-			Labels:         block.Labels, // TODO: get agglomerated labels
-			Supervoxels:    block.Labels, // supervoxel labels from read block
-			CompressedData: blockData,    // TODO: leave out Supervoxel list in header and compress in zstd
+			ChunkCoord: chunkCoord,
+			Data:       blockData,
 		}
 
 		// Send the block data to the appropriate shard writer
@@ -426,106 +661,106 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, handler *shardHandler,
 	timedLog.Infof("Finished reading labelmap %q %d blocks to exporting workers", d.DataName(), numBlocks)
 }
 
-// transformBlockToArrow converts a label block to Arrow format with supervoxel/label indices
-// and compressed block data
-func (d *Data) transformBlockToArrow(blockData []byte, idx dvid.IndexZYX) (*flight.FlightData, error) {
-	// Create Arrow memory allocator
-	pool := memory.NewGoAllocator()
+// // transformBlockToArrow converts a label block to Arrow format with supervoxel/label indices
+// // and compressed block data
+// func (d *Data) transformBlockToArrow(blockData []byte, idx dvid.IndexZYX) (*flight.FlightData, error) {
+// 	// Create Arrow memory allocator
+// 	pool := memory.NewGoAllocator()
 
-	// Unmarshal the block data into a labels.Block structure
-	// TODO -- this does not fill in the Block indices.
-	var block labels.Block
-	if err := block.UnmarshalBinary(blockData); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal block data: %v", err)
-	}
+// 	// Unmarshal the block data into a labels.Block structure
+// 	// TODO -- this does not fill in the Block indices.
+// 	var block labels.Block
+// 	if err := block.UnmarshalBinary(blockData); err != nil {
+// 		return nil, fmt.Errorf("failed to unmarshal block data: %v", err)
+// 	}
 
-	// Separate the header information from the compressed block label data so
-	// we can store both the supervoxel and aglomerated label indices.
-	if len(block.Labels) == 0 {
-		return nil, fmt.Errorf("block at %v has no labels", idx)
-	}
+// 	// Separate the header information from the compressed block label data so
+// 	// we can store both the supervoxel and aglomerated label indices.
+// 	if len(block.Labels) == 0 {
+// 		return nil, fmt.Errorf("block at %v has no labels", idx)
+// 	}
 
-	// Compress the block label data using ZSTD
-	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create zstd encoder: %v", err)
-	}
-	defer encoder.Close()
-	compressedData := encoder.EncodeAll(blockData, nil)
+// 	// Compress the block label data using ZSTD
+// 	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to create zstd encoder: %v", err)
+// 	}
+// 	defer encoder.Close()
+// 	compressedData := encoder.EncodeAll(blockData, nil)
 
-	// Create Arrow schema for the block data
-	// TODO: Consider using global blockSchema variable
-	schema := arrow.NewSchema([]arrow.Field{
-		{Name: "block_coord_x", Type: arrow.PrimitiveTypes.Int32},
-		{Name: "block_coord_y", Type: arrow.PrimitiveTypes.Int32},
-		{Name: "block_coord_z", Type: arrow.PrimitiveTypes.Int32},
-		{Name: "labels", Type: arrow.BinaryTypes.Binary},
-		{Name: "compressed_data", Type: arrow.BinaryTypes.Binary},
-	}, nil)
+// 	// Create Arrow schema for the block data
+// 	// TODO: Consider using global blockSchema variable
+// 	schema := arrow.NewSchema([]arrow.Field{
+// 		{Name: "block_coord_x", Type: arrow.PrimitiveTypes.Int32},
+// 		{Name: "block_coord_y", Type: arrow.PrimitiveTypes.Int32},
+// 		{Name: "block_coord_z", Type: arrow.PrimitiveTypes.Int32},
+// 		{Name: "labels", Type: arrow.BinaryTypes.Binary},
+// 		{Name: "compressed_data", Type: arrow.BinaryTypes.Binary},
+// 	}, nil)
 
-	// Create builders for each column
-	coordXBuilder := array.NewInt32Builder(pool)
-	coordYBuilder := array.NewInt32Builder(pool)
-	coordZBuilder := array.NewInt32Builder(pool)
-	labelsBuilder := array.NewBinaryBuilder(pool, arrow.BinaryTypes.Binary)
-	compressedBuilder := array.NewBinaryBuilder(pool, arrow.BinaryTypes.Binary)
+// 	// Create builders for each column
+// 	coordXBuilder := array.NewInt32Builder(pool)
+// 	coordYBuilder := array.NewInt32Builder(pool)
+// 	coordZBuilder := array.NewInt32Builder(pool)
+// 	labelsBuilder := array.NewBinaryBuilder(pool, arrow.BinaryTypes.Binary)
+// 	compressedBuilder := array.NewBinaryBuilder(pool, arrow.BinaryTypes.Binary)
 
-	defer func() {
-		coordXBuilder.Release()
-		coordYBuilder.Release()
-		coordZBuilder.Release()
-		labelsBuilder.Release()
-		compressedBuilder.Release()
-	}()
+// 	defer func() {
+// 		coordXBuilder.Release()
+// 		coordYBuilder.Release()
+// 		coordZBuilder.Release()
+// 		labelsBuilder.Release()
+// 		compressedBuilder.Release()
+// 	}()
 
-	// Convert labels slice to bytes for storage
-	labelsBytes := make([]byte, len(block.Labels)*8)
-	for i, label := range block.Labels {
-		binary.LittleEndian.PutUint64(labelsBytes[i*8:(i+1)*8], label)
-	}
+// 	// Convert labels slice to bytes for storage
+// 	labelsBytes := make([]byte, len(block.Labels)*8)
+// 	for i, label := range block.Labels {
+// 		binary.LittleEndian.PutUint64(labelsBytes[i*8:(i+1)*8], label)
+// 	}
 
-	// Append data to builders
-	coordXBuilder.Append(int32(idx[0]))
-	coordYBuilder.Append(int32(idx[1]))
-	coordZBuilder.Append(int32(idx[2]))
-	labelsBuilder.Append(labelsBytes)
-	compressedBuilder.Append(compressedData)
+// 	// Append data to builders
+// 	coordXBuilder.Append(int32(idx[0]))
+// 	coordYBuilder.Append(int32(idx[1]))
+// 	coordZBuilder.Append(int32(idx[2]))
+// 	labelsBuilder.Append(labelsBytes)
+// 	compressedBuilder.Append(compressedData)
 
-	// Build arrays
-	coordXArray := coordXBuilder.NewArray()
-	coordYArray := coordYBuilder.NewArray()
-	coordZArray := coordZBuilder.NewArray()
-	labelsArray := labelsBuilder.NewArray()
-	compressedArray := compressedBuilder.NewArray()
+// 	// Build arrays
+// 	coordXArray := coordXBuilder.NewArray()
+// 	coordYArray := coordYBuilder.NewArray()
+// 	coordZArray := coordZBuilder.NewArray()
+// 	labelsArray := labelsBuilder.NewArray()
+// 	compressedArray := compressedBuilder.NewArray()
 
-	defer func() {
-		coordXArray.Release()
-		coordYArray.Release()
-		coordZArray.Release()
-		labelsArray.Release()
-		compressedArray.Release()
-	}()
+// 	defer func() {
+// 		coordXArray.Release()
+// 		coordYArray.Release()
+// 		coordZArray.Release()
+// 		labelsArray.Release()
+// 		compressedArray.Release()
+// 	}()
 
-	// Create record batch
-	record := array.NewRecord(schema, []arrow.Array{
-		coordXArray, coordYArray, coordZArray,
-		labelsArray, compressedArray,
-	}, 1)
-	defer record.Release()
+// 	// Create record batch
+// 	record := array.NewRecord(schema, []arrow.Array{
+// 		coordXArray, coordYArray, coordZArray,
+// 		labelsArray, compressedArray,
+// 	}, 1)
+// 	defer record.Release()
 
-	// Convert to FlightData
-	flightData := &flight.FlightData{
-		FlightDescriptor: &flight.FlightDescriptor{
-			Type: flight.DescriptorPATH,
-			Path: []string{fmt.Sprintf("block_%d_%d_%d", idx[0], idx[1], idx[2])},
-		},
-	}
+// 	// Convert to FlightData
+// 	flightData := &flight.FlightData{
+// 		FlightDescriptor: &flight.FlightDescriptor{
+// 			Type: flight.DescriptorPATH,
+// 			Path: []string{fmt.Sprintf("block_%d_%d_%d", idx[0], idx[1], idx[2])},
+// 		},
+// 	}
 
-	// Serialize the record batch to FlightData
-	var buf []byte
-	// Note: In a full implementation, you'd properly serialize the Arrow record to IPC format
-	// For now, we'll create a placeholder implementation
-	flightData.DataBody = buf
+// 	// Serialize the record batch to FlightData
+// 	var buf []byte
+// 	// Note: In a full implementation, you'd properly serialize the Arrow record to IPC format
+// 	// For now, we'll create a placeholder implementation
+// 	flightData.DataBody = buf
 
-	return flightData, nil
-}
+// 	return flightData, nil
+// }
