@@ -7,16 +7,14 @@ format optimized for fast, random-access record reads.
 
 ## File Format
 
-Each shard file uses the following format:
+Each shard consists of two files:
 
-```
-[Standard Arrow IPC Data][JSON Chunk Index][8-byte Length][8-byte Magic]
-```
+- **`{origin}.arrow`**: Standard Apache Arrow IPC format containing block records
+- **`{origin}.json`**: JSON mapping of chunk coordinates to Arrow record indices
 
-- **Arrow IPC Data**: Standard Apache Arrow IPC format containing block records
-- **JSON Chunk Index**: JSON mapping of chunk coordinates to Arrow record indices  
-- **8-byte Length**: Little-endian uint64 indicating length of JSON data
-- **8-byte Magic**: ASCII string "CHUNKIDX" identifying the index footer
+For example, a shard starting at origin (0,0,0) would have files:
+- `0_0_0.arrow` - Arrow IPC data
+- `0_0_0.json` - Chunk coordinate index
 
 ## Arrow IPC File Format
 
@@ -32,8 +30,9 @@ shard size and chunk size configuration.
 
 ## Chunk Index Format
 
-The chunk index is a JSON object mapping coordinate strings to Arrow record indices:
+The chunk index is stored as a separate JSON file with the same base name as the Arrow file but with `.json` extension. It contains a JSON object mapping coordinate strings to Arrow record indices:
 
+**Example: `0_0_0.json`**
 ```json
 {
   "0_0_0": 0,
@@ -77,40 +76,41 @@ SCHEMA = pa.schema([
 
 ```python
 import json
-import struct
+import os
 import pyarrow as pa
 
-def read_shard_with_index(filename):
+def read_shard_with_index(arrow_filename):
     """
-    Read Arrow shard file with chunk index.
+    Read Arrow shard file with chunk index from separate JSON file.
+    
+    Args:
+        arrow_filename: Path to the .arrow file
     
     Returns:
         tuple: (pyarrow.Table, dict) - Arrow table and chunk coordinate index
     """
-    # First, read the standard Arrow data
-    with pa.ipc.open_file(filename) as reader:
+    # Read the Arrow data
+    with pa.ipc.open_file(arrow_filename) as reader:
         table = reader.read_all()
     
-    # Then read the chunk index from custom footer
-    with open(filename, 'rb') as f:
-        f.seek(-16, 2)  # Last 16 bytes
-        magic = f.read(8)
-        if magic == b'CHUNKIDX':
-            length_bytes = f.read(8)
-            length = struct.unpack('<Q', length_bytes)[0]
-            f.seek(-(16 + length), 2)
-            index_json = f.read(length)
-            chunk_index = json.loads(index_json)
-            return table, chunk_index
+    # Read the chunk index from corresponding JSON file
+    json_filename = os.path.splitext(arrow_filename)[0] + '.json'
+    chunk_index = {}
+    if os.path.exists(json_filename):
+        with open(json_filename, 'r') as f:
+            chunk_index = json.load(f)
     
-    return table, {}
+    return table, chunk_index
 ```
 
 ### Usage Example
 
 ```python
-# Read shard file
+# Read shard file and its index
 table, chunk_index = read_shard_with_index('s0/0_0_0.arrow')
+
+# The chunk index was loaded from s0/0_0_0.json
+print(f"Shard contains {len(chunk_index)} chunks")
 
 # Access specific chunk by coordinates
 chunk_coord = "64_64_0"
@@ -134,9 +134,9 @@ if chunk_coord in chunk_index:
 
 ```python
 class ArrowShardReader:
-    def __init__(self, filename):
-        self.filename = filename
-        self.table, self.chunk_index = read_shard_with_index(filename)
+    def __init__(self, arrow_filename):
+        self.arrow_filename = arrow_filename
+        self.table, self.chunk_index = read_shard_with_index(arrow_filename)
     
     def get_chunk(self, x, y, z):
         """Get chunk data by coordinates."""
@@ -172,7 +172,8 @@ labels = reader.get_labels_for_chunk(64, 64, 0)
 ## Notes
 
 - The Arrow IPC data can be read by any standard Arrow library
-- The chunk index provides O(1) lookup for specific spatial coordinates
-- Multiple chunks can be efficiently accessed from a single shard file
-- The format maintains backward compatibility with standard Arrow readers (they'll just ignore the footer)
+- The separate JSON chunk index provides O(1) lookup for specific spatial coordinates
+- Multiple chunks can be efficiently accessed from a single shard file  
+- The chunk index JSON file is human-readable for debugging and inspection
+- Standard Arrow tools can process the .arrow files without needing to understand the indexing
 

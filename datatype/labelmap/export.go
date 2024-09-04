@@ -192,16 +192,17 @@ var blockSchema = arrow.NewSchema([]arrow.Field{
 }, nil)
 
 type shardWriter struct {
-	f         *os.File
-	ch        chan *BlockData   // Channel to receive block data for this shard
-	indexMap  map[string]uint64 // Map of chunk coordinates to Arrow record index
-	mapping   *VCache           // Cache for mapping supervoxels to agglomerated labels
-	version   dvid.VersionID    // Version ID for this export
-	wg        *sync.WaitGroup
-	writer    *ipc.Writer      // Arrow IPC writer
-	pool      memory.Allocator // Arrow memory allocator
-	recordNum uint64           // Counter for Arrow records written
-	mu        sync.Mutex       // Mutex to protect indexMap and recordNum
+	f          *os.File
+	ch         chan *BlockData   // Channel to receive block data for this shard
+	indexMap   map[string]uint64 // Map of chunk coordinates to Arrow record index
+	mapping    *VCache           // Cache for mapping supervoxels to agglomerated labels
+	version    dvid.VersionID    // Version ID for this export
+	wg         *sync.WaitGroup
+	writer     *ipc.Writer      // Arrow IPC writer
+	pool       memory.Allocator // Arrow memory allocator
+	recordNum  uint64           // Counter for Arrow records written
+	mu         sync.Mutex       // Mutex to protect indexMap and recordNum
+	shardPath  string           // Base path for shard files (without extension)
 }
 
 // Start a goroutine to listen on the channel and write incoming block data to the shard file
@@ -342,65 +343,39 @@ func (w *shardWriter) close() error {
 		w.writer.Close()
 	}
 
-	// Now we need to append the chunk index as metadata to the file
-	// Since Arrow IPC doesn't allow modifying metadata after writing, 
-	// we'll append it as a custom footer with a magic marker
+	// Write the chunk index as a separate JSON file
 	if err := w.writeChunkIndex(); err != nil {
-		dvid.Errorf("Error writing chunk index to %s: %v", w.f.Name(), err)
+		dvid.Errorf("Error writing chunk index for %s: %v", w.shardPath, err)
 	}
 
-	// close file after all data has been written
+	// close Arrow file after all data has been written
 	if err := w.f.Close(); err != nil {
 		return fmt.Errorf("error closing shard file %s: %v", w.f.Name(), err)
 	}
 	return nil
 }
 
-// writeChunkIndex appends the chunk index as JSON metadata to the end of the file
-// Python reading example:
-// ```python
-// import json, struct
-// with open('shard.arrow', 'rb') as f:
-//     f.seek(-16, 2)  # Seek to 16 bytes before end
-//     magic = f.read(8)
-//     if magic == b'CHUNKIDX':
-//         length_bytes = f.read(8)
-//         length = struct.unpack('<Q', length_bytes)[0]  # Little-endian uint64
-//         f.seek(-(16 + length), 2)
-//         index_json = f.read(length)
-//         chunk_index = json.loads(index_json)
-// ```
+// writeChunkIndex writes the chunk index as a separate JSON file
 func (w *shardWriter) writeChunkIndex() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	
 	// Serialize the chunk index to JSON
-	indexJSON, err := json.Marshal(w.indexMap)
+	indexJSON, err := json.MarshalIndent(w.indexMap, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal chunk index: %v", err)
 	}
 	
-	// Write a custom footer with magic marker for chunk index
-	// Format: [Arrow IPC Data][JSON_DATA][JSON_LENGTH:8bytes][MAGIC:"CHUNKIDX"]
-	magic := []byte("CHUNKIDX")
-	
-	// Write the JSON data
-	if _, err := w.f.Write(indexJSON); err != nil {
-		return fmt.Errorf("failed to write chunk index JSON: %v", err)
+	// Write to separate JSON file with same base name
+	jsonPath := w.shardPath + ".json"
+	jsonFile, err := os.Create(jsonPath)
+	if err != nil {
+		return fmt.Errorf("failed to create chunk index file %s: %v", jsonPath, err)
 	}
+	defer jsonFile.Close()
 	
-	// Write the length of JSON data (8 bytes, little-endian)
-	lenBytes := make([]byte, 8)
-	for i := 0; i < 8; i++ {
-		lenBytes[i] = byte(len(indexJSON) >> (8 * i))
-	}
-	if _, err := w.f.Write(lenBytes); err != nil {
-		return fmt.Errorf("failed to write chunk index length: %v", err)
-	}
-	
-	// Write the magic marker
-	if _, err := w.f.Write(magic); err != nil {
-		return fmt.Errorf("failed to write chunk index magic: %v", err)
+	if _, err := jsonFile.Write(indexJSON); err != nil {
+		return fmt.Errorf("failed to write chunk index to %s: %v", jsonPath, err)
 	}
 	
 	return nil
@@ -485,7 +460,9 @@ func (s *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.Ch
 	}
 
 	// Create shard filename using voxel coordinates
-	filename := path.Join(scalePath, fmt.Sprintf("%d_%d_%d.arrow", shardOrigin[0], shardOrigin[1], shardOrigin[2]))
+	baseName := fmt.Sprintf("%d_%d_%d", shardOrigin[0], shardOrigin[1], shardOrigin[2])
+	w.shardPath = path.Join(scalePath, baseName)
+	filename := w.shardPath + ".arrow"
 	w.f, err = os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open shard file %s: %v", filename, err)
