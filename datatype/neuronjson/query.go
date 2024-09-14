@@ -290,19 +290,25 @@ func queryJustBodyIDs(queryList ListQueryJSON) (bodyids []uint64, onlyBodyIDs bo
 					bodyids = append(bodyids, v)
 				case []uint64:
 					bodyids = append(bodyids, v...)
+				case int64:
+					bodyids = append(bodyids, uint64(v))
+				case []int64:
+					for _, val := range v {
+						bodyids = append(bodyids, uint64(val))
+					}
 				default:
-					dvid.Errorf("query on bodyid expected to be int64 or []int64, not %v: %v\n",
+					dvid.Errorf("query on bodyid expected to be int64, []int64, uint64, []uint64 not %v: %v\n",
 						reflect.TypeOf(v), v)
 					onlyBodyIDs = false
-					break
+					return
 				}
 			} else {
 				onlyBodyIDs = false
-				break
+				return
 			}
 		}
 	}
-	return bodyids, onlyBodyIDs
+	return
 }
 
 // returns true if at least one query on the list matches the value.
@@ -421,8 +427,9 @@ func (d *Data) Query(ctx *datastore.VersionedCtx, w http.ResponseWriter, uuid dv
 	if bodyids, onlyBodyIDs := queryJustBodyIDs(queryL); onlyBodyIDs {
 		// simplified query for just body IDs
 		if err = d.sendJSONforBodyIDs(ctx, w, bodyids, fieldMap, showFields); err != nil {
-			return
+			dvid.Infof("error in sendJSONforBodyIDs: %v\n", err)
 		}
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, "[")

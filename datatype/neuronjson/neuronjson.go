@@ -1878,7 +1878,7 @@ func (d *Data) sendJSONforBodyIDs(ctx storage.VersionedCtx, w http.ResponseWrite
 		if len(jsonData) == 0 {
 			jsonData = []byte("{}")
 		}
-		fmt.Fprint(w, jsonData)
+		fmt.Fprint(w, string(jsonData))
 	}
 	fmt.Fprint(w, "]")
 	return

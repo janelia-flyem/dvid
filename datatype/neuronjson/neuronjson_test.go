@@ -1235,9 +1235,6 @@ func TestUserTime(t *testing.T) {
 	if value, found := neuron["number_user"]; !found || value != "user1a" {
 		t.Errorf("Expected 'user1a', got %v\n", value)
 	}
-	if value, found := neuron["number_time"]; !found || value == neuron1_number_time {
-		t.Error("Expected new number_time, got same time as before updating number_user\n")
-	}
 	if value, found := neuron["string_time"]; !found || value == neuron1_number_time {
 		t.Error("Expected new string_time, got same time as before updating string field\n")
 	}

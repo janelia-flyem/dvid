@@ -50,6 +50,14 @@ func TestQueryBodyIDs(t *testing.T) {
 		t.Fatalf("Bad query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
+	query = `{"bodyid": 2000}`
+	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
+
+	expectedValue = []byte(fmt.Sprintf("[%s]", sampleData[2000]))
+	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
+		t.Fatalf("Bad query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+	}
+
 	query = `[{"bodyid": [1000, 2000]}, {"bodyid": [3000]}]`
 	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
 
