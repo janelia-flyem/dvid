@@ -1277,16 +1277,16 @@ func updateJSON(origData, newData NeuronJSON, user string, conditionals []string
 	// where a null would be empty string
 	fieldUser := make(map[string]string)
 	fieldTime := make(map[string]string)
-	var notString bool
+	var isString bool
 	for field, value := range newData {
 		if strings.HasSuffix(field, "_user") {
-			fieldUser[field[:len(field)-5]], notString = value.(string)
-			if notString {
+			fieldUser[field[:len(field)-5]], isString = value.(string)
+			if !isString {
 				dvid.Errorf("bad field %q value (not string): %v\n", field, value)
 			}
 		} else if strings.HasSuffix(field, "_time") {
-			fieldTime[field[:len(field)-5]], notString = value.(string)
-			if notString {
+			fieldTime[field[:len(field)-5]], isString = value.(string)
+			if !isString {
 				dvid.Errorf("bad field %q value (not string): %v\n", field, value)
 			}
 		}
