@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -32,7 +32,6 @@ Example: body-blocks emdata3:8900 662ed segmentation 1539193374
 
 var (
 	showHelp    = flag.Bool("help", false, "Show help message")
-	runVerbose  = flag.Bool("verbose", false, "Run in verbose mode")
 	supervoxels = flag.Bool("supervoxels", false, "Access raw blocks without mapping to body labels")
 	storefile   = flag.String("filename", "", "File to store retrieved block stream.  Default is body-<label>.dat")
 
@@ -81,7 +80,7 @@ func main() {
 		fmt.Printf("couldn't do GET on %q: %v\n", url, err)
 		os.Exit(1)
 	}
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Printf("couldn't read index data: %v\n", err)
 		os.Exit(1)
@@ -144,7 +143,7 @@ func writeBlocks(f *os.File, bcoords []dvid.ChunkPoint3d) {
 		fmt.Printf("couldn't do GET on %q: %v\n", url, err)
 		os.Exit(1)
 	}
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Printf("couldn't read block data: %v\n", err)
 		os.Exit(1)
