@@ -86,6 +86,18 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		MergeOp: op,
 	}
 
+	// Return error if any of the merged bodies don't exist or are empty.
+	mergedIdxs := make(map[uint64]*labels.Index, len(op.Merged))
+	for label := range op.Merged {
+		if mergedIdxs[label], err = GetLabelIndex(d, v, label, false); err != nil {
+			return 0, fmt.Errorf("error getting label index for merge label %d: %v", label, err)
+		} else if mergedIdxs[label] == nil {
+			return 0, fmt.Errorf("can't merge non-existent label %d", label)
+		} else if mergedIdxs[label].NumVoxels() == 0 {
+			return 0, fmt.Errorf("can't merge label %d with no voxels", label)
+		}
+	}
+
 	// Get all the affected blocks in the merge.
 	var targetIdx, mergeIdx *labels.Index
 	if targetIdx, err = GetLabelIndex(d, v, op.Target, false); err != nil {
@@ -100,7 +112,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp, info dvid.ModInf
 		dvid.Criticalf("unable to add merge mutid %d target index %d: %v\n", mutID, op.Target, err)
 	}
 	delta.TargetVoxels = targetIdx.NumVoxels()
-	if mergeIdx, err = d.getMergedIndex(v, op.Merged, mutInfo, dvid.Bounds{}); err != nil {
+	if mergeIdx, err = d.getMergedIndex(v, mergedIdxs, mutInfo, dvid.Bounds{}); err != nil {
 		err = fmt.Errorf("can't get block indices of merge labels %s: %v", op.Merged, err)
 		return
 	}

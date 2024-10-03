@@ -825,8 +825,24 @@ func TestMergeLabels(t *testing.T) {
 		t.Errorf("Expected label 4, got label %d\n", labels[3])
 	}
 
+	// Make sure merging a bad label will result in a no-op with no change in target.
+	testMerge := mergeJSON(`[2, 3, 10]`)
+	if err := testMerge.sendErr(t, uuid, "labels"); err == nil {
+		t.Fatalf("Expected error from bad merge label, got none\n")
+	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/supervoxels/2", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
+	if err := json.Unmarshal(r, &supervoxels); err != nil {
+		t.Errorf("Unable to parse supervoxels from server.  Got: %v\n", supervoxels)
+	}
+	if len(supervoxels) != 1 || supervoxels[0] != 2 {
+		t.Fatalf("expected body 2 to only have supervoxel 2, got %v\n", supervoxels)
+	}
+
+	// Make sure merging an empty label
+
 	// Test merge of 3 into 2
-	testMerge := mergeJSON(`[2, 3]`)
+	testMerge = mergeJSON(`[2, 3]`)
 	testMerge.send(t, uuid, "labels")
 
 	// Make sure label 3 sparsevol has been removed.

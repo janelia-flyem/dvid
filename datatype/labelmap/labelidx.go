@@ -717,29 +717,22 @@ func ChangeLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, delta labels.
 }
 
 // getMergedIndex gets index data for all labels in a set with possible bounds.
-func (d *Data) getMergedIndex(v dvid.VersionID, lbls labels.Set, mutInfo dvid.MutInfo, bounds dvid.Bounds) (*labels.Index, error) {
-	if len(lbls) == 0 {
-		return nil, nil
-	}
-	idx := new(labels.Index)
-	for label := range lbls {
-		idx2, err := GetLabelIndex(d, v, label, false)
-		if err != nil {
-			return nil, err
-		}
-		if err := d.addMutcache(v, mutInfo.MutID, idx2); err != nil {
+func (d *Data) getMergedIndex(v dvid.VersionID, mergedIdxs map[uint64]*labels.Index, mutInfo dvid.MutInfo, bounds dvid.Bounds) (*labels.Index, error) {
+	combinedIdx := new(labels.Index)
+	for label, idx := range mergedIdxs {
+		if err := d.addMutcache(v, mutInfo.MutID, idx); err != nil {
 			dvid.Criticalf("unable to add merge mutid %d index %d: %v\n", mutInfo.MutID, label, err)
 		}
 		if bounds.Block != nil && bounds.Block.IsSet() {
-			if err := idx2.FitToBounds(bounds.Block); err != nil {
+			if err := idx.FitToBounds(bounds.Block); err != nil {
 				return nil, err
 			}
 		}
-		if err := idx.Add(idx2, mutInfo); err != nil {
+		if err := combinedIdx.Add(idx, mutInfo); err != nil {
 			return nil, err
 		}
 	}
-	return idx, nil
+	return combinedIdx, nil
 }
 
 // given supervoxels with given mapping and whether they were actually in in-memory SVMap, check
