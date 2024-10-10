@@ -9,6 +9,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"math"
 	"net/http"
@@ -210,11 +211,15 @@ GET  <api URL>/node/<UUID>/<data name>/keys
 
 	[key1, key2, ...]
 
-GET  <api URL>/node/<UUID>/<data name>/fields
+GET  <api URL>/node/<UUID>/<data name>/fields[?counts=true]
 
-	Returns all field names in annotations for the most recent version:
+	By default, returns all field names in annotations for the given version:
 
 	["field1", "field2", ...]
+
+	If the query string "counts=true" is set, the response will be a JSON object:
+
+	{"field1": count1, "field2": count2, ...}
 
 GET  <api URL>/node/<UUID>/<data name>/fieldtimes
 
@@ -986,6 +991,35 @@ func (d *Data) processStoreRange(ctx storage.Context, f func(key string, value N
 	return err
 }
 
+// return the field counts for all annotations of a particular version
+func (d *Data) getFieldCounts(ctx storage.Context) (fields map[string]int64, err error) {
+	var db storage.OrderedKeyValueDB
+	if db, err = datastore.GetOrderedKeyValueDB(d); err != nil {
+		return
+	}
+	first := storage.MinTKey(keyAnnotation)
+	last := storage.MaxTKey(keyAnnotation)
+	fields = make(map[string]int64)
+	err = db.ProcessRange(ctx, first, last, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+		if c == nil || c.TKeyValue == nil {
+			return nil
+		}
+		kv := c.TKeyValue
+		if kv.V == nil {
+			return nil
+		}
+		var value NeuronJSON
+		if err := value.UnmarshalJSON(kv.V); err != nil {
+			return err
+		}
+		for field := range value {
+			fields[field]++
+		}
+		return nil
+	})
+	return
+}
+
 // Initialize loads mutable properties of the neuronjson data instance,
 // which in this case is the in-memory neuron json map for the specified versions.
 func (d *Data) Initialize() {
@@ -1179,20 +1213,18 @@ func (d *Data) GetKeys(ctx storage.VersionedCtx) (out []string, err error) {
 	return out, nil
 }
 
-func (d *Data) GetFields(ctx storage.VersionedCtx) ([]string, error) {
+func (d *Data) GetFieldCounts(ctx storage.VersionedCtx) (map[string]int64, error) {
 	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
-	if !found {
-		return nil, fmt.Errorf("unable to get fields because no in-memory db for neuronjson %q, version %d", d.DataName(), ctx.VersionID())
+	if found {
+		mdb.mu.RLock()
+		fields := make(map[string]int64, len(mdb.fields))
+		for field, count := range mdb.fields {
+			fields[field] = count
+		}
+		mdb.mu.RUnlock()
+		return fields, nil
 	}
-	mdb.mu.RLock()
-	fields := make([]string, len(mdb.fields))
-	i := 0
-	for field := range mdb.fields {
-		fields[i] = field
-		i++
-	}
-	mdb.mu.RUnlock()
-	return fields, nil
+	return d.getFieldCounts(ctx)
 }
 
 func (d *Data) GetFieldTimes(ctx storage.VersionedCtx) (map[string]string, error) {
@@ -1440,8 +1472,11 @@ func (d *Data) storeAndUpdate(ctx *datastore.VersionedCtx, keyStr string, newDat
 		mdb.data[bodyid] = newData
 
 		// cache updated field and field timestamps
+		for field := range origData {
+			mdb.fields[field]--
+		}
 		for field := range newData {
-			mdb.fields[field] = struct{}{}
+			mdb.fields[field]++
 			if strings.HasSuffix(field, "_time") {
 				rootField := field[:len(field)-5]
 				mdb.fieldTimes[rootField] = newData[field].(string)
@@ -1568,6 +1603,9 @@ func (d *Data) DeleteData(ctx storage.VersionedCtx, keyStr string) error {
 		mdb.mu.Lock()
 		_, found := mdb.data[bodyid]
 		if found {
+			for field := range mdb.data[bodyid] {
+				mdb.fields[field]--
+			}
 			delete(mdb.data, bodyid)
 			mdb.deleteBodyID(bodyid)
 		}
@@ -2202,12 +2240,27 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		comment = "HTTP GET keys"
 
 	case "fields":
-		fieldList, err := d.GetFields(ctx)
+		returnCounts := r.URL.Query().Get("counts") == "true"
+		fieldCount, err := d.GetFieldCounts(ctx)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
-		jsonBytes, err := json.Marshal(fieldList)
+		var result interface{}
+		if returnCounts {
+			result = fieldCount
+		} else {
+			fields := make([]string, len(fieldCount))
+			i := 0
+			for field, count := range fieldCount {
+				if count > 0 {
+					fields[i] = field
+				}
+				i++
+			}
+			result = fields
+		}
+		jsonBytes, err := json.Marshal(result)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -2354,7 +2407,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			comment = fmt.Sprintf("HTTP DELETE data with key %q of neuronjson %q (%s)", keyStr, d.DataName(), url)
 
 		case "post":
-			data, err := ioutil.ReadAll(r.Body)
+			data, err := io.ReadAll(r.Body)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return

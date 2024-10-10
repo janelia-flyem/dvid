@@ -1065,6 +1065,80 @@ var testData2 = []struct {
 	{"40000", `{"position": [151, 251, 301], "bodyid": 40000, "soma_side": "LHS", "baz": "some string"}`},
 }
 
+func TestFieldNames(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+	payload := bytes.NewBufferString(`{"typename": "neuronjson", "dataname": "neurons"}`)
+	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, payload)
+
+	for _, td := range testData {
+		keyreq := fmt.Sprintf("%snode/%s/neurons/key/%s?u=tester", server.WebAPIPath, uuid, td.key)
+		server.TestHTTP(t, "POST", keyreq, strings.NewReader(td.val))
+	}
+
+	// Test fields request
+	fieldsReq := fmt.Sprintf("%snode/%s/neurons/fields", server.WebAPIPath, uuid)
+	returnValue := server.TestHTTP(t, "GET", fieldsReq, nil)
+
+	expectedFields := []string{"bodyid", "a number", "position", "baz", "bar", "somefield", "a list", "soma_side"}
+	var fields []string
+	if err := json.Unmarshal(returnValue, &fields); err != nil {
+		t.Fatalf("Unable to parse return from /fields request: %s\nError: %v\n", string(returnValue), err)
+	}
+	expectedNumFields := (len(expectedFields)-1)*3 + 1 // fields have _user and _time except bodyid
+	if len(fields) != expectedNumFields {
+		t.Fatalf("Expected %d fields, got %d\n", len(expectedFields), len(fields))
+	}
+	for _, field := range expectedFields {
+		found := false
+		for _, f := range fields {
+			if f == field {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Expected field %q not found in fields request\n", field)
+		}
+	}
+
+	// If we repost without the only instance of a field, it should no longer be in the fields request
+	postReq := fmt.Sprintf("%snode/%s/neurons/key/4000?u=changer&replace=true", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", postReq,
+		strings.NewReader(`{"bodyid": 4000, "position": [151, 251, 301], "baz": "some string"}`),
+	)
+
+	returnValue = server.TestHTTP(t, "GET", fieldsReq, nil)
+	if err := json.Unmarshal(returnValue, &fields); err != nil {
+		t.Fatalf("Unable to parse return from /fields request: %s\nError: %v\n", string(returnValue), err)
+	}
+	for _, field := range fields {
+		if field == "soma_side" {
+			t.Errorf("Found deleted field soma_side in fields request\n")
+		}
+	}
+
+	// If we delete an annotation, it should no longer contribute to the fields request.
+	// In this case, we delete the only "bar" field.
+	delReq := fmt.Sprintf("%snode/%s/neurons/key/2000?u=changer", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "DELETE", delReq, nil)
+
+	returnValue = server.TestHTTP(t, "GET", fieldsReq, nil)
+	if err := json.Unmarshal(returnValue, &fields); err != nil {
+		t.Fatalf("Unable to parse return from /fields request: %s\nError: %v\n", string(returnValue), err)
+	}
+	for _, field := range fields {
+		if field == "bar" {
+			t.Errorf("Found deleted field bar in fields request: %v\n", fields)
+		}
+	}
+}
+
 func TestStressConcurrentRW(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)

@@ -51,9 +51,9 @@ func (d *Data) getMemDBbyVersion(v dvid.VersionID) (db *memdb, found bool) {
 // in-memory neuron annotations with sorted body id list for optional sorted iteration.
 type memdb struct {
 	data       map[uint64]NeuronJSON
-	ids        []uint64            // sorted list of body ids
-	fields     map[string]struct{} // list of all fields among the annotations across versions
-	fieldTimes map[string]string   // timestamp of last update for each field in HEAD
+	ids        []uint64          // sorted list of body ids
+	fields     map[string]int64  // list of all fields and their counts for HEAD
+	fieldTimes map[string]string // timestamp of last update for each field in HEAD
 	mu         sync.RWMutex
 }
 
@@ -69,7 +69,7 @@ func (d *Data) initMemoryDB(versions []string) error {
 	for _, versionSpec := range versions {
 		mdb := &memdb{
 			data:       make(map[uint64]NeuronJSON),
-			fields:     make(map[string]struct{}),
+			fields:     make(map[string]int64),
 			fieldTimes: make(map[string]string),
 			ids:        []uint64{},
 		}
@@ -195,7 +195,7 @@ func (mdb *memdb) addAnnotation(bodyid uint64, annotation NeuronJSON) {
 	mdb.data[bodyid] = annotation
 	mdb.ids = append(mdb.ids, bodyid)
 	for field := range annotation {
-		mdb.fields[field] = struct{}{}
+		mdb.fields[field]++
 	}
 }
 
