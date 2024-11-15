@@ -325,7 +325,6 @@ func queryMatch(queryList ListQueryJSON, value map[string]interface{}) (matches 
 			switch v := queryValue.(type) {
 			case FieldExistence:
 				found = found && recordValue != nil
-				dvid.Infof("checking existence of field %s: %v where field %t (%v)", queryKey, v, found, recordValue)
 				if (bool(v) && !found) || (!bool(v) && found) {
 					and_match = false
 				}
