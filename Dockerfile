@@ -1,3 +1,7 @@
+// execute the following example command to build the image.
+// be sure to set the version numbers to the ones desired.
+docker build . --build-arg DVID_VERSION=0.9.12 --build-arg CONSOLE_VERSION=3.4.12 -t gcr.io/flyem-public/dvid/dvid:0.9.12-3.4.12
+
 FROM node:14 as consolebuilder
 WORKDIR /app
 ARG CONSOLE_VERSION=3.4.12
