@@ -345,7 +345,7 @@ func queryMatch(queryList ListQueryJSON, value map[string]interface{}) (matches 
 	return false, nil
 }
 
-func (d *Data) queryInMemory(mdb *memdb, w http.ResponseWriter, queryL ListQueryJSON, fieldMap map[string]struct{}, showFields Fields) (err error) {
+func (d *Data) queryInMemory(mdb *memdb, w http.ResponseWriter, queryL ListQueryJSON, fieldMap map[string]struct{}, showFields Fields, onlyidOut bool) (err error) {
 	mdb.mu.RLock()
 	defer mdb.mu.RUnlock()
 
@@ -359,12 +359,17 @@ func (d *Data) queryInMemory(mdb *memdb, w http.ResponseWriter, queryL ListQuery
 		if matches, err = queryMatch(queryL, value); err != nil {
 			return
 		} else if matches {
+			if numMatches > 0 {
+				fmt.Fprint(w, ",")
+			}
+			if onlyidOut {
+				fmt.Fprintf(w, "%d", bodyid)
+				numMatches++
+				continue
+			}
 			out := selectFields(value, fieldMap, showUser, showTime)
 			if jsonBytes, err = json.Marshal(out); err != nil {
 				break
-			}
-			if numMatches > 0 {
-				fmt.Fprint(w, ",")
 			}
 			fmt.Fprint(w, string(jsonBytes))
 			numMatches++
@@ -374,16 +379,28 @@ func (d *Data) queryInMemory(mdb *memdb, w http.ResponseWriter, queryL ListQuery
 }
 
 func (d *Data) queryBackingStore(ctx storage.VersionedCtx, w http.ResponseWriter,
-	queryL ListQueryJSON, fieldMap map[string]struct{}, showFields Fields) (err error) {
+	queryL ListQueryJSON, fieldMap map[string]struct{}, showFields Fields, onlyidOut bool) (err error) {
 
 	dvid.Infof("store query using mdb with queryL: %v\n", queryL)
 	numMatches := 0
 	process_func := func(key string, value NeuronJSON) {
-		value = NeuronJSON(value)
 		if matches, err := queryMatch(queryL, value); err != nil {
 			dvid.Errorf("error in matching process: %v\n", err) // TODO: alter d.processRange to allow return of err
 			return
 		} else if !matches {
+			return
+		}
+		bodyidVal, ok := value["bodyid"]
+		if !ok {
+			dvid.Errorf("No bodyid found in annotation: %v", value)
+			return
+		}
+		if numMatches > 0 {
+			fmt.Fprint(w, ",")
+		}
+		if onlyidOut {
+			fmt.Fprint(w, bodyidVal)
+			numMatches++
 			return
 		}
 		out := removeReservedFields(value, showFields)
@@ -392,9 +409,6 @@ func (d *Data) queryBackingStore(ctx storage.VersionedCtx, w http.ResponseWriter
 			dvid.Errorf("error in JSON encoding: %v\n", err)
 			return
 		}
-		if numMatches > 0 {
-			fmt.Fprint(w, ",")
-		}
 		fmt.Fprint(w, string(jsonBytes))
 		numMatches++
 	}
@@ -402,7 +416,7 @@ func (d *Data) queryBackingStore(ctx storage.VersionedCtx, w http.ResponseWriter
 }
 
 // Query reads POSTed data and returns JSON.
-func (d *Data) Query(ctx *datastore.VersionedCtx, w http.ResponseWriter, uuid dvid.UUID, onlyid bool, fieldMap map[string]struct{}, showFields Fields, in io.ReadCloser) (err error) {
+func (d *Data) Query(ctx *datastore.VersionedCtx, w http.ResponseWriter, uuid dvid.UUID, onlyidOut bool, fieldMap map[string]struct{}, showFields Fields, in io.ReadCloser) (err error) {
 	var queryBytes []byte
 	if queryBytes, err = io.ReadAll(in); err != nil {
 		return
@@ -434,11 +448,11 @@ func (d *Data) Query(ctx *datastore.VersionedCtx, w http.ResponseWriter, uuid dv
 	fmt.Fprint(w, "[")
 	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
 	if found {
-		if err = d.queryInMemory(mdb, w, queryL, fieldMap, showFields); err != nil {
+		if err = d.queryInMemory(mdb, w, queryL, fieldMap, showFields, onlyidOut); err != nil {
 			return
 		}
 	} else {
-		if err = d.queryBackingStore(ctx, w, queryL, fieldMap, showFields); err != nil {
+		if err = d.queryBackingStore(ctx, w, queryL, fieldMap, showFields, onlyidOut); err != nil {
 			return
 		}
 	}

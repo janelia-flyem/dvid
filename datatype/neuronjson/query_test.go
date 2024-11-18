@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/server"
 )
 
@@ -72,5 +73,29 @@ func TestQueryBodyIDs(t *testing.T) {
 	expectedValue = []byte(fmt.Sprintf("[%s]", sampleData[3003]))
 	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
 		t.Fatalf("Bad query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+	}
+
+	// Test if we use bodyid=true query string
+	query = `{"class": "9A"}`
+	queryreq = fmt.Sprintf("%snode/%s/neurons/query?onlyid=true", server.WebAPIPath, uuid)
+	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
+
+	if string(returnValue) != "[2000,2001,2002,2003]" {
+		t.Fatalf("Bad query request return.\nExpected: [2000,2001,2002,2003]\nGot: %v\n", string(returnValue))
+	}
+
+	// Commit current version and make new child to test querying on backing store instead of memory.
+	if err := datastore.Commit(uuid, "my commit msg", []string{"stuff one", "stuff two"}); err != nil {
+		t.Fatalf("Unable to lock root node %s: %v\n", uuid, err)
+	}
+	_, err := datastore.NewVersion(uuid, "some child", "", nil)
+	if err != nil {
+		t.Fatalf("Unable to create new version off node %s: %v\n", uuid, err)
+	}
+	queryreq = fmt.Sprintf("%snode/%s/neurons/query?onlyid=true", server.WebAPIPath, uuid)
+	returnValue = server.TestHTTP(t, "POST", queryreq, strings.NewReader(query))
+
+	if string(returnValue) != "[2000,2001,2002,2003]" {
+		t.Fatalf("Bad query request return.\nExpected: [2000,2001,2002,2003]\nGot: %v\n", string(returnValue))
 	}
 }

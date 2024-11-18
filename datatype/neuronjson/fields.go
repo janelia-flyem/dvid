@@ -83,10 +83,7 @@ func removeReservedFields(data NeuronJSON, showFields Fields) NeuronJSON {
 	return out
 }
 
-// Return a subset of fields where
-//
-//	onlyFields is a map of field names to include
-//	hideSuffixes is a map of fields suffixes (e.g., "_user") to exclude
+// Return a subset of fields from the NeuronJSON
 func selectFields(data NeuronJSON, fieldMap map[string]struct{}, showUser, showTime bool) NeuronJSON {
 	out := data.copy()
 	if len(fieldMap) > 0 {
