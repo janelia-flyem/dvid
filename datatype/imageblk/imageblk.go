@@ -1930,6 +1930,7 @@ func (d *Data) SendGridBlocks(w http.ResponseWriter, blockCoords []dvid.ChunkPoi
 		}
 		writeCh <- &storage.Block{Coord: blockCoord, Value: value}
 	}
+	close(writeCh)
 	writeWg.Wait()
 	return nil
 }
@@ -1962,6 +1963,7 @@ func (d *Data) SendGridVolume(w http.ResponseWriter, subvol *dvid.Subvolume, gri
 		}
 		return nil
 	})
+	close(writeCh)
 	writeWg.Wait()
 	return err
 }
