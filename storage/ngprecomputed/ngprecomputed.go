@@ -797,19 +797,19 @@ func (ng *ngStore) GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) (val []
 
 // GridGetVolume calls the given function with the results of retrieved block data in an ordered or
 // unordered fashion.  Missing blocks in the subvolume are not processed.
-func (ng *ngStore) GridGetVolume(scaleLevel int, minBlock, maxBlock dvid.ChunkPoint3d, ordered bool, op *storage.BlockOp, f storage.BlockFunc) error {
+func (ng *ngStore) GridGetVolume(scaleLevel int, minBlock, maxBlock dvid.ChunkPoint3d, ordered bool, f storage.BlockFunc) error {
 	if ordered {
 		return fmt.Errorf("ordered retrieval not implemented at this time")
 	}
-	ch := make(chan dvid.ChunkPoint3d)
+	blockCoordCh := make(chan dvid.ChunkPoint3d)
 
-	// Start concurrent processing routines to read each block and then pass it to given function.
+	// Start concurrent processing routines to read each block and then pass it to a single writer function.
 	concurrency := 10
 	wg := new(sync.WaitGroup)
 	wg.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
 		go func() {
-			for blockCoord := range ch {
+			for blockCoord := range blockCoordCh {
 				val, err := ng.GridGet(scaleLevel, blockCoord)
 				if err != nil {
 					dvid.Errorf("unable to get block %s in GridGetVolume: %v\n", blockCoord, err)
@@ -818,11 +818,8 @@ func (ng *ngStore) GridGetVolume(scaleLevel int, minBlock, maxBlock dvid.ChunkPo
 				if val == nil {
 					continue
 				}
-				if op != nil && op.Wg != nil {
-					op.Wg.Add(1)
-				}
 				block := &storage.Block{
-					BlockOp: op,
+					BlockOp: nil,
 					Coord:   blockCoord,
 					Value:   val,
 				}
@@ -838,12 +835,11 @@ func (ng *ngStore) GridGetVolume(scaleLevel int, minBlock, maxBlock dvid.ChunkPo
 	for z := minBlock.Value(2); z <= maxBlock.Value(2); z++ {
 		for y := minBlock.Value(1); y <= maxBlock.Value(1); y++ {
 			for x := minBlock.Value(0); x <= maxBlock.Value(0); x++ {
-				ch <- dvid.ChunkPoint3d{x, y, z}
+				blockCoordCh <- dvid.ChunkPoint3d{x, y, z}
 			}
 		}
 	}
-
-	close(ch)
+	close(blockCoordCh)
 	wg.Wait()
 	return nil
 }

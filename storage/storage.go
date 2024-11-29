@@ -324,5 +324,5 @@ type GridProps struct {
 type GridStoreGetter interface {
 	GridProperties(scaleLevel int) (GridProps, error)
 	GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) ([]byte, error)
-	GridGetVolume(scaleLevel int, minBlock, maxBlock dvid.ChunkPoint3d, ordered bool, op *BlockOp, f BlockFunc) error
+	GridGetVolume(scaleLevel int, minBlock, maxBlock dvid.ChunkPoint3d, ordered bool, f BlockFunc) error
 }
