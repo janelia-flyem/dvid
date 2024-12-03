@@ -1824,6 +1824,11 @@ func (d *Data) SendUnserializedBlock(w http.ResponseWriter, x, y, z int32, v []b
 		data = v
 	}
 
+	n := len(data)
+	if n == 0 {
+		return fmt.Errorf("zero size block")
+	}
+
 	// Send block coordinate and size of data.
 	if err := binary.Write(w, binary.LittleEndian, x); err != nil {
 		return err
@@ -1834,13 +1839,9 @@ func (d *Data) SendUnserializedBlock(w http.ResponseWriter, x, y, z int32, v []b
 	if err := binary.Write(w, binary.LittleEndian, z); err != nil {
 		return err
 	}
-
-	n := len(data)
 	if err := binary.Write(w, binary.LittleEndian, int32(n)); err != nil {
 		return err
 	}
-	copydata := make([]byte, len(data))
-	copy(copydata, data)
 	if written, err := w.Write(data); err != nil || written != n {
 		if err != nil {
 			return err
@@ -1910,6 +1911,9 @@ func (d *Data) SendGridBlocks(w http.ResponseWriter, blockCoords []dvid.ChunkPoi
 	go func() {
 		defer writeWg.Done()
 		for b := range writeCh {
+			if len(b.Value) == 0 {
+				continue
+			}
 			if err := d.SendUnserializedBlock(w, b.Coord[0], b.Coord[1], b.Coord[2], b.Value, compression); err != nil {
 				dvid.Errorf("Error writing block %s to http.ResponseWriter: %v\n", b.Coord, err)
 				return
@@ -1944,6 +1948,9 @@ func (d *Data) SendGridVolume(w http.ResponseWriter, subvol *dvid.Subvolume, gri
 	go func() {
 		defer writeWg.Done()
 		for b := range writeCh {
+			if len(b.Value) == 0 {
+				continue
+			}
 			if err := d.SendUnserializedBlock(w, b.Coord[0], b.Coord[1], b.Coord[2], b.Value, compression); err != nil {
 				dvid.Errorf("Error writing block %s to http.ResponseWriter: %v\n", b.Coord, err)
 				return
