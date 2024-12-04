@@ -1922,21 +1922,23 @@ func (d *Data) SendGridBlocks(w http.ResponseWriter, blockCoords []dvid.ChunkPoi
 	}()
 
 	// Retrieve blocks in parallel
+	var err error
 	for _, blockCoord := range blockCoords {
-		value, err := gridStore.GridGet(d.ScaleLevel, blockCoord)
+		var value []byte
+		value, err = gridStore.GridGet(d.ScaleLevel, blockCoord)
 		if err != nil {
-			dvid.Infof("gridStore GET on scale %d, chunk %s had err: %v", d.ScaleLevel, blockCoord, err)
-			return err
+			dvid.Errorf("gridStore GET on scale %d, skipping chunk %s had err: %v", d.ScaleLevel, blockCoord, err)
+			break
 		}
 		if value == nil {
-			dvid.Infof("gridStore GET on scale %d, chunk %s had nil value\n", d.ScaleLevel, blockCoord)
-			return nil
+			dvid.Infof("gridStore GET on scale %d, skipping chunk %s had nil value\n", d.ScaleLevel, blockCoord)
+			continue
 		}
 		writeCh <- &storage.Block{Coord: blockCoord, Value: value}
 	}
 	close(writeCh)
 	writeWg.Wait()
-	return nil
+	return err
 }
 
 // SendGridVolume writes blocks to the writer with given compression.
