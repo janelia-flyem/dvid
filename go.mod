@@ -27,7 +27,7 @@ require (
 	github.com/wblakecaldwell/profiler v0.0.0-20150908040756-6111ef1313a1
 	github.com/zenazn/goji v1.0.1
 	gocloud.dev v0.24.0
-	golang.org/x/net v0.23.0
+	golang.org/x/net v0.33.0
 	golang.org/x/oauth2 v0.7.0
 	google.golang.org/api v0.114.0
 	google.golang.org/appengine v1.6.7
