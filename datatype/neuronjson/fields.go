@@ -83,42 +83,51 @@ func removeReservedFields(data NeuronJSON, showFields Fields) NeuronJSON {
 	return out
 }
 
-// Return a subset of fields from the NeuronJSON
+// Return a subset of fields from the NeuronJSON where fieldMap is a map of field names to include.
 func selectFields(data NeuronJSON, fieldMap map[string]struct{}, showUser, showTime bool) NeuronJSON {
-	out := data.copy()
+	out := NeuronJSON{}
+
+	// Always include bodyid if it exists.
+	if v, ok := data["bodyid"]; ok {
+		out["bodyid"] = v
+	}
+
 	if len(fieldMap) > 0 {
-		for field := range data {
-			if field == "bodyid" {
+		for key := range fieldMap {
+			// Skip "bodyid", already copied.
+			if key == "bodyid" {
 				continue
 			}
-			if _, found := fieldMap[field]; found {
-				if !showUser {
-					delete(out, field+"_user")
+			// Add the primary field if present.
+			if v, ok := data[key]; ok {
+				out[key] = v
+			}
+			// Optionally include accompanying _user and _time fields.
+			if showUser {
+				if v, ok := data[key+"_user"]; ok {
+					out[key+"_user"] = v
 				}
-				if !showTime {
-					delete(out, field+"_time")
+			}
+			if showTime {
+				if v, ok := data[key+"_time"]; ok {
+					out[key+"_time"] = v
 				}
-			} else {
-				delete(out, field)
-				delete(out, field+"_time")
-				delete(out, field+"_user")
 			}
 		}
 	} else {
-		if !showUser {
-			for field := range data {
-				if strings.HasSuffix(field, "_user") {
-					delete(out, field)
-				}
+		// No fieldMap provided, copy all keys except suppressed ones.
+		for key, v := range data {
+			// If we're not showing user info, skip fields ending in _user.
+			if !showUser && strings.HasSuffix(key, "_user") {
+				continue
 			}
-		}
-		if !showTime {
-			for field := range data {
-				if strings.HasSuffix(field, "_time") {
-					delete(out, field)
-				}
+			// If we're not showing time info, skip fields ending in _time.
+			if !showTime && strings.HasSuffix(key, "_time") {
+				continue
 			}
+			out[key] = v
 		}
 	}
+
 	return out
 }

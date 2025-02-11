@@ -1383,6 +1383,55 @@ func TestAll(t *testing.T) {
 	}
 }
 
+func TestAllWithUser(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+
+	payload := bytes.NewBufferString(`{"typename": "neuronjson", "dataname": "neurons"}`)
+	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, payload)
+
+	allNeurons := make(ListNeuronJSON, len(testData))
+	var keyreq = make([]string, len(testData))
+	for i := 0; i < len(testData); i++ {
+		keyreq[i] = fmt.Sprintf("%snode/%s/neurons/key/%s?u=tester", server.WebAPIPath, uuid, testData[i].key)
+		server.TestHTTP(t, "POST", keyreq[i], strings.NewReader(testData[i].val))
+		if err := json.Unmarshal([]byte(testData[i].val), &(allNeurons[i])); err != nil {
+			t.Fatalf("Unable to parse test annotation %d: %v\n", i, err)
+		}
+	}
+
+	// Get all neuronjson with only baz_user selected as field.
+	expectedVal := ListNeuronJSON{
+		NeuronJSON{
+			"bodyid":   uint64(1000),
+			"baz_user": "tester",
+		},
+		NeuronJSON{
+			"bodyid":   uint64(2000),
+			"baz_user": "tester",
+		},
+		NeuronJSON{
+			"bodyid":   uint64(4000),
+			"baz_user": "tester",
+		},
+	}
+	allreq := fmt.Sprintf("%snode/%s/neurons/all?show=user&fields=baz_user", server.WebAPIPath, uuid)
+	returnValue := server.TestHTTP(t, "GET", allreq, nil)
+	var neurons ListNeuronJSON
+	if err := json.Unmarshal(returnValue, &neurons); err != nil {
+		t.Fatalf("Unable to parse return from /all request: %v\n", err)
+	}
+	sort.Sort(&neurons)
+	if !reflect.DeepEqual(neurons, expectedVal) {
+		t.Fatalf("Response to /all is incorrect. Expected: %v, Got: %v\n", expectedVal, neurons)
+	}
+}
+
 func TestDeleteWithNull(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
