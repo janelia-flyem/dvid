@@ -422,6 +422,9 @@ func (idx *Index) Add(idx2 *Index, mutInfo dvid.MutInfo) error {
 			// supervoxels cannot be in more than one set index, so if it's in idx2,
 			// that supervoxel can't be in idx.
 			for sv2, c2 := range svc2.Counts {
+				if _, found := svc.Counts[sv2]; found {
+					return fmt.Errorf("supervoxel %d already in index for target label %d", sv2, idx.Label)
+				}
 				svc.Counts[sv2] = c2
 			}
 			svc.SurfaceMutid = mutInfo.MutID
