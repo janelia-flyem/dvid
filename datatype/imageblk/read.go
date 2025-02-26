@@ -469,7 +469,7 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int32) 
 	blockBytes := int32(d.BlockSize().Prod()) * d.Values.BytesPerElement()
 	numBytes := blockBytes * span
 
-	buf := make([]byte, numBytes, numBytes)
+	buf := make([]byte, numBytes)
 	if d.Background != 0 {
 		for i := range buf {
 			buf[i] = byte(d.Background)
@@ -481,7 +481,7 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int32) 
 		for i := int32(0); i < span; i++ {
 			value, err := gridStore.GridGet(d.ScaleLevel, blockCoord)
 			if err != nil {
-				return nil, datastore.ErrBranchUnlockedNode
+				return nil, err
 			}
 			// TODO -- This append of serialization data wouldn't be necessary if
 			// compression was broken out.
@@ -492,10 +492,10 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int32) 
 			uncompress := true
 			block, _, err := dvid.DeserializeData(data, uncompress)
 			if err != nil {
-				return nil, fmt.Errorf("Unable to deserialize block %s: %v", blockCoord, err)
+				return nil, fmt.Errorf("unable to deserialize block %s: %v", blockCoord, err)
 			}
 			if int32(len(block)) != blockBytes {
-				return nil, fmt.Errorf("Deserialized block size (%d) != expected (%d)", len(block), blockBytes)
+				return nil, fmt.Errorf("deserialized block size (%d) != expected (%d)", len(block), blockBytes)
 			}
 			pos := i * blockBytes
 			copy(buf[pos:pos+blockBytes], block)

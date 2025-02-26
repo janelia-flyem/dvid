@@ -728,32 +728,40 @@ func (ng *ngStore) GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) (val []
 		var minishard, chunkID uint64
 		shardFile, minishard, chunkID, err = ng.calcShard(scale, blockCoord)
 		if err != nil {
+			// Return encoded zero data.
+			val, err = ng.encodeZeroData(scale.Encoding, chunkSize, clippedSize)
 			return
 		}
 
 		var minishardMap map[uint64]valueLoc
 		minishardMap, err = ng.getMinishardMap(scale, shardFile, minishard)
 		if err != nil {
+			// Return encoded zero data.
+			val, err = ng.encodeZeroData(scale.Encoding, chunkSize, clippedSize)
 			return
 		}
 		if minishardMap == nil {
-			return nil, fmt.Errorf("no minishard map found in shard %q for minishard %d", shardFile, minishard)
+			// Return encoded zero data.
+			val, err = ng.encodeZeroData(scale.Encoding, chunkSize, clippedSize)
+			if err != nil {
+				// handle error during zero data encoding.  If this fails return the error
+				return nil, fmt.Errorf("no minishard map found in shard %q for minishard %d, also failed to encode zero data: %w", shardFile, minishard, err)
+			}
+			return val, nil //Returning here to stop the execution
 		}
 
 		loc, found := minishardMap[chunkID]
-		var min, max uint64
-		min = math.MaxUint64
-		for key := range minishardMap {
-			if key < min {
-				min = key
-			}
-			if key > max {
-				max = key
-			}
-		}
+
 		if !found {
-			return nil, nil
+			// Return encoded zero data.
+			val, err = ng.encodeZeroData(scale.Encoding, chunkSize, clippedSize)
+			if err != nil {
+				// handle error during zero data encoding. If this fails return the error
+				return nil, fmt.Errorf("chunkID %d not found, also failed to encode zero data: %w", chunkID, err)
+			}
+			return val, nil //Returning here to stop the execution
 		}
+
 		val, err = ng.rangeRead(shardFile, loc.pos, loc.size)
 
 		if scale.Sharding.DataEncoding == "gzip" {
@@ -792,6 +800,42 @@ func (ng *ngStore) GridGet(scaleLevel int, blockCoord dvid.ChunkPoint3d) (val []
 		return nil, fmt.Errorf("ngprecomputed cannot decode segmentation at this time")
 	default:
 		return nil, fmt.Errorf("unknown scale encoding type %q", scale.Encoding)
+	}
+}
+
+// encodeZeroData encodes a chunk of zero data based on the scale's encoding and handles clipped volumes.
+func (ng *ngStore) encodeZeroData(encoding string, chunkSize dvid.Point3d, clippedSize dvid.Point3d) ([]byte, error) {
+	// Create a zero-filled byte array for the full chunk size.
+
+	switch encoding {
+	case "jpeg":
+		//Handle Clipped Volumes
+		if chunkSize[0] != clippedSize[0] || chunkSize[1] != clippedSize[1] || chunkSize[2] != clippedSize[2] {
+			//Create a zero filled image of clippedSize
+			clippedZeroData := make([]byte, clippedSize.Prod())
+			compressed, err := jpegCompress(clippedSize, clippedZeroData)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compress zero data as JPEG: %w", err)
+			}
+			inflated, err := jpegUncompress(chunkSize, clippedSize, compressed, dvid.ChunkPoint3d{})
+			if err != nil {
+				return nil, fmt.Errorf("failed to uncompress JPEG data after compression: %w", err)
+			}
+			return inflated, nil
+		}
+		// Compress the zero data as JPEG.
+		fullZeroData := make([]byte, chunkSize.Prod())
+		compressed, err := jpegCompress(chunkSize, fullZeroData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to compress zero data as JPEG: %w", err)
+		}
+		return compressed, nil
+	case "raw":
+		return make([]byte, chunkSize.Prod()), nil
+	case "compressed_segmentation":
+		return nil, fmt.Errorf("ngprecomputed cannot encode zero segmentation data at this time")
+	default:
+		return nil, fmt.Errorf("unknown scale encoding type %q, cannot encode zero data", encoding)
 	}
 }
 
