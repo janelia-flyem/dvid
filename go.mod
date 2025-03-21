@@ -1,6 +1,7 @@
 module github.com/janelia-flyem/dvid
 
 go 1.18
+toolchain go1.24.1
 
 require (
 	cloud.google.com/go/bigtable v1.13.0
@@ -12,7 +13,7 @@ require (
 	github.com/coocood/freecache v1.2.1
 	github.com/dgraph-io/badger/v3 v3.2103.2
 	github.com/dustin/go-humanize v1.0.0
-	github.com/golang-jwt/jwt/v4 v4.5.1
+	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da
 	github.com/golang/snappy v0.0.4
 	github.com/janelia-flyem/go v0.0.0-20180718195536-d388bdc31871
