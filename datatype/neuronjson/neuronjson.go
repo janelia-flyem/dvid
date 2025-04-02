@@ -10,9 +10,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math"
 	"net/http"
+	"os"
 	reflect "reflect"
 	"regexp"
 	"sort"
@@ -106,6 +106,15 @@ $ dvid node <UUID> <dataname> import-kv <keyvalue instance name>
 
 	The above imports data from the keyvalue instance "myOldKV" into the neuronjson
 	instance "myNeuronJSON".
+
+$ dvid node <UUID> <dataname> ingest-neuronjson <input-file>
+
+	Reads a JSON file and ingests it into the neuronjson instance.
+	Expects a JSON array of objects, each with at least a bodyid field.
+
+	Example:
+
+	$ dvid node 3f8c myNeuronJSON ingest-neuronjson myfile.json
 
 $ dvid node <UUID> <data name> version-changes <output-dir-path>
 
@@ -843,40 +852,6 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 }
 
 // -----
-
-// putCmd handles a PUT command-line request.
-func (d *Data) putCmd(cmd datastore.Request, reply *datastore.Response) error {
-	if len(cmd.Command) < 5 {
-		return fmt.Errorf("key name must be specified after 'put'")
-	}
-	if len(cmd.Input) == 0 {
-		return fmt.Errorf("no data was passed into standard input")
-	}
-	var uuidStr, dataName, cmdStr, keyStr string
-	cmd.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &keyStr)
-
-	_, versionID, err := datastore.MatchingUUID(uuidStr)
-	if err != nil {
-		return err
-	}
-
-	// Store data
-	if !d.Versioned() {
-		// Map everything to root version.
-		versionID, err = datastore.GetRepoRootVersion(versionID)
-		if err != nil {
-			return err
-		}
-	}
-	ctx := datastore.NewVersionedCtx(d, versionID)
-	if err = d.PutData(ctx, keyStr, cmd.Input, nil, false); err != nil {
-		return fmt.Errorf("error on put to key %q for neuronjson %q: %v", keyStr, d.DataName(), err)
-	}
-
-	reply.Output = []byte(fmt.Sprintf("Put %d bytes into key %q for neuronjson %q, uuid %s\n",
-		len(cmd.Input), keyStr, d.DataName(), uuidStr))
-	return nil
-}
 
 ///// Persistence of neuronjson data to storage
 
@@ -2002,7 +1977,7 @@ func (d *Data) handleKeyValues(ctx storage.VersionedCtx, w http.ResponseWriter, 
 		return
 	}
 	var data []byte
-	data, err = ioutil.ReadAll(r.Body)
+	data, err = io.ReadAll(r.Body)
 	if err != nil {
 		return
 	}
@@ -2043,7 +2018,7 @@ func (d *Data) handleIngest(ctx *datastore.VersionedCtx, r *http.Request, uuid d
 	cond_fields := r.URL.Query().Get("conditionals")
 	conditionals := strings.Split(cond_fields, ",")
 	replace := r.URL.Query().Get("replace") == "true"
-	data, err := ioutil.ReadAll(r.Body)
+	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		return err
 	}
@@ -2072,6 +2047,54 @@ func (d *Data) handleIngest(ctx *datastore.VersionedCtx, r *http.Request, uuid d
 	return nil
 }
 
+func (d *Data) ingestJson(ctx *datastore.VersionedCtx, uuid dvid.UUID, jsonFilePath string, userStr string) error {
+	file, err := os.Open(jsonFilePath)
+	if err != nil {
+		return fmt.Errorf("unable to open file %q: %v", jsonFilePath, err)
+	}
+	defer file.Close()
+
+	var neuronList []NeuronJSON
+	decoder := json.NewDecoder(file)
+	if err := decoder.Decode(&neuronList); err != nil {
+		return fmt.Errorf("error decoding JSON from file %q: %v", jsonFilePath, err)
+	}
+
+	jsonNum := 0
+	for _, neuron := range neuronList {
+		bodyid, err := getBodyID(neuron)
+		if err != nil {
+			return fmt.Errorf("error extracting bodyid from neuron JSON: %v", err)
+		}
+		key := strconv.FormatUint(bodyid, 10)
+		value, err := json.Marshal(neuron)
+		if err != nil {
+			return fmt.Errorf("error marshaling neuron JSON: %v", err)
+		}
+		err = d.PutData(ctx, key, value, []string{}, false)
+		if err != nil {
+			return err
+		}
+		jsonNum++
+		if jsonNum%1000 == 0 {
+			dvid.Infof("Ingested %d neuron JSONs\n", jsonNum)
+		}
+
+		msginfo := map[string]interface{}{
+			"Action":    "ingestneuronjson",
+			"Key":       key,
+			"Bytes":     len(value),
+			"UUID":      string(uuid),
+			"Timestamp": time.Now().String(),
+		}
+		jsonmsg, _ := json.Marshal(msginfo)
+		if err = d.PublishKafkaMsg(jsonmsg); err != nil {
+			dvid.Errorf("Error on sending neuronjson POST op to kafka: %v\n", err)
+		}
+	}
+	return nil
+}
+
 // --- DataService interface ---
 
 func (d *Data) Help() string {
@@ -2085,6 +2108,8 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		return d.putCmd(request, reply)
 	case "import-kv":
 		return d.importKV(request, reply)
+	case "ingest-neuronjson":
+		return d.ingestNeuronJSON(request, reply)
 	case "version-changes":
 		return d.versionChanges(request, reply)
 	default:
@@ -2125,7 +2150,7 @@ func (d *Data) handleSchema(ctx storage.VersionedCtx, w http.ResponseWriter, r *
 		}
 
 	case "post":
-		data, err := ioutil.ReadAll(r.Body)
+		data, err := io.ReadAll(r.Body)
 		if err != nil {
 			return err
 		}

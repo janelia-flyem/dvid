@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/keyvalue"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
@@ -197,30 +196,6 @@ func (mdb *memdb) addAnnotation(bodyid uint64, annotation NeuronJSON) {
 	for field := range annotation {
 		mdb.fields[field]++
 	}
-}
-
-// importKV imports a keyvalue instance into the neuronjson instance.
-func (d *Data) importKV(request datastore.Request, reply *datastore.Response) error {
-	if len(request.Command) < 5 {
-		return fmt.Errorf("keyvalue instance name must be specified after importKV")
-	}
-	var uuidStr, dataName, cmdStr, kvName string
-	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &kvName)
-
-	uuid, versionID, err := datastore.MatchingUUID(uuidStr)
-	if err != nil {
-		return err
-	}
-
-	sourceKV, err := keyvalue.GetByUUIDName(uuid, dvid.InstanceName(kvName))
-	if err != nil {
-		return err
-	}
-	go d.loadFromKV(versionID, sourceKV)
-
-	reply.Output = []byte(fmt.Sprintf("Started loading from keyvalue instance %q into neuronjson instance %q, uuid %s\n",
-		kvName, d.DataName(), uuidStr))
-	return nil
 }
 
 // kvType is an interface for keyvalue instances we wish to migrate to neuronjson.

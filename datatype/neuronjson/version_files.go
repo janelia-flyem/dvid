@@ -11,21 +11,6 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-// versionChanges writes JSON file for all changes by versions, including tombstones.
-func (d *Data) versionChanges(request datastore.Request, reply *datastore.Response) error {
-	if len(request.Command) < 5 {
-		return fmt.Errorf("path to output file must be specified after 'versionchanges'")
-	}
-	var uuidStr, dataName, cmdStr, filePath string
-	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &filePath)
-
-	go d.writeVersions(filePath)
-
-	reply.Output = []byte(fmt.Sprintf("Started writing version changes of neuronjson instance %q into %s ...\n",
-		d.DataName(), filePath))
-	return nil
-}
-
 type versionFiles struct {
 	fmap map[dvid.UUID]*os.File
 	path string
