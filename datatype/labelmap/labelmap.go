@@ -1363,6 +1363,9 @@ POST <api URL>/node/<UUID>/<data name>/split-supervoxel/<supervoxel>?<options>
 
 POST <api URL>/node/<UUID>/<data name>/split/<label>
 
+	Note: Endpoint deactivated by default. To enable, you must set the
+	AllowLabelmapSplit option to true in the server config TOML file.
+
 	Splits a portion of a label's voxels into a new supervoxel with a new label.  
 	Returns the following JSON:
 
