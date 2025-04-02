@@ -1761,7 +1761,7 @@ func (d *Data) handleCleave(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 
 func (d *Data) handleSplit(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
 	// POST <api URL>/node/<UUID>/<data name>/split/<label>[?splitlabel=X]
-	if server.NoLabelmapSplit() {
+	if !server.AllowLabelmapSplit() {
 		server.BadRequest(w, r, "Split endpoint deactivated in this DVID server's configuration.")
 		return
 	}
