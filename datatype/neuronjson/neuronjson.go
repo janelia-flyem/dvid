@@ -673,7 +673,7 @@ func getBodyID(data map[string]interface{}) (uint64, error) {
 	if !ok {
 		return 0, fmt.Errorf("neuronjson record has no 'bodyid' field")
 	}
-	bodyid, ok := bodyidVal.(int64)
+	bodyid, ok := bodyidVal.(uint64)
 	if !ok {
 		return 0, fmt.Errorf("neuronjson record 'bodyid' is not a uint64 value: %v", bodyidVal)
 	}
