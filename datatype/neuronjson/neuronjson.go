@@ -2060,38 +2060,42 @@ func (d *Data) ingestJson(ctx *datastore.VersionedCtx, uuid dvid.UUID, jsonFileP
 		return fmt.Errorf("error decoding JSON from file %q: %v", jsonFilePath, err)
 	}
 
-	jsonNum := 0
-	for _, neuron := range neuronList {
-		bodyid, err := getBodyID(neuron)
-		if err != nil {
-			return fmt.Errorf("error extracting bodyid from neuron JSON: %v", err)
-		}
-		key := strconv.FormatUint(bodyid, 10)
-		value, err := json.Marshal(neuron)
-		if err != nil {
-			return fmt.Errorf("error marshaling neuron JSON: %v", err)
-		}
-		err = d.PutData(ctx, key, value, []string{}, false)
-		if err != nil {
-			return err
-		}
-		jsonNum++
-		if jsonNum%1000 == 0 {
-			dvid.Infof("Ingested %d neuron JSONs\n", jsonNum)
-		}
+	go func() {
+		jsonNum := 0
+		for _, neuron := range neuronList {
+			bodyid, err := getBodyID(neuron)
+			if err != nil {
+				fmt.Printf("error extracting bodyid from neuron JSON: %v", err)
+				continue
+			}
+			key := strconv.FormatUint(bodyid, 10)
+			value, err := json.Marshal(neuron)
+			if err != nil {
+				fmt.Printf("error marshaling neuron JSON for bodyid %d: %v", bodyid, err)
+			} else {
+				err = d.PutData(ctx, key, value, []string{}, false)
+				if err != nil {
+					fmt.Printf("error putting neuron JSON for bodyid %d: %v", bodyid, err)
+				}
+			}
+			jsonNum++
+			if jsonNum%1000 == 0 {
+				dvid.Infof("Ingested %d neuron JSONs\n", jsonNum)
+			}
 
-		msginfo := map[string]interface{}{
-			"Action":    "ingestneuronjson",
-			"Key":       key,
-			"Bytes":     len(value),
-			"UUID":      string(uuid),
-			"Timestamp": time.Now().String(),
+			msginfo := map[string]interface{}{
+				"Action":    "ingestneuronjson",
+				"Key":       key,
+				"Bytes":     len(value),
+				"UUID":      string(uuid),
+				"Timestamp": time.Now().String(),
+			}
+			jsonmsg, _ := json.Marshal(msginfo)
+			if err = d.PublishKafkaMsg(jsonmsg); err != nil {
+				dvid.Errorf("Error on sending neuronjson POST op to kafka: %v\n", err)
+			}
 		}
-		jsonmsg, _ := json.Marshal(msginfo)
-		if err = d.PublishKafkaMsg(jsonmsg); err != nil {
-			dvid.Errorf("Error on sending neuronjson POST op to kafka: %v\n", err)
-		}
-	}
+	}()
 	return nil
 }
 

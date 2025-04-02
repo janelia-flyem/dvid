@@ -101,7 +101,7 @@ func (d *Data) ingestNeuronJSON(request datastore.Request, reply *datastore.Resp
 		return fmt.Errorf("error ingesting neuronjson from %q: %v", jsonFilePath, err)
 	}
 
-	reply.Output = []byte(fmt.Sprintf("Finished ingesting data from %q into neuronjson instance %q, uuid %s\n",
+	reply.Output = []byte(fmt.Sprintf("Ingesting data from %q into neuronjson instance %q, uuid %s ...\n",
 		jsonFilePath, d.DataName(), uuidStr))
 	return nil
 }
