@@ -1,6 +1,7 @@
 module github.com/janelia-flyem/dvid
 
-go 1.18
+go 1.23.0
+
 toolchain go1.24.1
 
 require (
