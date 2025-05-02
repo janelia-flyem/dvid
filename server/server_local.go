@@ -86,6 +86,7 @@ func OpenTest(configs ...TestConfig) error {
 	var dataMap datastore.DataStorageMap
 	var dataMapped bool
 	tc = tomlConfig{}
+	tc.Server.AllowLabelmapSplit = true
 	if len(configs) > 0 {
 		for _, c := range configs {
 			if len(c.KVStoresMap) != 0 {
