@@ -68,6 +68,11 @@ DANGEROUS COMMANDS (only available via command line)
 		branch name.  NOTE: This command will fail if the given UUID is not
 		a node that is directly branched off master.
 
+		This command should be used after committing the branches under
+		consideration. After renaming the master branch, the DVID server
+		should be restarted so datatypes like neuronjson can reload its
+		caches appropriately.
+
 	repo <UUID> hide-branch <branch-name>
 
 		Removes metadata for the given branch so that it is not visible.
