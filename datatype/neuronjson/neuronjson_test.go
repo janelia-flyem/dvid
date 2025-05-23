@@ -302,28 +302,28 @@ func TestNewNeuronjsonDifferent(t *testing.T) {
 	config := dvid.NewConfig()
 	dataservice1, err := datastore.NewData(uuid, jsontype, "instance1", config)
 	if err != nil {
-		t.Errorf("Error creating new neuronjson instance: %v\n", err)
+		t.Fatalf("Error creating new neuronjson instance: %v\n", err)
 	}
 	kv1, ok := dataservice1.(*Data)
 	if !ok {
-		t.Errorf("Returned new data instance 1 is not neuronjson.Data\n")
+		t.Fatalf("Returned new data instance 1 is not neuronjson.Data\n")
 	}
 	if kv1.DataName() != "instance1" {
-		t.Errorf("New neuronjson data instance name set incorrectly: %q != %q\n",
+		t.Fatalf("New neuronjson data instance name set incorrectly: %q != %q\n",
 			kv1.DataName(), "instance1")
 	}
 
 	dataservice2, err := datastore.NewData(uuid, jsontype, "instance2", config)
 	if err != nil {
-		t.Errorf("Error creating new neuronjson instance: %v\n", err)
+		t.Fatalf("Error creating new neuronjson instance: %v\n", err)
 	}
 	kv2, ok := dataservice2.(*Data)
 	if !ok {
-		t.Errorf("Returned new data instance 2 is not neuronjson.Data\n")
+		t.Fatalf("Returned new data instance 2 is not neuronjson.Data\n")
 	}
 
 	if kv1.InstanceID() == kv2.InstanceID() {
-		t.Errorf("Instance IDs should be different: %d == %d\n",
+		t.Fatalf("Instance IDs should be different: %d == %d\n",
 			kv1.InstanceID(), kv2.InstanceID())
 	}
 }
@@ -340,11 +340,11 @@ func TestNeuronjsonRoundTrip(t *testing.T) {
 	config := dvid.NewConfig()
 	dataservice, err := datastore.NewData(uuid, jsontype, "roundtripper", config)
 	if err != nil {
-		t.Errorf("Error creating new neuronjson instance: %v\n", err)
+		t.Fatalf("Error creating new neuronjson instance: %v\n", err)
 	}
 	kvdata, ok := dataservice.(*Data)
 	if !ok {
-		t.Errorf("Returned new data instance is not neuronjson.Data\n")
+		t.Fatalf("Returned new data instance is not neuronjson.Data\n")
 	}
 
 	ctx := datastore.NewVersionedCtx(dataservice, versionID)
@@ -354,7 +354,7 @@ func TestNeuronjsonRoundTrip(t *testing.T) {
 	value := []byte(`{"bodyid": 1234, "a string": "foo", "a number": 1234, "a list": [1, 2, 3]}`)
 
 	if err = kvdata.PutData(ctx, keyStr, value, nil, true); err != nil {
-		t.Errorf("Could not put neuronjson data: %v\n", err)
+		t.Fatalf("Could not put neuronjson data: %v\n", err)
 	}
 
 	retrieved, found, err := kvdata.GetData(ctx, keyStr, nil, ShowBasic)
@@ -365,7 +365,7 @@ func TestNeuronjsonRoundTrip(t *testing.T) {
 		t.Fatalf("Could not find put neuronjson\n")
 	}
 	if !equalObjectJSON(value, retrieved, ShowUsers) {
-		t.Errorf("neuronjson retrieved %q != put %q\n", string(retrieved), string(value))
+		t.Fatalf("neuronjson retrieved %q != put %q\n", string(retrieved), string(value))
 	}
 }
 
@@ -381,11 +381,11 @@ func TestNeuronjsonRepoPersistence(t *testing.T) {
 	config := dvid.NewConfig()
 	dataservice, err := datastore.NewData(uuid, jsontype, "annotations", config)
 	if err != nil {
-		t.Errorf("Unable to create neuronjson instance: %v\n", err)
+		t.Fatalf("Unable to create neuronjson instance: %v\n", err)
 	}
 	kvdata, ok := dataservice.(*Data)
 	if !ok {
-		t.Errorf("Can't cast neuronjson data service into neuronjson.Data\n")
+		t.Fatalf("Can't cast neuronjson data service into neuronjson.Data\n")
 	}
 	oldData := *kvdata
 
@@ -401,10 +401,10 @@ func TestNeuronjsonRepoPersistence(t *testing.T) {
 	}
 	kvdata2, ok := dataservice2.(*Data)
 	if !ok {
-		t.Errorf("Returned new data instance 2 is not neuronjson.Data\n")
+		t.Fatalf("Returned new data instance 2 is not neuronjson.Data\n")
 	}
 	if !oldData.Equals(kvdata2) {
-		t.Errorf("Expected %v, got %v\n", oldData, *kvdata2)
+		t.Fatalf("Expected %v, got %v\n", oldData, *kvdata2)
 	}
 }
 
@@ -421,67 +421,67 @@ func TestMetadataSupport(t *testing.T) {
 	reqJSONSchema := fmt.Sprintf("%snode/%s/neurons/json_schema?u=frank", server.WebAPIPath, uuid)
 	resp := server.TestHTTPResponse(t, "POST", reqJSONSchema, strings.NewReader(testJsonSchema))
 	if resp.Code != http.StatusOK {
-		t.Errorf("POST on %s returned %d, not 200: %s\n", reqJSONSchema, resp.Code, resp.Body.String())
+		t.Fatalf("POST on %s returned %d, not 200: %s\n", reqJSONSchema, resp.Code, resp.Body.String())
 	}
 	returnValue := server.TestHTTP(t, "GET", reqJSONSchema, nil)
 	if !equalObjectJSON(returnValue, []byte(testJsonSchema), ShowAll) {
-		t.Errorf("Error in getting json schema: got %s\n", string(returnValue))
+		t.Fatalf("Error in getting json schema: got %s\n", string(returnValue))
 	}
 
 	reqSchema1 := fmt.Sprintf("%snode/%s/neurons/schema?u=frank", server.WebAPIPath, uuid)
 	resp = server.TestHTTPResponse(t, "POST", reqSchema1, strings.NewReader(testJsonSchema))
 	if resp.Code != http.StatusOK {
-		t.Errorf("POST on %s returned %d, not 200: %s\n", reqSchema1, resp.Code, resp.Body.String())
+		t.Fatalf("POST on %s returned %d, not 200: %s\n", reqSchema1, resp.Code, resp.Body.String())
 	}
 	returnValue = server.TestHTTP(t, "GET", reqSchema1, nil)
 	if !equalObjectJSON(returnValue, []byte(testJsonSchema), ShowAll) {
-		t.Errorf("Error in getting json schema: got %s\n", string(returnValue))
+		t.Fatalf("Error in getting json schema: got %s\n", string(returnValue))
 	}
 	// -- check legacy /key/schema works for backwards-compatibility
 	reqSchema2 := fmt.Sprintf("%snode/%s/neurons/key/schema?u=frank", server.WebAPIPath, uuid)
 	resp = server.TestHTTPResponse(t, "POST", reqSchema2, strings.NewReader(testJsonSchema))
 	if resp.Code != http.StatusOK {
-		t.Errorf("POST on %s returned %d, not 200: %s\n", reqSchema2, resp.Code, resp.Body.String())
+		t.Fatalf("POST on %s returned %d, not 200: %s\n", reqSchema2, resp.Code, resp.Body.String())
 	}
 	returnValue = server.TestHTTP(t, "GET", reqSchema2, nil)
 	if !equalObjectJSON(returnValue, []byte(testJsonSchema), ShowAll) {
-		t.Errorf("Error in getting json schema: got %s\n", string(returnValue))
+		t.Fatalf("Error in getting json schema: got %s\n", string(returnValue))
 	}
 	resp = server.TestHTTPResponse(t, "DELETE", reqSchema2, nil)
 	if resp.Code != http.StatusOK {
-		t.Errorf("DELETE on %s returned %d, not 200: %s\n", reqSchema2, resp.Code, resp.Body.String())
+		t.Fatalf("DELETE on %s returned %d, not 200: %s\n", reqSchema2, resp.Code, resp.Body.String())
 	}
 	resp = server.TestHTTPResponse(t, "GET", reqSchema2, nil)
 	if resp.Code != http.StatusNotFound {
-		t.Errorf("GET on %s returned %d, not 404: %s\n", reqSchema2, resp.Code, resp.Body.String())
+		t.Fatalf("GET on %s returned %d, not 404: %s\n", reqSchema2, resp.Code, resp.Body.String())
 	}
 
 	reqSchema1 = fmt.Sprintf("%snode/%s/neurons/schema_batch?u=frank", server.WebAPIPath, uuid)
 	resp = server.TestHTTPResponse(t, "POST", reqSchema1, strings.NewReader(testJsonSchema))
 	if resp.Code != http.StatusOK {
-		t.Errorf("POST on %s returned %d, not 200: %s\n", reqSchema1, resp.Code, resp.Body.String())
+		t.Fatalf("POST on %s returned %d, not 200: %s\n", reqSchema1, resp.Code, resp.Body.String())
 	}
 	returnValue = server.TestHTTP(t, "GET", reqSchema1, nil)
 	if !equalObjectJSON(returnValue, []byte(testJsonSchema), ShowAll) {
-		t.Errorf("Error in getting json schema: got %s\n", string(returnValue))
+		t.Fatalf("Error in getting json schema: got %s\n", string(returnValue))
 	}
 	// -- check legacy /key/schema works for backwards-compatibility
 	reqSchema2 = fmt.Sprintf("%snode/%s/neurons/key/schema_batch?u=frank", server.WebAPIPath, uuid)
 	resp = server.TestHTTPResponse(t, "POST", reqSchema2, strings.NewReader(testJsonSchema))
 	if resp.Code != http.StatusOK {
-		t.Errorf("POST on %s returned %d, not 200: %s\n", reqSchema2, resp.Code, resp.Body.String())
+		t.Fatalf("POST on %s returned %d, not 200: %s\n", reqSchema2, resp.Code, resp.Body.String())
 	}
 	returnValue = server.TestHTTP(t, "GET", reqSchema2, nil)
 	if !equalObjectJSON(returnValue, []byte(testJsonSchema), ShowAll) {
-		t.Errorf("Error in getting json schema: got %s\n", string(returnValue))
+		t.Fatalf("Error in getting json schema: got %s\n", string(returnValue))
 	}
 	resp = server.TestHTTPResponse(t, "DELETE", reqSchema2, nil)
 	if resp.Code != http.StatusOK {
-		t.Errorf("DELETE on %s returned %d, not 200: %s\n", reqSchema2, resp.Code, resp.Body.String())
+		t.Fatalf("DELETE on %s returned %d, not 200: %s\n", reqSchema2, resp.Code, resp.Body.String())
 	}
 	resp = server.TestHTTPResponse(t, "GET", reqSchema2, nil)
 	if resp.Code != http.StatusNotFound {
-		t.Errorf("GET on %s returned %d, not 404: %s\n", reqSchema2, resp.Code, resp.Body.String())
+		t.Fatalf("GET on %s returned %d, not 404: %s\n", reqSchema2, resp.Code, resp.Body.String())
 	}
 }
 
@@ -517,7 +517,7 @@ func TestValidation(t *testing.T) {
 	}`
 	resp := server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(badValue))
 	if resp.Code == http.StatusOK {
-		t.Errorf("POST on %s returned %d, not error for bad bodyid\n", key1req, resp.Code)
+		t.Fatalf("POST on %s returned %d, not error for bad bodyid\n", key1req, resp.Code)
 	}
 
 	// Before json schema is installed, bad values should be permitted
@@ -531,7 +531,7 @@ func TestValidation(t *testing.T) {
 	}`
 	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(badValue))
 	if resp.Code != http.StatusOK {
-		t.Errorf("POST on %s returned %d, not 200: %s\n", key1req, resp.Code, resp.Body.String())
+		t.Fatalf("POST on %s returned %d, not 200: %s\n", key1req, resp.Code, resp.Body.String())
 	}
 	badValue = `
 	{
@@ -542,18 +542,18 @@ func TestValidation(t *testing.T) {
 	}`
 	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(badValue))
 	if resp.Code != http.StatusOK {
-		t.Errorf("POST on %s returned %d, not 200: %s\n", key1req, resp.Code, resp.Body.String())
+		t.Fatalf("POST on %s returned %d, not 200: %s\n", key1req, resp.Code, resp.Body.String())
 	}
 
 	// Store JSON Schema
 	schemaReq := fmt.Sprintf("%snode/%s/%s/json_schema?u=frank", server.WebAPIPath, uuid, data.DataName())
 	resp = server.TestHTTPResponse(t, "POST", schemaReq, strings.NewReader(testJsonSchema))
 	if resp.Code != http.StatusOK {
-		t.Errorf("POST on %s returned %d, not 200: %s\n", schemaReq, resp.Code, resp.Body.String())
+		t.Fatalf("POST on %s returned %d, not 200: %s\n", schemaReq, resp.Code, resp.Body.String())
 	}
 	resp = server.TestHTTPResponse(t, "GET", schemaReq, strings.NewReader(testJsonSchema))
 	if resp.Code != http.StatusOK {
-		t.Errorf("GET on %s returned %d, not 200: %s\n", schemaReq, resp.Code, resp.Body.String())
+		t.Fatalf("GET on %s returned %d, not 200: %s\n", schemaReq, resp.Code, resp.Body.String())
 	}
 	dvid.Infof("Schema: %s\n", resp.Body.String())
 
@@ -573,7 +573,7 @@ func TestValidation(t *testing.T) {
 	}`
 	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(okValue))
 	if resp.Code != http.StatusOK {
-		t.Errorf("POST on %s returned %d, not 200: %s\n", key1req, resp.Code, resp.Body.String())
+		t.Fatalf("POST on %s returned %d, not 200: %s\n", key1req, resp.Code, resp.Body.String())
 	}
 	okValue = `
 	{
@@ -583,7 +583,7 @@ func TestValidation(t *testing.T) {
 	}`
 	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(okValue))
 	if resp.Code != http.StatusOK {
-		t.Errorf("POST on %s returned %d, not 200: %s\n", key1req, resp.Code, resp.Body.String())
+		t.Fatalf("POST on %s returned %d, not 200: %s\n", key1req, resp.Code, resp.Body.String())
 	}
 
 	// Test values that should not pass validation
@@ -596,7 +596,7 @@ func TestValidation(t *testing.T) {
 	}`
 	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(badValue))
 	if resp.Code == http.StatusOK {
-		t.Errorf("POST on %s returned 200 when it shouldn't have been validated\n", key1req)
+		t.Fatalf("POST on %s returned 200 when it shouldn't have been validated\n", key1req)
 	}
 	badValue = `
 	{
@@ -607,7 +607,7 @@ func TestValidation(t *testing.T) {
 	}`
 	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(badValue))
 	if resp.Code == http.StatusOK {
-		t.Errorf("POST on %s returned 200 when it shouldn't have been validated\n", key1req)
+		t.Fatalf("POST on %s returned 200 when it shouldn't have been validated\n", key1req)
 	}
 	badValue = `
 	{
@@ -618,7 +618,7 @@ func TestValidation(t *testing.T) {
 	}` // missing bodyid
 	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(badValue))
 	if resp.Code == http.StatusOK {
-		t.Errorf("POST on %s returned 200 when it shouldn't have been validated\n", key1req)
+		t.Fatalf("POST on %s returned 200 when it shouldn't have been validated\n", key1req)
 	}
 	// test auto-convert from string to int using multiple fields
 	badValue = `
@@ -633,7 +633,7 @@ func TestValidation(t *testing.T) {
 	}`
 	resp = server.TestHTTPResponse(t, "POST", key1req, strings.NewReader(badValue))
 	if resp.Code != http.StatusOK {
-		t.Errorf("POST on %s should have been ok after auto-conversion\n", key1req)
+		t.Fatalf("POST on %s should have been ok after auto-conversion\n", key1req)
 	}
 	dvid.Infof("resp: %s\n", resp.Body.String())
 
@@ -654,7 +654,7 @@ func TestValidation(t *testing.T) {
 	req := fmt.Sprintf("%snode/%s/%s/key/1000?u=frank", server.WebAPIPath, uuid, data.DataName())
 	returnValue := server.TestHTTP(t, "GET", req, nil)
 	if !equalObjectJSON(returnValue, []byte(expectedValue), ShowBasic) {
-		t.Errorf("Error on autoconversion: expected %s\ngot %s\n", expectedValue, string(returnValue))
+		t.Fatalf("Error on autoconversion: expected %s\ngot %s\n", expectedValue, string(returnValue))
 	}
 }
 
@@ -687,7 +687,7 @@ func TestKeyvalueUser(t *testing.T) {
 	req = fmt.Sprintf("%snode/%s/%s/key/1000?show=user", server.WebAPIPath, uuid, name)
 	returnValue := server.TestHTTP(t, "GET", req, nil)
 	if !equalObjectJSON(returnValue, []byte(value), ShowUsers) {
-		t.Errorf("Error: expected %s, got %s\n", value, string(returnValue))
+		t.Fatalf("Error: expected %s, got %s\n", value, string(returnValue))
 	}
 
 	// Allow deletion of fields via null for non-replace POST
@@ -699,7 +699,7 @@ func TestKeyvalueUser(t *testing.T) {
 	req = fmt.Sprintf("%snode/%s/%s/key/1000?show=user", server.WebAPIPath, uuid, name)
 	returnValue = server.TestHTTP(t, "GET", req, nil)
 	if !equalObjectJSON(returnValue, []byte(`{"bodyid": 1000}`), ShowUsers) {
-		t.Errorf("Error: expected %s, got %s\n", `{"bodyid": 1000}`, string(returnValue))
+		t.Fatalf("Error: expected %s, got %s\n", `{"bodyid": 1000}`, string(returnValue))
 	}
 
 	// PUT back the kv
@@ -717,89 +717,31 @@ func TestKeyvalueUser(t *testing.T) {
 	returnValue = server.TestHTTP(t, "GET", req, nil)
 	expected := `{"bodyid": 1000, "key1_user": "deleter"}`
 	if !equalObjectJSON(returnValue, []byte(expected), ShowUsers) {
-		t.Errorf("Error: expected %s, got %s\n", expected, string(returnValue))
+		t.Fatalf("Error: expected %s, got %s\n", expected, string(returnValue))
 	}
 }
 
-func TestKeyvalueRequests(t *testing.T) {
-	if err := server.OpenTest(); err != nil {
-		t.Fatalf("can't open test server: %v\n", err)
-	}
-	defer server.CloseTest()
+func checkEndpoints(t *testing.T, uuid dvid.UUID) {
+	var err error
 
-	uuid, _ := initTestRepo()
 	name := dvid.InstanceName("annotations")
-
-	config := dvid.NewConfig()
-	_, err := datastore.NewData(uuid, jsontype, name, config)
-	if err != nil {
-		t.Fatalf("Error creating new neuronjson instance: %v\n", err)
-	}
-
 	key1 := "1000"
-	key1req := fmt.Sprintf("%snode/%s/%s/key/%s?u=frank", server.WebAPIPath, uuid, name, key1)
-	resp := server.TestHTTPResponse(t, "HEAD", key1req, nil)
-	if resp.Code != http.StatusNotFound {
-		t.Errorf("HEAD on %s did not return 404 (File not found).  Status = %d\n", key1req, resp.Code)
-	}
-
-	// PUT a value
-	value1 := `{"bodyid": 1000, "a string": "foo", "a number": 1234, "a list": [1, 2, 3]}`
-	server.TestHTTP(t, "POST", key1req, strings.NewReader(value1))
-
-	// Expect error if key 0 is used
-	badrequest := fmt.Sprintf("%snode/%s/%s/key/0?u=tester", server.WebAPIPath, uuid, name)
-	server.TestBadHTTP(t, "POST", badrequest, strings.NewReader(`{"bodyid": 0, "data": "foo"}`))
-
-	// Check HEAD response
-	resp = server.TestHTTPResponse(t, "HEAD", key1req, nil)
-	if resp.Code != http.StatusOK {
-		t.Errorf("HEAD on %s did not return 200 (OK).  Status = %d\n", key1req, resp.Code)
-	}
-
-	// Get back k/v
-	returnValue := server.TestHTTP(t, "GET", key1req, nil)
-	if !equalObjectJSON(returnValue, []byte(value1), ShowBasic) {
-		t.Errorf("Error on key %q: expected %s, got %s\n", key1, value1, string(returnValue))
-	}
-
-	// Expect error if no key used.
-	badrequest = fmt.Sprintf("%snode/%s/%s/key/", server.WebAPIPath, uuid, name)
-	server.TestBadHTTP(t, "GET", badrequest, nil)
-
-	// Add 2nd k/v
 	key2 := "2000"
-	key2req := fmt.Sprintf("%snode/%s/%s/key/%s?u=martha", server.WebAPIPath, uuid, name, key2)
-
-	resp = server.TestHTTPResponse(t, "HEAD", key2req, nil)
-	if resp.Code != http.StatusNotFound {
-		t.Errorf("HEAD on %s did not return 404 (File Not Found).  Status = %d\n", key2req, resp.Code)
-	}
-
-	value2 := `{"bodyid": 2000, "a string": "moo", "a number": 2345, "a list": ["mom", "pop"]}`
-	server.TestHTTP(t, "POST", key2req, strings.NewReader(value2))
-
-	resp = server.TestHTTPResponse(t, "HEAD", key2req, nil)
-	if resp.Code != http.StatusOK {
-		t.Errorf("HEAD on %s did not return 200 (OK).  Status = %d\n", key2req, resp.Code)
-	}
-
-	// Add 3rd k/v
 	key3 := "3000"
+	value1 := `{"bodyid": 1000, "a string": "foo", "a number": 1234, "a list": [1, 2, 3]}`
+	value2 := `{"bodyid": 2000, "a string": "moo", "a number": 2345, "a list": ["mom", "pop"]}`
 	value3 := `{"bodyid": 3000, "a string": "goo", "a number": 3456, "a list": [23]}`
-	key3req := fmt.Sprintf("%snode/%s/%s/key/%s?u=shawna", server.WebAPIPath, uuid, name, key3)
-	server.TestHTTP(t, "POST", key3req, strings.NewReader(value3))
 
 	// Check return of first two keys in range.
 	rangereq := fmt.Sprintf("%snode/%s/%s/keyrange/%s/%s", server.WebAPIPath, uuid, name, "0", "2100")
-	returnValue = server.TestHTTP(t, "GET", rangereq, nil)
+	returnValue := server.TestHTTP(t, "GET", rangereq, nil)
 
 	var retrievedKeys []string
 	if err = json.Unmarshal(returnValue, &retrievedKeys); err != nil {
-		t.Errorf("Bad key range request unmarshal: %v\n", err)
+		t.Fatalf("Bad key range request unmarshal: %v\n", err)
 	}
 	if len(retrievedKeys) != 2 || retrievedKeys[1] != key2 && retrievedKeys[0] != key1 {
-		t.Errorf("Bad key range request return.  Expected: [%q,%q].  Got: %s\n",
+		t.Fatalf("Bad key range request return.  Expected: [%q,%q].  Got: %s\n",
 			key2, key1, string(returnValue))
 	}
 
@@ -808,10 +750,10 @@ func TestKeyvalueRequests(t *testing.T) {
 	returnValue = server.TestHTTP(t, "GET", allkeyreq, nil)
 
 	if err = json.Unmarshal(returnValue, &retrievedKeys); err != nil {
-		t.Errorf("Bad key range request unmarshal: %v\n", err)
+		t.Fatalf("Bad key range request unmarshal: %v\n", err)
 	}
 	if len(retrievedKeys) != 3 || retrievedKeys[0] != key1 && retrievedKeys[1] != key2 && retrievedKeys[2] != key3 {
-		t.Errorf("Bad all key request return.  Expected: [%q,%q,%q].  Got: %s\n",
+		t.Fatalf("Bad all key request return.  Expected: [%q,%q,%q].  Got: %s\n",
 			key3, key2, key1, string(returnValue))
 	}
 
@@ -822,20 +764,20 @@ func TestKeyvalueRequests(t *testing.T) {
 
 	expectedValue := []byte(`{"2000":` + value2 + `,"3000":` + value3 + "}")
 	if !equalObjectJSON(returnValue, expectedValue, ShowBasic) {
-		t.Errorf("Bad keyvalues request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+		t.Fatalf("Bad keyvalues request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	jsonIds = `["2000", "3000"]`
 	returnValue = server.TestHTTP(t, "GET", kvreq, strings.NewReader(jsonIds))
 	if !equalObjectJSON(returnValue, expectedValue, ShowBasic) {
-		t.Errorf("Bad keyvalues request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+		t.Fatalf("Bad keyvalues request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	// Make sure non-existent keys return appropriately
 	jsonIds = `["23910", "23", "2000", "14", "3000", "10000"]`
 	returnValue = server.TestHTTP(t, "GET", kvreq, strings.NewReader(jsonIds))
 	if !equalObjectJSON(returnValue, expectedValue, ShowBasic) {
-		t.Errorf("Bad keyvalues request return using unknown key.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+		t.Fatalf("Bad keyvalues request return using unknown key.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	// Check query
@@ -908,6 +850,131 @@ func TestKeyvalueRequests(t *testing.T) {
 		t.Fatalf("Bad regex query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
+	// Get all neuronjson with only bodyid selected as field.
+	expectedVal := ListNeuronJSON{
+		NeuronJSON{
+			"bodyid": uint64(1000),
+		},
+		NeuronJSON{
+			"bodyid": uint64(2000),
+		},
+		NeuronJSON{
+			"bodyid": uint64(3000),
+		},
+	}
+	allreq := fmt.Sprintf("%snode/%s/%s/all?fields=bodyid", server.WebAPIPath, uuid, name)
+	returnValue = server.TestHTTP(t, "GET", allreq, nil)
+	var neurons ListNeuronJSON
+	if err := json.Unmarshal(returnValue, &neurons); err != nil {
+		t.Fatalf("Unable to parse return from /all?fields=bodyid request: %v\n", err)
+	}
+	sort.Sort(&neurons)
+	if !reflect.DeepEqual(neurons, expectedVal) {
+		t.Fatalf("Response to /all?fields=bodyid is incorrect. Expected: %v, Got: %v\n", expectedVal, neurons)
+	}
+}
+
+func TestKeyvalueRequests(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+	name := dvid.InstanceName("annotations")
+
+	config := dvid.NewConfig()
+	_, err := datastore.NewData(uuid, jsontype, name, config)
+	if err != nil {
+		t.Fatalf("Error creating new neuronjson instance: %v\n", err)
+	}
+
+	key1 := "1000"
+	key1req := fmt.Sprintf("%snode/%s/%s/key/%s?u=frank", server.WebAPIPath, uuid, name, key1)
+	resp := server.TestHTTPResponse(t, "HEAD", key1req, nil)
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("HEAD on %s did not return 404 (File not found).  Status = %d\n", key1req, resp.Code)
+	}
+
+	// PUT a value
+	value1 := `{"bodyid": 1000, "a string": "foo", "a number": 1234, "a list": [1, 2, 3]}`
+	server.TestHTTP(t, "POST", key1req, strings.NewReader(value1))
+
+	// Expect error if key 0 is used
+	badrequest := fmt.Sprintf("%snode/%s/%s/key/0?u=tester", server.WebAPIPath, uuid, name)
+	server.TestBadHTTP(t, "POST", badrequest, strings.NewReader(`{"bodyid": 0, "data": "foo"}`))
+
+	// Check HEAD response
+	resp = server.TestHTTPResponse(t, "HEAD", key1req, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("HEAD on %s did not return 200 (OK).  Status = %d\n", key1req, resp.Code)
+	}
+
+	// Get back k/v
+	returnValue := server.TestHTTP(t, "GET", key1req, nil)
+	if !equalObjectJSON(returnValue, []byte(value1), ShowBasic) {
+		t.Fatalf("Error on key %q: expected %s, got %s\n", key1, value1, string(returnValue))
+	}
+
+	// Expect error if no key used.
+	badrequest = fmt.Sprintf("%snode/%s/%s/key/", server.WebAPIPath, uuid, name)
+	server.TestBadHTTP(t, "GET", badrequest, nil)
+
+	// Add 2nd k/v
+	key2 := "2000"
+	key2req := fmt.Sprintf("%snode/%s/%s/key/%s?u=martha", server.WebAPIPath, uuid, name, key2)
+
+	resp = server.TestHTTPResponse(t, "HEAD", key2req, nil)
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("HEAD on %s did not return 404 (File Not Found).  Status = %d\n", key2req, resp.Code)
+	}
+
+	value2 := `{"bodyid": 2000, "a string": "moo", "a number": 2345, "a list": ["mom", "pop"]}`
+	server.TestHTTP(t, "POST", key2req, strings.NewReader(value2))
+
+	resp = server.TestHTTPResponse(t, "HEAD", key2req, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("HEAD on %s did not return 200 (OK).  Status = %d\n", key2req, resp.Code)
+	}
+
+	// Add 3rd k/v
+	key3 := "3000"
+	value3 := `{"bodyid": 3000, "a string": "goo", "a number": 3456, "a list": [23]}`
+	key3req := fmt.Sprintf("%snode/%s/%s/key/%s?u=shawna", server.WebAPIPath, uuid, name, key3)
+	server.TestHTTP(t, "POST", key3req, strings.NewReader(value3))
+
+	// Run tests on current HEAD (memDB)
+	checkEndpoints(t, uuid)
+
+	// Commit and create new version so old HEAD now requires getting from persistent store.
+	commitReq := fmt.Sprintf("%snode/%s/commit", server.WebAPIPath, uuid)
+	payload := bytes.NewBufferString(`{"note": "first version"}`)
+	server.TestHTTP(t, "POST", commitReq, payload)
+
+	versionReq := fmt.Sprintf("%snode/%s/newversion", server.WebAPIPath, uuid)
+	respData := server.TestHTTP(t, "POST", versionReq, nil)
+	respNewVersion := struct {
+		Child dvid.UUID `json:"child"`
+	}{}
+	if err := json.Unmarshal(respData, &respNewVersion); err != nil {
+		t.Fatalf("Expected 'child' JSON response.  Got %s\n", string(respData))
+	}
+	newUUID := respNewVersion.Child
+
+	// Make some changes so new version is different.
+	key1req = fmt.Sprintf("%snode/%s/%s/key/%s?u=frank", server.WebAPIPath, newUUID, name, key1)
+	value1 = `{"bodyid": 1000, "a string": "new string", "a number": 1111, "a list": [5], "new_field": "new value"}`
+	server.TestHTTP(t, "POST", key1req, strings.NewReader(value1))
+	key2req = fmt.Sprintf("%snode/%s/%s/key/%s?u=martha", server.WebAPIPath, newUUID, name, key2)
+	value2 = `{"bodyid": 2000, "a string": "another string", "a number": 3490, "a list": ["sister", "father"], "new_field": "new value"}`
+	server.TestHTTP(t, "POST", key2req, strings.NewReader(value2))
+
+	// Run tests on old version
+	checkEndpoints(t, uuid)
+
+	// Run more tests on new version
+	uuid = newUUID
+
 	// Check if keys are re-POSTed using default update or replace=true.
 	value3mod := `{"bodyid": 3000, "a string": "goo modified", "a 2nd list": [26]}`
 	key3modreq := fmt.Sprintf("%snode/%s/%s/key/%s?u=bill&show=all", server.WebAPIPath, uuid, name, key3)
@@ -915,7 +982,7 @@ func TestKeyvalueRequests(t *testing.T) {
 
 	returnValue = server.TestHTTP(t, "GET", key3modreq, nil)
 
-	expectedValue = []byte(`{"bodyid": 3000, "a string": "goo modified", "a number": 3456, "a list": [23], "a 2nd list": [26]}`)
+	expectedValue := []byte(`{"bodyid": 3000, "a string": "goo modified", "a number": 3456, "a list": [23], "a 2nd list": [26]}`)
 	var expectedJSON NeuronJSON
 	if err := json.Unmarshal(expectedValue, &expectedJSON); err != nil {
 		t.Fatalf("Couldn't unmarshal expected basic JSON: %s\n", expectedJSON)
@@ -1103,7 +1170,7 @@ func TestFieldNames(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Errorf("Expected field %q not found in fields request\n", field)
+			t.Fatalf("Expected field %q not found in fields request\n", field)
 		}
 	}
 
@@ -1119,7 +1186,7 @@ func TestFieldNames(t *testing.T) {
 	}
 	for _, field := range fields {
 		if field == "soma_side" {
-			t.Errorf("Found deleted field soma_side in fields request\n")
+			t.Fatalf("Found deleted field soma_side in fields request\n")
 		}
 	}
 
@@ -1134,7 +1201,7 @@ func TestFieldNames(t *testing.T) {
 	}
 	for _, field := range fields {
 		if field == "bar" {
-			t.Errorf("Found deleted field bar in fields request: %v\n", fields)
+			t.Fatalf("Found deleted field bar in fields request: %v\n", fields)
 		}
 	}
 }
@@ -1223,10 +1290,10 @@ func TestBodyidUserTime(t *testing.T) {
 		t.Fatalf("Expected only 1 neuron, got %d\n", len(neurons))
 	}
 	if _, found := neurons[0]["bodyid_user"]; found {
-		t.Errorf("Expected no bodyid_user field, got %v\n", neurons[0]["bodyid_user"])
+		t.Fatalf("Expected no bodyid_user field, got %v\n", neurons[0]["bodyid_user"])
 	}
 	if _, found := neurons[0]["bodyid_time"]; found {
-		t.Errorf("Expected no bodyid_time field, got %v\n", neurons[0]["bodyid_time"])
+		t.Fatalf("Expected no bodyid_time field, got %v\n", neurons[0]["bodyid_time"])
 	}
 
 	// Post with bodyid_user or bodyid_time should not be allowed
@@ -1276,21 +1343,21 @@ func TestUserTime(t *testing.T) {
 		t.Fatalf("Expected 2 neuron, got %d\n", len(neurons))
 	}
 	if value, found := neurons[0]["number_user"]; !found || value != "user1" {
-		t.Errorf("Expected 'user1', got %v\n", value)
+		t.Fatalf("Expected 'user1', got %v\n", value)
 	}
 	ival, found := neurons[0]["number_time"]
 	if !found {
-		t.Errorf("Expected number_time field but got none\n")
+		t.Fatalf("Expected number_time field but got none\n")
 	}
 	neuron1_number_time, ok := ival.(string)
 	if !ok {
-		t.Errorf("Expected string for number_time, got %v\n", reflect.TypeOf(ival))
+		t.Fatalf("Expected string for number_time, got %v\n", reflect.TypeOf(ival))
 	}
 	if value, found := neurons[1]["number_user"]; !found || value != "user2" {
-		t.Errorf("Expected 'user2', got %v\n", value)
+		t.Fatalf("Expected 'user2', got %v\n", value)
 	}
 	if _, found := neurons[1]["number_time"]; !found {
-		t.Errorf("Expected number_time field but got none\n")
+		t.Fatalf("Expected number_time field but got none\n")
 	}
 
 	// Sleep for a second so we know the timestamps will be different.
@@ -1307,13 +1374,13 @@ func TestUserTime(t *testing.T) {
 		t.Fatalf("Unable to parse return: %s\nError: %v\n", string(returnValue), err)
 	}
 	if value, found := neuron["number_user"]; !found || value != "user1a" {
-		t.Errorf("Expected 'user1a', got %v\n", value)
+		t.Fatalf("Expected 'user1a', got %v\n", value)
 	}
 	if value, found := neuron["string_time"]; !found || value == neuron1_number_time {
 		t.Error("Expected new string_time, got same time as before updating string field\n")
 	}
 	if value, found := neuron["string_user"]; !found || value != "user3" {
-		t.Errorf("Expected new string_user 'user3', got same user (%s) as before updating string field\n", value)
+		t.Fatalf("Expected new string_user 'user3', got same user (%s) as before updating string field\n", value)
 	}
 }
 
@@ -1509,7 +1576,7 @@ func TestKeyvalueRange(t *testing.T) {
 
 	returnValue := server.TestHTTP(t, "GET", key1req, nil)
 	if !equalObjectJSON(returnValue, []byte(testData[0].val), ShowBasic) {
-		t.Errorf("Error on key %q: expected %s, got %s\n", testData[0].key, testData[0].val, string(returnValue))
+		t.Fatalf("Error on key %q: expected %s, got %s\n", testData[0].key, testData[0].val, string(returnValue))
 	}
 
 	// Add 2nd k/v
@@ -1522,7 +1589,7 @@ func TestKeyvalueRange(t *testing.T) {
 
 	returnValue = server.TestHTTP(t, "GET", rangeReq+"?json=true", nil)
 	if !equalObjectJSON(returnValue, []byte(expectedJSON), ShowBasic) {
-		t.Errorf("Error on keyrangevalues: got %s, expected %s\n", string(returnValue), expectedJSON)
+		t.Fatalf("Error on keyrangevalues: got %s, expected %s\n", string(returnValue), expectedJSON)
 	}
 }
 
@@ -1558,7 +1625,7 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 
 	expectedValue := []byte("[" + testData[1].val + "," + testData[3].val + "]")
 	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
-		t.Errorf("Bad existence query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+		t.Fatalf("Bad existence query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	query = `{"a number": "exists/1", "position": "exists/0"}`
@@ -1566,7 +1633,7 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 
 	expectedValue = []byte("[" + testData[2].val + "]")
 	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
-		t.Errorf("Bad existence query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+		t.Fatalf("Bad existence query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	query = `{"somefield": "exists/0"}`
@@ -1583,7 +1650,7 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 
 	expectedValue = []byte("[" + testData[0].val + "," + testData[2].val + "]")
 	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
-		t.Errorf("Bad ORed baz existence query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+		t.Fatalf("Bad ORed baz existence query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	// Use the batch POST for all 4 annotations with key += 10000
@@ -1604,7 +1671,7 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 
 	// Commit current version
 	if err = datastore.Commit(uuid, "my commit msg", []string{"stuff one", "stuff two"}); err != nil {
-		t.Errorf("Unable to lock root node %s: %v\n", uuid, err)
+		t.Fatalf("Unable to lock root node %s: %v\n", uuid, err)
 	}
 
 	// Verify we can still do queries on committed version.
@@ -1613,7 +1680,7 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 
 	expectedValue = []byte("[" + testData[2].val + "," + testData2[2].val + "]")
 	if !equalListJSON(returnValue, expectedValue, ShowBasic) {
-		t.Errorf("Bad existence query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
+		t.Fatalf("Bad existence query request return.  Expected:%v.  Got: %v\n", string(expectedValue), string(returnValue))
 	}
 
 	// Make new version for additional testing.
@@ -1634,14 +1701,14 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 	// Get the first version value
 	returnValue = server.TestHTTP(t, "GET", keyreq[0], nil)
 	if !equalObjectJSON(returnValue, []byte(testData[0].val), ShowBasic) {
-		t.Errorf("Error on first version, key %q: expected %s, got %s\n", testData[0].key, testData[0].val, string(returnValue))
+		t.Fatalf("Error on first version, key %q: expected %s, got %s\n", testData[0].key, testData[0].val, string(returnValue))
 	}
 
 	// Get the second version value
 	expected2val := updatedJSONBytes(t, testData[1].val, uuid2val)
 	returnValue = server.TestHTTP(t, "GET", uuid2req, nil)
 	if !equalObjectJSON(returnValue, expected2val, ShowBasic) {
-		t.Errorf("Error on second version, key %q: expected %s, got %s\n", testData[1].key, uuid2val, string(returnValue))
+		t.Fatalf("Error on second version, key %q: expected %s, got %s\n", testData[1].key, uuid2val, string(returnValue))
 	}
 
 	// Check return of first two keys in range.
@@ -1650,10 +1717,10 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 
 	var retrievedKeys []string
 	if err = json.Unmarshal(returnValue, &retrievedKeys); err != nil {
-		t.Errorf("Bad key range request unmarshal: %v\n", err)
+		t.Fatalf("Bad key range request unmarshal: %v\n", err)
 	}
 	if len(retrievedKeys) != 2 || retrievedKeys[1] != testData[1].key && retrievedKeys[0] != testData[0].key {
-		t.Errorf("Bad key range request return.  Expected: [%q,%q].  Got: %s\n",
+		t.Fatalf("Bad key range request return.  Expected: [%q,%q].  Got: %s\n",
 			testData[0].key, testData[1].key, string(returnValue))
 	}
 
@@ -1663,7 +1730,7 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 		keyreq := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), k)
 		returnValue := server.TestHTTP(t, "GET", keyreq, nil)
 		if !equalObjectJSON(returnValue, []byte(testData2[i].val), ShowBasic) {
-			t.Errorf("Expected batch POST key %q to have value %s, got %d instead\n", k, testData[i].val, returnValue)
+			t.Fatalf("Expected batch POST key %q to have value %s, got %d instead\n", k, testData[i].val, returnValue)
 		}
 	}
 
@@ -1692,7 +1759,7 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 		}
 		returnValue := val.Bytes()
 		if !equalObjectJSON(returnValue, []byte(expectedVals[keyNum]), ShowBasic) {
-			t.Errorf("Expected batch POST key %q to have value %s, got %d instead\n", expectedKeys[keyNum], expectedVals[keyNum], returnValue)
+			t.Fatalf("Expected batch POST key %q to have value %s, got %d instead\n", expectedKeys[keyNum], expectedVals[keyNum], returnValue)
 		}
 		dvid.Infof("Key: %s, Value: %s\n", hdr.Name, returnValue)
 		keyNum++
@@ -1723,13 +1790,13 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 			t.Fatalf("expected for key %d %q, got %q", keyNum, expectedKeys[keyNum], kv.Key)
 		}
 		if !equalObjectJSON(kv.Value, []byte(expectedVals[keyNum]), ShowBasic) {
-			t.Errorf("Expected batch POST key %q to have value %s, got %d instead\n", expectedKeys[keyNum], testData[keyNum].val, returnValue)
+			t.Fatalf("Expected batch POST key %q to have value %s, got %d instead\n", expectedKeys[keyNum], testData[keyNum].val, returnValue)
 		}
 	}
 
 	// Commit the repo
 	if err = datastore.Commit(uuid2, "my 2nd commit msg", []string{"changed 2nd k/v"}); err != nil {
-		t.Errorf("Unable to commit node %s: %v\n", uuid2, err)
+		t.Fatalf("Unable to commit node %s: %v\n", uuid2, err)
 	}
 
 	// Make grandchild of root
@@ -1747,10 +1814,10 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 	// Make sure the 2nd k/v is correct for each of previous versions.
 	returnValue = server.TestHTTP(t, "GET", keyreq[1], nil)
 	if !equalObjectJSON(returnValue, []byte(testData[1].val), ShowBasic) {
-		t.Errorf("Error on first version, key %q: expected %s, got %s\n", testData[1].key, testData[1].val, string(returnValue))
+		t.Fatalf("Error on first version, key %q: expected %s, got %s\n", testData[1].key, testData[1].val, string(returnValue))
 	}
 	returnValue = server.TestHTTP(t, "GET", uuid2req, nil)
 	if !equalObjectJSON(returnValue, expected2val, ShowBasic) {
-		t.Errorf("Error on second version, key %q: expected %s, got %s\n", testData[1].key, expected2val, string(returnValue))
+		t.Fatalf("Error on second version, key %q: expected %s, got %s\n", testData[1].key, expected2val, string(returnValue))
 	}
 }

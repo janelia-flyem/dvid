@@ -1147,6 +1147,16 @@ func (d *Data) GetAll(ctx storage.VersionedCtx, fieldMap map[string]struct{}, sh
 	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
 	if found {
 		mdb.mu.RLock()
+		// Handle case of just ?fields=bodyid where we can use cached bodyids
+		_, bodyidField := fieldMap["bodyid"]
+		if len(fieldMap) == 1 && bodyidField {
+			all = make(ListNeuronJSON, len(mdb.ids))
+			for i, bodyid := range mdb.ids {
+				all[i] = NeuronJSON{"bodyid": bodyid}
+			}
+			mdb.mu.RUnlock()
+			return all, nil
+		}
 		for _, value := range mdb.data {
 			out := selectFields(value, fieldMap, showUser, showTime)
 			if len(out) > 1 {
@@ -1157,7 +1167,8 @@ func (d *Data) GetAll(ctx storage.VersionedCtx, fieldMap map[string]struct{}, sh
 	} else {
 		process_func := func(key string, value NeuronJSON) {
 			out := selectFields(value, fieldMap, showUser, showTime)
-			if len(out) > 1 {
+			_, bodyidField := fieldMap["bodyid"]
+			if len(out) > 1 || bodyidField {
 				all = append(all, out)
 			}
 		}
