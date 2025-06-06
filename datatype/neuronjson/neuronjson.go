@@ -1180,6 +1180,86 @@ func (d *Data) GetAll(ctx storage.VersionedCtx, fieldMap map[string]struct{}, sh
 	return all, nil
 }
 
+// streamAllJSON streams all neuron data as JSON array directly to writer without building in memory
+func (d *Data) streamAllJSON(ctx storage.VersionedCtx, writer io.Writer, fieldMap map[string]struct{}, showFields Fields) error {
+	showUser, showTime := showFields.Bools()
+	
+	// Write opening bracket for JSON array
+	if _, err := writer.Write([]byte("[")); err != nil {
+		return err
+	}
+	
+	var first = true
+	var writeItem = func(item NeuronJSON) error {
+		if !first {
+			if _, err := writer.Write([]byte(",")); err != nil {
+				return err
+			}
+		}
+		first = false
+		jsonBytes, err := json.Marshal(item)
+		if err != nil {
+			return err
+		}
+		_, err = writer.Write(jsonBytes)
+		return err
+	}
+	
+	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
+	if found {
+		mdb.mu.RLock()
+		defer mdb.mu.RUnlock()
+		
+		// Handle optimized case of just ?fields=bodyid
+		_, bodyidField := fieldMap["bodyid"]
+		if len(fieldMap) == 1 && bodyidField {
+			for _, bodyid := range mdb.ids {
+				neuron := NeuronJSON{"bodyid": bodyid}
+				if err := writeItem(neuron); err != nil {
+					return err
+				}
+			}
+		} else {
+			for _, value := range mdb.data {
+				out := selectFields(value, fieldMap, showUser, showTime)
+				if len(out) > 1 {
+					if err := writeItem(out); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	} else {
+		// For store-based processing, we need to handle errors differently
+		var processErr error
+		process_func := func(key string, value NeuronJSON) {
+			if processErr != nil {
+				return // Skip if we already have an error
+			}
+			out := selectFields(value, fieldMap, showUser, showTime)
+			_, bodyidField := fieldMap["bodyid"]
+			if len(out) > 1 || bodyidField {
+				if err := writeItem(out); err != nil {
+					processErr = err
+				}
+			}
+		}
+		if err := d.processStoreRange(ctx, process_func); err != nil {
+			return err
+		}
+		if processErr != nil {
+			return processErr
+		}
+	}
+	
+	// Write closing bracket for JSON array
+	if _, err := writer.Write([]byte("]")); err != nil {
+		return err
+	}
+	
+	return nil
+}
+
 func (d *Data) GetKeys(ctx storage.VersionedCtx) (out []string, err error) {
 	mdb, found := d.getMemDBbyVersion(ctx.VersionID())
 	if found {
@@ -2251,24 +2331,20 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 
 	case "all":
-		kvList, err := d.GetAll(ctx, fieldMap(r), showFields(r))
-		if err != nil {
-			server.BadRequest(w, r, err)
-			return
-		}
-		jsonBytes, err := json.Marshal(kvList)
-		if err != nil {
-			server.BadRequest(w, r, err)
-			return
-		}
 		w.Header().Set("Content-Type", "application/json")
+		
+		var writer io.Writer = w
+		var gz *gzip.Writer
 		if dvid.SupportsGzipEncoding(r) {
 			w.Header().Set("Content-Encoding", "gzip")
-			gz := gzip.NewWriter(w)
+			gz = gzip.NewWriter(w)
+			writer = gz
 			defer gz.Close()
-			gz.Write(jsonBytes)
-		} else {
-			w.Write(jsonBytes)
+		}
+		
+		if err := d.streamAllJSON(ctx, writer, fieldMap(r), showFields(r)); err != nil {
+			server.BadRequest(w, r, err)
+			return
 		}
 		comment = "HTTP GET all"
 
