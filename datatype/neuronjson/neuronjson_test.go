@@ -3,11 +3,13 @@ package neuronjson
 import (
 	"archive/tar"
 	bytes "bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	io "io"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"sort"
 	"strings"
@@ -1304,6 +1306,101 @@ func TestBodyidUserTime(t *testing.T) {
 	neuron = `{"bodyid": 1000, "bodyid_time": "2023-11-11T22:44:50-05:00", "a number": 3456, "position": [150,250,380], "baz": ""}`
 	keyreq = fmt.Sprintf("%snode/%s/neurons/key/%s?u=moo&replace=true", server.WebAPIPath, uuid, "1000")
 	server.TestBadHTTP(t, "POST", keyreq, strings.NewReader(neuron))
+}
+
+// TestGzipAllEndpoint tests that the /all endpoint supports gzip compression when requested.
+func TestGzipAllEndpoint(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+
+	payload := bytes.NewBufferString(`{"typename": "neuronjson", "dataname": "neurons"}`)
+	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, payload)
+
+	// Post some test data
+	for i := 0; i < 3; i++ {
+		keyreq := fmt.Sprintf("%snode/%s/neurons/key/%s?u=testuser", server.WebAPIPath, uuid, testData[i].key)
+		server.TestHTTP(t, "POST", keyreq, strings.NewReader(testData[i].val))
+	}
+
+	// Test 1: Request WITHOUT gzip - should not have Content-Encoding header
+	allreq := fmt.Sprintf("%snode/%s/neurons/all", server.WebAPIPath, uuid)
+	req, err := http.NewRequest("GET", allreq, nil)
+	if err != nil {
+		t.Fatalf("Unable to create request: %v\n", err)
+	}
+	
+	resp := httptest.NewRecorder()
+	server.ServeSingleHTTP(resp, req)
+	
+	if resp.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK, got %d", resp.Code)
+	}
+	
+	if resp.Header().Get("Content-Encoding") == "gzip" {
+		t.Errorf("Expected no gzip encoding without Accept-Encoding header, but got gzip")
+	}
+
+	// Test 2: Request WITH gzip - should have Content-Encoding: gzip header
+	req, err = http.NewRequest("GET", allreq, nil)
+	if err != nil {
+		t.Fatalf("Unable to create request: %v\n", err)
+	}
+	req.Header.Set("Accept-Encoding", "gzip")
+	
+	resp = httptest.NewRecorder()
+	server.ServeSingleHTTP(resp, req)
+	
+	if resp.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK, got %d", resp.Code)
+	}
+	
+	if resp.Header().Get("Content-Encoding") != "gzip" {
+		t.Errorf("Expected gzip encoding with Accept-Encoding: gzip header, got: %s", resp.Header().Get("Content-Encoding"))
+	}
+
+	// Test 3: Verify the gzipped response can be decompressed and contains expected data
+	body := resp.Body.Bytes()
+	
+	// Decompress the gzipped response
+	gz, err := gzip.NewReader(bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("Unable to create gzip reader: %v\n", err)
+	}
+	defer gz.Close()
+	
+	decompressed, err := io.ReadAll(gz)
+	if err != nil {
+		t.Fatalf("Unable to decompress gzipped response: %v\n", err)
+	}
+	
+	var neurons ListNeuronJSON
+	if err := json.Unmarshal(decompressed, &neurons); err != nil {
+		t.Fatalf("Unable to parse decompressed JSON: %v\n", err)
+	}
+
+	if len(neurons) != 3 {
+		t.Errorf("Expected 3 neurons, got %d", len(neurons))
+	}
+	
+	// Verify all test data is present
+	bodyids := make(map[uint64]bool)
+	for _, neuron := range neurons {
+		if bodyid, ok := neuron["bodyid"].(uint64); ok {
+			bodyids[bodyid] = true
+		}
+	}
+	
+	expectedBodyids := []uint64{1000, 2000, 3000}
+	for _, expectedID := range expectedBodyids {
+		if !bodyids[expectedID] {
+			t.Errorf("Expected bodyid %d not found in response", expectedID)
+		}
+	}
 }
 
 // TestUserTime tests that user and time are properly recorded.

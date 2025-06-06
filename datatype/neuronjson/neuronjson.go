@@ -6,6 +6,7 @@ package neuronjson
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
@@ -2261,7 +2262,14 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, string(jsonBytes))
+		if dvid.SupportsGzipEncoding(r) {
+			w.Header().Set("Content-Encoding", "gzip")
+			gz := gzip.NewWriter(w)
+			defer gz.Close()
+			gz.Write(jsonBytes)
+		} else {
+			w.Write(jsonBytes)
+		}
 		comment = "HTTP GET all"
 
 	case "keys":
