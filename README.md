@@ -84,8 +84,9 @@ Both high-level and detailed descriptions of DVID and its ecosystem can found he
 * [Paper on DVID](https://www.frontiersin.org/article/10.3389/fncir.2019.00005)
 describing its motivation and architecture, including how versioning works at the key-value
 level.  
-* The main place for DVID documentation and information is the [DVID Wiki](https://github.com/janelia-flyem/dvid/wiki) in this github repository.
-There is also some documentation and blog posts on [dvid.io](http://dvid.io) pertinent to published datasets like the hemibrain.
+* The main place for DVID documentation and information is the [DVID Wiki](https://github.com/janelia-flyem/dvid/wiki) in this github repository. 
+* An AI-generated summary of DVID, including architecture diagrams, can be found on [DeepWiki](https://deepwiki.com/janelia-flyem/dvid).
+* There is also some documentation and blog posts on [dvid.io](http://dvid.io) pertinent to published datasets like the hemibrain.
 
 DVID is easily extensible by adding custom *data types*, each of which fulfill a
 minimal interface (e.g., HTTP request handling), DVID's initial focus is on efficiently 
@@ -120,6 +121,22 @@ C, e.g., storage engines like Leveldb and fast codecs like lz4, are embedded or 
 Command-line and HTTP API documentation can be 
 found in [help constants within packages](https://github.com/janelia-flyem/dvid/blob/master/datatype/labelmap/labelmap.go#L34) or by visiting the **/api/help**
 HTTP endpoint on a running DVID server.
+
+Over time, a number of built-in data types and backends have not gained traction or sunset. As of 2025, these are the preferred data types and backends used by the Janelia developers for recent & new datasets:
+
+### Data types
+* `labelmap` for segmentation
+* `labelsz` for label-indexed synapse and other structure counts
+* `annotation` for synapses, TO-DO markers, and other 3d point annotations
+* `roi` for describing the various regions of interest
+* `neuronjson` for more powerful queries and in-memory speedup of JSON per neuron
+* `uint8blk` for proxying massive grayscale data stored in Google Cloud (autocreated via config)
+* `keyvalue` for any data (e.g., meshes, UI data) stored like a branched versioned file system
+
+### Storage backends
+* `badger`: our default embedded key-value store. We typically use multiple DBs for one dataset.
+* `filelog`: logs on file system for mutation logs, etc.
+* `ngprecomputed`: GCS buckets containing neuroglancer precomputed volumes that DVID proxies.
 
 ## Monitoring
 
