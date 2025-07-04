@@ -3,6 +3,7 @@ DVID       [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/janelia-flyem/dvid)](https://goreportcard.com/report/github.com/janelia-flyem/dvid)
 [![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/janelia-flyem/dvid)
 
 DVID is a ***D**istributed, **V**ersioned, **I**mage-oriented **D**ataservice* written to support 
 neural reconstruction, analysis and visualization efforts at 
