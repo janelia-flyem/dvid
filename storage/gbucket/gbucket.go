@@ -36,6 +36,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -849,7 +850,7 @@ func (db *GBucket) getVhandle(obj_handle *api.ObjectHandle) ([]byte, error) {
 
 		// no error, read value and return
 		if err2 == nil {
-			value, err2 := ioutil.ReadAll(obj)
+			value, err2 := io.ReadAll(obj)
 			return value, err2
 		}
 
@@ -1047,7 +1048,7 @@ func (db *GBucket) extractVers(ctx storage.Context, baseKey storage.Key) ([]stor
 
 		// no error, read value and return
 		if err2 == nil {
-			value, err2 = ioutil.ReadAll(obj)
+			value, err2 = io.ReadAll(obj)
 			if err2 != nil {
 				return nil, nil, err2
 			}

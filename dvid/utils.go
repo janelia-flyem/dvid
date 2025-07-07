@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math"
 	"math/rand"
 	"mime"
@@ -193,7 +192,7 @@ func DataFromPost(r *http.Request, key string) ([]byte, error) {
 	}
 	defer f.Close()
 
-	return ioutil.ReadAll(f)
+	return io.ReadAll(f)
 }
 
 // WriteJSONFile writes an arbitrary but exportable Go object to a JSON file.
@@ -223,7 +222,7 @@ func ReadJSONFile(filename string) (value map[string]interface{}, err error) {
 	}
 	defer file.Close()
 	var fileBytes []byte
-	fileBytes, err = ioutil.ReadAll(file)
+	fileBytes, err = io.ReadAll(file)
 	if err != nil {
 		return
 	}

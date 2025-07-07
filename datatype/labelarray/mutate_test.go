@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"reflect"
@@ -1681,7 +1680,7 @@ func (b testBody) splitmerge(t *testing.T, uuid dvid.UUID, name dvid.InstanceNam
 		resp := server.TestHTTPResponse(t, "POST", reqStr, bytes.NewBuffer(splitBytes))
 		var retbytes []byte
 		if resp.Body != nil {
-			retbytes, err = ioutil.ReadAll(resp.Body)
+			retbytes, err = io.ReadAll(resp.Body)
 			if err != nil {
 				t.Fatalf("could not read response body for split %d of label %d: %v\n", tries, b.label, err)
 			}
@@ -1730,7 +1729,7 @@ func (b testBody) splitmerge(t *testing.T, uuid dvid.UUID, name dvid.InstanceNam
 		default:
 			var retstr string
 			if resp.Body != nil {
-				retbytes, err := ioutil.ReadAll(resp.Body)
+				retbytes, err := io.ReadAll(resp.Body)
 				if err != nil {
 					t.Fatalf("Error trying to read response body from request %q: %v\n", reqStr, err)
 					break

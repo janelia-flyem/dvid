@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"image"
 	"io"
-	"io/ioutil"
 	"math"
 	"net/http"
 	"strings"
@@ -1189,14 +1188,14 @@ func getBinaryData(compression string, in io.ReadCloser, estsize int64) ([]byte,
 	switch compression {
 	case "":
 		tlog := dvid.NewTimeLog()
-		data, err = ioutil.ReadAll(in)
+		data, err = io.ReadAll(in)
 		if err != nil {
 			return nil, err
 		}
 		tlog.Debugf("read 3d uncompressed POST")
 	case "lz4":
 		tlog := dvid.NewTimeLog()
-		data, err = ioutil.ReadAll(in)
+		data, err = io.ReadAll(in)
 		if err != nil {
 			return nil, err
 		}
@@ -1217,7 +1216,7 @@ func getBinaryData(compression string, in io.ReadCloser, estsize int64) ([]byte,
 		if err != nil {
 			return nil, err
 		}
-		data, err = ioutil.ReadAll(gr)
+		data, err = io.ReadAll(gr)
 		if err != nil {
 			return nil, err
 		}
@@ -1324,7 +1323,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		fmt.Fprintln(w, jsonStr)
 
 	case "resolution":
-		jsonBytes, err := ioutil.ReadAll(r.Body)
+		jsonBytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -1381,7 +1380,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Batch labels query must be a GET request")
 			return
 		}
-		data, err := ioutil.ReadAll(r.Body)
+		data, err := io.ReadAll(r.Body)
 		if err != nil {
 			server.BadRequest(w, r, "Bad GET request body for batch query: %v", err)
 			return

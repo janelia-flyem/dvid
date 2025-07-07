@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"sync"
 
@@ -54,7 +53,7 @@ func readStreamedBlock(r io.Reader, scale uint8) (block *labels.Block, compresse
 		return
 	}
 	var uncompressed []byte
-	uncompressed, err = ioutil.ReadAll(zr)
+	uncompressed, err = io.ReadAll(zr)
 	if err != nil {
 		err = fmt.Errorf("can't read all %d bytes from gzipped block %s: %v", numBytes, bcoord, err)
 		return

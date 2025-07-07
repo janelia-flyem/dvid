@@ -6,7 +6,7 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -87,7 +87,7 @@ func main() {
 		fmt.Printf("bad HTTP blocks request response: %v\n", err)
 		os.Exit(1)
 	}
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if err != nil {
 		fmt.Printf("couldn't read block data: %v\n", err)
@@ -116,7 +116,7 @@ func main() {
 		fmt.Printf("can't uncompress gzip block: %v\n", err)
 		os.Exit(1)
 	}
-	uncompressed, err = ioutil.ReadAll(zr)
+	uncompressed, err = io.ReadAll(zr)
 	if err != nil {
 		fmt.Printf("can't uncompress gzip block: %v\n", err)
 		os.Exit(1)

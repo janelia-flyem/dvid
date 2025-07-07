@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"strconv"
 	"strings"
@@ -444,7 +443,7 @@ func (d *Data) handlePostLabels(ctx *datastore.VersionedCtx, w http.ResponseWrit
 	if err != nil {
 		return err
 	}
-	jsonBytes, err := ioutil.ReadAll(r)
+	jsonBytes, err := io.ReadAll(r)
 	if err != nil {
 		return err
 	}

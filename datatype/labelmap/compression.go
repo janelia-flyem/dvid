@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math"
 	"net/http"
 
@@ -20,14 +19,14 @@ func uncompressReaderData(compression string, in io.ReadCloser, estsize int64) (
 	switch compression {
 	case "":
 		tlog := dvid.NewTimeLog()
-		data, err = ioutil.ReadAll(in)
+		data, err = io.ReadAll(in)
 		if err != nil {
 			return nil, err
 		}
 		tlog.Debugf("read 3d uncompressed POST")
 	case "lz4":
 		tlog := dvid.NewTimeLog()
-		data, err = ioutil.ReadAll(in)
+		data, err = io.ReadAll(in)
 		if err != nil {
 			return nil, err
 		}
@@ -48,7 +47,7 @@ func uncompressReaderData(compression string, in io.ReadCloser, estsize int64) (
 		if err != nil {
 			return nil, err
 		}
-		data, err = ioutil.ReadAll(gr)
+		data, err = io.ReadAll(gr)
 		if err != nil {
 			return nil, err
 		}

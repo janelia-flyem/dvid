@@ -1,5 +1,5 @@
 /*
-   Package tarsupervoxels implements DVID support for data blobs associated with supervoxels.
+Package tarsupervoxels implements DVID support for data blobs associated with supervoxels.
 */
 package tarsupervoxels
 
@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"strconv"
 	"strings"
@@ -516,7 +515,7 @@ func (d *Data) handleExistence(uuid dvid.UUID, w http.ResponseWriter, r *http.Re
 		server.BadRequest(w, r, "exists query must be a GET request")
 		return
 	}
-	data, err := ioutil.ReadAll(r.Body)
+	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		server.BadRequest(w, r, "Bad GET request body for exists query: %v", err)
 		return
@@ -959,7 +958,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			comment = fmt.Sprintf("HTTP DELETE supervoxel %d data of tarsupervoxels %q (%s)\n", supervoxel, d.DataName(), url)
 
 		case "post":
-			data, err := ioutil.ReadAll(r.Body)
+			data, err := io.ReadAll(r.Body)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return

@@ -4,7 +4,7 @@ import (
 	"compress/gzip"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -54,7 +54,7 @@ func main() {
 }
 
 func compress() {
-	b, err := ioutil.ReadAll(os.Stdin)
+	b, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading stdin: %v\n", err)
 		os.Exit(1)
@@ -95,7 +95,7 @@ func uncompress() {
 		os.Exit(1)
 	}
 
-	serialization, err := ioutil.ReadAll(fz)
+	serialization, err := io.ReadAll(fz)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "unable to uncompress gzip input: %v\n", err)
 		os.Exit(1)

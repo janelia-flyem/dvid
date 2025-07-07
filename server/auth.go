@@ -4,7 +4,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -66,7 +66,7 @@ func (auth *authData) loadAuthFile() error {
 	if err != nil {
 		return err
 	}
-	data, err := ioutil.ReadAll(f)
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return err
 	}
@@ -249,7 +249,7 @@ func getEmailFromProxy(r *http.Request) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("unable to get profile from %s (status %d), perhaps not logged in: %v", tc.Auth.ProxyAddress, resp.StatusCode, err)
 	}
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("unable to read /profile response from %s: %v", tc.Auth.ProxyAddress, err)
 	}

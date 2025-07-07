@@ -6,7 +6,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -236,7 +236,7 @@ func DoCommand(cmd dvid.Command) error {
 		request := datastore.Request{Command: cmd}
 		if *useStdin {
 			var err error
-			request.Input, err = ioutil.ReadAll(os.Stdin)
+			request.Input, err = io.ReadAll(os.Stdin)
 			if err != nil {
 				return fmt.Errorf("Error in reading from standard input: %v", err)
 			}

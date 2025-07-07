@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -39,7 +38,7 @@ func getLabelMetadata(dstURL string) *LabelMetadata {
 		fmt.Printf("Bad status on getting metadata (%s): %d\n", infoUrl, resp.StatusCode)
 		os.Exit(1)
 	}
-	metadata, err := ioutil.ReadAll(resp.Body)
+	metadata, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if err != nil {
 		fmt.Printf("Could not read metadata from labels (%s): %v\n", infoUrl, err.Error())
@@ -210,7 +209,7 @@ func sendStrip(name, srcURL string, vx, vy, vz, ox, oy, oz int) {
 		}
 		if resp.StatusCode != http.StatusOK {
 			var respnote []byte
-			data, _ := ioutil.ReadAll(resp.Body)
+			data, _ := io.ReadAll(resp.Body)
 			if len(data) < 2000 {
 				respnote = data
 			}

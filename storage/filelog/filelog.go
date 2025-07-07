@@ -3,6 +3,7 @@ package filelog
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -176,7 +177,7 @@ func (flogs *fileLogs) readEntireVersion(dataID, version dvid.UUID, processor fu
 		}
 		return err
 	}
-	data, err := ioutil.ReadAll(f)
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return err
 	}
@@ -240,7 +241,7 @@ func (flogs *fileLogs) ReadAll(dataID, version dvid.UUID) ([]storage.LogMessage,
 		}
 		return nil, err
 	}
-	data, err := ioutil.ReadAll(f)
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +309,7 @@ func (flogs *fileLogs) StreamAll(dataID, version dvid.UUID, ch chan storage.LogM
 		}
 		return err
 	}
-	data, err := ioutil.ReadAll(f)
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return err
 	}

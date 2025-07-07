@@ -257,7 +257,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("Unexpected status code %d returned when getting volume metadata for %q", resp.StatusCode, volumeid)
 	}
-	metadata, err := ioutil.ReadAll(resp.Body)
+	metadata, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -368,7 +368,7 @@ func (dtype *Type) Do(cmd datastore.Request, reply *datastore.Response) error {
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("Unexpected status code %d returned when getting volumes for user", resp.StatusCode)
 		}
-		metadata, err := ioutil.ReadAll(resp.Body)
+		metadata, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return err
 		}
@@ -1002,7 +1002,7 @@ func (d *Data) serveTile(w http.ResponseWriter, r *http.Request, geom *GoogleSub
 	// If it's on edge, we need to pad the tile to the tile size.
 	if geom.edge {
 		// We need to read whole thing in to pad it.
-		data, err := ioutil.ReadAll(resp.Body)
+		data, err := io.ReadAll(resp.Body)
 		timedLog.Infof("Got edge tile from Google, %d bytes\n", len(data))
 		if err != nil {
 			return err
@@ -1091,7 +1091,7 @@ func (d *Data) serveVolume(w http.ResponseWriter, r *http.Request, geom *GoogleS
 
 	switch compression {
 	case "lz4":
-		data, err := ioutil.ReadAll(resp.Body)
+		data, err := io.ReadAll(resp.Body)
 		timedLog.Infof("Got raw subvolume from Google, %d bytes\n", len(data))
 		if err != nil {
 			return err

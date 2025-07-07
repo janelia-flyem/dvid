@@ -944,7 +944,7 @@ func mutationsHandler(c *web.C, h http.Handler) http.Handler {
 	mutConfig := MutationLogSpec()
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		if mutConfig.Httpstore != "" {
-			buf, err := ioutil.ReadAll(r.Body)
+			buf, err := io.ReadAll(r.Body)
 			if err != nil {
 				BadRequest(w, r, "unable to read POST for mirroring: %v", err)
 				return
@@ -1254,7 +1254,7 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 				}
 
 			case "post":
-				value, err := ioutil.ReadAll(r.Body)
+				value, err := io.ReadAll(r.Body)
 				if err != nil {
 					BadRequest(w, r, err)
 					return
@@ -1326,7 +1326,7 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 		if method == "post" {
 			mirrors := instanceMirrors(data.DataUUID(), uuid)
 			if len(mirrors) > 0 {
-				buf, err := ioutil.ReadAll(r.Body)
+				buf, err := io.ReadAll(r.Body)
 				if err != nil {
 					BadRequest(w, r, "unable to read POST for mirroring: %v", err)
 					return
@@ -1438,7 +1438,7 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
 			BadRequest(w, r, err)
 			return
 		}
-		data, err := ioutil.ReadAll(rsrc)
+		data, err := io.ReadAll(rsrc)
 		if err != nil {
 			BadRequest(w, r, err)
 			return
@@ -2052,7 +2052,7 @@ func repoCommitHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		Log  []string `json:"log"`
 	}{}
 	if r.Body != nil {
-		data, err := ioutil.ReadAll(r.Body)
+		data, err := io.ReadAll(r.Body)
 		if err != nil {
 			BadRequest(w, r, err)
 			return
@@ -2094,7 +2094,7 @@ func repoNewVersionHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	}{}
 
 	if r.Body != nil {
-		data, err := ioutil.ReadAll(r.Body)
+		data, err := io.ReadAll(r.Body)
 		if err != nil {
 			BadRequest(w, r, err)
 			return
@@ -2151,7 +2151,7 @@ func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 
 	// load branch and note/uuid options
 	if r.Body != nil {
-		data, err := ioutil.ReadAll(r.Body)
+		data, err := io.ReadAll(r.Body)
 		if err != nil {
 			BadRequest(w, r, err)
 			return
@@ -2217,7 +2217,7 @@ func repoTagHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	}{}
 
 	if r.Body != nil {
-		data, err := ioutil.ReadAll(r.Body)
+		data, err := io.ReadAll(r.Body)
 		if err != nil {
 			BadRequest(w, r, err)
 			return
@@ -2271,7 +2271,7 @@ func repoMergeHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, "merge requires JSON to be POSTed per API documentation")
 		return
 	}
-	data, err := ioutil.ReadAll(r.Body)
+	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		BadRequest(w, r, err)
 		return
@@ -2332,7 +2332,7 @@ func repoResolveHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, "merge resolving requires JSON to be POSTed per API documentation")
 		return
 	}
-	data, err := ioutil.ReadAll(r.Body)
+	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		BadRequest(w, r, err)
 		return

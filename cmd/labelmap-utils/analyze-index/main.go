@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -83,7 +83,7 @@ func main() {
 
 	url := fmt.Sprintf("http://%s/api/node/%s/%s/index/%d", server, uuid, name, label)
 	resp, err := http.Get(url)
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Printf("couldn't read index data: %v\n", err)
 		os.Exit(1)
