@@ -5,7 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/binary"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -170,7 +170,7 @@ func (d *Data) transcodeBlock(b blockData) (out []byte, err error) {
 			if err != nil {
 				return
 			}
-			uncompressed, err = ioutil.ReadAll(zr)
+			uncompressed, err = io.ReadAll(zr)
 			if err != nil {
 				return
 			}

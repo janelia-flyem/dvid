@@ -1,8 +1,8 @@
 /*
-	Package imagetile implements DVID support for imagetiles in XY, XZ, and YZ orientation.
-	All raw tiles are stored as PNG images that are by default gzipped.  This allows raw
-	tile gets to be already compressed at the cost of more expensive uncompression to
-	retrieve arbitrary image sizes.
+Package imagetile implements DVID support for imagetiles in XY, XZ, and YZ orientation.
+All raw tiles are stored as PNG images that are by default gzipped.  This allows raw
+tile gets to be already compressed at the cost of more expensive uncompression to
+retrieve arbitrary image sizes.
 */
 package imagetile
 
@@ -16,7 +16,7 @@ import (
 	"image/draw"
 	"image/jpeg"
 	"image/png"
-	"io/ioutil"
+	"io"
 	"math"
 	"net/http"
 	"sort"
@@ -469,11 +469,13 @@ type specJSON map[string]LevelSpec
 
 // LoadTileSpec loads a TileSpec from JSON data.
 // JSON data should look like:
-// {
-//    "0": { "Resolution": [3.1, 3.1, 40.0], "TileSize": [512, 512, 40] },
-//    "1": { "Resolution": [6.2, 6.2, 40.0], "TileSize": [512, 512, 80] },
-//    ...
-// }
+//
+//	{
+//	   "0": { "Resolution": [3.1, 3.1, 40.0], "TileSize": [512, 512, 40] },
+//	   "1": { "Resolution": [6.2, 6.2, 40.0], "TileSize": [512, 512, 80] },
+//	   ...
+//	}
+//
 // Each line is a scale with a n-D resolution/voxel and a n-D tile size in voxels.
 func LoadTileSpec(jsonBytes []byte) (TileSpec, error) {
 	var config specJSON
@@ -879,7 +881,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "metadata":
 		switch action {
 		case "post":
-			jsonBytes, err := ioutil.ReadAll(r.Body)
+			jsonBytes, err := io.ReadAll(r.Body)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
@@ -1091,7 +1093,7 @@ func (d *Data) PostTile(ctx storage.Context, w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		return err
 	}
-	data, err := ioutil.ReadAll(r.Body)
+	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		return err
 	}

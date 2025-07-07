@@ -1,7 +1,7 @@
 package storage
 
 import (
-	"io/ioutil"
+	"io"
 	"os"
 )
 
@@ -12,7 +12,7 @@ func DataFromFile(filename string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err = ioutil.ReadAll(file)
+	data, err = io.ReadAll(file)
 	if err != nil {
 		return nil, err
 	}

@@ -2,8 +2,8 @@
 // +build filestore
 
 /*
-	Package filestore implements a simple file-based store that fulfills
-	the KeyValueDB interface.  Keys are strings that must be valid file names.
+Package filestore implements a simple file-based store that fulfills
+the KeyValueDB interface.  Keys are strings that must be valid file names.
 */
 package filestore
 
@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -261,7 +262,7 @@ func (fs *fileStore) GetWithTimestamp(ctx storage.Context, tk storage.TKey) (dat
 		return
 	}
 	modTime = info.ModTime()
-	data, err = ioutil.ReadAll(f)
+	data, err = io.ReadAll(f)
 	f.Close()
 	return
 }

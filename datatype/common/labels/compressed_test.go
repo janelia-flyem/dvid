@@ -5,7 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/binary"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -84,7 +84,7 @@ func readGzipFile(filename string) ([]byte, error) {
 	}
 	defer fz.Close()
 
-	data, err := ioutil.ReadAll(fz)
+	data, err := io.ReadAll(fz)
 	if err != nil {
 		return nil, err
 	}
@@ -443,7 +443,7 @@ func TestSolidBlockRLE(t *testing.T) {
 	if err := outOp.Finish(); err != nil {
 		t.Fatalf("error writing RLEs: %v\n", err)
 	}
-	output, err := ioutil.ReadAll(&buf)
+	output, err := io.ReadAll(&buf)
 	if err != nil {
 		t.Fatalf("error on reading WriteRLEs: %v\n", err)
 	}
@@ -727,7 +727,7 @@ func TestBlockSplitAndRLEs(t *testing.T) {
 	if err = outOp.Finish(); err != nil {
 		t.Fatalf("error writing RLEs: %v\n", err)
 	}
-	output, err := ioutil.ReadAll(&buf)
+	output, err := io.ReadAll(&buf)
 	if err != nil {
 		t.Fatalf("error on reading WriteRLEs: %v\n", err)
 	}
@@ -1085,7 +1085,7 @@ func BenchmarkDvidUnmarshalGzip(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		data, err := ioutil.ReadAll(zr)
+		data, err := io.ReadAll(zr)
 		if err != nil {
 			b.Fatal(err)
 		}

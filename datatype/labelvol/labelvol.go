@@ -1,6 +1,6 @@
 /*
-	Package labelvol supports label-specific sparse volumes.  It can be synced
-	with labelblk and is a different view of 64-bit label data.
+Package labelvol supports label-specific sparse volumes.  It can be synced
+with labelblk and is a different view of 64-bit label data.
 */
 package labelvol
 
@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1316,7 +1315,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Merge requests must be POST actions.")
 			return
 		}
-		data, err := ioutil.ReadAll(r.Body)
+		data, err := io.ReadAll(r.Body)
 		if err != nil {
 			server.BadRequest(w, r, "Bad POSTed data for merge.  Should be JSON.")
 			return
@@ -1575,23 +1574,23 @@ func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds 
 
 // GetSparseVol returns an encoded sparse volume given a label.  The encoding has the
 // following format where integers are little endian:
-//    byte     Payload descriptor:
-//               Bit 0 (LSB) - 8-bit grayscale
-//               Bit 1 - 16-bit grayscale
-//               Bit 2 - 16-bit normal
-//               ...
-//    uint8    Number of dimensions
-//    uint8    Dimension of run (typically 0 = X)
-//    byte     Reserved (to be used later)
-//    uint32    # Voxels
-//    uint32    # Spans
-//    Repeating unit of:
-//        int32   Coordinate of run start (dimension 0)
-//        int32   Coordinate of run start (dimension 1)
-//        int32   Coordinate of run start (dimension 2)
-//        int32   Length of run
-//        bytes   Optional payload dependent on first byte descriptor
 //
+//	byte     Payload descriptor:
+//	           Bit 0 (LSB) - 8-bit grayscale
+//	           Bit 1 - 16-bit grayscale
+//	           Bit 2 - 16-bit normal
+//	           ...
+//	uint8    Number of dimensions
+//	uint8    Dimension of run (typically 0 = X)
+//	byte     Reserved (to be used later)
+//	uint32    # Voxels
+//	uint32    # Spans
+//	Repeating unit of:
+//	    int32   Coordinate of run start (dimension 0)
+//	    int32   Coordinate of run start (dimension 1)
+//	    int32   Coordinate of run start (dimension 2)
+//	    int32   Length of run
+//	    bytes   Optional payload dependent on first byte descriptor
 func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds) ([]byte, error) {
 	iv := d.getMergeIV(ctx.VersionID())
 	mapping := labels.LabelMap(iv)
@@ -1703,18 +1702,18 @@ func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dv
 
 // GetSparseCoarseVol returns an encoded sparse volume given a label.  The encoding has the
 // following format where integers are little endian:
-// 		byte     Set to 0
-// 		uint8    Number of dimensions
-// 		uint8    Dimension of run (typically 0 = X)
-// 		byte     Reserved (to be used later)
-// 		uint32    # Blocks [TODO.  0 for now]
-// 		uint32    # Spans
-// 		Repeating unit of:
-//     		int32   Block coordinate of run start (dimension 0)
-//     		int32   Block coordinate of run start (dimension 1)
-//     		int32   Block coordinate of run start (dimension 2)
-//     		int32   Length of run
 //
+//			byte     Set to 0
+//			uint8    Number of dimensions
+//			uint8    Dimension of run (typically 0 = X)
+//			byte     Reserved (to be used later)
+//			uint32    # Blocks [TODO.  0 for now]
+//			uint32    # Spans
+//			Repeating unit of:
+//	    		int32   Block coordinate of run start (dimension 0)
+//	    		int32   Block coordinate of run start (dimension 1)
+//	    		int32   Block coordinate of run start (dimension 2)
+//	    		int32   Length of run
 func (d *Data) GetSparseCoarseVol(ctx *datastore.VersionedCtx, label uint64) ([]byte, error) {
 	iv := d.getMergeIV(ctx.VersionID())
 	mapping := labels.LabelMap(iv)

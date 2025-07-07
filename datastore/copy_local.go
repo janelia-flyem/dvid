@@ -1,3 +1,4 @@
+//go:build !clustered && !gcloud
 // +build !clustered,!gcloud
 
 /*
@@ -13,7 +14,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -140,7 +141,7 @@ func getFlattenMetaCfg(configFName string) (fc flattenMetaCfg, err error) {
 		return
 	}
 	var data []byte
-	if data, err = ioutil.ReadAll(f); err != nil {
+	if data, err = io.ReadAll(f); err != nil {
 		return
 	}
 	if err = json.Unmarshal(data, &fc); err != nil {
@@ -294,28 +295,29 @@ func getDataTypeInstances(repo *repoT, typeName dvid.TypeString) (names dvid.Ins
 // destination store is available.
 //
 // The migrate config file contains JSON with the following format:
-// {
-// 	"Versions": ["2881e9","52a13","57e8d"],
-// 	"Migrations": [
-// 		{
-// 			"Name": "instance-name",
-// 			"SrcStore": "source store",
-// 			"DstStore": {
-// 				"Path": "/path/to/store",
-// 				"Engine": "basholeveldb"
-// 			}
-// 		},
-// 		{
-// 			"Name": "#datatype",
-// 			"SrcStore": "source store",
-// 			"DstStore": {
-// 				"Path": "/another/store",
-// 				"Engine": "badger"
-// 			}
-// 		},
-// 	],
-// 	"Exclusions": ["name1", "name2"]
-// }
+//
+//	{
+//		"Versions": ["2881e9","52a13","57e8d"],
+//		"Migrations": [
+//			{
+//				"Name": "instance-name",
+//				"SrcStore": "source store",
+//				"DstStore": {
+//					"Path": "/path/to/store",
+//					"Engine": "basholeveldb"
+//				}
+//			},
+//			{
+//				"Name": "#datatype",
+//				"SrcStore": "source store",
+//				"DstStore": {
+//					"Path": "/another/store",
+//					"Engine": "badger"
+//				}
+//			},
+//		],
+//		"Exclusions": ["name1", "name2"]
+//	}
 func MigrateBatch(uuid dvid.UUID, configFName string) (err error) {
 	var repo *repoT
 	repo, err = manager.repoFromUUID(uuid)
@@ -329,7 +331,7 @@ func MigrateBatch(uuid dvid.UUID, configFName string) (err error) {
 		return
 	}
 	var data []byte
-	if data, err = ioutil.ReadAll(f); err != nil {
+	if data, err = io.ReadAll(f); err != nil {
 		return
 	}
 	var cfg migrateConfig
@@ -485,7 +487,7 @@ func getTransferConfig(configFName string) (tc transferConfig, okVersions map[dv
 		return
 	}
 	var data []byte
-	if data, err = ioutil.ReadAll(f); err != nil {
+	if data, err = io.ReadAll(f); err != nil {
 		return
 	}
 	if err = json.Unmarshal(data, &tc); err != nil {
@@ -512,7 +514,7 @@ func LimitVersions(uui dvid.UUID, configFName string) error {
 	if err != nil {
 		return err
 	}
-	data, err := ioutil.ReadAll(f)
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return err
 	}
@@ -584,14 +586,15 @@ func LimitVersions(uui dvid.UUID, configFName string) error {
 // TransferData copies key-value pairs from one repo to store and apply filtering as specified
 // by the JSON configuration in the file specified by configFName.
 // An example of the transfer JSON configuration file format:
-// {
-// 	"Versions": [
-// 		"8a90ec0d257c415cae29f8c46603bcae",
-// 		"a5682904bb824c06aba470c0a0cbffab",
-// 		...
-// 	},
-// 	"Metadata": true,
-// }
+//
+//	{
+//		"Versions": [
+//			"8a90ec0d257c415cae29f8c46603bcae",
+//			"a5682904bb824c06aba470c0a0cbffab",
+//			...
+//		},
+//		"Metadata": true,
+//	}
 //
 // All ancestors of desired leaf nodes should be specified because
 // key-value pair transfer only occurs if the version in which

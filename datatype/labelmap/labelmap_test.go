@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -357,7 +356,7 @@ func (v *testVolume) testGetBlocks(t *testing.T, context string, uuid dvid.UUID,
 			if err != nil {
 				t.Fatalf("can't uncompress gzip block: %v\n", err)
 			}
-			uncompressed, err = ioutil.ReadAll(zr)
+			uncompressed, err = io.ReadAll(zr)
 			if err != nil {
 				t.Fatalf("can't uncompress gzip block: %v\n", err)
 			}
@@ -550,7 +549,7 @@ func (vol *labelVol) getLabelVolume(t *testing.T, uuid dvid.UUID, compression, r
 		if err != nil {
 			t.Fatalf("Error on gzip new reader: %v\n", err)
 		}
-		uncompressed, err := ioutil.ReadAll(gr)
+		uncompressed, err := io.ReadAll(gr)
 		if err != nil {
 			t.Fatalf("Error on reading gzip: %v\n", err)
 		}
@@ -670,7 +669,7 @@ func (vol *labelVol) testBlocks(t *testing.T, context string, uuid dvid.UUID, co
 			if err != nil {
 				t.Fatalf("can't uncompress gzip block: %v\n", err)
 			}
-			uncompressed, err = ioutil.ReadAll(zr)
+			uncompressed, err = io.ReadAll(zr)
 			if err != nil {
 				t.Fatalf("can't uncompress gzip block: %v\n", err)
 			}
@@ -1675,7 +1674,7 @@ func readGzipFile(filename string) ([]byte, error) {
 	}
 	defer fz.Close()
 
-	data, err := ioutil.ReadAll(fz)
+	data, err := io.ReadAll(fz)
 	if err != nil {
 		return nil, err
 	}
@@ -1762,7 +1761,7 @@ func testGetBlock(t *testing.T, uuid dvid.UUID, name string, bcoord dvid.Point3d
 	if err != nil {
 		t.Fatalf("can't uncompress gzip block: %v\n", err)
 	}
-	uncompressed, err := ioutil.ReadAll(zr)
+	uncompressed, err := io.ReadAll(zr)
 	if err != nil {
 		t.Fatalf("can't uncompress gzip block: %v\n", err)
 	}
@@ -1816,7 +1815,7 @@ func decodeReturnedBlocks(t *testing.T, data []byte) []labels.PositionedBlock {
 		if err != nil {
 			t.Fatalf("can't uncompress gzip block: %v\n", err)
 		}
-		uncompressed, err := ioutil.ReadAll(zr)
+		uncompressed, err := io.ReadAll(zr)
 		if err != nil {
 			t.Fatalf("can't uncompress gzip block: %v\n", err)
 		}
@@ -2252,7 +2251,7 @@ func TestPostBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Couldn't open compressed block test data: %v\n", err)
 	}
-	data, err := ioutil.ReadAll(f)
+	data, err := io.ReadAll(f)
 	if err != nil {
 		t.Fatalf("Couldn't read compressed block test data: %v\n", err)
 	}
@@ -2294,7 +2293,7 @@ func TestBigPostBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Couldn't open compressed block test data: %v\n", err)
 	}
-	data, err := ioutil.ReadAll(f)
+	data, err := io.ReadAll(f)
 	if err != nil {
 		t.Fatalf("Couldn't read compressed block test data: %v\n", err)
 	}

@@ -2,7 +2,7 @@ package dvid
 
 import (
 	"bytes"
-	"io/ioutil"
+	"io"
 	"math/rand"
 	"os"
 	"reflect"
@@ -104,7 +104,7 @@ func readData(t *testing.T, filepath string) []byte {
 		t.Fatal(err)
 	}
 
-	data, err := ioutil.ReadAll(f)
+	data, err := io.ReadAll(f)
 	f.Close()
 	if err != nil {
 		t.Fatal(err)

@@ -3,7 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,7 +19,7 @@ func loadConfigFile(t *testing.T, filename string) string {
 	if err != nil {
 		t.Fatalf("couldn't open TOML file %q: %v\n", filename, err)
 	}
-	data, err := ioutil.ReadAll(f)
+	data, err := io.ReadAll(f)
 	if err != nil {
 		t.Fatalf("couldn't read TOML file %q: %v\n", filename, err)
 	}
@@ -36,7 +36,7 @@ func TestServerInit(t *testing.T) {
 	var sent []byte
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		sent, err = ioutil.ReadAll(r.Body)
+		sent, err = io.ReadAll(r.Body)
 		if err != nil {
 			t.Fatalf("couldn't read all of POSTed body: %v\n", err)
 		}

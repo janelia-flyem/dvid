@@ -6,7 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"reflect"
 	"sync"
@@ -512,7 +512,7 @@ func (vol *labelVol) getLabelVolume(t *testing.T, uuid dvid.UUID, compression, r
 		if err != nil {
 			t.Fatalf("Error on gzip new reader: %v\n", err)
 		}
-		uncompressed, err := ioutil.ReadAll(gr)
+		uncompressed, err := io.ReadAll(gr)
 		if err != nil {
 			t.Fatalf("Error on reading gzip: %v\n", err)
 		}

@@ -15,7 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -2769,7 +2769,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		fmt.Fprintln(w, jsonStr)
 
 	case "extents":
-		jsonBytes, err := ioutil.ReadAll(r.Body)
+		jsonBytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -2780,7 +2780,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 
 	case "resolution":
-		jsonBytes, err := ioutil.ReadAll(r.Body)
+		jsonBytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return

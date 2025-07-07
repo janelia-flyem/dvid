@@ -12,7 +12,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -42,7 +41,7 @@ func TestHTTP(t *testing.T, method, urlStr string, payload io.Reader) []byte {
 		_, fn, line, _ := runtime.Caller(1)
 		var retstr string
 		if resp.Body != nil {
-			retbytes, err := ioutil.ReadAll(resp.Body)
+			retbytes, err := io.ReadAll(resp.Body)
 			if err != nil {
 				t.Errorf("Error trying to read response body from request %q: %v [%s:%d]\n", urlStr, err, fn, line)
 			} else {
@@ -61,7 +60,7 @@ func TestHTTPError(t *testing.T, method, urlStr string, payload io.Reader) (retb
 	if resp.Code != http.StatusOK {
 		_, fn, line, _ := runtime.Caller(1)
 		if resp.Body != nil {
-			retbytes, err = ioutil.ReadAll(resp.Body)
+			retbytes, err = io.ReadAll(resp.Body)
 			if err != nil {
 				err = fmt.Errorf("error trying to read response body from request %q: %v [%s:%d]", urlStr, err, fn, line)
 				return

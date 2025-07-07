@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"reflect"
@@ -2313,7 +2313,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "extents endpoint only supports POST HTTP verb")
 			return
 		}
-		jsonBytes, err := ioutil.ReadAll(r.Body)
+		jsonBytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -2328,7 +2328,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "resolution endpoint only supports POST HTTP verb")
 			return
 		}
-		jsonBytes, err := ioutil.ReadAll(r.Body)
+		jsonBytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -2630,7 +2630,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					server.BadRequest(w, r, "Data %q uses an immutable GridStore so cannot received POSTs", d.DataName())
 					return
 				}
-				data, err := ioutil.ReadAll(r.Body)
+				data, err := io.ReadAll(r.Body)
 				if err != nil {
 					server.BadRequest(w, r, err)
 					return

@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"sort"
 	"time"
 
@@ -354,7 +353,7 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, info dvid.ModInfo, r 
 	dvid.Debugf("Cleaving subset of label %d into new label %d.\n", label, cleaveLabel)
 
 	var data []byte
-	data, err = ioutil.ReadAll(r)
+	data, err = io.ReadAll(r)
 	if err != nil {
 		err = fmt.Errorf("bad POSTed data for merge; should be JSON parsable: %v", err)
 		return

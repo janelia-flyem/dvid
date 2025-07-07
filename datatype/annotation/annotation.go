@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"reflect"
 	"sort"
@@ -2173,7 +2172,7 @@ type blockList map[string]Elements
 // StoreBlocks performs a synchronous store of synapses in JSON format, not
 // returning until the data blocks are complete.
 func (d *Data) StoreBlocks(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff bool) (numBlocks int, err error) {
-	jsonBytes, err := ioutil.ReadAll(r)
+	jsonBytes, err := io.ReadAll(r)
 	if err != nil {
 		return 0, err
 	}
@@ -2240,7 +2239,7 @@ func (d *Data) StoreBlocks(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff bo
 // StoreElements performs a synchronous store of synapses in JSON format, not
 // returning until the data and its denormalizations are complete.
 func (d *Data) StoreElements(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff bool) error {
-	jsonBytes, err := ioutil.ReadAll(r)
+	jsonBytes, err := io.ReadAll(r)
 	if err != nil {
 		return err
 	}

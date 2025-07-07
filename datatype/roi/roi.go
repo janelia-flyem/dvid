@@ -1,5 +1,5 @@
 /*
-	Package roi implements DVID support for Region-Of-Interest operations.
+Package roi implements DVID support for Region-Of-Interest operations.
 */
 package roi
 
@@ -9,7 +9,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"math"
 	"net/http"
 	"reflect"
@@ -1370,7 +1370,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			fmt.Fprintf(w, string(jsonBytes))
 			comment = fmt.Sprintf("HTTP GET ROI %q: %d bytes", d.DataName(), len(jsonBytes))
 		case "post":
-			data, err := ioutil.ReadAll(r.Body)
+			data, err := io.ReadAll(r.Body)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
@@ -1432,7 +1432,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "ptquery requires POST with list of points")
 			return
 		case "post":
-			data, err := ioutil.ReadAll(r.Body)
+			data, err := io.ReadAll(r.Body)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return

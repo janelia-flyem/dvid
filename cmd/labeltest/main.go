@@ -6,7 +6,7 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -98,7 +98,7 @@ func main() {
 		if resp.StatusCode != http.StatusOK {
 			os.Exit(1)
 		}
-		data, err := ioutil.ReadAll(resp.Body)
+		data, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
 			fmt.Printf("error on trying to read sparsevol %d response: %v\n", label, err)

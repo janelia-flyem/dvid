@@ -6,7 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -61,7 +61,7 @@ func (d *Data) handleLabels(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 		server.BadRequest(w, r, "Batch labels query must be a GET request")
 		return
 	}
-	data, err := ioutil.ReadAll(r.Body)
+	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		server.BadRequest(w, r, "Bad GET request body for batch query: %v", err)
 		return
@@ -111,7 +111,7 @@ func (d *Data) handleMapping(ctx *datastore.VersionedCtx, w http.ResponseWriter,
 		server.BadRequest(w, r, "Batch mapping query must be a GET request")
 		return
 	}
-	data, err := ioutil.ReadAll(r.Body)
+	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		server.BadRequest(w, r, "Bad GET request body for batch query: %v", err)
 		return
@@ -362,7 +362,7 @@ func (d *Data) handleIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 			server.BadRequest(w, r, fmt.Errorf("no data POSTed"))
 			return
 		}
-		serialization, err := ioutil.ReadAll(r.Body)
+		serialization, err := io.ReadAll(r.Body)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -526,7 +526,7 @@ func (d *Data) handleIndices(ctx *datastore.VersionedCtx, w http.ResponseWriter,
 		server.BadRequest(w, r, fmt.Errorf("expected data to be sent for /indices request"))
 		return
 	}
-	dataIn, err := ioutil.ReadAll(r.Body)
+	dataIn, err := io.ReadAll(r.Body)
 	if err != nil {
 		server.BadRequest(w, r, err)
 	}
@@ -583,7 +583,7 @@ func (d *Data) handleIndicesCompressed(ctx *datastore.VersionedCtx, w http.Respo
 		server.BadRequest(w, r, fmt.Errorf("expected data to be sent for /indices request"))
 		return
 	}
-	dataIn, err := ioutil.ReadAll(r.Body)
+	dataIn, err := io.ReadAll(r.Body)
 	if err != nil {
 		server.BadRequest(w, r, err)
 	}
@@ -657,7 +657,7 @@ func (d *Data) handleMappings(ctx *datastore.VersionedCtx, w http.ResponseWriter
 			server.BadRequest(w, r, fmt.Errorf("no data POSTed"))
 			return
 		}
-		serialization, err := ioutil.ReadAll(r.Body)
+		serialization, err := io.ReadAll(r.Body)
 		if err != nil {
 			server.BadRequest(w, r, err)
 		}
@@ -1177,7 +1177,7 @@ func (d *Data) handleSizes(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 		server.BadRequest(w, r, "Batch sizes query must be a GET request")
 		return
 	}
-	data, err := ioutil.ReadAll(r.Body)
+	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		server.BadRequest(w, r, "Bad GET request body for batch sizes query: %v", err)
 		return
@@ -1804,7 +1804,7 @@ func (d *Data) handleMerge(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 	}
 	timedLog := dvid.NewTimeLog()
 
-	data, err := ioutil.ReadAll(r.Body)
+	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		server.BadRequest(w, r, "Bad POSTed data for merge.  Should be JSON.")
 		return
@@ -1840,7 +1840,7 @@ func (d *Data) handleRenumber(ctx *datastore.VersionedCtx, w http.ResponseWriter
 	}
 	timedLog := dvid.NewTimeLog()
 
-	data, err := ioutil.ReadAll(r.Body)
+	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		server.BadRequest(w, r, "Bad POSTed data for renumber.  Should be JSON.")
 		return
