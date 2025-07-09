@@ -301,12 +301,17 @@ func TestIngest(t *testing.T) {
 	idx3 = body3.getIndex(t)
 
 	ingestIndex(t, child2, idx1)
+	checkIndexVersion(t, 2, child1, child2)
 	ingestIndex(t, child2, idx2)
+	checkIndexVersion(t, 2, child2, child2)
 	ingestIndex(t, child2, idx3)
+
+	checkIndexVersion(t, 7, child1, child2)
 	blankIdx.Label = 7
 	ingestIndex(t, child2, blankIdx)
 	blankIdx.Label = 8
 	ingestIndex(t, child2, blankIdx)
+	checkIndexVersion(t, 7, child2, child2)
 
 	// Test result
 	checkSparsevolAPIs(t, child2)

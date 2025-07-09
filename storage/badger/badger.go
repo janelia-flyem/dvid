@@ -348,6 +348,38 @@ func (db *BadgerDB) GetKeyUsage(ranges []storage.KeyRange) (hitsPerInstance []st
 	return
 }
 
+// ---- KeyVersionsGetter interface ------
+
+// GetVersion returns the VersionID of the key for the given context.
+// If an error occurs, the key does not exist, or the key is a tombstone, VersionID 0 is returned.
+func (db *BadgerDB) GetVersion(ctx storage.Context, tk storage.TKey) (dvid.VersionID, error) {
+	if db == nil {
+		return 0, fmt.Errorf("Can't call GetVersions() on nil BadgerDB")
+	}
+	if db.options == nil {
+		return 0, fmt.Errorf("Can't call GetVersions() on db with nil options: %v", db)
+	}
+	if ctx == nil {
+		return 0, fmt.Errorf("Received nil context in GetVersions()")
+	}
+	if !ctx.Versioned() {
+		return 0, fmt.Errorf("GetVersions() called on non-versioned context: %v", ctx)
+	}
+	vctx, ok := ctx.(storage.VersionedCtx)
+	if !ok {
+		return 0, fmt.Errorf("Bad GetVersions(): context is versioned but doesn't fulfill interface: %v", ctx)
+	}
+	keys, err := db.getKeyVersions(vctx, tk)
+	if err != nil {
+		return 0, err
+	}
+	versionID, err := vctx.GetBestVersion(keys)
+	if err != nil {
+		return 0, err
+	}
+	return versionID, err
+}
+
 // ---- KeyValueGetter interface ------
 
 // Get returns a value given a key.
@@ -370,7 +402,7 @@ func (db *BadgerDB) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		key, err := vctx.GetBestKeyVersion(keys)
+		key, err := vctx.GetBestKeyForVersion(keys)
 		if err != nil {
 			return nil, err
 		}
@@ -430,7 +462,7 @@ func (db *BadgerDB) Exists(ctx storage.Context, tk storage.TKey) (exists bool, e
 		if err != nil {
 			return false, err
 		}
-		key, err := vctx.GetBestKeyVersion(keys)
+		key, err := vctx.GetBestKeyForVersion(keys)
 		if err != nil {
 			return false, err
 		}

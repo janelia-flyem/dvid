@@ -108,9 +108,9 @@ func (vctx *VersionedCtx) VersionedKeyValue(values []*storage.KeyValue) (*storag
 	return kv, err
 }
 
-// GetBestKeyVersion returns the key that most closely matches this context's version.
+// GetBestKeyForVersion returns the key that most closely matches this context's version.
 // If no suitable key or a tombstone is encountered closed to the version, nil is returned.
-func (vctx *VersionedCtx) GetBestKeyVersion(keys []storage.Key) (storage.Key, error) {
+func (vctx *VersionedCtx) GetBestKeyForVersion(keys []storage.Key) (storage.Key, error) {
 	if len(keys) == 0 {
 		return nil, nil
 	}
@@ -133,6 +133,29 @@ func (vctx *VersionedCtx) GetBestKeyVersion(keys []storage.Key) (storage.Key, er
 		return nil, nil
 	}
 	return kv.K, err
+}
+
+// GetBestVersion returns the VersionID of the key that most closely matches this context's version.
+// If no suitable key or a tombstone is encountered closed to the version, VersionID 0 is returned.
+func (vctx *VersionedCtx) GetBestVersion(keys []storage.Key) (dvid.VersionID, error) {
+	if len(keys) == 0 {
+		return 0, nil
+	}
+	// Set up a map[VersionID]Key
+	versionMap := make(kvVersions, len(keys))
+	for _, k := range keys {
+		vid, err := vctx.VersionFromKey(k)
+		if err != nil {
+			return 0, err
+		}
+		kv := storage.KeyValue{K: k}
+		versionMap[vid] = kvvNode{kv: &kv}
+	}
+
+	// Get the correct key-value for this version among all ancestors, some of which might have
+	// a value.
+	_, versionID, err := versionMap.FindMatch(vctx.VersionID())
+	return versionID, err
 }
 
 // VersionUUID returns the UUID associated with this versioned context.
@@ -1051,6 +1074,24 @@ func (d *Data) MutDelete(mutID uint64) {
 	d.opWG_mu.Lock()
 	delete(d.opWG, mutID)
 	d.opWG_mu.Unlock()
+}
+
+// GetKeyVersionGetter returns a KeyVersionGetter assigned to this data instance.
+// If the store is nil or not available, an error is returned.
+func GetKeyVersionGetter(d dvid.Data) (db storage.KeyVersionGetter, err error) {
+	store, err := d.KVStore()
+	if err != nil {
+		return nil, err
+	}
+	if store == nil {
+		return nil, ErrInvalidStore
+	}
+	var ok bool
+	db, ok = store.(storage.KeyVersionGetter)
+	if !ok {
+		return nil, fmt.Errorf("Store assigned to data %q (%s) is not a KeyVersionGetter", d.DataName(), store)
+	}
+	return
 }
 
 // GetKeyValueDB returns a kv data store assigned to this data instance.

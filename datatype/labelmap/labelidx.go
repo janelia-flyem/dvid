@@ -182,6 +182,14 @@ func (d *Data) labelIndexExists(v dvid.VersionID, label uint64) (bool, error) {
 	return store.Exists(ctx, NewLabelIndexTKey(label))
 }
 
+func getLabelIndexVersion(ctx *datastore.VersionedCtx, label uint64) (dvid.VersionID, error) {
+	store, err := datastore.GetKeyVersionGetter(ctx.Data())
+	if err != nil {
+		return 0, err
+	}
+	return store.GetVersion(ctx, NewLabelIndexTKey(label))
+}
+
 // returns nil if no Meta is found.
 // should only call getCachedLabelIndex external to this file.
 func getLabelIndex(ctx *datastore.VersionedCtx, label uint64) (*labels.Index, error) {
