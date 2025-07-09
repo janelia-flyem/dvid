@@ -86,6 +86,15 @@ func checkSparsevolAPIs(t *testing.T, uuid dvid.UUID) {
 	}
 }
 
+func checkIndexVersion(t *testing.T, label uint64, expectedUUID, curUUID dvid.UUID) {
+	reqStr := fmt.Sprintf("%snode/%s/labels/index-version/%d", server.WebAPIPath, curUUID, label)
+	encoding := server.TestHTTP(t, "GET", reqStr, nil)
+	// test if encoding is same as uuid1 or else through t.Fatalf
+	if dvid.UUID(encoding) != expectedUUID {
+		t.Fatalf("Expected index version encoding to be %s, got %s\n", expectedUUID, encoding)
+	}
+}
+
 func ingestIndex(t *testing.T, uuid dvid.UUID, idx *labels.Index) {
 	serialization, err := pb.Marshal(idx)
 	if err != nil {

@@ -1453,6 +1453,16 @@ GET <api URL>/node/<UUID>/<data name>/proximity/<label 1 (target)>,<label 2a>,<l
 	are artificially split along block boundaries but won't be true for agglomerated
 	labels.
 	
+
+GET  <api URL>/node/<UUID>/<data name>/index-version/<label>
+
+	Returns the UUID of the the most recently stored label index for the given label.
+	Returns a status code 404 (Not Found) if label does not exist.
+
+	For example, if the label index for label 1234 was last stored in UUID d26e15,
+	the response would be the full UUID string "d26e15af06784aedbfcac1ff82684b51".
+
+
 GET  <api URL>/node/<UUID>/<data name>/index/<label>?mutid=<uint64>
 POST <api URL>/node/<UUID>/<data name>/index/<label>
 
@@ -2973,6 +2983,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 	case "proximity":
 		d.handleProximity(ctx, w, r, parts)
+
+	case "index-version":
+		d.handleIndexVersion(ctx, w, r, parts)
 
 	case "index":
 		d.handleIndex(ctx, w, r, parts)

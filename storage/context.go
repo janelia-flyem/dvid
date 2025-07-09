@@ -100,9 +100,13 @@ type VersionedCtx interface {
 	// Returns upper bound key for versions.
 	MaxVersionKey(TKey) (Key, error)
 
-	// GetBestKeyVersion returns the key that most closely matches this context's version.
+	// GetBestKeyForVersion returns the key that most closely matches this context's version.
 	// If no suitable key or a tombstone is encountered closed to the version, nil is returned.
-	GetBestKeyVersion([]Key) (Key, error)
+	GetBestKeyForVersion([]Key) (Key, error)
+
+	// GetBestVersion returns the version of the stored key that most closely matches this context's version.
+	// If no suitable key or a tombstone is encountered closed to the version, a version 0 is returned.
+	GetBestVersion([]Key) (dvid.VersionID, error)
 
 	// VersionedKeyValue returns the key-value pair corresponding to this key's version
 	// given a list of key-value pairs across many versions.  If no suitable key-value

@@ -243,6 +243,11 @@ type KeyValueGetter interface {
 	Exists(ctx Context, k TKey) (bool, error)
 }
 
+type KeyVersionGetter interface {
+	// GetVersions returns the VersionID of the key for the given context.
+	GetVersion(ctx Context, k TKey) (dvid.VersionID, error)
+}
+
 type OrderedKeyValueGetter interface {
 	KeyValueGetter
 

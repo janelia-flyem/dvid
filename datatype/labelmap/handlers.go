@@ -322,6 +322,56 @@ func (d *Data) handleProximity(ctx *datastore.VersionedCtx, w http.ResponseWrite
 	timedLog.Infof("HTTP %s proximity for labels %d, %d (%s)", r.Method, label1, label2, r.URL)
 }
 
+func (d *Data) handleIndexVersion(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
+	// GET  <api URL>/node/<UUID>/<data name>/index-version/<label>
+	timedLog := dvid.NewTimeLog()
+
+	queryStrings := r.URL.Query()
+	if throttle := queryStrings.Get("throttle"); throttle == "on" || throttle == "true" {
+		if server.ThrottledHTTP(w) {
+			return
+		}
+		defer server.ThrottledOpDone()
+	}
+
+	label, err := strconv.ParseUint(parts[4], 10, 64)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	if label == 0 {
+		server.BadRequest(w, r, "there is no index for protected label 0")
+		return
+	}
+
+	switch strings.ToLower(r.Method) {
+	case "get":
+		versionID, err := getLabelIndexVersion(ctx, label)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		// Translate from VersionID to UUID.
+		uuid, err := datastore.UUIDFromVersion(versionID)
+		if err != nil {
+			server.BadRequest(w, r, fmt.Errorf("could not convert version ID %d to UUID: %v", versionID, err))
+			return
+		}
+		// Write the UUID as a string to response.
+		w.Header().Set("Content-type", "text/plain")
+		if _, err := w.Write([]byte(uuid)); err != nil {
+			server.BadRequest(w, r, fmt.Errorf("error writing UUID %s to response: %v", uuid, err))
+			return
+		}
+
+	default:
+		server.BadRequest(w, r, "only GET action allowed for /index-version endpoint")
+		return
+	}
+
+	timedLog.Infof("HTTP %s index-version for label %d (%s)", r.Method, label, r.URL)
+}
+
 func (d *Data) handleIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
 	// GET  <api URL>/node/<UUID>/<data name>/index/<label>
 	// POST <api URL>/node/<UUID>/<data name>/index/<label>
