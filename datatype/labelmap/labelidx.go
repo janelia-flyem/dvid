@@ -97,6 +97,13 @@ func (d *Data) Initialize() {
 	}
 }
 
+// Mutation cache, currently supported only for labelmap's label indices,
+// stores every label index just before modification. This allows you to
+// reach back to its state just before any given mutation id.
+//
+// See scripts/distro-files/config-full.toml for an example of how to set cache path.
+// If [mutcache] section is not specified, no mutation cache is created.
+
 func (d *Data) getMutcache(v dvid.VersionID, mutID uint64, label uint64) (*labels.Index, error) {
 	if mutcache == nil {
 		return nil, nil
