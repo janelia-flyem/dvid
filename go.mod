@@ -30,7 +30,7 @@ require (
 	github.com/zenazn/goji v1.0.1
 	gocloud.dev v0.24.0
 	golang.org/x/net v0.38.0
-	golang.org/x/oauth2 v0.7.0
+	golang.org/x/oauth2 v0.27.0
 	google.golang.org/api v0.114.0
 	google.golang.org/appengine v1.6.7
 	google.golang.org/grpc v1.56.3
@@ -39,8 +39,7 @@ require (
 
 require (
 	cloud.google.com/go v0.110.0 // indirect
-	cloud.google.com/go/compute v1.19.1 // indirect
-	cloud.google.com/go/compute/metadata v0.2.3 // indirect
+	cloud.google.com/go/compute/metadata v0.3.0 // indirect
 	cloud.google.com/go/iam v0.13.0 // indirect
 	cloud.google.com/go/longrunning v0.4.1 // indirect
 	github.com/aws/aws-sdk-go v1.40.34 // indirect
