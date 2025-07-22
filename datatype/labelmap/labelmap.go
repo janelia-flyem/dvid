@@ -1692,6 +1692,13 @@ POST <api URL>/node/<UUID>/<data name>/mappings
 GET  <api URL>/node/<UUID>/<data name>/map-stats
 	
 	Returns JSON describing in-memory mapping stats.
+
+
+POST <api URL>/node/<UUID>/<data name>/export/<N>
+
+	Exports the labelmap data via Arrow Flight to N python clients specified by the last parameter.
+	It is assumed that N python workers are already running and connected to the DVID server's
+	Arrow Flight server port. See python worker code in the "export" directory of the DVID repository.
 `
 
 var (
@@ -2812,6 +2819,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, string(jsonBytes))
+
+	case "export":
+		if action != "post" {
+			server.BadRequest(w, r, "only POST available for endpoint /export")
+			return
+		}
+		d.ExportData(ctx, w) // This is a long-running operation, so no activity return
 
 	case "info":
 		if action == "post" {
