@@ -10,6 +10,7 @@
 # host = "mygreatserver.test.com"  # Lets you specify a user-friendly alias for help messages.
 httpAddress = ":8000"
 rpcAddress = ":8001"
+flightAddress = ":8002"  # Arrow Flight server for high-performance data streaming to Python workers
 webClient = "./http/dvid-web-console"
 webDefaultFile = "index.html" # contents of this file will be returned for any bad file path; required by dvid-console 3.0+
 

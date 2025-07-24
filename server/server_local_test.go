@@ -67,12 +67,12 @@ func TestServerInit(t *testing.T) {
 	}
 
 	// check standard webhook
-	if string(sent) != `{"HTTP Address":":8000","Host":"mygreatserver.test.com","Note":"You can put anything you want in here and have it available via /api/server/note.\nMultiple lines!\n","RPC Address":":8001"}` {
+	if string(sent) != `{"Flight Address":":8002","HTTP Address":":8000","Host":"mygreatserver.test.com","Note":"You can put anything you want in here and have it available via /api/server/note.\nMultiple lines!\n","RPC Address":":8001"}` {
 		t.Fatalf("Expected server info to be sent to webhook, but received this instead:\n%s\n", string(sent))
 	}
 
 	// check Janelia webhook
-	if data != `{"HTTP Address":":8000","Host":"mygreatserver.test.com","Note":"You can put anything you want in here and have it available via /api/server/note.\nMultiple lines!\n","RPC Address":":8001"}` {
+	if data != `{"Flight Address":":8002","HTTP Address":":8000","Host":"mygreatserver.test.com","Note":"You can put anything you want in here and have it available via /api/server/note.\nMultiple lines!\n","RPC Address":":8001"}` {
 		t.Fatalf("Expected server info to be sent to Janelia webhook, but received this instead:\n%s\n", data)
 	}
 

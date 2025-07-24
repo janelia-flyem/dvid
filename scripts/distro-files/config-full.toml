@@ -5,6 +5,7 @@
 host = "mygreatserver.test.com"  # Lets you specify a user-friendly alias for help messages.
 httpAddress = ":8000"
 rpcAddress = ":8001"
+flightAddress = ":8002"  # Arrow Flight server for high-performance data streaming to Python workers
 webClient = "/path/to/webclient"
 
 # only one of the following should be used if the default file path is missing, with webRedirectPath

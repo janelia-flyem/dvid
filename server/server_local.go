@@ -171,10 +171,11 @@ func Initialize() error {
 	}
 
 	data := map[string]string{
-		"Host":         sc.Host,
-		"Note":         sc.Note,
-		"HTTP Address": sc.HTTPAddress,
-		"RPC Address":  sc.RPCAddress,
+		"Host":           sc.Host,
+		"Note":           sc.Note,
+		"HTTP Address":   sc.HTTPAddress,
+		"RPC Address":    sc.RPCAddress,
+		"Flight Address": sc.FlightAddress,
 	}
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
@@ -436,6 +437,7 @@ type localConfig struct {
 	Host            string
 	HTTPAddress     string
 	RPCAddress      string
+	FlightAddress   string
 	WebClient       string
 	WebRedirectPath string
 	WebDefaultFile  string
@@ -595,10 +597,14 @@ func Serve() {
 	if tc.Server.RPCAddress == "" {
 		tc.Server.RPCAddress = DefaultRPCAddress
 	}
+	if tc.Server.FlightAddress == "" {
+		tc.Server.FlightAddress = DefaultFlightAddress
+	}
 
 	dvid.TimeInfof("DVID code version: %s\n", gitVersion)
 	dvid.TimeInfof("Serving HTTP on %s (host alias %q)\n", tc.Server.HTTPAddress, tc.Server.Host)
 	dvid.TimeInfof("Serving command-line use via RPC %s\n", tc.Server.RPCAddress)
+	dvid.TimeInfof("Serving Arrow Flight on %s\n", tc.Server.FlightAddress)
 	dvid.TimeInfof("Using web client files from %s\n", tc.Server.WebClient)
 	dvid.TimeInfof("Using %d of %d logical CPUs for DVID.\n", dvid.NumCPU, runtime.NumCPU())
 
@@ -609,6 +615,13 @@ func Serve() {
 	go func() {
 		if err := rpc.StartServer(tc.Server.RPCAddress); err != nil {
 			dvid.Criticalf("Could not start RPC server: %v\n", err)
+		}
+	}()
+
+	// Launch the Arrow Flight server
+	go func() {
+		if err := StartFlightServer(tc.Server.FlightAddress); err != nil {
+			dvid.Criticalf("Could not start Arrow Flight server: %v\n", err)
 		}
 	}()
 

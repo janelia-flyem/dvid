@@ -3027,3 +3027,16 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	}
 	return
 }
+
+// GetArrowFlightWorkers returns the number of connected Python workers
+// available for Arrow Flight streaming.
+func (d *Data) GetArrowFlightWorkers(ctx *datastore.VersionedCtx) (int, error) {
+	flightServer := server.GetFlightServer()
+	if flightServer == nil {
+		return 0, fmt.Errorf("Arrow Flight server not initialized")
+	}
+	
+	count := flightServer.GetConnectedWorkerCount()
+	dvid.Infof("Arrow Flight server has %d connected workers\n", count)
+	return count, nil
+}

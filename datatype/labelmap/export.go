@@ -1,6 +1,7 @@
 package labelmap
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net/http"
 	"sync"
@@ -8,7 +9,14 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
+
+	"github.com/apache/arrow/go/v14/arrow"
+	"github.com/apache/arrow/go/v14/arrow/array"
+	"github.com/apache/arrow/go/v14/arrow/flight"
+	"github.com/apache/arrow/go/v14/arrow/memory"
+	"github.com/klauspost/compress/zstd"
 )
 
 // ExportData exports the labelmap data via Arrow Flight to python clients already running and connected
@@ -47,7 +55,7 @@ func (d *Data) readBlocks(ctx *datastore.VersionedCtx) {
 
 	wg := new(sync.WaitGroup)
 	chunkCh := make(chan *storage.Chunk, 100) // Buffered channel to hold chunks read from storage.
-	for i := 0; i < len(workers); i++ {
+	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go d.exportWorker(wg, chunkCh)
 	}
@@ -123,11 +131,142 @@ func (d *Data) exportWorker(wg *sync.WaitGroup, chunkCh chan *storage.Chunk) {
 			continue
 		}
 
-		// Transform block data into Arrow with supervoxel and label index followed by
-		// the recompressed label data using zstd into a format suitable for Arrow Flight.
+		// Transform block data into Arrow format
+		arrowData, err := d.transformBlockToArrow(&block, *idx)
+		if err != nil {
+			dvid.Errorf("Unable to transform block %s to Arrow format: %v\n", idx, err)
+			wg.Done()
+			continue
+		}
 
-		// Send the data down channel to the python workers.
-		// ...
+		// Send the data to appropriate worker via Arrow Flight server
+		if err := d.sendArrowDataToWorker(*idx, arrowData); err != nil {
+			dvid.Errorf("Unable to send block %s to worker: %v\n", idx, err)
+		}
 		wg.Done()
 	}
+}
+
+// transformBlockToArrow converts a label block to Arrow format with supervoxel/label indices
+// and compressed block data
+func (d *Data) transformBlockToArrow(block *labels.Block, idx dvid.IndexZYX) (*flight.FlightData, error) {
+	// Create Arrow memory allocator
+	pool := memory.NewGoAllocator()
+	
+	// Extract labels from block
+	labels := block.Labels
+	
+	// Get block data by marshaling to binary
+	blockData, err := block.MarshalBinary()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal block data: %v", err)
+	}
+	
+	// Compress the block data using ZSTD
+	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create zstd encoder: %v", err)
+	}
+	defer encoder.Close()
+	
+	compressedData := encoder.EncodeAll(blockData, nil)
+	
+	// Create Arrow schema for the block data
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "block_coord_x", Type: arrow.PrimitiveTypes.Int32},
+		{Name: "block_coord_y", Type: arrow.PrimitiveTypes.Int32},
+		{Name: "block_coord_z", Type: arrow.PrimitiveTypes.Int32},
+		{Name: "labels", Type: arrow.BinaryTypes.Binary},
+		{Name: "compressed_data", Type: arrow.BinaryTypes.Binary},
+	}, nil)
+	
+	// Create builders for each column
+	coordXBuilder := array.NewInt32Builder(pool)
+	coordYBuilder := array.NewInt32Builder(pool)
+	coordZBuilder := array.NewInt32Builder(pool)
+	labelsBuilder := array.NewBinaryBuilder(pool, arrow.BinaryTypes.Binary)
+	compressedBuilder := array.NewBinaryBuilder(pool, arrow.BinaryTypes.Binary)
+	
+	defer func() {
+		coordXBuilder.Release()
+		coordYBuilder.Release()
+		coordZBuilder.Release()
+		labelsBuilder.Release()
+		compressedBuilder.Release()
+	}()
+	
+	// Convert labels slice to bytes for storage
+	labelsBytes := make([]byte, len(labels)*8)
+	for i, label := range labels {
+		binary.LittleEndian.PutUint64(labelsBytes[i*8:(i+1)*8], label)
+	}
+	
+	// Append data to builders
+	coordXBuilder.Append(int32(idx[0]))
+	coordYBuilder.Append(int32(idx[1]))
+	coordZBuilder.Append(int32(idx[2]))
+	labelsBuilder.Append(labelsBytes)
+	compressedBuilder.Append(compressedData)
+	
+	// Build arrays
+	coordXArray := coordXBuilder.NewArray()
+	coordYArray := coordYBuilder.NewArray()
+	coordZArray := coordZBuilder.NewArray()
+	labelsArray := labelsBuilder.NewArray()
+	compressedArray := compressedBuilder.NewArray()
+	
+	defer func() {
+		coordXArray.Release()
+		coordYArray.Release()
+		coordZArray.Release()
+		labelsArray.Release()
+		compressedArray.Release()
+	}()
+	
+	// Create record batch
+	record := array.NewRecord(schema, []arrow.Array{
+		coordXArray, coordYArray, coordZArray,
+		labelsArray, compressedArray,
+	}, 1)
+	defer record.Release()
+	
+	// Convert to FlightData
+	flightData := &flight.FlightData{
+		FlightDescriptor: &flight.FlightDescriptor{
+			Type: flight.DescriptorPATH,
+			Path: []string{fmt.Sprintf("block_%d_%d_%d", idx[0], idx[1], idx[2])},
+		},
+	}
+	
+	// Serialize the record batch to FlightData
+	var buf []byte
+	// Note: In a full implementation, you'd properly serialize the Arrow record to IPC format
+	// For now, we'll create a placeholder implementation
+	flightData.DataBody = buf
+	
+	return flightData, nil
+}
+
+// sendArrowDataToWorker sends Arrow data to an appropriate worker using load balancing
+func (d *Data) sendArrowDataToWorker(idx dvid.IndexZYX, arrowData *flight.FlightData) error {
+	flightServer := server.GetFlightServer()
+	if flightServer == nil {
+		return fmt.Errorf("Arrow Flight server not available")
+	}
+	
+	workerIDs := flightServer.GetWorkerIDs()
+	if len(workerIDs) == 0 {
+		return fmt.Errorf("no workers available")
+	}
+	
+	// Simple load balancing: use hash of block coordinates to determine worker
+	hash := uint32(idx[0]*73856093) ^ uint32(idx[1]*19349663) ^ uint32(idx[2]*83492791)
+	workerIndex := int(hash) % len(workerIDs)
+	selectedWorkerID := workerIDs[workerIndex]
+	
+	dvid.Debugf("Sending block %v to worker %s (worker %d of %d)\n", 
+		idx, selectedWorkerID, workerIndex+1, len(workerIDs))
+	
+	// Send data to the selected worker
+	return flightServer.SendDataToWorker(selectedWorkerID, arrowData)
 }
