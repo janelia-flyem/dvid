@@ -153,11 +153,13 @@ GET <api URL>/node/<UUID>/<data name>/label/<label>[?<options>]
 	
 	GET Query-string Option:
 
-	relationships   Set to true to return all relationships for each annotation.
+	relationships   Set to "true" to return all relationships for each annotation.
+	                Set to "verbose" to return relationships with full partner properties.
 
 	Example:
 
 	GET http://foo.com/api/node/83af/myannotations/label/23?relationships=true
+	GET http://foo.com/api/node/83af/myannotations/label/23?relationships=verbose
 
 
 POST <api URL>/node/<UUID>/<data name>/labels
@@ -177,11 +179,13 @@ GET <api URL>/node/<UUID>/<data name>/tag/<tag>[?<options>]
 
 	GET Query-string Option:
 
-	relationships   Set to true to return all relationships for each annotation.
+	relationships   Set to "true" to return all relationships for each annotation.
+	                Set to "verbose" to return relationships with full partner properties.
 
 	Example:
 
 	GET http://foo.com/api/node/83af/myannotations/tag/goodstuff?relationships=true
+	GET http://foo.com/api/node/83af/myannotations/tag/goodstuff?relationships=verbose
 	
 
 DELETE <api URL>/node/<UUID>/<data name>/element/<coord>[?<options>]
@@ -570,6 +574,16 @@ type Relationship struct {
 
 type Relationships []Relationship
 
+// VerboseRelationship is a link between two synaptic elements that includes
+// the full Element data of the partner, not just coordinates.
+type VerboseRelationship struct {
+	Rel RelationType
+	To  dvid.Point3d
+	Partner *ElementNR `json:"Partner,omitempty"` // Full partner element data
+}
+
+type VerboseRelationships []VerboseRelationship
+
 func (r Relationships) Len() int {
 	return len(r)
 }
@@ -715,6 +729,15 @@ func (e Element) Copy() *Element {
 	copy(c.Rels, e.Rels)
 	return c
 }
+
+// VerboseElement describes a synaptic element's properties, including verbose relationships
+// that contain full partner Element data.
+type VerboseElement struct {
+	ElementNR
+	Rels VerboseRelationships
+}
+
+type VerboseElements []VerboseElement
 
 // ElementsNR is a slice of elements without relationships.
 type ElementsNR []ElementNR
@@ -1301,6 +1324,121 @@ func (d *Data) getExpandedElements(ctx *datastore.VersionedCtx, tk storage.TKey)
 	return expanded, nil
 }
 
+// getVerboseExpandedElements returns VerboseElements with full partner Element data
+// included in relationships instead of just coordinates. This function is optimized
+// to fetch all required blocks in a single pass, avoiding duplicate block lookups.
+func (d *Data) getVerboseExpandedElements(ctx *datastore.VersionedCtx, tk storage.TKey) (VerboseElements, error) {
+	elems, err := getElementsNR(ctx, tk)
+	if err != nil {
+		return nil, err
+	}
+
+	blockSize := d.blockSize()
+	
+	// Collect all unique blocks we need to fetch (both for the elements themselves and their partners)
+	allBlocks := make(map[dvid.IZYXString]bool)
+	
+	// Batch each element into blocks to get their relationships
+	for _, elem := range elems {
+		// Add the block containing this element
+		elemBlockCoord := elem.Pos.Chunk(blockSize).(dvid.ChunkPoint3d)
+		izyxStr := elemBlockCoord.ToIZYXString()
+		allBlocks[izyxStr] = true
+	}
+	
+	// Fetch all blocks once and create element lookup maps
+	elementMap := make(map[string]*Element) // Map from position to full Element with relationships
+	
+	for izyxStr := range allBlocks {
+		chunkPt, err := izyxStr.ToChunkPoint3d()
+		if err != nil {
+			continue
+		}
+		btk := NewBlockTKey(chunkPt)
+		blockElems, err := getElements(ctx, btk)
+		if err != nil {
+			continue
+		}
+		
+		// Add all elements from this block to the lookup map
+		for _, blockElem := range blockElems {
+			elementMap[blockElem.Pos.MapKey()] = &blockElem
+		}
+	}
+	
+	// Now collect all partner blocks needed
+	partnerBlocks := make(map[dvid.IZYXString]bool)
+	for _, elem := range elems {
+		// Get the full element with relationships from our map
+		fullElem := elementMap[elem.Pos.MapKey()]
+		if fullElem != nil {
+			// Collect partner blocks
+			for _, rel := range fullElem.Rels {
+				partnerBlockCoord := rel.To.Chunk(blockSize).(dvid.ChunkPoint3d)
+				partnerIzyxStr := partnerBlockCoord.ToIZYXString()
+				if !allBlocks[partnerIzyxStr] { // Only add if we haven't already fetched this block
+					partnerBlocks[partnerIzyxStr] = true
+				}
+			}
+		}
+	}
+	
+	// Fetch additional partner blocks if needed
+	for izyxStr := range partnerBlocks {
+		chunkPt, err := izyxStr.ToChunkPoint3d()
+		if err != nil {
+			continue
+		}
+		btk := NewBlockTKey(chunkPt)
+		blockElems, err := getElements(ctx, btk)
+		if err != nil {
+			continue
+		}
+		
+		// Add partner elements to the lookup map
+		for _, blockElem := range blockElems {
+			elementMap[blockElem.Pos.MapKey()] = &blockElem
+		}
+	}
+	
+	// Build the verbose elements with full partner data
+	verboseElems := make(VerboseElements, len(elems))
+	for i, elem := range elems {
+		// Get the full element with relationships
+		fullElem := elementMap[elem.Pos.MapKey()]
+		if fullElem == nil {
+			// Fallback if element not found in blocks (shouldn't happen)
+			verboseElems[i] = VerboseElement{
+				ElementNR: elem,
+				Rels:      VerboseRelationships{},
+			}
+			continue
+		}
+		
+		verboseElems[i] = VerboseElement{
+			ElementNR: elem,
+			Rels:      make(VerboseRelationships, len(fullElem.Rels)),
+		}
+		
+		// Convert each relationship to verbose relationship with full partner data
+		for j, rel := range fullElem.Rels {
+			partnerElem := elementMap[rel.To.MapKey()]
+			var partner *ElementNR
+			if partnerElem != nil {
+				partner = &partnerElem.ElementNR
+			}
+			
+			verboseElems[i].Rels[j] = VerboseRelationship{
+				Rel:     rel.Rel,
+				To:      rel.To,
+				Partner: partner, // This will be nil if partner not found
+			}
+		}
+	}
+	
+	return verboseElems, nil
+}
+
 // delete all reference to given element point in the slice of tags.
 // This is private method and assumes outer locking.
 func (d *Data) deleteElementInTags(ctx *datastore.VersionedCtx, batch storage.Batch, pt dvid.Point3d, tags []Tag) error {
@@ -1883,17 +2021,25 @@ func (d *Data) ProcessLabelAnnotations(v dvid.VersionID, f func(label uint64, el
 }
 
 // GetLabelJSON returns JSON for synapse elements in a given label.
-func (d *Data) GetLabelJSON(ctx *datastore.VersionedCtx, label uint64, addRels bool) ([]byte, error) {
+func (d *Data) GetLabelJSON(ctx *datastore.VersionedCtx, label uint64, addRels bool, verbose bool) ([]byte, error) {
 	// d.RLock()
 	// defer d.RUnlock()
 
 	tk := NewLabelTKey(label)
 	if addRels {
-		elems, err := d.getExpandedElements(ctx, tk)
-		if err != nil {
-			return nil, err
+		if verbose {
+			elems, err := d.getVerboseExpandedElements(ctx, tk)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(elems)
+		} else {
+			elems, err := d.getExpandedElements(ctx, tk)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(elems)
 		}
-		return json.Marshal(elems)
 	}
 	elems, err := getElementsNR(ctx, tk)
 	if err != nil {
@@ -1903,7 +2049,7 @@ func (d *Data) GetLabelJSON(ctx *datastore.VersionedCtx, label uint64, addRels b
 }
 
 // GetTagJSON returns JSON for synapse elements in a given tag.
-func (d *Data) GetTagJSON(ctx *datastore.VersionedCtx, tag Tag, addRels bool) (jsonBytes []byte, err error) {
+func (d *Data) GetTagJSON(ctx *datastore.VersionedCtx, tag Tag, addRels bool, verbose bool) (jsonBytes []byte, err error) {
 	// d.RLock()
 	// defer d.RUnlock()
 
@@ -1914,7 +2060,11 @@ func (d *Data) GetTagJSON(ctx *datastore.VersionedCtx, tag Tag, addRels bool) (j
 	}
 	var elems interface{}
 	if addRels {
-		elems, err = d.getExpandedElements(ctx, tk)
+		if verbose {
+			elems, err = d.getVerboseExpandedElements(ctx, tk)
+		} else {
+			elems, err = d.getExpandedElements(ctx, tk)
+		}
 	} else {
 		elems, err = getElementsNR(ctx, tk)
 	}
