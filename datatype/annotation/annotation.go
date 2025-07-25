@@ -575,11 +575,14 @@ type Relationship struct {
 type Relationships []Relationship
 
 // VerboseRelationship is a link between two synaptic elements that includes
-// the full Element data of the partner, not just coordinates.
+// the partner's properties flattened into the relationship object.
 type VerboseRelationship struct {
-	Rel RelationType
-	To  dvid.Point3d
-	Partner *ElementNR `json:"Partner,omitempty"` // Full partner element data
+	Rel  RelationType
+	To   dvid.Point3d
+	// Partner properties flattened into this struct (Pos omitted as it's redundant with To)
+	Kind ElementType        `json:"Kind,omitempty"`
+	Tags Tags               `json:"Tags,omitempty"`
+	Prop map[string]string  `json:"Prop,omitempty"`
 }
 
 type VerboseRelationships []VerboseRelationship
@@ -1420,19 +1423,23 @@ func (d *Data) getVerboseExpandedElements(ctx *datastore.VersionedCtx, tk storag
 			Rels:      make(VerboseRelationships, len(fullElem.Rels)),
 		}
 		
-		// Convert each relationship to verbose relationship with full partner data
+		// Convert each relationship to verbose relationship with flattened partner data
 		for j, rel := range fullElem.Rels {
 			partnerElem := elementMap[rel.To.MapKey()]
-			var partner *ElementNR
-			if partnerElem != nil {
-				partner = &partnerElem.ElementNR
+			
+			verboseRel := VerboseRelationship{
+				Rel: rel.Rel,
+				To:  rel.To,
 			}
 			
-			verboseElems[i].Rels[j] = VerboseRelationship{
-				Rel:     rel.Rel,
-				To:      rel.To,
-				Partner: partner, // This will be nil if partner not found
+			// If partner found, flatten its properties into the relationship (omit Pos as it's redundant with To)
+			if partnerElem != nil {
+				verboseRel.Kind = partnerElem.Kind
+				verboseRel.Tags = partnerElem.Tags
+				verboseRel.Prop = partnerElem.Prop
 			}
+			
+			verboseElems[i].Rels[j] = verboseRel
 		}
 	}
 	
