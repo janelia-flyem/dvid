@@ -172,7 +172,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		queryStrings := r.URL.Query()
-		jsonBytes, err := d.GetLabelJSON(ctx, label, queryStrings.Get("relationships") == "true")
+		relationshipsParam := queryStrings.Get("relationships")
+		addRels := relationshipsParam == "true" || relationshipsParam == "verbose"
+		verbose := relationshipsParam == "verbose"
+		jsonBytes, err := d.GetLabelJSON(ctx, label, addRels, verbose)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -195,7 +198,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		tag := Tag(parts[4])
 		queryStrings := r.URL.Query()
-		jsonBytes, err := d.GetTagJSON(ctx, tag, queryStrings.Get("relationships") == "true")
+		relationshipsParam := queryStrings.Get("relationships")
+		addRels := relationshipsParam == "true" || relationshipsParam == "verbose"
+		verbose := relationshipsParam == "verbose"
+		jsonBytes, err := d.GetTagJSON(ctx, tag, addRels, verbose)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return

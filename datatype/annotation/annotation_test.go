@@ -661,30 +661,55 @@ func testResponse(t *testing.T, expected Elements, template string, args ...inte
 
 func testResponseLabel(t *testing.T, expected interface{}, template string, args ...interface{}) {
 	var useRels bool
+	var useVerbose bool
 	if strings.HasSuffix(template, "?relationships=true") {
 		useRels = true
+	} else if strings.HasSuffix(template, "?relationships=verbose") {
+		useRels = true
+		useVerbose = true
 	}
 	url := fmt.Sprintf(template, args...)
 	returnValue := server.TestHTTP(t, "GET", url, nil)
 
 	if useRels {
-		var elems Elements
-		if expected == nil {
-			elems = Elements{}
-		} else {
-			var ok bool
-			elems, ok = expected.(Elements)
-			if !ok {
-				t.Fatalf("testResponseLabel with template %q didn't get passed Elements for expected: %v\n", template, expected)
+		if useVerbose {
+			var elems VerboseElements
+			if expected == nil {
+				elems = VerboseElements{}
+			} else {
+				var ok bool
+				elems, ok = expected.(VerboseElements)
+				if !ok {
+					t.Fatalf("testResponseLabel with template %q didn't get passed VerboseElements for expected: %v\n", template, expected)
+				}
 			}
-		}
-		got := Elements{}
-		if err := json.Unmarshal(returnValue, &got); err != nil {
-			t.Fatal(err)
-		}
-		if !reflect.DeepEqual(elems.Normalize(), got.Normalize()) {
-			_, fn, line, _ := runtime.Caller(1)
-			t.Errorf("Expected for %s [%s:%d]:\n%v\nGot:\n%v\n", url, fn, line, elems.Normalize(), got.Normalize())
+			got := VerboseElements{}
+			if err := json.Unmarshal(returnValue, &got); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(elems, got) {
+				_, fn, line, _ := runtime.Caller(1)
+				t.Errorf("Expected for %s [%s:%d]:\n%v\nGot:\n%v\n", url, fn, line, elems, got)
+			}
+		} else {
+			var elems Elements
+			if expected == nil {
+				elems = Elements{}
+			} else {
+				var ok bool
+				elems, ok = expected.(Elements)
+				if !ok {
+					t.Fatalf("testResponseLabel with template %q didn't get passed Elements for expected: %v\n", template, expected)
+				}
+			}
+			got := Elements{}
+			if err := json.Unmarshal(returnValue, &got); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(elems.Normalize(), got.Normalize()) {
+				_, fn, line, _ := runtime.Caller(1)
+				t.Errorf("Expected for %s [%s:%d]:\n%v\nGot:\n%v\n", url, fn, line, elems.Normalize(), got.Normalize())
+			}
 		}
 	} else {
 		var elems ElementsNR
@@ -2279,3 +2304,172 @@ var (
 	bodysplit = bodies[6]
 	svsplit   = bodies[7]
 )
+
+func TestVerboseRelationships(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+
+	// Create a labelblk instance first 
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", dvid.NewConfig())
+	// Populate with labels
+	_ = createLabelTestVolume(t, uuid, "labels")
+
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	// Create annotation instance and sync with labels
+	config := dvid.NewConfig()
+	server.CreateTestInstance(t, uuid, "annotation", "synapses", config)
+	server.CreateTestSync(t, uuid, "synapses", "labels")
+	
+	dataservice, err := datastore.GetDataByUUIDName(uuid, "synapses")
+	if err != nil {
+		t.Errorf("Unable to get annotation instance: %v\n", err)
+	}
+	data, ok := dataservice.(*Data)
+	if !ok {
+		t.Errorf("Can't cast data service into annotation.Data\n")
+	}
+
+	// Create test elements with known properties
+	// Body1 voxel spans: {35, 27, 11, 28} and {36, 28, 13, 25}
+	// This means Z=35, Y=27, X∈[11,28] and Z=36, Y=28, X∈[13,25]
+	testElements := Elements{
+		{
+			ElementNR{
+				Pos:  dvid.Point3d{15, 27, 35}, // PreSyn element within body1 voxel span
+				Kind: PreSyn,
+				Tags: []Tag{"TestSynapse"},
+				Prop: map[string]string{
+					"conf": "0.95",
+					"type": "T-Bar",
+				},
+			},
+			[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 28, 36}}}, // Points to PostSyn within body1
+		},
+		{
+			ElementNR{
+				Pos:  dvid.Point3d{20, 28, 36}, // PostSyn element within body1 second voxel span
+				Kind: PostSyn,
+				Tags: []Tag{"TestSynapse"},
+				Prop: map[string]string{
+					"conf": "0.87",
+					"type": "PSD",
+				},
+			},
+			[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}}, // Points back to PreSyn
+		},
+	}
+
+	// Post the test elements
+	testJSON, _ := json.Marshal(testElements)
+	url := fmt.Sprintf("%snode/%s/%s/elements", server.WebAPIPath, uuid, data.DataName())
+	server.TestHTTP(t, "POST", url, strings.NewReader(string(testJSON)))
+
+	// Test regular relationships=true (should only return coordinates)
+	url1 := fmt.Sprintf("%snode/%s/%s/label/1?relationships=true", server.WebAPIPath, uuid, data.DataName())
+	returnValue1 := server.TestHTTP(t, "GET", url1, nil)
+	
+	var normalElements Elements
+	if err := json.Unmarshal(returnValue1, &normalElements); err != nil {
+		t.Errorf("Unable to unmarshal normal relationships response: %v\n", err)
+	}
+
+	// Debug: print actual response
+	t.Logf("Label 1 response: %s", string(returnValue1))
+	t.Logf("Parsed elements: %+v", normalElements)
+
+	// Verify normal response structure (should have relationships but no partner data)
+	if len(normalElements) != 2 { // Both elements should be in label 1
+		t.Errorf("Expected 2 elements for label 1, got %d", len(normalElements))
+		// Don't proceed if we don't have the expected number of elements
+		return
+	}
+	if len(normalElements[0].Rels) != 1 {
+		t.Errorf("Expected 1 relationship, got %d", len(normalElements[0].Rels))
+	}
+
+	// Test verbose relationships (should return full partner data)
+	url2 := fmt.Sprintf("%snode/%s/%s/label/1?relationships=verbose", server.WebAPIPath, uuid, data.DataName())
+	returnValue2 := server.TestHTTP(t, "GET", url2, nil)
+	
+	var verboseElements VerboseElements
+	if err := json.Unmarshal(returnValue2, &verboseElements); err != nil {
+		t.Errorf("Unable to unmarshal verbose relationships response: %v\n", err)
+	}
+
+	// Verify verbose response structure (should have 2 elements, both in label 1)
+	if len(verboseElements) != 2 {
+		t.Errorf("Expected 2 elements for label 1, got %d", len(verboseElements))
+		return
+	}
+	
+	// Each element should have 1 relationship
+	for i, elem := range verboseElements {
+		if len(elem.Rels) != 1 {
+			t.Errorf("Element %d: expected 1 relationship, got %d", i, len(elem.Rels))
+		}
+	}
+
+	// Find the PreSyn element and verify its partner data
+	var preSynElem *VerboseElement
+	for i := range verboseElements {
+		if verboseElements[i].Kind == PreSyn {
+			preSynElem = &verboseElements[i]
+			break
+		}
+	}
+	
+	if preSynElem == nil {
+		t.Errorf("Could not find PreSyn element in verbose response")
+		return
+	}
+
+	// Verify that partner data is included in verbose response
+	partner := preSynElem.Rels[0].Partner
+	if partner == nil {
+		t.Errorf("Expected partner data in verbose relationship, got nil")
+	} else {
+		if !partner.Pos.Equals(dvid.Point3d{20, 28, 36}) {
+			t.Errorf("Expected partner position {20, 28, 36}, got %v", partner.Pos)
+		}
+		if partner.Kind != PostSyn {
+			t.Errorf("Expected partner kind PostSyn, got %v", partner.Kind)
+		}
+		if partner.Prop["conf"] != "0.87" {
+			t.Errorf("Expected partner conf '0.87', got '%s'", partner.Prop["conf"])
+		}
+		if partner.Prop["type"] != "PSD" {
+			t.Errorf("Expected partner type 'PSD', got '%s'", partner.Prop["type"])
+		}
+	}
+
+	// Test verbose relationships for tags as well
+	url3 := fmt.Sprintf("%snode/%s/%s/tag/TestSynapse?relationships=verbose", server.WebAPIPath, uuid, data.DataName())
+	returnValue3 := server.TestHTTP(t, "GET", url3, nil)
+	
+	var tagVerboseElements VerboseElements
+	if err := json.Unmarshal(returnValue3, &tagVerboseElements); err != nil {
+		t.Errorf("Unable to unmarshal tag verbose relationships response: %v\n", err)
+	}
+
+	// Should get both elements back (they both have TestSynapse tag)
+	if len(tagVerboseElements) != 2 {
+		t.Errorf("Expected 2 elements for tag TestSynapse, got %d", len(tagVerboseElements))
+	}
+
+	// Verify both elements have partner data
+	for i, elem := range tagVerboseElements {
+		if len(elem.Rels) != 1 {
+			t.Errorf("Element %d: expected 1 relationship, got %d", i, len(elem.Rels))
+		}
+		if elem.Rels[0].Partner == nil {
+			t.Errorf("Element %d: expected partner data, got nil", i)
+		}
+	}
+}
