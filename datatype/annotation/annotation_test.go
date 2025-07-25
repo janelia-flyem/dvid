@@ -2430,22 +2430,23 @@ func TestVerboseRelationships(t *testing.T) {
 		return
 	}
 
-	// Verify that partner data is included in verbose response
-	partner := preSynElem.Rels[0].Partner
-	if partner == nil {
-		t.Errorf("Expected partner data in verbose relationship, got nil")
+	// Verify that partner data is included in verbose response (flattened format)
+	rel := preSynElem.Rels[0]
+	// Verify To field contains partner position (backward compatibility)
+	if !rel.To.Equals(dvid.Point3d{20, 28, 36}) {
+		t.Errorf("Expected partner position in To field {20, 28, 36}, got %v", rel.To)
+	}
+	if rel.Kind != PostSyn {
+		t.Errorf("Expected partner kind PostSyn, got %v", rel.Kind)
+	}
+	if rel.Prop == nil {
+		t.Errorf("Expected partner properties, got nil")
 	} else {
-		if !partner.Pos.Equals(dvid.Point3d{20, 28, 36}) {
-			t.Errorf("Expected partner position {20, 28, 36}, got %v", partner.Pos)
+		if rel.Prop["conf"] != "0.87" {
+			t.Errorf("Expected partner conf '0.87', got '%s'", rel.Prop["conf"])
 		}
-		if partner.Kind != PostSyn {
-			t.Errorf("Expected partner kind PostSyn, got %v", partner.Kind)
-		}
-		if partner.Prop["conf"] != "0.87" {
-			t.Errorf("Expected partner conf '0.87', got '%s'", partner.Prop["conf"])
-		}
-		if partner.Prop["type"] != "PSD" {
-			t.Errorf("Expected partner type 'PSD', got '%s'", partner.Prop["type"])
+		if rel.Prop["type"] != "PSD" {
+			t.Errorf("Expected partner type 'PSD', got '%s'", rel.Prop["type"])
 		}
 	}
 
@@ -2463,13 +2464,17 @@ func TestVerboseRelationships(t *testing.T) {
 		t.Errorf("Expected 2 elements for tag TestSynapse, got %d", len(tagVerboseElements))
 	}
 
-	// Verify both elements have partner data
+	// Verify both elements have partner data (flattened format)
 	for i, elem := range tagVerboseElements {
 		if len(elem.Rels) != 1 {
 			t.Errorf("Element %d: expected 1 relationship, got %d", i, len(elem.Rels))
 		}
-		if elem.Rels[0].Partner == nil {
-			t.Errorf("Element %d: expected partner data, got nil", i)
+		rel := elem.Rels[0]
+		if rel.Kind == 0 { // Check if partner kind is set (0 is UnknownElem)
+			t.Errorf("Element %d: expected partner kind to be set, got %v", i, rel.Kind)
+		}
+		if rel.Prop == nil {
+			t.Errorf("Element %d: expected partner properties, got nil", i)
 		}
 	}
 }
