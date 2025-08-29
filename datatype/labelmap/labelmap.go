@@ -149,14 +149,11 @@ $ dvid node <UUID> <data name> export-shards <spec path> <dest>
 	Exports the labelmap data to local shard files corresponding to blocks that would be within different
 	shards using neuroglancer precomputed volume specification.
 
-	The json spec path should be a JSON file with the following fields:
-	{
-		"minishard_bits": 6,
-		"preshift_bits": 6,
-		"shard_bits": 15,
-		"volume_extents": [300, 400, 500]
-	}
+	The json spec path should be a JSON file that meets the neuroglancer multiscale volume specification
+	with documentation at https://github.com/google/neuroglancer/blob/master/src/datasource/precomputed/volume.md#info-json-file-specification
 	
+	For an example, see https://storage.googleapis.com/cns-full-clahe/info
+
 	This is an asynchronous operation that will write an Arrow IPC stream format to each shard file.
 	Shard files will include Arrow records for each block in the shard with the following fields:
 	{
@@ -2730,7 +2727,7 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		if err != nil {
 			return fmt.Errorf("error reading volume specification file %q: %v", specPath, err)
 		}
-		var spec volSpec
+		var spec ngVolume
 		if err := json.Unmarshal(specBytes, &spec); err != nil {
 			return fmt.Errorf("error unmarshalling volume specification file %q: %v", specPath, err)
 		}

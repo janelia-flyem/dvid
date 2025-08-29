@@ -8,7 +8,7 @@ import subprocess
 repo_dir = sys.argv[1]
 record_path = sys.argv[2]
 
-current_description = subprocess.check_output(b'git describe', shell=True).decode('utf-8').strip()
+current_description = subprocess.check_output(b'git describe --tags', shell=True).decode('utf-8').strip()
 
 different = False
 if not os.path.exists(record_path):
