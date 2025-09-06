@@ -160,27 +160,6 @@ type BlockData struct {
 	Data       []byte
 }
 
-// getBlockSchema returns Arrow schema with chunk index metadata
-func getBlockSchema(chunkIndex map[string]uint64) *arrow.Schema {
-	// Convert chunk index to Arrow metadata format
-	metadata := arrow.NewMetadata([]string{}, []string{})
-	if len(chunkIndex) > 0 {
-		indexJSON, err := json.Marshal(chunkIndex)
-		if err == nil {
-			metadata = arrow.NewMetadata([]string{"chunk_index"}, []string{string(indexJSON)})
-		}
-	}
-	
-	return arrow.NewSchema([]arrow.Field{
-		{Name: "chunk_x", Type: arrow.PrimitiveTypes.Int32},
-		{Name: "chunk_y", Type: arrow.PrimitiveTypes.Int32},
-		{Name: "chunk_z", Type: arrow.PrimitiveTypes.Int32},
-		{Name: "labels", Type: arrow.ListOf(arrow.PrimitiveTypes.Uint64)},
-		{Name: "supervoxels", Type: arrow.ListOf(arrow.PrimitiveTypes.Uint64)},
-		{Name: "dvid_compressed_block", Type: arrow.BinaryTypes.Binary},
-	}, metadata)
-}
-
 // Basic schema without metadata for initial writing
 var blockSchema = arrow.NewSchema([]arrow.Field{
 	{Name: "chunk_x", Type: arrow.PrimitiveTypes.Int32},
@@ -192,17 +171,17 @@ var blockSchema = arrow.NewSchema([]arrow.Field{
 }, nil)
 
 type shardWriter struct {
-	f          *os.File
-	ch         chan *BlockData   // Channel to receive block data for this shard
-	indexMap   map[string]uint64 // Map of chunk coordinates to Arrow record index
-	mapping    *VCache           // Cache for mapping supervoxels to agglomerated labels
-	version    dvid.VersionID    // Version ID for this export
-	wg         *sync.WaitGroup
-	writer     *ipc.Writer      // Arrow IPC writer
-	pool       memory.Allocator // Arrow memory allocator
-	recordNum  uint64           // Counter for Arrow records written
-	mu         sync.Mutex       // Mutex to protect indexMap and recordNum
-	shardPath  string           // Base path for shard files (without extension)
+	f         *os.File
+	ch        chan *BlockData   // Channel to receive block data for this shard
+	indexMap  map[string]uint64 // Map of chunk coordinates to Arrow record index
+	mapping   *VCache           // Cache for mapping supervoxels to agglomerated labels
+	version   dvid.VersionID    // Version ID for this export
+	wg        *sync.WaitGroup
+	writer    *ipc.Writer      // Arrow IPC writer
+	pool      memory.Allocator // Arrow memory allocator
+	recordNum uint64           // Counter for Arrow records written
+	mu        sync.Mutex       // Mutex to protect indexMap and recordNum
+	shardPath string           // Base path for shard files (without extension)
 }
 
 // Start a goroutine to listen on the channel and write incoming block data to the shard file
@@ -225,7 +204,7 @@ func (w *shardWriter) start() {
 		for block := range w.ch {
 			// Record the chunk index before writing
 			coordKey := fmt.Sprintf("%d_%d_%d", block.ChunkCoord[0], block.ChunkCoord[1], block.ChunkCoord[2])
-			
+
 			w.mu.Lock()
 			if w.indexMap == nil {
 				w.indexMap = make(map[string]uint64)
@@ -234,7 +213,7 @@ func (w *shardWriter) start() {
 			currentRecord := w.recordNum
 			w.recordNum++
 			w.mu.Unlock()
-			
+
 			// Write the block data to the shard file in Arrow format
 			if err := w.writeBlock(block); err != nil {
 				dvid.Errorf("Error writing block %s (record %d) to shard file %s: %v", block.ChunkCoord, currentRecord, w.f.Name(), err)
@@ -359,13 +338,13 @@ func (w *shardWriter) close() error {
 func (w *shardWriter) writeChunkIndex() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	
+
 	// Serialize the chunk index to JSON
 	indexJSON, err := json.MarshalIndent(w.indexMap, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal chunk index: %v", err)
 	}
-	
+
 	// Write to separate JSON file with same base name
 	jsonPath := w.shardPath + ".json"
 	jsonFile, err := os.Create(jsonPath)
@@ -373,11 +352,11 @@ func (w *shardWriter) writeChunkIndex() error {
 		return fmt.Errorf("failed to create chunk index file %s: %v", jsonPath, err)
 	}
 	defer jsonFile.Close()
-	
+
 	if _, err := jsonFile.Write(indexJSON); err != nil {
 		return fmt.Errorf("failed to write chunk index to %s: %v", jsonPath, err)
 	}
-	
+
 	return nil
 }
 
