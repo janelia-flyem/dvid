@@ -391,16 +391,23 @@ func (s *shardHandler) Initialize(ctx *datastore.VersionedCtx, exportSpec export
 			return fmt.Errorf("Aborting export-shards after initializing neuroglancer scale %d: %v", level, err)
 		}
 
-		// Determine shard size in Z based on block bits and morton code interleaving.
+		// Determine shard size in Z based on shard bits and morton code interleaving.
 		// Assumes no dimension extent is smaller than 1 shard.
-		shardSideBits := int(scale.chunkBits+scale.Sharding.PreshiftBits+scale.Sharding.MinishardBits) / 3
+		shardSideBits := int(scale.Sharding.ShardBits+scale.Sharding.PreshiftBits+scale.Sharding.MinishardBits) / 3
+		if shardSideBits < 0 {
+			shardSideBits = 0
+		}
 		s.shardZSize[level] = int32(1) << shardSideBits
 		dvid.Infof("Exporting labelmap at scale %d with chunk size %v and shard Z size %d\n", level, scale.ChunkSizes[0], s.shardZSize[level])
 	}
 
 	// Set capacity of map to # of shards in XY in scale 0
 	hiresChunkSize := exportSpec.Scales[0].ChunkSizes[0]
-	minNumShards := (hiresChunkSize[0] * hiresChunkSize[1]) / (s.shardZSize[0] * s.shardZSize[0])
+	shardArea := s.shardZSize[0] * s.shardZSize[0]
+	if shardArea == 0 {
+		shardArea = 1 // Prevent division by zero
+	}
+	minNumShards := (hiresChunkSize[0] * hiresChunkSize[1]) / shardArea
 	s.writers = make(map[uint64]*shardWriter, minNumShards)
 	return nil
 }
@@ -413,11 +420,20 @@ func (sh *shardHandler) getLastShardZ(scale uint8, blockZ int32) int32 {
 }
 
 func (s *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.ChunkPoint3d, ngScale *ngScale) (w *shardWriter, err error) {
+	// First, check if writer already exists with read lock
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	if w, ok := s.writers[shardID]; ok {
+		s.mu.RUnlock()
+		return w, nil
+	}
+	s.mu.RUnlock()
 
-	var ok bool
-	if w, ok = s.writers[shardID]; ok {
+	// Writer doesn't exist, need to create it with write lock
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Double-check in case another goroutine created it while we were waiting for the lock
+	if w, ok := s.writers[shardID]; ok {
 		return w, nil
 	}
 
@@ -616,107 +632,3 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, handler *shardHandler,
 
 	timedLog.Infof("Finished reading labelmap %q %d blocks to exporting workers", d.DataName(), numBlocks)
 }
-
-// // transformBlockToArrow converts a label block to Arrow format with supervoxel/label indices
-// // and compressed block data
-// func (d *Data) transformBlockToArrow(blockData []byte, idx dvid.IndexZYX) (*flight.FlightData, error) {
-// 	// Create Arrow memory allocator
-// 	pool := memory.NewGoAllocator()
-
-// 	// Unmarshal the block data into a labels.Block structure
-// 	// TODO -- this does not fill in the Block indices.
-// 	var block labels.Block
-// 	if err := block.UnmarshalBinary(blockData); err != nil {
-// 		return nil, fmt.Errorf("failed to unmarshal block data: %v", err)
-// 	}
-
-// 	// Separate the header information from the compressed block label data so
-// 	// we can store both the supervoxel and aglomerated label indices.
-// 	if len(block.Labels) == 0 {
-// 		return nil, fmt.Errorf("block at %v has no labels", idx)
-// 	}
-
-// 	// Compress the block label data using ZSTD
-// 	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
-// 	if err != nil {
-// 		return nil, fmt.Errorf("failed to create zstd encoder: %v", err)
-// 	}
-// 	defer encoder.Close()
-// 	compressedData := encoder.EncodeAll(blockData, nil)
-
-// 	// Create Arrow schema for the block data
-// 	// TODO: Consider using global blockSchema variable
-// 	schema := arrow.NewSchema([]arrow.Field{
-// 		{Name: "block_coord_x", Type: arrow.PrimitiveTypes.Int32},
-// 		{Name: "block_coord_y", Type: arrow.PrimitiveTypes.Int32},
-// 		{Name: "block_coord_z", Type: arrow.PrimitiveTypes.Int32},
-// 		{Name: "labels", Type: arrow.BinaryTypes.Binary},
-// 		{Name: "compressed_data", Type: arrow.BinaryTypes.Binary},
-// 	}, nil)
-
-// 	// Create builders for each column
-// 	coordXBuilder := array.NewInt32Builder(pool)
-// 	coordYBuilder := array.NewInt32Builder(pool)
-// 	coordZBuilder := array.NewInt32Builder(pool)
-// 	labelsBuilder := array.NewBinaryBuilder(pool, arrow.BinaryTypes.Binary)
-// 	compressedBuilder := array.NewBinaryBuilder(pool, arrow.BinaryTypes.Binary)
-
-// 	defer func() {
-// 		coordXBuilder.Release()
-// 		coordYBuilder.Release()
-// 		coordZBuilder.Release()
-// 		labelsBuilder.Release()
-// 		compressedBuilder.Release()
-// 	}()
-
-// 	// Convert labels slice to bytes for storage
-// 	labelsBytes := make([]byte, len(block.Labels)*8)
-// 	for i, label := range block.Labels {
-// 		binary.LittleEndian.PutUint64(labelsBytes[i*8:(i+1)*8], label)
-// 	}
-
-// 	// Append data to builders
-// 	coordXBuilder.Append(int32(idx[0]))
-// 	coordYBuilder.Append(int32(idx[1]))
-// 	coordZBuilder.Append(int32(idx[2]))
-// 	labelsBuilder.Append(labelsBytes)
-// 	compressedBuilder.Append(compressedData)
-
-// 	// Build arrays
-// 	coordXArray := coordXBuilder.NewArray()
-// 	coordYArray := coordYBuilder.NewArray()
-// 	coordZArray := coordZBuilder.NewArray()
-// 	labelsArray := labelsBuilder.NewArray()
-// 	compressedArray := compressedBuilder.NewArray()
-
-// 	defer func() {
-// 		coordXArray.Release()
-// 		coordYArray.Release()
-// 		coordZArray.Release()
-// 		labelsArray.Release()
-// 		compressedArray.Release()
-// 	}()
-
-// 	// Create record batch
-// 	record := array.NewRecord(schema, []arrow.Array{
-// 		coordXArray, coordYArray, coordZArray,
-// 		labelsArray, compressedArray,
-// 	}, 1)
-// 	defer record.Release()
-
-// 	// Convert to FlightData
-// 	flightData := &flight.FlightData{
-// 		FlightDescriptor: &flight.FlightDescriptor{
-// 			Type: flight.DescriptorPATH,
-// 			Path: []string{fmt.Sprintf("block_%d_%d_%d", idx[0], idx[1], idx[2])},
-// 		},
-// 	}
-
-// 	// Serialize the record batch to FlightData
-// 	var buf []byte
-// 	// Note: In a full implementation, you'd properly serialize the Arrow record to IPC format
-// 	// For now, we'll create a placeholder implementation
-// 	flightData.DataBody = buf
-
-// 	return flightData, nil
-// }

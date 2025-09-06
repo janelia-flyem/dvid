@@ -1,9 +1,14 @@
 package labelmap
 
 import (
+	"encoding/json"
+	"os"
+	"sync"
 	"testing"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/server"
 )
 
 func TestMortonCode(t *testing.T) {
@@ -129,6 +134,105 @@ func TestCalculateShardOrigin(t *testing.T) {
 		result := handler.calculateShardOrigin(tc.chunkCoord, scale)
 		if result != tc.expected {
 			t.Errorf("calculateShardOrigin(%v) = %v, want %v", tc.chunkCoord, result, tc.expected)
+		}
+	}
+}
+
+// Test variables similar to labelmap_test.go
+var (
+	exportLabelsT datastore.TypeService
+	exportTestMu  sync.Mutex
+)
+
+// Test helper functions similar to labelmap_test.go
+func initExportTestRepo(t *testing.T) (dvid.UUID, dvid.VersionID) {
+	exportTestMu.Lock()
+	defer exportTestMu.Unlock()
+	if exportLabelsT == nil {
+		var err error
+		exportLabelsT, err = datastore.TypeServiceByName("labelmap")
+		if err != nil {
+			t.Fatalf("Can't get labelmap type: %s\n", err)
+		}
+	}
+	return datastore.NewTestRepo()
+}
+
+func newExportDataInstance(uuid dvid.UUID, t *testing.T, name dvid.InstanceName) *Data {
+	config := dvid.NewConfig()
+	dataservice, err := datastore.NewData(uuid, exportLabelsT, name, config)
+	if err != nil {
+		t.Fatalf("Unable to create labelmap instance %q: %v\n", name, err)
+	}
+	labels, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("Can't cast labels data service into Data\n")
+	}
+	return labels
+}
+
+func TestShardHandlerWithRealSpecs(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	// Load the real neuroglancer specs
+	data, err := os.ReadFile("../../test_data/mcns-ng-specs.json")
+	if err != nil {
+		t.Fatalf("Failed to read test spec file: %v", err)
+	}
+
+	var spec ngVolume
+	if err := json.Unmarshal(data, &spec); err != nil {
+		t.Fatalf("Failed to parse test spec: %v", err)
+	}
+
+	// Convert to export spec with directory
+	exportSpec := exportSpec{
+		ngVolume:  spec,
+		Directory: "/tmp/test_export",
+	}
+
+	// Create DVID test repo and labelmap instance
+	uuid, versionID := initExportTestRepo(t)
+	lbls := newExportDataInstance(uuid, t, "test_labelmap")
+	labelsCtx := datastore.NewVersionedCtx(lbls, versionID)
+
+	// Create shard handler and test initialization
+	handler := &shardHandler{}
+	err = handler.Initialize(labelsCtx, exportSpec)
+	if err != nil {
+		t.Fatalf("ShardHandler initialization failed: %v", err)
+	}
+
+	// Verify shard Z sizes were calculated for all scales
+	expectedScales := len(spec.Scales)
+	if len(handler.shardZSize) != expectedScales {
+		t.Errorf("Expected %d shard Z sizes, got %d", expectedScales, len(handler.shardZSize))
+	}
+
+	// Log the calculated shard Z sizes for each scale to verify they're reasonable
+	for i, size := range handler.shardZSize {
+		scale := &exportSpec.Scales[i]
+		totalBits := int(scale.Sharding.ShardBits + scale.Sharding.PreshiftBits + scale.Sharding.MinishardBits)
+		shardSideBits := totalBits / 3
+		expectedSize := int32(1) << shardSideBits
+		
+		if shardSideBits < 0 {
+			expectedSize = 1 // Due to our bounds checking
+		}
+		
+		t.Logf("Scale %d: ShardBits=%d, PreshiftBits=%d, MinishardBits=%d → TotalBits=%d → ShardSideBits=%d → ShardZSize=%d (expected=%d)",
+			i, scale.Sharding.ShardBits, scale.Sharding.PreshiftBits, scale.Sharding.MinishardBits,
+			totalBits, shardSideBits, size, expectedSize)
+			
+		if size != expectedSize {
+			t.Errorf("Scale %d: Expected shard Z size %d, got %d", i, expectedSize, size)
+		}
+		
+		if size <= 0 {
+			t.Errorf("Scale %d: Invalid shard Z size %d (should be positive)", i, size)
 		}
 	}
 }

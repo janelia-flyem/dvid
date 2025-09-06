@@ -154,10 +154,12 @@ $ dvid node <UUID> <data name> export-shards <spec path> <dest>
 	
 	For an example, see https://storage.googleapis.com/cns-full-clahe/info
 
-	This is an asynchronous operation that will write an Arrow IPC stream format to each shard file.
+	This is an asynchronous operation that will write an Arrow IPC file format to each shard file.
 	Shard files will include Arrow records for each block in the shard with the following fields:
 	{
-		"morton_code": <uint64>,
+		"chunk_x": <int32>,
+		"chunk_y": <int32>,
+		"chunk_z": <int32>,
 		"labels": [<uint64>, ...],
 		"supervoxels": [<uint64>, ...],
 		"compressed_data": <byte array>
