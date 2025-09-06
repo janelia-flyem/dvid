@@ -3,7 +3,7 @@ package labelmap
 import (
 	"encoding/json"
 	"fmt"
-	"math"
+	"math/bits"
 	"os"
 	"path"
 	"sync"
@@ -18,6 +18,15 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/ipc"
 	"github.com/apache/arrow/go/v14/arrow/memory"
 )
+
+// We assume that the export chunk sizes are equivalent to DVID chunk sizes (64x64x64).
+// So we hardwire this and throw an error if the specs don't match.
+const dvidChunkVoxelsPerDim = 64
+const dvidChunkBitsPerDim = 6
+const dvidChunkBitsTotal = 18
+
+// FinalShardZ is a sentinel value indicating that all shard writers should be closed.
+const FinalShardZ = -2
 
 type exportSpec struct {
 	ngVolume
@@ -43,11 +52,12 @@ type ngScale struct {
 	Sharding   ngShard        `json:"sharding"`
 	Size       dvid.Point3d   `json:"size"`
 
-	volChunkBits  uint8    // Number of bits to address chunks in volume (not per-chunk voxel bits)
-	numBits       [3]uint8 // required bits per dimension precomputed on init
-	maxBits       uint8    // max of required bits across dimensions
-	minishardMask uint64   // bit mask for minishard bits in hashed chunk ID
-	shardMask     uint64   // bit mask for shard bits in hashed chunk ID
+	chunkCoordBits    [3]uint8  // bits per dimension needed for chunk coordinates
+	totChunkCoordBits uint8     // total bits needed for chunk coordinates
+	gridSize          [3]uint32 // number of chunks in each dimension
+
+	minishardMask uint64 // bit mask for minishard bits in hashed chunk ID
+	shardMask     uint64 // bit mask for shard bits in hashed chunk ID
 }
 
 type ngShard struct {
@@ -64,38 +74,31 @@ type ngShard struct {
 // It computes the number of bits required for each dimension and sums them.
 // Also initializes numBits, maxBits and shard masks for Morton code calculation.
 func (ng *ngScale) initialize() error {
-	if len(ng.ChunkSizes) == 0 {
-		ng.volChunkBits = 0
-		return fmt.Errorf("neuroglancer scale has no chunk sizes defined")
-	}
-
 	if ng.Sharding.FormatType != "neuroglancer_uint64_sharded_v1" {
 		return fmt.Errorf("unsupported sharding format type: %s", ng.Sharding.FormatType)
 	}
-
+	if len(ng.ChunkSizes) == 0 {
+		return fmt.Errorf("neuroglancer scale has no chunk sizes defined")
+	}
 	chunkSize := ng.ChunkSizes[0] // neuroglancer multiscale spec can have multiple chunk sizes, use the first one
-	var totalBits uint8
-
-	// Calculate bits needed for each dimension and find max
 	for dim := 0; dim < 3; dim++ {
-		if chunkSize[dim] <= 0 {
-			ng.numBits[dim] = 0
-			continue
-		}
-
-		// Calculate number of chunks in this dimension
-		numChunks := float64(ng.Size[dim]) / float64(chunkSize[dim])
-		dimBits := uint8(math.Ceil(math.Log2(numChunks)))
-
-		ng.numBits[dim] = dimBits
-		totalBits += dimBits
-
-		if dimBits > ng.maxBits {
-			ng.maxBits = dimBits
+		if chunkSize[dim] != dvidChunkVoxelsPerDim {
+			return fmt.Errorf("neuroglancer chunk size %v for dim %d != DVID chunk size %d", chunkSize, dim, dvidChunkVoxelsPerDim)
 		}
 	}
 
-	ng.volChunkBits = totalBits
+	// Calculate bits needed for each dimension and total bits
+	ng.totChunkCoordBits = 0
+	ng.gridSize = [3]uint32{}
+	for dim := 0; dim < 3; dim++ {
+		chunksNeeded := ng.Size[dim] / chunkSize[dim]
+		if ng.Size[dim]%chunkSize[dim] != 0 {
+			chunksNeeded++
+		}
+		ng.gridSize[dim] = uint32(chunksNeeded)
+		ng.chunkCoordBits[dim] = uint8(bits.Len32(uint32(chunksNeeded)))
+		ng.totChunkCoordBits += ng.chunkCoordBits[dim]
+	}
 
 	// Calculate shard and minishard masks if sharding is enabled
 	const on uint64 = 0xFFFFFFFFFFFFFFFF
@@ -109,28 +112,20 @@ func (ng *ngScale) initialize() error {
 	return nil
 }
 
-// mortonCode computes the compressed Morton code for given block coordinates
-// This is adapted from the ngprecomputed storage implementation
-func (ng *ngScale) mortonCode(blockCoord dvid.ChunkPoint3d) uint64 {
-	var coords [3]uint64
-	for dim := uint8(0); dim < 3; dim++ {
-		coords[dim] = uint64(blockCoord[dim])
-	}
-
-	var mortonCode uint64
-	var outBit uint8
-	for curBit := uint8(0); curBit < ng.maxBits; curBit++ {
-		for dim := uint8(0); dim < 3; dim++ {
-			if curBit < ng.numBits[dim] {
-				// set mortonCode bit position outBit to value of coord[dim] curBit position
-				bitVal := coords[dim] & 0x0000000000000001
-				mortonCode |= (bitVal << outBit)
-				outBit++
-				coords[dim] = coords[dim] >> 1
+// mortonCode computes the compressed Morton code for given block coordinate.
+// From the reference implementation:
+// https://github.com/google/neuroglancer/blob/master/src/datasource/precomputed/volume.md#unsharded-chunk-storage
+func (ng *ngScale) mortonCode(blockCoord dvid.ChunkPoint3d) (morton_code uint64) {
+	j := 0
+	for i := 0; i < int(ng.totChunkCoordBits); i++ {
+		for dim := 0; dim < 3; dim++ {
+			if (1 << i) < ng.gridSize[dim] {
+				morton_code |= ((uint64(blockCoord[dim]) >> i) & 1) << j
+				j++
 			}
 		}
 	}
-	return mortonCode
+	return
 }
 
 // computeShardID calculates the shard ID from block coordinates
@@ -171,33 +166,39 @@ var blockSchema = arrow.NewSchema([]arrow.Field{
 }, nil)
 
 type shardWriter struct {
-	f         *os.File
-	ch        chan *BlockData   // Channel to receive block data for this shard
+	shardPath  string // Base path for shard files (without extension)
+	f          *os.File
+	ch         chan *BlockData // Channel to receive block data for this shard
+	lastShardZ int32           // Last Z coordinate of this shard (for tracking shard boundaries)
+
 	indexMap  map[string]uint64 // Map of chunk coordinates to Arrow record index
 	mapping   *VCache           // Cache for mapping supervoxels to agglomerated labels
 	version   dvid.VersionID    // Version ID for this export
-	wg        *sync.WaitGroup
-	writer    *ipc.Writer      // Arrow IPC writer
-	pool      memory.Allocator // Arrow memory allocator
-	recordNum uint64           // Counter for Arrow records written
-	mu        sync.Mutex       // Mutex to protect indexMap and recordNum
-	shardPath string           // Base path for shard files (without extension)
+	writer    *ipc.Writer       // Arrow IPC writer
+	pool      memory.Allocator  // Arrow memory allocator
+	recordNum uint64            // Counter for Arrow records written
+
+	wg *sync.WaitGroup
+	mu sync.Mutex // Mutex to protect indexMap and recordNum
 }
 
 // Start a goroutine to listen on the channel and write incoming block data to the shard file
 func (w *shardWriter) start() {
-	w.wg = &sync.WaitGroup{}
-	w.wg.Add(1)
-
 	// Initialize Arrow writer
 	w.pool = memory.NewGoAllocator()
 	w.writer = ipc.NewWriter(w.f, ipc.WithSchema(blockSchema))
 
 	go func() {
-		defer w.wg.Done()
 		defer func() {
-			if w.writer != nil {
-				w.writer.Close()
+			// Write the chunk index as a separate JSON file
+			if err := w.writeChunkIndex(); err != nil {
+				dvid.Errorf("Error writing chunk index for %s: %v", w.shardPath, err)
+			}
+
+			// close Arrow file after all data has been written
+			fname := w.f.Name()
+			if err := w.f.Close(); err != nil {
+				dvid.Errorf("error closing shard file %s: %v", fname, err)
 			}
 		}()
 
@@ -218,7 +219,9 @@ func (w *shardWriter) start() {
 			if err := w.writeBlock(block); err != nil {
 				dvid.Errorf("Error writing block %s (record %d) to shard file %s: %v", block.ChunkCoord, currentRecord, w.f.Name(), err)
 			}
+			dvid.Infof("Written block %s to shard file %s as record %d\n", block.ChunkCoord, w.f.Name(), currentRecord)
 		}
+		dvid.Infof("Shard writer for file %s finished after writing %d records\n", w.f.Name(), w.recordNum)
 	}()
 }
 
@@ -313,29 +316,6 @@ func (w *shardWriter) writeBlock(block *BlockData) error {
 	return w.writer.Write(record)
 }
 
-func (w *shardWriter) close() error {
-	dvid.Infof("Closing shard writer for file %s with %d records\n", w.f.Name(), w.recordNum)
-
-	close(w.ch)
-	w.wg.Wait()
-
-	// Close Arrow writer first (this finalizes the Arrow IPC format)
-	if w.writer != nil {
-		w.writer.Close()
-	}
-
-	// Write the chunk index as a separate JSON file
-	if err := w.writeChunkIndex(); err != nil {
-		dvid.Errorf("Error writing chunk index for %s: %v", w.shardPath, err)
-	}
-
-	// close Arrow file after all data has been written
-	if err := w.f.Close(); err != nil {
-		return fmt.Errorf("error closing shard file %s: %v", w.f.Name(), err)
-	}
-	return nil
-}
-
 // writeChunkIndex writes the chunk index as a separate JSON file
 func (w *shardWriter) writeChunkIndex() error {
 	w.mu.Lock()
@@ -364,12 +344,16 @@ func (w *shardWriter) writeChunkIndex() error {
 
 // Manage all shard files and channels
 type shardHandler struct {
-	path       string  // Path to the directory where shard files are stored
-	shardZSize []int32 // Size of each shard in Z direction at each scale
-	writers    map[uint64]*shardWriter
-	mapping    *VCache        // Cache for mapping supervoxels to agglomerated labels
-	version    dvid.VersionID // Version ID for this export
-	mu         sync.RWMutex
+	path           string  // Path to the directory where shard files are stored
+	shardDimVoxels []int32 // Size of each shard in Z direction at each scale
+	writers        map[uint64]*shardWriter
+	writeClosed    map[int32]bool // Track which Z slabs have been closed
+
+	mapping *VCache        // Cache for mapping supervoxels to agglomerated labels
+	version dvid.VersionID // Version ID for this export
+
+	mu      sync.RWMutex
+	chunkWG sync.WaitGroup
 }
 
 func (s *shardHandler) Initialize(ctx *datastore.VersionedCtx, exportSpec exportSpec) error {
@@ -385,7 +369,7 @@ func (s *shardHandler) Initialize(ctx *datastore.VersionedCtx, exportSpec export
 
 	// Initialize the scale information and shard Z sizes
 	s.path = exportSpec.Directory
-	s.shardZSize = make([]int32, len(exportSpec.Scales))
+	s.shardDimVoxels = make([]int32, len(exportSpec.Scales))
 
 	for level := range exportSpec.Scales {
 		scale := &exportSpec.Scales[level]
@@ -393,35 +377,46 @@ func (s *shardHandler) Initialize(ctx *datastore.VersionedCtx, exportSpec export
 			return fmt.Errorf("Aborting export-shards after initializing neuroglancer scale %d: %v", level, err)
 		}
 
-		// Determine shard size in Z based on shard bits and morton code interleaving.
+		// Determine max shard size in voxels based on bits allocated in sharding spec
+		// to chunk size, preshift bits, and minishard bits.
 		// Assumes no dimension extent is smaller than 1 shard.
-		shardSideBits := int(scale.Sharding.ShardBits+scale.Sharding.PreshiftBits+scale.Sharding.MinishardBits) / 3
-		if shardSideBits < 0 {
-			shardSideBits = 0
-		}
-		s.shardZSize[level] = int32(1) << shardSideBits
-		dvid.Infof("Exporting labelmap at scale %d with chunk size %v and shard Z size %d\n", level, scale.ChunkSizes[0], s.shardZSize[level])
+		shardSideBits := int(dvidChunkBitsTotal+scale.Sharding.PreshiftBits+scale.Sharding.MinishardBits) / 3
+		s.shardDimVoxels[level] = int32(1) << shardSideBits
+		dvid.Infof("Exporting labelmap at scale %d with chunk size %v and shard voxels along axes = %d\n", level, scale.ChunkSizes[0], s.shardDimVoxels[level])
 	}
 
 	// Set capacity of map to # of shards in XY in scale 0
 	hiresChunkSize := exportSpec.Scales[0].ChunkSizes[0]
-	shardArea := s.shardZSize[0] * s.shardZSize[0]
-	if shardArea == 0 {
-		shardArea = 1 // Prevent division by zero
-	}
+	shardArea := s.shardDimVoxels[0] * s.shardDimVoxels[0]
 	minNumShards := (hiresChunkSize[0] * hiresChunkSize[1]) / shardArea
 	s.writers = make(map[uint64]*shardWriter, minNumShards)
+	s.writeClosed = make(map[int32]bool)
 	return nil
 }
 
 // getLastShardZ computes the last Z coordinate covered by the shard containing blockZ
-func (sh *shardHandler) getLastShardZ(scale uint8, blockZ int32) int32 {
-	shardSize := sh.shardZSize[scale]
+func (s *shardHandler) getLastShardZ(scale uint8, blockZ int32) int32 {
+	shardSize := s.shardDimVoxels[scale]
 	shardStart := blockZ - (blockZ % shardSize)
 	return shardStart + shardSize - 1
 }
 
-func (s *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.ChunkPoint3d, ngScale *ngScale) (w *shardWriter, err error) {
+// shardOriginFromChunkCoord computes the voxel coordinate origin for the shard containing
+// the given chunk coordinate
+func (s *shardHandler) shardOriginFromChunkCoord(scale uint8, chunkCoord dvid.ChunkPoint3d) dvid.Point3d {
+	shardVoxelsPerDim := s.shardDimVoxels[scale] // Assuming cubic shards. TODO: handle non-cubic shards if needed
+	chunkOriginX := chunkCoord[0] * dvidChunkVoxelsPerDim
+	chunkOriginY := chunkCoord[1] * dvidChunkVoxelsPerDim
+	chunkOriginZ := chunkCoord[2] * dvidChunkVoxelsPerDim
+
+	return dvid.Point3d{
+		(chunkOriginX / shardVoxelsPerDim) * shardVoxelsPerDim,
+		(chunkOriginY / shardVoxelsPerDim) * shardVoxelsPerDim,
+		(chunkOriginZ / shardVoxelsPerDim) * shardVoxelsPerDim,
+	}
+}
+
+func (s *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.ChunkPoint3d) (w *shardWriter, err error) {
 	// First, check if writer already exists with read lock
 	s.mu.RLock()
 	if w, ok := s.writers[shardID]; ok {
@@ -439,11 +434,12 @@ func (s *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.Ch
 		return w, nil
 	}
 
-	// If writer does not exist, create a file and channel for this shard.
+	// If writer does not exist for this shard ID, create a goroutine with its own block channel.
 	w = &shardWriter{
-		ch:      make(chan *BlockData, 100), // Buffered channel to hold block data for this shard
-		mapping: s.mapping,
-		version: s.version,
+		ch:         make(chan *BlockData, 100), // Buffered channel to hold block data for this shard
+		lastShardZ: s.getLastShardZ(scale, chunkCoord[2]),
+		mapping:    s.mapping,
+		version:    s.version,
 	}
 
 	// Create scale directory (e.g., s0, s1, s2)
@@ -454,7 +450,7 @@ func (s *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.Ch
 	}
 
 	// Calculate voxel coordinates that correspond to this shard ID
-	shardOrigin := s.calculateShardOriginFromID(shardID, chunkCoord, ngScale)
+	shardOrigin := s.shardOriginFromChunkCoord(scale, chunkCoord)
 
 	// Create shard filename using voxel coordinates
 	baseName := fmt.Sprintf("%d_%d_%d", shardOrigin[0], shardOrigin[1], shardOrigin[2])
@@ -470,60 +466,25 @@ func (s *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.Ch
 	return w, nil
 }
 
-// calculateShardOriginFromID determines the voxel coordinate origin for the shard
-// by calculating the actual shard size based on the neuroglancer specification
-func (s *shardHandler) calculateShardOriginFromID(shardID uint64, anyChunkInShard dvid.ChunkPoint3d, ngScale *ngScale) dvid.Point3d {
-	if len(ngScale.ChunkSizes) == 0 {
-		return dvid.Point3d{0, 0, 0}
+func (s *shardHandler) closeWriters(lastShardZ int32) {
+	s.mu.RLock()
+	_, alreadyClosed := s.writeClosed[lastShardZ]
+	s.mu.RUnlock()
+	if alreadyClosed {
+		return
 	}
-	chunkSize := ngScale.ChunkSizes[0]
-
-	// Calculate the actual shard size in voxels based on the neuroglancer spec
-	// The shard size is determined by the lower-order bits: PreshiftBits + MinishardBits + VoxelBitsPerChunk
-	// For neuroglancer, we need voxel bits per chunk, not volume addressing bits
-	voxelBitsPerChunk := int(math.Log2(float64(chunkSize[0]))) * 3 // Assuming cubic chunks
-	totalLowerBits := int(ngScale.Sharding.PreshiftBits+ngScale.Sharding.MinishardBits) + voxelBitsPerChunk
-	bitsPerDim := totalLowerBits / 3
-
-	if bitsPerDim <= 0 {
-		return dvid.Point3d{0, 0, 0}
-	}
-
-	// Calculate shard size in voxels per dimension directly
-	shardSizeInVoxels := dvid.Point3d{
-		int32(1) << bitsPerDim, // 2^11 = 2048 voxels per dimension
-		int32(1) << bitsPerDim,
-		int32(1) << bitsPerDim,
-	}
-
-	// Calculate which shard this chunk belongs to by finding the shard grid coordinates
-	chunkVoxelCoord := dvid.Point3d{
-		anyChunkInShard[0] * chunkSize[0],
-		anyChunkInShard[1] * chunkSize[1],
-		anyChunkInShard[2] * chunkSize[2],
-	}
-
-	// Find the shard origin by rounding down to shard boundaries
-	shardOriginX := (chunkVoxelCoord[0] / shardSizeInVoxels[0]) * shardSizeInVoxels[0]
-	shardOriginY := (chunkVoxelCoord[1] / shardSizeInVoxels[1]) * shardSizeInVoxels[1]
-	shardOriginZ := (chunkVoxelCoord[2] / shardSizeInVoxels[2]) * shardSizeInVoxels[2]
-
-	return dvid.Point3d{shardOriginX, shardOriginY, shardOriginZ}
-}
-
-func (s *shardHandler) close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.writeClosed[lastShardZ] = true
 	for shardID, w := range s.writers {
-		fname := w.f.Name()
-		if err := w.close(); err != nil {
-			dvid.Errorf("Error closing shard file %s: %v", w.f.Name(), err)
+		if w.lastShardZ == lastShardZ || lastShardZ == FinalShardZ {
+			fname := w.f.Name()
+			close(w.ch)
+			dvid.Infof("Closed shard id %d -> shard file %s\n", shardID, fname)
+			delete(s.writers, shardID)
 		}
-		dvid.Infof("Closed shard id %d -> shard file %s\n", shardID, fname)
-		delete(s.writers, shardID)
 	}
-	return nil
 }
 
 // ExportData dumps the label blocks to local shard files corresponding to neuroglancer precomputed
@@ -542,9 +503,11 @@ func (d *Data) ExportData(ctx *datastore.VersionedCtx, spec exportSpec) error {
 	return nil
 }
 
-// goroutine to receive stream of block data over channel, decode, and write to shard file
+// goroutine to receive stream of block data over channel, decode, and send to correct shard writer
 func (d *Data) chunkHandler(ch <-chan *storage.Chunk, handler *shardHandler, exportSpec exportSpec) {
 	lastShardZ := handler.getLastShardZ(0, 0)
+
+	var numBlocks uint64
 	for c := range ch {
 		// Block keys are in ZYX order, but we will compute the morton code of block coordinates
 		// and shard id, using the latter to determine which worker to send the block to.
@@ -563,7 +526,6 @@ func (d *Data) chunkHandler(ch <-chan *storage.Chunk, handler *shardHandler, exp
 			dvid.Errorf("No neuroglancer scale %d defined for labelmap %q\n", scale, d.DataName())
 			continue
 		}
-		scaleStruct := &exportSpec.Scales[scale]
 
 		// Track shard boundaries for resetting the shard writers.
 		// Since blocks are read in ZYX order, if we cross a shard boundary in Z,
@@ -572,13 +534,9 @@ func (d *Data) chunkHandler(ch <-chan *storage.Chunk, handler *shardHandler, exp
 		// we will see all blocks for a given scale before moving to the next scale.
 		chunkX, chunkY, chunkZ := indexZYX.Unpack()
 		if chunkZ > lastShardZ {
-			handler.close()
+			handler.closeWriters(lastShardZ)
 			lastShardZ = handler.getLastShardZ(scale, chunkZ)
-			dvid.Infof("Export of %s: Now processing blocks for shard starting at Z %d (block %d)\n", d.DataName(), lastShardZ, chunkZ)
 		}
-
-		// Compute the shard ID based on the chunk coordinates
-		shardID := scaleStruct.computeShardID(chunkX, chunkY, chunkZ)
 
 		// Uncompress the block data
 		blockData, _, err := dvid.DeserializeData(c.V, true)
@@ -594,13 +552,22 @@ func (d *Data) chunkHandler(ch <-chan *storage.Chunk, handler *shardHandler, exp
 		}
 
 		// Send the block data to the appropriate shard writer
-		writer, err := handler.getWriter(shardID, scale, chunkCoord, scaleStruct)
+		scaleStruct := &exportSpec.Scales[scale]
+		shardID := scaleStruct.computeShardID(chunkX, chunkY, chunkZ)
+		writer, err := handler.getWriter(shardID, scale, chunkCoord)
 		if err != nil {
 			dvid.Errorf("Failed to get writer for shard %d: %v", shardID, err)
 			continue
 		}
 		writer.ch <- blockInfo
+		numBlocks++
+		if numBlocks%100000 == 0 {
+			dvid.Infof("Exported %d blocks for labelmap %q. Most recent block is %s, scale %d\n",
+				numBlocks, d.DataName(), chunkCoord, scale)
+		}
 	}
+	dvid.Infof("Chunk handler finished sending %d blocks for labelmap %q\n", numBlocks, d.DataName())
+
 }
 
 // readBlocksZYX reads blocks in native ZYX key order from the labelmap data and sends them to
@@ -612,6 +579,7 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, handler *shardHandler,
 
 	// Create a pool of workers to process blocks and send them to the appropriate shard writer.
 	const workers = 100
+	handler.chunkWG.Add(workers)
 	chunkCh := make(chan *storage.Chunk, 1000) // Buffered channel to hold chunks read from storage.
 	for i := 0; i < workers; i++ {
 		go d.chunkHandler(chunkCh, handler, spec)
@@ -650,7 +618,9 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, handler *shardHandler,
 	if err != nil {
 		dvid.Errorf("export: problem during process range: %v\n", err)
 	}
-	close(chunkCh)
-
 	timedLog.Infof("Finished reading labelmap %q %d blocks to exporting workers", d.DataName(), numBlocks)
+	close(chunkCh)
+	handler.chunkWG.Wait()
+	timedLog.Infof("All chunk handlers finished for labelmap %q", d.DataName())
+	handler.closeWriters(FinalShardZ)
 }
