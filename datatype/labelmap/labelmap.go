@@ -144,7 +144,7 @@ $ dvid node <UUID> <data name> dump <dump type> <file path>
 	dump type     One of "svcount", "mappings", or "indices".
 	file path     Absolute path to a writable file that the dvid server has write privileges to.
 
-$ dvid node <UUID> <data name> export-shards <spec path> <dest>
+$ dvid node <UUID> <data name> export-shards <spec path> <dest> <num scales>
 
 	Exports the labelmap data to local shard files corresponding to blocks that would be within different
 	shards using neuroglancer precomputed volume specification.
@@ -167,10 +167,11 @@ $ dvid node <UUID> <data name> export-shards <spec path> <dest>
 
     Arguments:
 
-    UUID        Hexadecimal string with enough characters to uniquely identify a version node.
-	data name	Name of data to add.
-	spec path   Absolute path to a JSON file with the volume specification.
-	dest     	Absolute path to a writable directory that the dvid server has write privileges to.
+    UUID         Hexadecimal string with enough characters to uniquely identify a version node.
+	data name	 Name of data to add.
+	spec path    Absolute path to a JSON file with the volume specification.
+	dest     	 Absolute path to a writable directory that the dvid server has write privileges to.
+	num scales   Number of scales to export starting with scale 0.  (e.g., 3 means scales 0, 1, and 2)
 
 $ dvid node <UUID> <data name> set-nextlabel <label>
 
@@ -2714,8 +2715,8 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 			return fmt.Errorf("poorly formatted export-shards command.  See command-line help")
 		}
 		// Parse the request
-		var uuidStr, dataName, cmdStr, specPath, outPath string
-		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &specPath, &outPath)
+		var uuidStr, dataName, cmdStr, specPath, outPath, numScalesStr string
+		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &specPath, &outPath, &numScalesStr)
 
 		uuid, v, err := datastore.MatchingUUID(uuidStr)
 		if err != nil {
@@ -2740,7 +2741,14 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		}
 
 		// Export the data asynchronously.
-		go d.ExportData(ctx, exportSpec{spec, outPath})
+		numScalesInt, err := strconv.Atoi(numScalesStr)
+		if err != nil {
+			return fmt.Errorf("error parsing numScales %q: %v", numScalesStr, err)
+		}
+		if numScalesInt < 1 || numScalesInt > 255 {
+			return fmt.Errorf("numScales must be between 1 and 255, got %d", numScalesInt)
+		}
+		go d.ExportData(ctx, exportSpec{ngVolume: spec, Directory: outPath, NumScales: uint8(numScalesInt)})
 
 		reply.Text = fmt.Sprintf("Asynchronously exporting shard files for data %q, uuid %s to directory: %s\n", d.DataName(), uuid, outPath)
 		return nil

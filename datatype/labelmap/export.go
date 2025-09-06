@@ -31,6 +31,7 @@ const FinalShardZ = -2
 type exportSpec struct {
 	ngVolume
 	Directory string `json:"directory"`
+	NumScales uint8  `json:"num_scales"`
 }
 
 type ngVolume struct {
@@ -499,7 +500,7 @@ func (d *Data) ExportData(ctx *datastore.VersionedCtx, spec exportSpec) error {
 	// Start the process to read blocks from storage and send them to the appropriate shard writers.
 	go d.readBlocksZYX(ctx, &handler, spec)
 
-	dvid.Infof("Beginning export of labelmap %q data to %s ...\n", d.DataName(), spec.Directory)
+	dvid.Infof("Beginning export of %d scale levels of labelmap %q data to %s ...\n", spec.NumScales, d.DataName(), spec.Directory)
 	return nil
 }
 
@@ -591,7 +592,7 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, handler *shardHandler,
 		return
 	}
 	begTKey := NewBlockTKeyByCoord(0, dvid.MinIndexZYX.ToIZYXString())
-	endTKey := NewBlockTKeyByCoord(0, dvid.MaxIndexZYX.ToIZYXString())
+	endTKey := NewBlockTKeyByCoord(spec.NumScales-1, dvid.MaxIndexZYX.ToIZYXString())
 
 	// Go through all labelmap blocks and send them to the workers.
 	var numBlocks uint64

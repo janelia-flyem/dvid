@@ -66,6 +66,7 @@ func getExportSpec(t *testing.T) exportSpec {
 	return exportSpec{
 		ngVolume:  spec,
 		Directory: "/tmp/test_export",
+		NumScales: 3,
 	}
 }
 
