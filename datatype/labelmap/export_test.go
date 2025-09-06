@@ -2,6 +2,7 @@ package labelmap
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"sync"
 	"testing"
@@ -13,7 +14,7 @@ import (
 
 func TestMortonCode(t *testing.T) {
 	scale := &ngScale{
-		chunkBits: 10, // 2^10 = 1024 chunks per dimension
+		volChunkBits: 10, // 2^10 = 1024 chunks per dimension
 		numBits:   [3]uint8{10, 10, 10},
 		maxBits:   30,
 	}
@@ -96,8 +97,8 @@ func TestNgScaleInitialize(t *testing.T) {
 	}
 
 	// Verify computed values
-	if scale.chunkBits == 0 {
-		t.Error("chunkBits should be set after initialize")
+	if scale.volChunkBits == 0 {
+		t.Error("volChunkBits should be set after initialize")
 	}
 
 	if scale.shardMask == 0 {
@@ -107,36 +108,12 @@ func TestNgScaleInitialize(t *testing.T) {
 	// Verify chunk bits calculation
 	// With size 1024 and chunk size 64, we have 1024/64 = 16 chunks per dimension
 	// 16 chunks requires 4 bits (log2(16) = 4), so total = 4*3 = 12 bits
-	expectedChunkBits := uint8(12)
-	if scale.chunkBits != expectedChunkBits {
-		t.Errorf("Expected chunkBits %d, got %d", expectedChunkBits, scale.chunkBits)
+	expectedVolChunkBits := uint8(12)
+	if scale.volChunkBits != expectedVolChunkBits {
+		t.Errorf("Expected volChunkBits %d, got %d", expectedVolChunkBits, scale.volChunkBits)
 	}
 }
 
-func TestCalculateShardOrigin(t *testing.T) {
-	handler := &shardHandler{}
-	scale := &ngScale{
-		ChunkSizes: []dvid.Point3d{{64, 64, 64}},
-		chunkBits:  6, // 2^6 = 64
-	}
-
-	testCases := []struct {
-		chunkCoord dvid.ChunkPoint3d
-		expected   dvid.Point3d
-	}{
-		{dvid.ChunkPoint3d{0, 0, 0}, dvid.Point3d{0, 0, 0}},
-		{dvid.ChunkPoint3d{1, 1, 1}, dvid.Point3d{64, 64, 64}},
-		{dvid.ChunkPoint3d{2, 0, 1}, dvid.Point3d{128, 0, 64}},
-		{dvid.ChunkPoint3d{-1, -1, -1}, dvid.Point3d{-64, -64, -64}},
-	}
-
-	for _, tc := range testCases {
-		result := handler.calculateShardOrigin(tc.chunkCoord, scale)
-		if result != tc.expected {
-			t.Errorf("calculateShardOrigin(%v) = %v, want %v", tc.chunkCoord, result, tc.expected)
-		}
-	}
-}
 
 // Test variables similar to labelmap_test.go
 var (
@@ -234,5 +211,197 @@ func TestShardHandlerWithRealSpecs(t *testing.T) {
 		if size <= 0 {
 			t.Errorf("Scale %d: Invalid shard Z size %d (should be positive)", i, size)
 		}
+	}
+}
+
+func TestShardFilenameMapping(t *testing.T) {
+	// Create a test ngScale with known sharding parameters
+	// Set up a large volume so we get meaningful chunk bits
+	// For a volume of 1M x 1M x 1M voxels with 64^3 chunks, we get ~16K chunks per dimension
+	// log2(16384) = 14 bits per dimension, so volChunkBits = 14*3 = 42
+	scale := &ngScale{
+		ChunkSizes: []dvid.Point3d{{64, 64, 64}},
+		Size:       dvid.Point3d{1048576, 1048576, 1048576}, // 1M x 1M x 1M voxels
+		Sharding: ngShard{
+			FormatType:    "neuroglancer_uint64_sharded_v1",
+			Hash:          "identity",
+			PreshiftBits:  9,
+			MinishardBits: 6,
+			ShardBits:     15,
+		},
+	}
+	
+	// Initialize the scale to set up computed values
+	err := scale.initialize()
+	if err != nil {
+		t.Fatalf("Failed to initialize scale: %v", err)
+	}
+	
+	// Log the actual volume chunk bits calculated  
+	t.Logf("Calculated volChunkBits: %d", scale.volChunkBits)
+	
+	handler := &shardHandler{}
+	
+	// Calculate expected shard size
+	// Calculate neuroglancer shard size with proper voxel bits per chunk (not volume addressing bits)
+	voxelBitsPerChunk := 18 // log2(64^3) = 18 bits per 64x64x64 chunk
+	totalLowerBits := int(scale.Sharding.PreshiftBits + scale.Sharding.MinishardBits) + voxelBitsPerChunk
+	bitsPerDim := totalLowerBits / 3
+	shardSizeInVoxels := int32(1) << bitsPerDim  // 2^11 = 2048 voxels per dimension
+	shardSizeInChunks := shardSizeInVoxels / 64  // 2048/64 = 32 chunks per dimension
+	
+	t.Logf("PreshiftBits=%d, MinishardBits=%d, VoxelBitsPerChunk=%d", 
+		scale.Sharding.PreshiftBits, scale.Sharding.MinishardBits, voxelBitsPerChunk)
+	t.Logf("Total lower bits=%d, bits per dim=%d", totalLowerBits, bitsPerDim)  
+	t.Logf("Shard size: %d voxels per dim = %d chunks per dim", shardSizeInVoxels, shardSizeInChunks)
+	
+	// Test cases with specific chunk coordinates that should fall into different shards
+	// With shard size of 32 chunks per dimension (2048 voxels), chunks beyond that should be in different shards
+	testCases := []struct {
+		name       string
+		chunkCoord dvid.ChunkPoint3d
+		expectedShardOrigin dvid.Point3d // Expected voxel origin of the shard
+	}{
+		{"Origin shard", dvid.ChunkPoint3d{0, 0, 0}, dvid.Point3d{0, 0, 0}},
+		{"Still in origin shard", dvid.ChunkPoint3d{10, 20, 30}, dvid.Point3d{0, 0, 0}},
+		{"Still in origin shard max", dvid.ChunkPoint3d{31, 31, 31}, dvid.Point3d{0, 0, 0}},
+		{"Next X shard", dvid.ChunkPoint3d{32, 0, 0}, dvid.Point3d{shardSizeInVoxels, 0, 0}},
+		{"Next Y shard", dvid.ChunkPoint3d{0, 32, 0}, dvid.Point3d{0, shardSizeInVoxels, 0}}, 
+		{"Next Z shard", dvid.ChunkPoint3d{0, 0, 32}, dvid.Point3d{0, 0, shardSizeInVoxels}},
+		{"Diagonal next shard", dvid.ChunkPoint3d{32, 32, 32}, dvid.Point3d{shardSizeInVoxels, shardSizeInVoxels, shardSizeInVoxels}},
+		{"Large coords shard", dvid.ChunkPoint3d{100, 200, 300}, dvid.Point3d{
+			(100 / shardSizeInChunks) * shardSizeInVoxels,
+			(200 / shardSizeInChunks) * shardSizeInVoxels,
+			(300 / shardSizeInChunks) * shardSizeInVoxels,
+		}},
+	}
+	
+	// Track filename to shard ID mapping to verify uniqueness
+	filenameToShardID := make(map[string]uint64)
+	shardIDToFilename := make(map[uint64]string)
+	
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Calculate shard ID using the scale's method
+			actualShardID := scale.computeShardID(tc.chunkCoord[0], tc.chunkCoord[1], tc.chunkCoord[2])
+			
+			// Calculate the shard origin using our method
+			shardOrigin := handler.calculateShardOriginFromID(actualShardID, tc.chunkCoord, scale)
+			filename := fmt.Sprintf("%d_%d_%d.arrow", shardOrigin[0], shardOrigin[1], shardOrigin[2])
+			
+			t.Logf("Chunk %v -> Shard ID %d -> Origin %v -> Filename %s", 
+				tc.chunkCoord, actualShardID, shardOrigin, filename)
+				
+			// Verify the calculated shard origin matches expected
+			if shardOrigin != tc.expectedShardOrigin {
+				t.Errorf("Chunk %v: Expected shard origin %v, got %v", 
+					tc.chunkCoord, tc.expectedShardOrigin, shardOrigin)
+			}
+			
+			// Verify that the same shard ID always produces the same filename
+			if existingFilename, exists := shardIDToFilename[actualShardID]; exists {
+				if existingFilename != filename {
+					t.Errorf("Shard ID %d produced different filenames: %s vs %s", actualShardID, existingFilename, filename)
+				}
+			} else {
+				shardIDToFilename[actualShardID] = filename
+			}
+			
+			// Verify that different shard IDs produce different filenames (filename uniqueness)
+			if existingShardID, exists := filenameToShardID[filename]; exists {
+				if existingShardID != actualShardID {
+					t.Errorf("Filename %s maps to multiple shard IDs: %d and %d", filename, existingShardID, actualShardID)
+				}
+			} else {
+				filenameToShardID[filename] = actualShardID
+			}
+		})
+	}
+	
+	// Test that chunks mapping to the same shard ID produce the same filename
+	t.Run("SameShardSameFilename", func(t *testing.T) {
+		// Find chunks that should map to the same shard (if any exist)
+		chunk1 := dvid.ChunkPoint3d{10, 20, 30}
+		chunk2 := dvid.ChunkPoint3d{11, 20, 30} // Slightly different coordinate
+		
+		shardID1 := scale.computeShardID(chunk1[0], chunk1[1], chunk1[2])
+		shardID2 := scale.computeShardID(chunk2[0], chunk2[1], chunk2[2])
+		
+		shardOrigin1 := handler.calculateShardOriginFromID(shardID1, chunk1, scale)
+		shardOrigin2 := handler.calculateShardOriginFromID(shardID2, chunk2, scale)
+		
+		filename1 := fmt.Sprintf("%d_%d_%d.arrow", shardOrigin1[0], shardOrigin1[1], shardOrigin1[2])
+		filename2 := fmt.Sprintf("%d_%d_%d.arrow", shardOrigin2[0], shardOrigin2[1], shardOrigin2[2])
+		
+		if shardID1 == shardID2 {
+			// If they map to the same shard, filenames must be identical
+			if filename1 != filename2 {
+				t.Errorf("Chunks with same shard ID %d produced different filenames: %s vs %s", shardID1, filename1, filename2)
+			}
+			t.Logf("Chunks %v and %v both map to shard %d -> filename %s", chunk1, chunk2, shardID1, filename1)
+		} else {
+			// If they map to different shards, filenames must be different
+			if filename1 == filename2 {
+				t.Errorf("Chunks with different shard IDs (%d, %d) produced same filename: %s", shardID1, shardID2, filename1)
+			}
+			t.Logf("Chunk %v -> shard %d -> filename %s", chunk1, shardID1, filename1)
+			t.Logf("Chunk %v -> shard %d -> filename %s", chunk2, shardID2, filename2)
+		}
+	})
+}
+
+func TestShardFilenameConsistency(t *testing.T) {
+	// Test with the real neuroglancer specs to ensure consistency
+	data, err := os.ReadFile("../../test_data/mcns-ng-specs.json")
+	if err != nil {
+		t.Fatalf("Failed to read test spec file: %v", err)
+	}
+
+	var spec ngVolume
+	if err := json.Unmarshal(data, &spec); err != nil {
+		t.Fatalf("Failed to parse test spec: %v", err)
+	}
+
+	handler := &shardHandler{}
+	
+	// Test each scale in the spec
+	for scaleIdx, scale := range spec.Scales {
+		t.Run(fmt.Sprintf("Scale%d", scaleIdx), func(t *testing.T) {
+			err := scale.initialize()
+			if err != nil {
+				t.Fatalf("Failed to initialize scale %d: %v", scaleIdx, err)
+			}
+			
+			// Test a variety of chunk coordinates
+			testChunks := []dvid.ChunkPoint3d{
+				{0, 0, 0},
+				{1, 0, 0},
+				{0, 1, 0},
+				{0, 0, 1},
+				{5, 10, 15},
+				{100, 200, 300},
+			}
+			
+			filenameMap := make(map[uint64]string)
+			
+			for _, chunk := range testChunks {
+				shardID := scale.computeShardID(chunk[0], chunk[1], chunk[2])
+				shardOrigin := handler.calculateShardOriginFromID(shardID, chunk, &scale)
+				filename := fmt.Sprintf("%d_%d_%d.arrow", shardOrigin[0], shardOrigin[1], shardOrigin[2])
+				
+				// Verify consistency: same shard ID should always produce same filename
+				if existingFilename, exists := filenameMap[shardID]; exists {
+					if existingFilename != filename {
+						t.Errorf("Scale %d: Shard ID %d produced inconsistent filenames: %s vs %s", 
+							scaleIdx, shardID, existingFilename, filename)
+					}
+				} else {
+					filenameMap[shardID] = filename
+				}
+				
+				t.Logf("Scale %d: Chunk %v -> Shard ID %d -> Filename %s", 
+					scaleIdx, chunk, shardID, filename)
+			}
+		})
 	}
 }

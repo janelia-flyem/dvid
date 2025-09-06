@@ -43,7 +43,7 @@ type ngScale struct {
 	Sharding   ngShard        `json:"sharding"`
 	Size       dvid.Point3d   `json:"size"`
 
-	chunkBits     uint8    // Number of bits in each block, e.g., 18 for 64x64x64 blocks
+	volChunkBits  uint8    // Number of bits to address chunks in volume (not per-chunk voxel bits)
 	numBits       [3]uint8 // required bits per dimension precomputed on init
 	maxBits       uint8    // max of required bits across dimensions
 	minishardMask uint64   // bit mask for minishard bits in hashed chunk ID
@@ -60,12 +60,12 @@ type ngShard struct {
 	DataEncoding  string `json:"data_encoding"`            // "raw" or "gzip"
 }
 
-// initialize calculates and sets the chunkBits field based on the first ChunkSize.
+// initialize calculates and sets the volChunkBits field based on the first ChunkSize.
 // It computes the number of bits required for each dimension and sums them.
 // Also initializes numBits, maxBits and shard masks for Morton code calculation.
 func (ng *ngScale) initialize() error {
 	if len(ng.ChunkSizes) == 0 {
-		ng.chunkBits = 0
+		ng.volChunkBits = 0
 		return fmt.Errorf("neuroglancer scale has no chunk sizes defined")
 	}
 
@@ -95,7 +95,7 @@ func (ng *ngScale) initialize() error {
 		}
 	}
 
-	ng.chunkBits = totalBits
+	ng.volChunkBits = totalBits
 
 	// Calculate shard and minishard masks if sharding is enabled
 	const on uint64 = 0xFFFFFFFFFFFFFFFF
@@ -314,6 +314,8 @@ func (w *shardWriter) writeBlock(block *BlockData) error {
 }
 
 func (w *shardWriter) close() error {
+	dvid.Infof("Closing shard writer for file %s with %d records\n", w.f.Name(), w.recordNum)
+
 	close(w.ch)
 	w.wg.Wait()
 
@@ -444,15 +446,15 @@ func (s *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.Ch
 		version: s.version,
 	}
 
-	// Calculate shard voxel origin
-	shardOrigin := s.calculateShardOrigin(chunkCoord, ngScale)
-
 	// Create scale directory (e.g., s0, s1, s2)
 	scaleDir := fmt.Sprintf("s%d", scale)
 	scalePath := path.Join(s.path, scaleDir)
 	if err = os.MkdirAll(scalePath, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create scale directory %s: %v", scalePath, err)
 	}
+
+	// Calculate voxel coordinates that correspond to this shard ID
+	shardOrigin := s.calculateShardOriginFromID(shardID, chunkCoord, ngScale)
 
 	// Create shard filename using voxel coordinates
 	baseName := fmt.Sprintf("%d_%d_%d", shardOrigin[0], shardOrigin[1], shardOrigin[2])
@@ -468,30 +470,45 @@ func (s *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.Ch
 	return w, nil
 }
 
-// calculateShardOrigin determines the voxel coordinate origin for the shard containing the given chunk
-func (s *shardHandler) calculateShardOrigin(chunkCoord dvid.ChunkPoint3d, ngScale *ngScale) dvid.Point3d {
+// calculateShardOriginFromID determines the voxel coordinate origin for the shard
+// by calculating the actual shard size based on the neuroglancer specification
+func (s *shardHandler) calculateShardOriginFromID(shardID uint64, anyChunkInShard dvid.ChunkPoint3d, ngScale *ngScale) dvid.Point3d {
 	if len(ngScale.ChunkSizes) == 0 {
 		return dvid.Point3d{0, 0, 0}
 	}
 	chunkSize := ngScale.ChunkSizes[0]
 
-	// Calculate shard size in chunks for each dimension
-	// This uses the total shard bits distributed across 3 dimensions
-	totalShardBits := ngScale.Sharding.ShardBits + ngScale.Sharding.MinishardBits + ngScale.Sharding.PreshiftBits
-	shardBitsPerDim := totalShardBits / 3
-	shardSizeInChunks := int32(1) << shardBitsPerDim
+	// Calculate the actual shard size in voxels based on the neuroglancer spec
+	// The shard size is determined by the lower-order bits: PreshiftBits + MinishardBits + VoxelBitsPerChunk
+	// For neuroglancer, we need voxel bits per chunk, not volume addressing bits
+	voxelBitsPerChunk := int(math.Log2(float64(chunkSize[0]))) * 3 // Assuming cubic chunks
+	totalLowerBits := int(ngScale.Sharding.PreshiftBits+ngScale.Sharding.MinishardBits) + voxelBitsPerChunk
+	bitsPerDim := totalLowerBits / 3
 
-	// Calculate which shard this chunk belongs to
-	shardCoordX := chunkCoord[0] / shardSizeInChunks
-	shardCoordY := chunkCoord[1] / shardSizeInChunks
-	shardCoordZ := chunkCoord[2] / shardSizeInChunks
+	if bitsPerDim <= 0 {
+		return dvid.Point3d{0, 0, 0}
+	}
 
-	// Convert shard coordinates to voxel coordinates (origin of the shard)
-	voxelOriginX := shardCoordX * shardSizeInChunks * chunkSize[0]
-	voxelOriginY := shardCoordY * shardSizeInChunks * chunkSize[1]
-	voxelOriginZ := shardCoordZ * shardSizeInChunks * chunkSize[2]
+	// Calculate shard size in voxels per dimension directly
+	shardSizeInVoxels := dvid.Point3d{
+		int32(1) << bitsPerDim, // 2^11 = 2048 voxels per dimension
+		int32(1) << bitsPerDim,
+		int32(1) << bitsPerDim,
+	}
 
-	return dvid.Point3d{voxelOriginX, voxelOriginY, voxelOriginZ}
+	// Calculate which shard this chunk belongs to by finding the shard grid coordinates
+	chunkVoxelCoord := dvid.Point3d{
+		anyChunkInShard[0] * chunkSize[0],
+		anyChunkInShard[1] * chunkSize[1],
+		anyChunkInShard[2] * chunkSize[2],
+	}
+
+	// Find the shard origin by rounding down to shard boundaries
+	shardOriginX := (chunkVoxelCoord[0] / shardSizeInVoxels[0]) * shardSizeInVoxels[0]
+	shardOriginY := (chunkVoxelCoord[1] / shardSizeInVoxels[1]) * shardSizeInVoxels[1]
+	shardOriginZ := (chunkVoxelCoord[2] / shardSizeInVoxels[2]) * shardSizeInVoxels[2]
+
+	return dvid.Point3d{shardOriginX, shardOriginY, shardOriginZ}
 }
 
 func (s *shardHandler) close() error {
@@ -620,8 +637,13 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, handler *shardHandler,
 		chunkCh <- c
 
 		numBlocks++
-		if numBlocks%10000 == 0 {
-			timedLog.Infof("Read up to block %d with chunk channel at %d", numBlocks, len(chunkCh))
+		if numBlocks%100000 == 0 {
+			scale, indexZYX, err := DecodeBlockTKey(c.K)
+			if err != nil {
+				dvid.Errorf("Couldn't decode label block key %v for data %q\n", c.K, d.DataName())
+			} else {
+				timedLog.Infof("Read %d blocks. Recently at scale %d, chunk %s", numBlocks, scale, indexZYX)
+			}
 		}
 		return nil
 	})
