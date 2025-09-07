@@ -132,6 +132,7 @@ func TestShardHandlerWithRealSpecs(t *testing.T) {
 	if !foundJSON {
 		t.Fatalf("After half second, did not find expected shard json file %q\n", jsonFile)
 	}
+	dvid.Infof("Found expected shard files %q and %q\n", arrowFile, jsonFile)
 }
 
 func getTestDataInstance(t *testing.T) (*Data, dvid.UUID, dvid.VersionID) {

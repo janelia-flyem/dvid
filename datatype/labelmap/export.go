@@ -220,7 +220,6 @@ func (w *shardWriter) start() {
 			if err := w.writeBlock(block); err != nil {
 				dvid.Errorf("Error writing block %s (record %d) to shard file %s: %v", block.ChunkCoord, currentRecord, w.f.Name(), err)
 			}
-			dvid.Infof("Written block %s to shard file %s as record %d\n", block.ChunkCoord, w.f.Name(), currentRecord)
 		}
 		dvid.Infof("Shard writer for file %s finished after writing %d records\n", w.f.Name(), w.recordNum)
 	}()
@@ -340,6 +339,7 @@ func (w *shardWriter) writeChunkIndex() error {
 		return fmt.Errorf("failed to write chunk index to %s: %v", jsonPath, err)
 	}
 
+	dvid.Infof("Wrote chunk index file %s with %d entries\n", jsonPath, len(w.indexMap))
 	return nil
 }
 
@@ -567,8 +567,8 @@ func (d *Data) chunkHandler(ch <-chan *storage.Chunk, handler *shardHandler, exp
 				numBlocks, d.DataName(), chunkCoord, scale)
 		}
 	}
+	handler.chunkWG.Done()
 	dvid.Infof("Chunk handler finished sending %d blocks for labelmap %q\n", numBlocks, d.DataName())
-
 }
 
 // readBlocksZYX reads blocks in native ZYX key order from the labelmap data and sends them to
@@ -611,7 +611,9 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, handler *shardHandler,
 			if err != nil {
 				dvid.Errorf("Couldn't decode label block key %v for data %q\n", c.K, d.DataName())
 			} else {
-				timedLog.Infof("Read %d blocks. Recently at scale %d, chunk %s", numBlocks, scale, indexZYX)
+				chunkX, chunkY, chunkZ := indexZYX.Unpack()
+				timedLog.Infof("Read %d blocks. Recently at scale %d, chunk (%d,%d,%d)",
+					numBlocks, scale, chunkX, chunkY, chunkZ)
 			}
 		}
 		return nil
