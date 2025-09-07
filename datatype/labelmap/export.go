@@ -3,6 +3,7 @@ package labelmap
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/bits"
 	"os"
 	"path"
@@ -17,6 +18,8 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/array"
 	"github.com/apache/arrow/go/v14/arrow/ipc"
 	"github.com/apache/arrow/go/v14/arrow/memory"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 // We assume that the export chunk sizes are equivalent to DVID chunk sizes (64x64x64).
@@ -163,7 +166,15 @@ var blockSchema = arrow.NewSchema([]arrow.Field{
 	{Name: "chunk_z", Type: arrow.PrimitiveTypes.Int32},
 	{Name: "labels", Type: arrow.ListOf(arrow.PrimitiveTypes.Uint64)},
 	{Name: "supervoxels", Type: arrow.ListOf(arrow.PrimitiveTypes.Uint64)},
-	{Name: "dvid_compressed_block", Type: arrow.BinaryTypes.Binary},
+	{
+		Name: "dvid_compressed_block",
+		Type: arrow.BinaryTypes.Binary,
+		Metadata: arrow.NewMetadata(
+			[]string{"compression", "codec"},
+			[]string{"true", "zstd"},
+		),
+	},
+	{Name: "uncompressed_size", Type: arrow.PrimitiveTypes.Uint32},
 }, nil)
 
 type shardWriter struct {
@@ -179,19 +190,29 @@ type shardWriter struct {
 	writer    *ipc.Writer       // Arrow IPC writer
 	pool      memory.Allocator  // Arrow memory allocator
 	recordNum uint64            // Counter for Arrow records written
+	zenc      *zstd.Encoder     // per-writer encoder, not shared across goroutines
 
 	wg *sync.WaitGroup
 	mu sync.Mutex // Mutex to protect indexMap and recordNum
 }
 
 // Start a goroutine to listen on the channel and write incoming block data to the shard file
-func (w *shardWriter) start() {
+func (w *shardWriter) start() error {
 	// Initialize Arrow writer
 	w.pool = memory.NewGoAllocator()
 	w.writer = ipc.NewWriter(w.f, ipc.WithSchema(blockSchema))
 
+	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
+	if err != nil {
+		return fmt.Errorf("zstd encoder create failed for %s: %v", w.shardPath, err)
+	}
+	w.zenc = enc
+
 	go func() {
 		defer func() {
+			if err := w.writer.Close(); err != nil {
+				dvid.Errorf("error closing Arrow IPC writer for %s: %v", w.f.Name(), err)
+			}
 			// Write the chunk index as a separate JSON file
 			if err := w.writeChunkIndex(); err != nil {
 				dvid.Errorf("Error writing chunk index for %s: %v", w.shardPath, err)
@@ -224,6 +245,8 @@ func (w *shardWriter) start() {
 		}
 		dvid.Infof("Shard writer for file %s finished after writing %d records\n", w.f.Name(), w.recordNum)
 	}()
+
+	return nil
 }
 
 // writeBlock writes a single block's data to the shard file in Arrow format.
@@ -253,6 +276,7 @@ func (w *shardWriter) writeBlock(block *BlockData) error {
 	labelsBuilder := array.NewListBuilder(w.pool, arrow.PrimitiveTypes.Uint64)
 	supervoxelsBuilder := array.NewListBuilder(w.pool, arrow.PrimitiveTypes.Uint64)
 	compressedBuilder := array.NewBinaryBuilder(w.pool, arrow.BinaryTypes.Binary)
+	usizeBuilder := array.NewUint32Builder(w.pool)
 
 	defer func() {
 		coordXBuilder.Release()
@@ -261,6 +285,7 @@ func (w *shardWriter) writeBlock(block *BlockData) error {
 		labelsBuilder.Release()
 		supervoxelsBuilder.Release()
 		compressedBuilder.Release()
+		usizeBuilder.Release()
 	}()
 
 	// Append coordinate data
@@ -283,11 +308,24 @@ func (w *shardWriter) writeBlock(block *BlockData) error {
 	}
 
 	// Append compressed block data
-	compressedData, err := b.MarshalBinary()
+	raw, err := b.MarshalBinary()
 	if err != nil {
 		return fmt.Errorf("Failed to marshal block data for %s: %v\n", block.ChunkCoord, err)
 	}
-	compressedBuilder.Append(compressedData)
+
+	// Append uncompressed size (Uint32)
+	if len(raw) > math.MaxUint32 {
+		return fmt.Errorf("raw block too large: %d bytes", len(raw))
+	}
+	usizeBuilder.Append(uint32(len(raw)))
+
+	// zstd-compress the raw bytes.
+	// EncodeAll emits a full zstd frame. Pre-size dst to ~half to reduce allocs.
+	if w.zenc == nil {
+		return fmt.Errorf("zstd encoder not initialized for shard %s", w.shardPath)
+	}
+	compressed := w.zenc.EncodeAll(raw, make([]byte, 0, len(raw)/2))
+	compressedBuilder.Append(compressed)
 
 	// Build arrays
 	coordXArray := coordXBuilder.NewArray()
@@ -296,6 +334,7 @@ func (w *shardWriter) writeBlock(block *BlockData) error {
 	labelsArray := labelsBuilder.NewArray()
 	supervoxelsArray := supervoxelsBuilder.NewArray()
 	compressedArray := compressedBuilder.NewArray()
+	usizeArray := usizeBuilder.NewArray()
 
 	defer func() {
 		coordXArray.Release()
@@ -304,12 +343,18 @@ func (w *shardWriter) writeBlock(block *BlockData) error {
 		labelsArray.Release()
 		supervoxelsArray.Release()
 		compressedArray.Release()
+		usizeArray.Release()
 	}()
 
 	// Create record batch
 	record := array.NewRecord(blockSchema, []arrow.Array{
-		coordXArray, coordYArray, coordZArray,
-		labelsArray, supervoxelsArray, compressedArray,
+		coordXArray,      // chunk_x
+		coordYArray,      // chunk_y
+		coordZArray,      // chunk_z
+		labelsArray,      // labels
+		supervoxelsArray, // supervoxels
+		compressedArray,  // dvid_compressed_block  (zstd)
+		usizeArray,       // uncompressed_size      (bytes)
 	}, 1)
 	defer record.Release()
 
@@ -465,7 +510,9 @@ func (s *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.Ch
 		return nil, fmt.Errorf("failed to open shard file %s: %v", filename, err)
 	}
 	s.writers[shardID] = w
-	w.start()
+	if err := w.start(); err != nil {
+		return nil, fmt.Errorf("failed to start shard writer for %s: %v", filename, err)
+	}
 	dvid.Infof("Created shard writer %d -> shard file %s\n", shardID, filename)
 	return w, nil
 }
