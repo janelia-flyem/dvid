@@ -7,7 +7,9 @@ import (
 	"math/bits"
 	"os"
 	"path"
+	"runtime/metrics"
 	"sync"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -198,9 +200,16 @@ type shardWriter struct {
 
 // Start a goroutine to listen on the channel and write incoming block data to the shard file
 func (w *shardWriter) start() error {
-	// Initialize Arrow writer
-	w.pool = memory.NewGoAllocator()
-	w.writer = ipc.NewWriter(w.f, ipc.WithSchema(blockSchema))
+	// Initialize Arrow writer.
+	// See ExportArchitectureAnalysis.md in labelmap package for discussion.
+	base := memory.NewGoAllocator()
+	tracked := memory.NewCheckedAllocator(base)
+	w.pool = tracked
+	w.writer = ipc.NewWriter(w.f,
+		ipc.WithSchema(blockSchema),
+		ipc.WithZstd(),                // Enable ZSTD compression
+		ipc.WithMinSpaceSavings(0.05), // Skip compression unless it saves 5%+
+	)
 
 	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
 	if err != nil {
@@ -210,18 +219,35 @@ func (w *shardWriter) start() error {
 
 	go func() {
 		defer func() {
+			fname := w.f.Name()
 			if err := w.writer.Close(); err != nil {
-				dvid.Errorf("error closing Arrow IPC writer for %s: %v", w.f.Name(), err)
+				dvid.Errorf("Error closing Arrow IPC writer for %s: %v", fname, err)
 			}
+
 			// Write the chunk index as a separate JSON file
 			if err := w.writeChunkIndex(); err != nil {
 				dvid.Errorf("Error writing chunk index for %s: %v", w.shardPath, err)
 			}
 
 			// close Arrow file after all data has been written
-			fname := w.f.Name()
 			if err := w.f.Close(); err != nil {
-				dvid.Errorf("error closing shard file %s: %v", fname, err)
+				dvid.Errorf("Rrror closing shard file %s: %v", fname, err)
+			}
+
+			// Release zstd encoder resources
+			if w.zenc != nil {
+				if err := w.zenc.Close(); err != nil {
+					dvid.Errorf("Shard writer for %s -- error closing zstd encoder for %s: %v",
+						fname, w.shardPath, err)
+				}
+			}
+
+			// Report any memory leaks
+			if ca, ok := w.pool.(*memory.CheckedAllocator); ok {
+				if ca.CurrentAlloc() != 0 {
+					dvid.Errorf("Shard writer for %s -- Arrow allocator leak for %s: %d bytes still allocated",
+						fname, w.shardPath, ca.CurrentAlloc())
+				}
 			}
 		}()
 
@@ -547,13 +573,15 @@ func (s *shardHandler) closeWriters(lastShardZ int32) {
 // volume specification. This is a goroutine that is called asynchronously so should provide feedback
 // via log and no response to client.
 func (d *Data) ExportData(ctx *datastore.VersionedCtx, spec exportSpec) error {
+	stopResMonitor := startResourceMonitor(10 * time.Second)
+
 	var handler shardHandler
 	if err := handler.Initialize(ctx, spec); err != nil {
 		return fmt.Errorf("couldn't initialize shard handler for labelmap %q: %v", d.DataName(), err)
 	}
 
 	// Start the process to read blocks from storage and send them to the appropriate shard writers.
-	go d.readBlocksZYX(ctx, &handler, spec)
+	go d.readBlocksZYX(ctx, &handler, spec, stopResMonitor)
 
 	dvid.Infof("Beginning export of %d scale levels of labelmap %q data to %s ...\n", spec.NumScales, d.DataName(), spec.Directory)
 	return nil
@@ -629,7 +657,7 @@ func (d *Data) chunkHandler(ch <-chan *storage.Chunk, handler *shardHandler, exp
 
 // readBlocksZYX reads blocks in native ZYX key order from the labelmap data and sends them to
 // appropriate shard writers.
-func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, handler *shardHandler, spec exportSpec) {
+func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, handler *shardHandler, spec exportSpec, stopResMonitor chan struct{}) {
 	// Read blocks from the labelmap data and send them to the blocks channel.
 	// This is a long-running operation, so it should not block the main thread.
 	timedLog := dvid.NewTimeLog()
@@ -682,4 +710,55 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, handler *shardHandler,
 	handler.chunkWG.Wait()
 	timedLog.Infof("All chunk handlers finished for labelmap %q", d.DataName())
 	handler.closeWriters(FinalShardZ)
+	close(stopResMonitor)
+}
+
+func startResourceMonitor(interval time.Duration) chan struct{} {
+	stop := make(chan struct{})
+
+	go func() {
+		// Pick a few useful metrics
+		names := []string{
+			"/memory/classes/heap/objects:bytes",
+			"/memory/classes/heap/free:bytes",
+			"/memory/classes/metadata/other:bytes",
+			"/gc/heap/objects:objects",
+			"/gc/cycles/automatic:gc-cycles",
+			"/sched/goroutines:goroutines",
+		}
+		samples := make([]metrics.Sample, len(names))
+		for i, n := range names {
+			samples[i].Name = n
+		}
+
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				metrics.Read(samples)
+				// extract values
+				m := func(name string) metrics.Sample {
+					for _, s := range samples {
+						if s.Name == name {
+							return s
+						}
+					}
+					return metrics.Sample{}
+				}
+				heapObjects := m("/memory/classes/heap/objects:bytes").Value.Uint64()
+				heapFree := m("/memory/classes/heap/free:bytes").Value.Uint64()
+				meta := m("/memory/classes/metadata/other:bytes").Value.Uint64()
+				gcs := m("/gc/cycles/automatic:gc-cycles").Value.Uint64()
+				gr := m("/sched/goroutines:goroutines").Value.Uint64()
+
+				dvid.Infof("[resmon] goroutines=%d heap_objects=%d heap_free=%d metadata=%d gc_cycles=%d",
+					gr, heapObjects, heapFree, meta, gcs)
+
+			case <-stop:
+				return
+			}
+		}
+	}()
+	return stop
 }
