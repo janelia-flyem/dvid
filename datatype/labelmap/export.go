@@ -171,6 +171,7 @@ type shardWriter struct {
 	f          *os.File
 	ch         chan *BlockData // Channel to receive block data for this shard
 	lastShardZ int32           // Last Z coordinate of this shard (for tracking shard boundaries)
+	shardZSize int32           // Size of shard in Z direction (voxels) for this scale
 
 	indexMap  map[string]uint64 // Map of chunk coordinates to Arrow record index
 	mapping   *VCache           // Cache for mapping supervoxels to agglomerated labels
@@ -439,6 +440,7 @@ func (s *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.Ch
 	w = &shardWriter{
 		ch:         make(chan *BlockData, 100), // Buffered channel to hold block data for this shard
 		lastShardZ: s.getLastShardZ(scale, chunkCoord[2]),
+		shardZSize: s.shardDimVoxels[scale],
 		mapping:    s.mapping,
 		version:    s.version,
 	}
@@ -478,13 +480,18 @@ func (s *shardHandler) closeWriters(lastShardZ int32) {
 	defer s.mu.Unlock()
 
 	s.writeClosed[lastShardZ] = true
+
+	// Delete shardWriters from the map to prevent calls after we close the channels.
+	var closeList []*shardWriter
 	for shardID, w := range s.writers {
-		if w.lastShardZ == lastShardZ || lastShardZ == FinalShardZ {
-			fname := w.f.Name()
-			close(w.ch)
-			dvid.Infof("Closed shard id %d -> shard file %s\n", shardID, fname)
+		if w.lastShardZ <= lastShardZ-w.shardZSize || lastShardZ == FinalShardZ {
+			closeList = append(closeList, w)
 			delete(s.writers, shardID)
 		}
+	}
+	for _, w := range closeList {
+		close(w.ch)
+		dvid.Infof("Closed shard channel %s\n", w.f.Name())
 	}
 }
 
@@ -535,6 +542,7 @@ func (d *Data) chunkHandler(ch <-chan *storage.Chunk, handler *shardHandler, exp
 		// we will see all blocks for a given scale before moving to the next scale.
 		chunkX, chunkY, chunkZ := indexZYX.Unpack()
 		if chunkZ > lastShardZ {
+			// dvid.Infof("Export-shards: Crossed shard boundary at chunkZ (%d,%d,%d)\n", chunkX, chunkY, chunkZ)
 			handler.closeWriters(lastShardZ)
 			lastShardZ = handler.getLastShardZ(scale, chunkZ)
 		}
