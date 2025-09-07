@@ -396,10 +396,11 @@ func (s *shardHandler) Initialize(ctx *datastore.VersionedCtx, exportSpec export
 	return nil
 }
 
-// getLastShardZ computes the last Z coordinate covered by the shard containing blockZ
-func (s *shardHandler) getLastShardZ(scale uint8, blockZ int32) int32 {
+// getShardEndZ computes the end Z voxel coordinate covered by the shard containing blockZ
+func (s *shardHandler) getShardEndZ(scale uint8, blockZ int32) int32 {
+	voxelZ := blockZ * dvidChunkVoxelsPerDim
 	shardSize := s.shardDimVoxels[scale]
-	shardStart := blockZ - (blockZ % shardSize)
+	shardStart := voxelZ - (voxelZ % shardSize)
 	return shardStart + shardSize - 1
 }
 
@@ -439,7 +440,7 @@ func (s *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.Ch
 	// If writer does not exist for this shard ID, create a goroutine with its own block channel.
 	w = &shardWriter{
 		ch:         make(chan *BlockData, 100), // Buffered channel to hold block data for this shard
-		lastShardZ: s.getLastShardZ(scale, chunkCoord[2]),
+		lastShardZ: s.getShardEndZ(scale, chunkCoord[2]),
 		shardZSize: s.shardDimVoxels[scale],
 		mapping:    s.mapping,
 		version:    s.version,
@@ -513,7 +514,7 @@ func (d *Data) ExportData(ctx *datastore.VersionedCtx, spec exportSpec) error {
 
 // goroutine to receive stream of block data over channel, decode, and send to correct shard writer
 func (d *Data) chunkHandler(ch <-chan *storage.Chunk, handler *shardHandler, exportSpec exportSpec) {
-	lastShardZ := handler.getLastShardZ(0, 0)
+	lastShardZ := handler.getShardEndZ(0, 0)
 
 	var numBlocks uint64
 	for c := range ch {
@@ -541,10 +542,10 @@ func (d *Data) chunkHandler(ch <-chan *storage.Chunk, handler *shardHandler, exp
 		// This uses fact that scale is stored in higher-order bits in the block key, so
 		// we will see all blocks for a given scale before moving to the next scale.
 		chunkX, chunkY, chunkZ := indexZYX.Unpack()
-		if chunkZ > lastShardZ {
-			// dvid.Infof("Export-shards: Crossed shard boundary at chunkZ (%d,%d,%d)\n", chunkX, chunkY, chunkZ)
+		if chunkZ*dvidChunkVoxelsPerDim > lastShardZ {
+			dvid.Infof("Export-shards: Crossed shard boundary at chunkZ (%d,%d,%d)\n", chunkX, chunkY, chunkZ)
 			handler.closeWriters(lastShardZ)
-			lastShardZ = handler.getLastShardZ(scale, chunkZ)
+			lastShardZ = handler.getShardEndZ(scale, chunkZ)
 		}
 
 		// Uncompress the block data
