@@ -20,7 +20,7 @@ require (
 	github.com/golang/snappy v0.0.4
 	github.com/janelia-flyem/go v0.0.0-20180718195536-d388bdc31871
 	github.com/janelia-flyem/protolog v0.0.0-20191102211808-ce1a9ba02c03
-	github.com/klauspost/compress v1.16.7
+	github.com/klauspost/compress v1.18.0
 	github.com/natefinch/lumberjack v2.0.0+incompatible
 	github.com/ncw/swift v1.0.53
 	github.com/rs/cors v1.8.2
