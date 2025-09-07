@@ -1,11 +1,33 @@
-# Arrow Shard File Format
+# The export-shards architecture
 
 The `export-shards` RPC command creates Arrow IPC files that are partitioned into neuroglancer shards, 
 where each DVID block is written as an Arrow record while traversing the segmentation database in ZYX 
 order. Since TensorStore may request blocks (chunks) in a non-ZYX Morton order, we need to use a shard file 
 format optimized for fast, random-access record reads.
 
-## File Format
+For a large dataset like the segmentation for male CNS, the result are tens of thousands of shard files and
+accompanying JSON chunk index files. The total data will exceed 1TB after using zstd compression on the
+already compressed DVID segmentation.
+
+## Code Architecture
+
+The functionality is contained in `datatype/labelmap/export.go`. It basically has three layers of goroutines: 
+
+1. `readBlocksZYX` is a function that as quickly as possible scans the embedded key-value 
+database in native ZYX key order for potentially multiple scales and sends data to a buffered 
+`chunkCh` channel
+
+2. a layer of 100 `chunkHandler` goroutines that all consume from that single buffered `chunkCh`, 
+deserializes &  uncompresses the gzip DVID segmentation block data, computes a shard ID, and 
+then either reuses or starts a `shardWriter` goroutine and sends the block data
+
+3. a layer of shard-specific goroutines that are launched within a `shardWriter.start` function, 
+reading from its buffered shardWriter channel, adding data for agglomerated labels from the 
+in-memory versioned label mapping system, and then converting the block data to an Arrow 
+record which is written to an Arrow IPC file as well as a sidecar JSON chunk index file  
+that gives chunk coordinates and Arrow record numbers.
+
+## Shard Arrow File Formats
 
 Each shard consists of two files:
 
