@@ -1,13 +1,14 @@
 package labelmap
 
 import (
-	"encoding/json"
+	"bufio"
 	"fmt"
 	"math"
 	"math/bits"
 	"os"
 	"path"
 	"runtime/metrics"
+	"strconv"
 	"sync"
 	"time"
 
@@ -186,15 +187,17 @@ type shardWriter struct {
 	lastShardZ int32           // Last Z coordinate of this shard (for tracking shard boundaries)
 	shardZSize int32           // Size of shard in Z direction (voxels) for this scale
 
-	indexMap  map[string]uint64 // Map of chunk coordinates to Arrow record index
-	mapping   *VCache           // Cache for mapping supervoxels to agglomerated labels
-	version   dvid.VersionID    // Version ID for this export
-	writer    *ipc.Writer       // Arrow IPC writer
-	pool      memory.Allocator  // Arrow memory allocator
-	recordNum uint64            // Counter for Arrow records written
-	zenc      *zstd.Encoder     // per-writer encoder, not shared across goroutines
+	mapping   *VCache          // Cache for mapping supervoxels to agglomerated labels
+	version   dvid.VersionID   // Version ID for this export
+	writer    *ipc.Writer      // Arrow IPC writer
+	pool      memory.Allocator // Arrow memory allocator
+	recordNum uint64           // Counter for Arrow records written
+	zenc      *zstd.Encoder    // per-writer encoder, not shared across goroutines
 
-	wg *sync.WaitGroup
+	idxF    *os.File // CSV index file
+	idxBuf  *bufio.Writer
+	scratch []byte // reused per line
+
 	mu sync.Mutex // Mutex to protect indexMap and recordNum
 }
 
@@ -205,17 +208,27 @@ func (w *shardWriter) start() error {
 	base := memory.NewGoAllocator()
 	tracked := memory.NewCheckedAllocator(base)
 	w.pool = tracked
-	w.writer = ipc.NewWriter(w.f,
-		ipc.WithSchema(blockSchema),
-		ipc.WithZstd(),                // Enable ZSTD compression
-		ipc.WithMinSpaceSavings(0.05), // Skip compression unless it saves 5%+
-	)
+	w.writer = ipc.NewWriter(w.f, ipc.WithSchema(blockSchema))
 
 	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
 	if err != nil {
 		return fmt.Errorf("zstd encoder create failed for %s: %v", w.shardPath, err)
 	}
 	w.zenc = enc
+
+	// --- CSV index setup ---
+	idxPath := w.shardPath + ".csv"
+	f, err := os.OpenFile(idxPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("open index file %s: %w", idxPath, err)
+	}
+	w.idxF = f
+	w.idxBuf = bufio.NewWriterSize(f, 1<<20) // 1 MiB buffer
+	w.scratch = make([]byte, 0, 128)         // reusable buffer for writing index lines
+
+	if _, err := w.idxBuf.WriteString("x,y,z,rec,morton\n"); err != nil {
+		return fmt.Errorf("write index header: %w", err)
+	}
 
 	go func() {
 		defer func() {
@@ -224,9 +237,14 @@ func (w *shardWriter) start() error {
 				dvid.Errorf("Error closing Arrow IPC writer for %s: %v", fname, err)
 			}
 
-			// Write the chunk index as a separate JSON file
-			if err := w.writeChunkIndex(); err != nil {
-				dvid.Errorf("Error writing chunk index for %s: %v", w.shardPath, err)
+			// flush/close CSV index
+			if w.idxBuf != nil {
+				if err := w.idxBuf.Flush(); err != nil {
+					dvid.Errorf("Error flushing index %s: %v", idxPath, err)
+				}
+			}
+			if w.idxF != nil {
+				_ = w.idxF.Close()
 			}
 
 			// close Arrow file after all data has been written
@@ -252,17 +270,10 @@ func (w *shardWriter) start() error {
 		}()
 
 		for block := range w.ch {
-			// Record the chunk index before writing
-			coordKey := fmt.Sprintf("%d_%d_%d", block.ChunkCoord[0], block.ChunkCoord[1], block.ChunkCoord[2])
-
-			w.mu.Lock()
-			if w.indexMap == nil {
-				w.indexMap = make(map[string]uint64)
-			}
-			w.indexMap[coordKey] = w.recordNum
+			// Write chunk index line to CSV file
 			currentRecord := w.recordNum
 			w.recordNum++
-			w.mu.Unlock()
+			w.writeIndexCSV(block.ChunkCoord[0], block.ChunkCoord[1], block.ChunkCoord[2], currentRecord)
 
 			// Write the block data to the shard file in Arrow format
 			if err := w.writeBlock(block); err != nil {
@@ -273,6 +284,25 @@ func (w *shardWriter) start() error {
 	}()
 
 	return nil
+}
+
+// writeIndexCSV writes a chunk index for an Arrow file
+func (w *shardWriter) writeIndexCSV(x, y, z int32, rec uint64) {
+	b := w.scratch[:0]
+	b = strconv.AppendInt(b, int64(x), 10)
+	b = append(b, ',')
+	b = strconv.AppendInt(b, int64(y), 10)
+	b = append(b, ',')
+	b = strconv.AppendInt(b, int64(z), 10)
+	b = append(b, ',')
+	b = strconv.AppendUint(b, rec, 10)
+	b = append(b, '\n')
+
+	if _, err := w.idxBuf.Write(b); err != nil {
+		dvid.Errorf("write index CSV for %s failed: %v", w.shardPath, err)
+	}
+	// reuse capacity
+	w.scratch = b[:0]
 }
 
 // writeBlock writes a single block's data to the shard file in Arrow format.
@@ -336,7 +366,7 @@ func (w *shardWriter) writeBlock(block *BlockData) error {
 	// Append compressed block data
 	raw, err := b.MarshalBinary()
 	if err != nil {
-		return fmt.Errorf("Failed to marshal block data for %s: %v\n", block.ChunkCoord, err)
+		return fmt.Errorf("failed to marshal block data for %s: %v", block.ChunkCoord, err)
 	}
 
 	// Append uncompressed size (Uint32)
@@ -386,33 +416,6 @@ func (w *shardWriter) writeBlock(block *BlockData) error {
 
 	// Write record to Arrow IPC file
 	return w.writer.Write(record)
-}
-
-// writeChunkIndex writes the chunk index as a separate JSON file
-func (w *shardWriter) writeChunkIndex() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	// Serialize the chunk index to JSON
-	indexJSON, err := json.MarshalIndent(w.indexMap, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal chunk index: %v", err)
-	}
-
-	// Write to separate JSON file with same base name
-	jsonPath := w.shardPath + ".json"
-	jsonFile, err := os.Create(jsonPath)
-	if err != nil {
-		return fmt.Errorf("failed to create chunk index file %s: %v", jsonPath, err)
-	}
-	defer jsonFile.Close()
-
-	if _, err := jsonFile.Write(indexJSON); err != nil {
-		return fmt.Errorf("failed to write chunk index to %s: %v", jsonPath, err)
-	}
-
-	dvid.Infof("Wrote chunk index file %s with %d entries\n", jsonPath, len(w.indexMap))
-	return nil
 }
 
 // Manage all shard files and channels
@@ -573,15 +576,13 @@ func (s *shardHandler) closeWriters(lastShardZ int32) {
 // volume specification. This is a goroutine that is called asynchronously so should provide feedback
 // via log and no response to client.
 func (d *Data) ExportData(ctx *datastore.VersionedCtx, spec exportSpec) error {
-	stopResMonitor := startResourceMonitor(10 * time.Second)
-
 	var handler shardHandler
 	if err := handler.Initialize(ctx, spec); err != nil {
 		return fmt.Errorf("couldn't initialize shard handler for labelmap %q: %v", d.DataName(), err)
 	}
 
 	// Start the process to read blocks from storage and send them to the appropriate shard writers.
-	go d.readBlocksZYX(ctx, &handler, spec, stopResMonitor)
+	go d.readBlocksZYX(ctx, &handler, spec)
 
 	dvid.Infof("Beginning export of %d scale levels of labelmap %q data to %s ...\n", spec.NumScales, d.DataName(), spec.Directory)
 	return nil
@@ -657,7 +658,7 @@ func (d *Data) chunkHandler(ch <-chan *storage.Chunk, handler *shardHandler, exp
 
 // readBlocksZYX reads blocks in native ZYX key order from the labelmap data and sends them to
 // appropriate shard writers.
-func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, handler *shardHandler, spec exportSpec, stopResMonitor chan struct{}) {
+func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, handler *shardHandler, spec exportSpec) {
 	// Read blocks from the labelmap data and send them to the blocks channel.
 	// This is a long-running operation, so it should not block the main thread.
 	timedLog := dvid.NewTimeLog()
@@ -710,9 +711,11 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, handler *shardHandler,
 	handler.chunkWG.Wait()
 	timedLog.Infof("All chunk handlers finished for labelmap %q", d.DataName())
 	handler.closeWriters(FinalShardZ)
-	close(stopResMonitor)
 }
 
+// startResourceMonitor starts a goroutine that periodically logs key runtime metrics.
+// Currently unused, but could be helpful for debugging performance issues.
+// Might also cause performance issues itself, so not enabled by default.
 func startResourceMonitor(interval time.Duration) chan struct{} {
 	stop := make(chan struct{})
 
@@ -752,7 +755,7 @@ func startResourceMonitor(interval time.Duration) chan struct{} {
 				gcs := m("/gc/cycles/automatic:gc-cycles").Value.Uint64()
 				gr := m("/sched/goroutines:goroutines").Value.Uint64()
 
-				dvid.Infof("[resmon] goroutines=%d heap_objects=%d heap_free=%d metadata=%d gc_cycles=%d",
+				dvid.Infof("[resmon] goroutines=%d heap_objects=%d heap_free=%d metadata=%d gc_cycles=%d\n",
 					gr, heapObjects, heapFree, meta, gcs)
 
 			case <-stop:
