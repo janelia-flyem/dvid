@@ -113,14 +113,14 @@ func TestShardHandlerWithRealSpecs(t *testing.T) {
 	// Periodically check for presence of 0_0_0.arrow and 0_0_0.json files
 	// in /tmp/test_export/s0. Give up after half second.
 	arrowFile := path.Join(exportSpec.Directory, "s0", "0_0_0.arrow")
-	jsonFile := path.Join(exportSpec.Directory, "s0", "0_0_0.json")
+	csvFile := path.Join(exportSpec.Directory, "s0", "0_0_0.csv")
 	foundArrow := false
-	foundJSON := false
+	foundCSV := false
 	for i := 0; i < 10; i++ {
 		if _, err := os.Stat(arrowFile); err == nil {
 			foundArrow = true
-			if _, err := os.Stat(jsonFile); err == nil {
-				foundJSON = true
+			if _, err := os.Stat(csvFile); err == nil {
+				foundCSV = true
 				break
 			}
 		}
@@ -129,10 +129,10 @@ func TestShardHandlerWithRealSpecs(t *testing.T) {
 	if !foundArrow {
 		t.Fatalf("After half second, did not find expected shard arrow file %q\n", arrowFile)
 	}
-	if !foundJSON {
-		t.Fatalf("After half second, did not find expected shard json file %q\n", jsonFile)
+	if !foundCSV {
+		t.Fatalf("After half second, did not find expected shard csv file %q\n", csvFile)
 	}
-	dvid.Infof("Found expected shard files %q and %q\n", arrowFile, jsonFile)
+	dvid.Infof("Found expected shard files %q and %q\n", arrowFile, csvFile)
 }
 
 func getTestDataInstance(t *testing.T) (*Data, dvid.UUID, dvid.VersionID) {
