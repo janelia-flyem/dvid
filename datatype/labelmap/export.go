@@ -423,7 +423,9 @@ type shardHandler struct {
 	path           string  // Path to the directory where shard files are stored
 	shardDimVoxels []int32 // Size of each shard in Z direction at each scale
 	writers        map[uint64]*shardWriter
-	writeClosed    map[int32]bool // Track which Z slabs have been closed
+
+	writeClosed map[int32]struct{}  // Track which Z slabs have been closed
+	shardClosed map[uint64]struct{} // Track which shards were already written & closed
 
 	mapping *VCache        // Cache for mapping supervoxels to agglomerated labels
 	version dvid.VersionID // Version ID for this export
@@ -466,7 +468,8 @@ func (s *shardHandler) Initialize(ctx *datastore.VersionedCtx, exportSpec export
 	shardArea := s.shardDimVoxels[0] * s.shardDimVoxels[0]
 	minNumShards := (hiresChunkSize[0] * hiresChunkSize[1]) / shardArea
 	s.writers = make(map[uint64]*shardWriter, minNumShards)
-	s.writeClosed = make(map[int32]bool)
+	s.writeClosed = make(map[int32]struct{})
+	s.shardClosed = make(map[uint64]struct{})
 	return nil
 }
 
@@ -499,6 +502,10 @@ func (s *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.Ch
 	if w, ok := s.writers[shardID]; ok {
 		s.mu.RUnlock()
 		return w, nil
+	}
+	if _, closed := s.shardClosed[shardID]; closed {
+		dvid.Criticalf("Attempted to recreate shard writer for ID %d - chunk %s, export corrupted", shardID, chunkCoord)
+		return nil, fmt.Errorf("shard recreation detected")
 	}
 	s.mu.RUnlock()
 
@@ -556,19 +563,22 @@ func (s *shardHandler) closeWriters(lastShardZ int32) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.writeClosed[lastShardZ] = true
+	s.writeClosed[lastShardZ] = struct{}{}
 
 	// Delete shardWriters from the map to prevent calls after we close the channels.
-	var closeList []*shardWriter
+	var closeList []uint64           // list of shardIDs to close
+	var closeChans []chan *BlockData // list of channels to close
 	for shardID, w := range s.writers {
 		if w.lastShardZ <= lastShardZ-w.shardZSize || lastShardZ == FinalShardZ {
-			closeList = append(closeList, w)
+			closeList = append(closeList, shardID)
+			closeChans = append(closeChans, w.ch)
 			delete(s.writers, shardID)
+			dvid.Infof("Closed shard %s\n", w.f.Name())
 		}
 	}
-	for _, w := range closeList {
-		close(w.ch)
-		dvid.Infof("Closed shard channel %s\n", w.f.Name())
+	for i, shardID := range closeList {
+		s.shardClosed[shardID] = struct{}{}
+		close(closeChans[i])
 	}
 }
 
