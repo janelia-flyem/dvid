@@ -6,7 +6,7 @@ order. Since TensorStore may request blocks (chunks) in a non-ZYX Morton order, 
 format optimized for fast, random-access record reads.
 
 For a large dataset like the segmentation for male CNS, the result are tens of thousands of shard files and
-accompanying JSON chunk index files. The total data will exceed 1TB after using zstd compression on the
+accompanying CSV chunk index files. The total data will exceed 1TB after using zstd compression on the
 already compressed DVID segmentation.
 
 ## Code Architecture
@@ -14,17 +14,17 @@ already compressed DVID segmentation.
 The functionality is contained in `datatype/labelmap/export.go`. It basically has three layers of goroutines: 
 
 1. `readBlocksZYX` is a function that as quickly as possible scans the embedded key-value 
-database in native ZYX key order for potentially multiple scales and sends data to a buffered 
+database in native ZYX key order (potentially across multiple scales) and sends data to a buffered 
 `chunkCh` channel
 
-2. a layer of 100 `chunkHandler` goroutines that all consume from that single buffered `chunkCh`, 
+2. a layer of 50 `chunkHandler` goroutines that all consume from that single buffered `chunkCh`, 
 deserializes &  uncompresses the gzip DVID segmentation block data, computes a shard ID, and 
 then either reuses or starts a `shardWriter` goroutine and sends the block data
 
 3. a layer of shard-specific goroutines that are launched within a `shardWriter.start` function, 
 reading from its buffered shardWriter channel, adding data for agglomerated labels from the 
 in-memory versioned label mapping system, and then converting the block data to an Arrow 
-record which is written to an Arrow IPC file as well as a sidecar JSON chunk index file  
+record which is written to an Arrow IPC file as well as a sidecar CSV chunk index file  
 that gives chunk coordinates and Arrow record numbers.
 
 ## Shard Arrow File Formats
@@ -32,11 +32,11 @@ that gives chunk coordinates and Arrow record numbers.
 Each shard consists of two files:
 
 - **`{origin}.arrow`**: Standard Apache Arrow IPC format containing block records
-- **`{origin}.json`**: JSON mapping of chunk coordinates to Arrow record indices
+- **`{origin}.csv`**: CSV mapping of chunk coordinates to Arrow record indices
 
 For example, a shard starting at origin (0,0,0) would have files:
 - `0_0_0.arrow` - Arrow IPC data
-- `0_0_0.json` - Chunk coordinate index
+- `0_0_0.csv` - Chunk coordinate index
 
 ## Arrow IPC File Format
 
@@ -52,19 +52,15 @@ shard size and chunk size configuration.
 
 ## Chunk Index Format
 
-The chunk index is stored as a separate JSON file with the same base name as the Arrow file but with `.json` extension. It contains a JSON object mapping coordinate strings to Arrow record indices:
+The chunk index is stored as a separate CSV file with the same base name as the Arrow file but with `.csv` extension. It contains rows mapping chunk coordinates to Arrow record indices:
 
-**Example: `0_0_0.json`**
-```json
-{
-  "0_0_0": 0,
-  "0_0_64": 1,
-  "0_64_0": 2,
-  "64_0_0": 3
-}
+**Example: `0_0_0.csv`**
+```csv
+x,y,z,rec
+1,1,0,1
+2,1,0,2
+2,2,1,3
 ```
-
-Keys are formatted as `"{x}_{y}_{z}"` where x, y, z are chunk coordinates in voxel space.
 
 ## Arrow Schema
 
@@ -97,13 +93,13 @@ SCHEMA = pa.schema([
 ### Basic Reader
 
 ```python
-import json
+import csv
 import os
 import pyarrow as pa
 
 def read_shard_with_index(arrow_filename):
     """
-    Read Arrow shard file with chunk index from separate JSON file.
+    Read Arrow shard file with chunk index from separate CSV file.
     
     Args:
         arrow_filename: Path to the .arrow file
@@ -115,12 +111,16 @@ def read_shard_with_index(arrow_filename):
     with pa.ipc.open_file(arrow_filename) as reader:
         table = reader.read_all()
     
-    # Read the chunk index from corresponding JSON file
-    json_filename = os.path.splitext(arrow_filename)[0] + '.json'
+    # Read the chunk index from corresponding CSV file
+    csv_filename = os.path.splitext(arrow_filename)[0] + '.csv'
     chunk_index = {}
-    if os.path.exists(json_filename):
-        with open(json_filename, 'r') as f:
-            chunk_index = json.load(f)
+    if os.path.exists(csv_filename):
+        with open(csv_filename, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # Use tuple of coordinates as key for efficient lookup by TensorStore
+                coord_key = (int(row['x']), int(row['y']), int(row['z']))
+                chunk_index[coord_key] = int(row['rec'])
     
     return table, chunk_index
 ```
@@ -131,11 +131,11 @@ def read_shard_with_index(arrow_filename):
 # Read shard file and its index
 table, chunk_index = read_shard_with_index('s0/0_0_0.arrow')
 
-# The chunk index was loaded from s0/0_0_0.json
+# The chunk index was loaded from s0/0_0_0.csv
 print(f"Shard contains {len(chunk_index)} chunks")
 
-# Access specific chunk by coordinates
-chunk_coord = "64_64_0"
+# Access specific chunk by coordinates (using tuple for efficient lookup)
+chunk_coord = (64, 64, 0)
 if chunk_coord in chunk_index:
     record_idx = chunk_index[chunk_coord]
     
@@ -162,7 +162,7 @@ class ArrowShardReader:
     
     def get_chunk(self, x, y, z):
         """Get chunk data by coordinates."""
-        coord_key = f"{x}_{y}_{z}"
+        coord_key = (x, y, z)
         if coord_key not in self.chunk_index:
             return None
             
@@ -176,9 +176,7 @@ class ArrowShardReader:
     
     def list_chunks(self):
         """List all available chunk coordinates."""
-        return [(int(x), int(y), int(z)) 
-                for coord_str in self.chunk_index.keys()
-                for x, y, z in [coord_str.split('_')]]
+        return list(self.chunk_index.keys())
     
     def get_labels_for_chunk(self, x, y, z):
         """Get just the labels for a specific chunk."""
@@ -191,11 +189,67 @@ chunks = reader.list_chunks()
 labels = reader.get_labels_for_chunk(64, 64, 0)
 ```
 
+### TensorStore Integration Example
+
+The tuple-based coordinate indexing integrates seamlessly with TensorStore's virtual_chunked driver:
+
+```python
+import tensorstore as ts
+import pandas as pd
+
+def create_tensorstore_reader(base_path):
+    """Create a TensorStore virtual chunked reader for the shard data."""
+    
+    # Load all CSV indices into a single mapping using pandas for efficiency
+    chunk_mapping = {}
+    arrow_files = {}
+    
+    # Scan for all shard files
+    import glob
+    for arrow_path in glob.glob(f"{base_path}/**/*.arrow", recursive=True):
+        table, index = read_shard_with_index(arrow_path)
+        arrow_files[arrow_path] = table
+        chunk_mapping.update(index)
+    
+    def read_chunk(output_array, read_params):
+        """Read function called by TensorStore for each chunk request."""
+        domain = output_array.domain()
+        # domain.origin() gives global coordinates as tuple - perfect for our index!
+        global_coords = tuple(domain.origin())
+        
+        record_idx = chunk_mapping.get(global_coords)
+        if record_idx is not None:
+            # Find which shard file contains this record
+            # (In practice, you'd optimize this lookup)
+            for arrow_path, table in arrow_files.items():
+                if record_idx < table.num_rows:
+                    # Extract compressed block data and decode
+                    compressed_data = table['dvid_compressed_block'][record_idx].as_py()
+                    # Decode DVID block format and fill output_array
+                    # ... (DVID decompression logic here)
+                    break
+        
+        return ts.TimestampedStorageGeneration()
+    
+    # Create virtual chunked TensorStore
+    return ts.VirtualChunked(
+        read_function=read_chunk,
+        dtype=ts.uint64,  # assuming label data
+        domain=ts.IndexDomain(...),  # your volume domain
+        chunk_layout=ts.ChunkLayout(chunk_shape=[64, 64, 64]),  # DVID chunk size
+    )
+
+# Usage
+store = create_tensorstore_reader("exported_shards/")
+# Now you can read data: store[100:164, 200:264, 300:364]
+```
+
 ## Notes
 
 - The Arrow IPC data can be read by any standard Arrow library
-- The separate JSON chunk index provides O(1) lookup for specific spatial coordinates
+- The CSV chunk index provides O(1) tuple-based lookup perfect for TensorStore's coordinate system
 - Multiple chunks can be efficiently accessed from a single shard file  
-- The chunk index JSON file is human-readable for debugging and inspection
+- The chunk index CSV file is human-readable for debugging and inspection
 - Standard Arrow tools can process the .arrow files without needing to understand the indexing
+- Global chunk coordinates in the CSV eliminate the need for coordinate translation in TensorStore
 

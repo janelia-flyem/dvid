@@ -280,7 +280,7 @@ func (w *shardWriter) start(wg *sync.WaitGroup) error {
 
 			// close Arrow file after all data has been written
 			if err := w.f.Close(); err != nil {
-				dvid.Errorf("Rrror closing shard file %s: %v", fname, err)
+				dvid.Errorf("Error closing shard file %s: %v", fname, err)
 			}
 
 			// Release zstd encoder resources
