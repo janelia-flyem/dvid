@@ -9,6 +9,7 @@ import (
 	"path"
 	"runtime/metrics"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -158,8 +159,10 @@ func (ng *ngScale) computeShardID(blockX, blockY, blockZ int32) uint64 {
 }
 
 type BlockData struct {
-	ChunkCoord dvid.ChunkPoint3d
-	Data       []byte
+	ChunkCoord  dvid.ChunkPoint3d
+	AggloLabels []uint64
+	Supervoxels []uint64
+	Data        []byte
 }
 
 // Basic schema without metadata for initial writing
@@ -180,15 +183,32 @@ var blockSchema = arrow.NewSchema([]arrow.Field{
 	{Name: "uncompressed_size", Type: arrow.PrimitiveTypes.Uint32},
 }, nil)
 
-type shardWriter struct {
-	shardPath  string // Base path for shard files (without extension)
-	f          *os.File
-	ch         chan *BlockData // Channel to receive block data for this shard
-	lastShardZ int32           // Last Z coordinate of this shard (for tracking shard boundaries)
-	shardZSize int32           // Size of shard in Z direction (voxels) for this scale
+type arrowBuilders struct {
+	coordXBuilder      *array.Int32Builder
+	coordYBuilder      *array.Int32Builder
+	coordZBuilder      *array.Int32Builder
+	labelsBuilder      *array.ListBuilder
+	supervoxelsBuilder *array.ListBuilder
+	compressedBuilder  *array.BinaryBuilder
+	usizeBuilder       *array.Uint32Builder
+}
 
-	mapping   *VCache          // Cache for mapping supervoxels to agglomerated labels
-	version   dvid.VersionID   // Version ID for this export
+func (ab *arrowBuilders) Release() {
+	ab.coordXBuilder.Release()
+	ab.coordYBuilder.Release()
+	ab.coordZBuilder.Release()
+	ab.labelsBuilder.Release()
+	ab.supervoxelsBuilder.Release()
+	ab.compressedBuilder.Release()
+	ab.usizeBuilder.Release()
+}
+
+type shardWriter struct {
+	shardPath string // Base path for shard files (without extension)
+	f         *os.File
+	ch        chan *BlockData // Channel to receive block data for this shard
+
+	builders  arrowBuilders
 	writer    *ipc.Writer      // Arrow IPC writer
 	pool      memory.Allocator // Arrow memory allocator
 	recordNum uint64           // Counter for Arrow records written
@@ -226,11 +246,21 @@ func (w *shardWriter) start() error {
 	w.idxBuf = bufio.NewWriterSize(f, 1<<20) // 1 MiB buffer
 	w.scratch = make([]byte, 0, 128)         // reusable buffer for writing index lines
 
-	if _, err := w.idxBuf.WriteString("x,y,z,rec,morton\n"); err != nil {
+	if _, err := w.idxBuf.WriteString("x,y,z,rec\n"); err != nil {
 		return fmt.Errorf("write index header: %w", err)
 	}
 
 	go func() {
+		// Create Arrow record builders
+		var ab arrowBuilders
+		ab.coordXBuilder = array.NewInt32Builder(w.pool)
+		ab.coordYBuilder = array.NewInt32Builder(w.pool)
+		ab.coordZBuilder = array.NewInt32Builder(w.pool)
+		ab.labelsBuilder = array.NewListBuilder(w.pool, arrow.PrimitiveTypes.Uint64)
+		ab.supervoxelsBuilder = array.NewListBuilder(w.pool, arrow.PrimitiveTypes.Uint64)
+		ab.compressedBuilder = array.NewBinaryBuilder(w.pool, arrow.BinaryTypes.Binary)
+		ab.usizeBuilder = array.NewUint32Builder(w.pool)
+
 		defer func() {
 			fname := w.f.Name()
 			if err := w.writer.Close(); err != nil {
@@ -260,6 +290,8 @@ func (w *shardWriter) start() error {
 				}
 			}
 
+			ab.Release()
+
 			// Report any memory leaks
 			if ca, ok := w.pool.(*memory.CheckedAllocator); ok {
 				if ca.CurrentAlloc() != 0 {
@@ -276,7 +308,7 @@ func (w *shardWriter) start() error {
 			w.writeIndexCSV(block.ChunkCoord[0], block.ChunkCoord[1], block.ChunkCoord[2], currentRecord)
 
 			// Write the block data to the shard file in Arrow format
-			if err := w.writeBlock(block); err != nil {
+			if err := w.writeBlock(block, &ab); err != nil {
 				dvid.Errorf("Error writing block %s (record %d) to shard file %s: %v", block.ChunkCoord, currentRecord, w.f.Name(), err)
 			}
 		}
@@ -286,111 +318,50 @@ func (w *shardWriter) start() error {
 	return nil
 }
 
-// writeIndexCSV writes a chunk index for an Arrow file
-func (w *shardWriter) writeIndexCSV(x, y, z int32, rec uint64) {
-	b := w.scratch[:0]
-	b = strconv.AppendInt(b, int64(x), 10)
-	b = append(b, ',')
-	b = strconv.AppendInt(b, int64(y), 10)
-	b = append(b, ',')
-	b = strconv.AppendInt(b, int64(z), 10)
-	b = append(b, ',')
-	b = strconv.AppendUint(b, rec, 10)
-	b = append(b, '\n')
-
-	if _, err := w.idxBuf.Write(b); err != nil {
-		dvid.Errorf("write index CSV for %s failed: %v", w.shardPath, err)
-	}
-	// reuse capacity
-	w.scratch = b[:0]
-}
-
 // writeBlock writes a single block's data to the shard file in Arrow format.
-func (w *shardWriter) writeBlock(block *BlockData) error {
-	// Parse the block to extract labels and supervoxels
-	var b labels.Block
-	if err := b.UnmarshalBinary(block.Data); err != nil {
-		return fmt.Errorf("Failed to unmarshal block data for %s: %v\n", block.ChunkCoord, err)
-	}
-
-	// Get the list of agglomerated labels for the given version.
-	mappedVersions := w.mapping.getMappedVersionsDist(w.version)
-	aggloLabels := make([]uint64, len(b.Labels))
-	for i, sv := range b.Labels {
-		mapped, found := w.mapping.mapLabel(sv, mappedVersions)
-		if found {
-			aggloLabels[i] = mapped
-		} else {
-			aggloLabels[i] = sv // if no mapping, use supervoxel ID
-		}
-	}
-
-	// Create Arrow record builders
-	coordXBuilder := array.NewInt32Builder(w.pool)
-	coordYBuilder := array.NewInt32Builder(w.pool)
-	coordZBuilder := array.NewInt32Builder(w.pool)
-	labelsBuilder := array.NewListBuilder(w.pool, arrow.PrimitiveTypes.Uint64)
-	supervoxelsBuilder := array.NewListBuilder(w.pool, arrow.PrimitiveTypes.Uint64)
-	compressedBuilder := array.NewBinaryBuilder(w.pool, arrow.BinaryTypes.Binary)
-	usizeBuilder := array.NewUint32Builder(w.pool)
-
-	defer func() {
-		coordXBuilder.Release()
-		coordYBuilder.Release()
-		coordZBuilder.Release()
-		labelsBuilder.Release()
-		supervoxelsBuilder.Release()
-		compressedBuilder.Release()
-		usizeBuilder.Release()
-	}()
+func (w *shardWriter) writeBlock(block *BlockData, ab *arrowBuilders) error {
 
 	// Append coordinate data
-	coordXBuilder.Append(block.ChunkCoord[0])
-	coordYBuilder.Append(block.ChunkCoord[1])
-	coordZBuilder.Append(block.ChunkCoord[2])
+	ab.coordXBuilder.Append(block.ChunkCoord[0])
+	ab.coordYBuilder.Append(block.ChunkCoord[1])
+	ab.coordZBuilder.Append(block.ChunkCoord[2])
 
 	// Append labels list (agglomerated labels)
-	labelsBuilder.Append(true)
-	labelValues := labelsBuilder.ValueBuilder().(*array.Uint64Builder)
-	for _, label := range aggloLabels {
+	ab.labelsBuilder.Append(true)
+	labelValues := ab.labelsBuilder.ValueBuilder().(*array.Uint64Builder)
+	for _, label := range block.AggloLabels {
 		labelValues.Append(label)
 	}
 
 	// Append supervoxels list (original supervoxel IDs)
-	supervoxelsBuilder.Append(true)
-	supervoxelValues := supervoxelsBuilder.ValueBuilder().(*array.Uint64Builder)
-	for _, sv := range b.Labels {
+	ab.supervoxelsBuilder.Append(true)
+	supervoxelValues := ab.supervoxelsBuilder.ValueBuilder().(*array.Uint64Builder)
+	for _, sv := range block.Supervoxels {
 		supervoxelValues.Append(sv)
 	}
 
-	// Append compressed block data
-	raw, err := b.MarshalBinary()
-	if err != nil {
-		return fmt.Errorf("failed to marshal block data for %s: %v", block.ChunkCoord, err)
-	}
-
 	// Append uncompressed size (Uint32)
-	if len(raw) > math.MaxUint32 {
-		return fmt.Errorf("raw block too large: %d bytes", len(raw))
+	if len(block.Data) > math.MaxUint32 {
+		return fmt.Errorf("raw block too large: %d bytes", len(block.Data))
 	}
-	usizeBuilder.Append(uint32(len(raw)))
+	ab.usizeBuilder.Append(uint32(len(block.Data)))
 
 	// zstd-compress the raw bytes.
 	// EncodeAll emits a full zstd frame. Pre-size dst to ~half to reduce allocs.
 	if w.zenc == nil {
 		return fmt.Errorf("zstd encoder not initialized for shard %s", w.shardPath)
 	}
-	compressed := w.zenc.EncodeAll(raw, make([]byte, 0, len(raw)/2))
-	compressedBuilder.Append(compressed)
+	compressed := w.zenc.EncodeAll(block.Data, make([]byte, 0, len(block.Data)/2))
+	ab.compressedBuilder.Append(compressed)
 
 	// Build arrays
-	coordXArray := coordXBuilder.NewArray()
-	coordYArray := coordYBuilder.NewArray()
-	coordZArray := coordZBuilder.NewArray()
-	labelsArray := labelsBuilder.NewArray()
-	supervoxelsArray := supervoxelsBuilder.NewArray()
-	compressedArray := compressedBuilder.NewArray()
-	usizeArray := usizeBuilder.NewArray()
+	coordXArray := ab.coordXBuilder.NewArray()
+	coordYArray := ab.coordYBuilder.NewArray()
+	coordZArray := ab.coordZBuilder.NewArray()
+	labelsArray := ab.labelsBuilder.NewArray()
+	supervoxelsArray := ab.supervoxelsBuilder.NewArray()
+	compressedArray := ab.compressedBuilder.NewArray()
+	usizeArray := ab.usizeBuilder.NewArray()
 
 	defer func() {
 		coordXArray.Release()
@@ -418,36 +389,56 @@ func (w *shardWriter) writeBlock(block *BlockData) error {
 	return w.writer.Write(record)
 }
 
+// writeIndexCSV writes a chunk index for an Arrow file
+func (w *shardWriter) writeIndexCSV(x, y, z int32, rec uint64) {
+	b := w.scratch[:0]
+	b = strconv.AppendInt(b, int64(x), 10)
+	b = append(b, ',')
+	b = strconv.AppendInt(b, int64(y), 10)
+	b = append(b, ',')
+	b = strconv.AppendInt(b, int64(z), 10)
+	b = append(b, ',')
+	b = strconv.AppendUint(b, rec, 10)
+	b = append(b, '\n')
+
+	if _, err := w.idxBuf.Write(b); err != nil {
+		dvid.Errorf("write index CSV for %s failed: %v", w.shardPath, err)
+	}
+	// reuse capacity
+	w.scratch = b[:0]
+}
+
 // Manage all shard files and channels
 type shardHandler struct {
-	path           string  // Path to the directory where shard files are stored
+	path           string // Path to the directory where shard files are stored
+	scales         []ngScale
 	shardDimVoxels []int32 // Size of each shard in Z direction at each scale
 	writers        map[uint64]*shardWriter
 
-	writeClosed map[int32]struct{}  // Track which Z slabs have been closed
-	shardClosed map[uint64]struct{} // Track which shards were already written & closed
+	closeCh chan bool // signal sent when all current shardWriters should close their channel
 
-	mapping *VCache        // Cache for mapping supervoxels to agglomerated labels
-	version dvid.VersionID // Version ID for this export
+	mapping        *VCache // Cache for mapping supervoxels to agglomerated labels
+	mappedVersions distFromRoot
 
 	mu      sync.RWMutex
 	chunkWG sync.WaitGroup
 }
 
-func (s *shardHandler) Initialize(ctx *datastore.VersionedCtx, exportSpec exportSpec) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (sh *shardHandler) Initialize(ctx *datastore.VersionedCtx, exportSpec exportSpec) error {
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
 
 	// Get the label mapping cache for this version
 	var err error
-	if s.mapping, err = getMapping(ctx.Data(), ctx.VersionID()); err != nil {
+	if sh.mapping, err = getMapping(ctx.Data(), ctx.VersionID()); err != nil {
 		return fmt.Errorf("couldn't get label mapping for labelmap %q: %v", ctx.DataName(), err)
 	}
-	s.version = ctx.VersionID()
+	sh.mappedVersions = sh.mapping.getMappedVersionsDist(ctx.VersionID())
 
 	// Initialize the scale information and shard Z sizes
-	s.path = exportSpec.Directory
-	s.shardDimVoxels = make([]int32, len(exportSpec.Scales))
+	sh.scales = exportSpec.Scales
+	sh.path = exportSpec.Directory
+	sh.shardDimVoxels = make([]int32, len(exportSpec.Scales))
 
 	for level := range exportSpec.Scales {
 		scale := &exportSpec.Scales[level]
@@ -459,32 +450,22 @@ func (s *shardHandler) Initialize(ctx *datastore.VersionedCtx, exportSpec export
 		// to chunk size, preshift bits, and minishard bits.
 		// Assumes no dimension extent is smaller than 1 shard.
 		shardSideBits := int(dvidChunkBitsTotal+scale.Sharding.PreshiftBits+scale.Sharding.MinishardBits) / 3
-		s.shardDimVoxels[level] = int32(1) << shardSideBits
-		dvid.Infof("Exporting labelmap at scale %d with chunk size %v and shard voxels along axes = %d\n", level, scale.ChunkSizes[0], s.shardDimVoxels[level])
+		sh.shardDimVoxels[level] = int32(1) << shardSideBits
+		dvid.Infof("Exporting labelmap at scale %d with chunk size %v and shard voxels along axes = %d\n", level, scale.ChunkSizes[0], sh.shardDimVoxels[level])
 	}
 
 	// Set capacity of map to # of shards in XY in scale 0
 	hiresChunkSize := exportSpec.Scales[0].ChunkSizes[0]
-	shardArea := s.shardDimVoxels[0] * s.shardDimVoxels[0]
+	shardArea := sh.shardDimVoxels[0] * sh.shardDimVoxels[0]
 	minNumShards := (hiresChunkSize[0] * hiresChunkSize[1]) / shardArea
-	s.writers = make(map[uint64]*shardWriter, minNumShards)
-	s.writeClosed = make(map[int32]struct{})
-	s.shardClosed = make(map[uint64]struct{})
+	sh.writers = make(map[uint64]*shardWriter, minNumShards)
 	return nil
-}
-
-// getShardEndZ computes the end Z voxel coordinate covered by the shard containing blockZ
-func (s *shardHandler) getShardEndZ(scale uint8, blockZ int32) int32 {
-	voxelZ := blockZ * dvidChunkVoxelsPerDim
-	shardSize := s.shardDimVoxels[scale]
-	shardStart := voxelZ - (voxelZ % shardSize)
-	return shardStart + shardSize - 1
 }
 
 // shardOriginFromChunkCoord computes the voxel coordinate origin for the shard containing
 // the given chunk coordinate
-func (s *shardHandler) shardOriginFromChunkCoord(scale uint8, chunkCoord dvid.ChunkPoint3d) dvid.Point3d {
-	shardVoxelsPerDim := s.shardDimVoxels[scale] // Assuming cubic shards. TODO: handle non-cubic shards if needed
+func (sh *shardHandler) shardOriginFromChunkCoord(scale uint8, chunkCoord dvid.ChunkPoint3d) dvid.Point3d {
+	shardVoxelsPerDim := sh.shardDimVoxels[scale] // Assuming cubic shards. TODO: handle non-cubic shards if needed
 	chunkOriginX := chunkCoord[0] * dvidChunkVoxelsPerDim
 	chunkOriginY := chunkCoord[1] * dvidChunkVoxelsPerDim
 	chunkOriginZ := chunkCoord[2] * dvidChunkVoxelsPerDim
@@ -496,46 +477,38 @@ func (s *shardHandler) shardOriginFromChunkCoord(scale uint8, chunkCoord dvid.Ch
 	}
 }
 
-func (s *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.ChunkPoint3d) (w *shardWriter, err error) {
+func (sh *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.ChunkPoint3d) (w *shardWriter, err error) {
 	// First, check if writer already exists with read lock
-	s.mu.RLock()
-	if w, ok := s.writers[shardID]; ok {
-		s.mu.RUnlock()
+	sh.mu.RLock()
+	if w, ok := sh.writers[shardID]; ok {
+		sh.mu.RUnlock()
 		return w, nil
 	}
-	if _, closed := s.shardClosed[shardID]; closed {
-		dvid.Criticalf("Attempted to recreate shard writer for ID %d - chunk %s, export corrupted", shardID, chunkCoord)
-		return nil, fmt.Errorf("shard recreation detected")
-	}
-	s.mu.RUnlock()
+	sh.mu.RUnlock()
 
 	// Writer doesn't exist, need to create it with write lock
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
 
 	// Double-check in case another goroutine created it while we were waiting for the lock
-	if w, ok := s.writers[shardID]; ok {
+	if w, ok := sh.writers[shardID]; ok {
 		return w, nil
 	}
 
 	// If writer does not exist for this shard ID, create a goroutine with its own block channel.
 	w = &shardWriter{
-		ch:         make(chan *BlockData, 100), // Buffered channel to hold block data for this shard
-		lastShardZ: s.getShardEndZ(scale, chunkCoord[2]),
-		shardZSize: s.shardDimVoxels[scale],
-		mapping:    s.mapping,
-		version:    s.version,
+		ch: make(chan *BlockData, 100), // Buffered channel to hold block data for this shard
 	}
 
 	// Create scale directory (e.g., s0, s1, s2)
 	scaleDir := fmt.Sprintf("s%d", scale)
-	scalePath := path.Join(s.path, scaleDir)
+	scalePath := path.Join(sh.path, scaleDir)
 	if err = os.MkdirAll(scalePath, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create scale directory %s: %v", scalePath, err)
 	}
 
 	// Calculate voxel coordinates that correspond to this shard ID
-	shardOrigin := s.shardOriginFromChunkCoord(scale, chunkCoord)
+	shardOrigin := sh.shardOriginFromChunkCoord(scale, chunkCoord)
 
 	// Create shard filename using voxel coordinates
 	baseName := fmt.Sprintf("%d_%d_%d", shardOrigin[0], shardOrigin[1], shardOrigin[2])
@@ -545,7 +518,7 @@ func (s *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.Ch
 	if err != nil {
 		return nil, fmt.Errorf("failed to open shard file %s: %v", filename, err)
 	}
-	s.writers[shardID] = w
+	sh.writers[shardID] = w
 	if err := w.start(); err != nil {
 		return nil, fmt.Errorf("failed to start shard writer for %s: %v", filename, err)
 	}
@@ -553,33 +526,100 @@ func (s *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.Ch
 	return w, nil
 }
 
-func (s *shardHandler) closeWriters(lastShardZ int32) {
-	s.mu.RLock()
-	_, alreadyClosed := s.writeClosed[lastShardZ]
-	s.mu.RUnlock()
-	if alreadyClosed {
-		return
+// startShardSet fires off parallel chunkHandler goroutines that will stop when
+// the returned chunk channel is closed.
+func (sh *shardHandler) startShardSet(dataname dvid.InstanceName, workers int) (chunkCh chan *storage.Chunk) {
+	sh.chunkWG.Add(workers)
+	chunkCh = make(chan *storage.Chunk, 1000) // Buffered channel to hold chunks read from storage.
+	for i := 0; i < workers; i++ {
+		go sh.chunkHandler(dataname, chunkCh)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	return chunkCh
+}
 
-	s.writeClosed[lastShardZ] = struct{}{}
+// goroutine to receive stream of block data over channel, decode, and send to correct shard writer.
+// Shards are closed after receiving a signal BlockData
+// from the labelmap data and sends them to
+// appropriate shard writers.
+func (sh *shardHandler) chunkHandler(dataname dvid.InstanceName, ch <-chan *storage.Chunk) {
+	var numBlocks uint64
+	for c := range ch {
+		// Block keys are in ZYX order, but we will compute the morton code of block coordinates
+		// and shard id, using the latter to determine which worker to send the block to.
+		scale, indexZYX, err := DecodeBlockTKey(c.K)
+		if err != nil {
+			dvid.Errorf("Couldn't decode label block key %v for data %q\n", c.K, dataname)
+			continue
+		}
+		if c.V == nil {
+			dvid.Errorf("Nil data for label block %s in data %q\n", indexZYX, dataname)
+			continue
+		}
 
-	// Delete shardWriters from the map to prevent calls after we close the channels.
-	var closeList []uint64           // list of shardIDs to close
-	var closeChans []chan *BlockData // list of channels to close
-	for shardID, w := range s.writers {
-		if w.lastShardZ <= lastShardZ-w.shardZSize || lastShardZ == FinalShardZ {
-			closeList = append(closeList, shardID)
-			closeChans = append(closeChans, w.ch)
-			delete(s.writers, shardID)
-			dvid.Infof("Closed shard %s\n", w.f.Name())
+		// Get the neuroglancer scale configuration
+		if len(sh.scales) <= int(scale) {
+			dvid.Errorf("No neuroglancer scale %d defined for labelmap %q\n", scale, dataname)
+			continue
+		}
+
+		chunkX, chunkY, chunkZ := indexZYX.Unpack()
+		chunkCoord := dvid.ChunkPoint3d{chunkX, chunkY, chunkZ}
+
+		// Uncompress the block data
+		blockData, _, err := dvid.DeserializeData(c.V, true)
+		if err != nil {
+			dvid.Errorf("Unable to deserialize block %s in data %q: %v\n", indexZYX, dataname, err)
+			continue
+		}
+
+		// Parse the block to extract labels and supervoxels
+		var b labels.Block
+		if err := b.UnmarshalBinary(blockData); err != nil {
+			dvid.Errorf("failed to unmarshal block data for %s: %v\n", chunkCoord, err)
+		}
+
+		// Get the list of agglomerated labels for the given version.
+		aggloLabels := make([]uint64, len(b.Labels))
+		supervoxels := make([]uint64, len(b.Labels))
+		for i, sv := range b.Labels {
+			supervoxels[i] = sv
+			mapped, found := sh.mapping.mapLabel(sv, sh.mappedVersions)
+			if found {
+				aggloLabels[i] = mapped
+			} else {
+				aggloLabels[i] = sv // if no mapping, use supervoxel ID
+			}
+		}
+
+		raw, err := b.MarshalBinary()
+		if err != nil {
+			dvid.Errorf("failed to marshal block data for %s: %v\n", chunkCoord, err)
+		}
+
+		blockInfo := &BlockData{
+			ChunkCoord:  chunkCoord,
+			AggloLabels: aggloLabels,
+			Supervoxels: supervoxels,
+			Data:        raw,
+		}
+
+		// Send the block data to the appropriate shard writer
+		scaleStruct := &sh.scales[scale]
+		shardID := scaleStruct.computeShardID(chunkX, chunkY, chunkZ)
+		writer, err := sh.getWriter(shardID, scale, chunkCoord)
+		if err != nil {
+			dvid.Errorf("Failed to get writer for shard %d: %v", shardID, err)
+			continue
+		}
+		writer.ch <- blockInfo
+		numBlocks++
+		if numBlocks%100000 == 0 {
+			dvid.Infof("Exported %d blocks for labelmap %q. Most recent block is %s, scale %d\n",
+				numBlocks, dataname, chunkCoord, scale)
 		}
 	}
-	for i, shardID := range closeList {
-		s.shardClosed[shardID] = struct{}{}
-		close(closeChans[i])
-	}
+	sh.chunkWG.Done()
+	dvid.Infof("Chunk handler finished sending %d blocks for labelmap %q\n", numBlocks, dataname)
 }
 
 // ExportData dumps the label blocks to local shard files corresponding to neuroglancer precomputed
@@ -598,129 +638,103 @@ func (d *Data) ExportData(ctx *datastore.VersionedCtx, spec exportSpec) error {
 	return nil
 }
 
-// goroutine to receive stream of block data over channel, decode, and send to correct shard writer
-func (d *Data) chunkHandler(ch <-chan *storage.Chunk, handler *shardHandler, exportSpec exportSpec) {
-	lastShardZ := handler.getShardEndZ(0, 0)
-
-	var numBlocks uint64
-	for c := range ch {
-		// Block keys are in ZYX order, but we will compute the morton code of block coordinates
-		// and shard id, using the latter to determine which worker to send the block to.
-		scale, indexZYX, err := DecodeBlockTKey(c.K)
-		if err != nil {
-			dvid.Errorf("Couldn't decode label block key %v for data %q\n", c.K, d.DataName())
-			continue
-		}
-		if c.V == nil {
-			dvid.Errorf("Nil data for label block %s in data %q\n", indexZYX, d.DataName())
-			continue
-		}
-
-		// Get the neuroglancer scale configuration
-		if len(exportSpec.Scales) <= int(scale) {
-			dvid.Errorf("No neuroglancer scale %d defined for labelmap %q\n", scale, d.DataName())
-			continue
-		}
-
-		// Track shard boundaries for resetting the shard writers.
-		// Since blocks are read in ZYX order, if we cross a shard boundary in Z,
-		// we can close out all shard writers because all previous shards are retired.
-		// This uses fact that scale is stored in higher-order bits in the block key, so
-		// we will see all blocks for a given scale before moving to the next scale.
-		chunkX, chunkY, chunkZ := indexZYX.Unpack()
-		if chunkZ*dvidChunkVoxelsPerDim > lastShardZ {
-			dvid.Infof("Export-shards: Crossed shard boundary at chunkZ (%d,%d,%d)\n", chunkX, chunkY, chunkZ)
-			handler.closeWriters(lastShardZ)
-			lastShardZ = handler.getShardEndZ(scale, chunkZ)
-		}
-
-		// Uncompress the block data
-		blockData, _, err := dvid.DeserializeData(c.V, true)
-		if err != nil {
-			dvid.Errorf("Unable to deserialize block %s in data %q: %v\n", indexZYX, d.DataName(), err)
-			continue
-		}
-
-		chunkCoord := dvid.ChunkPoint3d{chunkX, chunkY, chunkZ}
-		blockInfo := &BlockData{
-			ChunkCoord: chunkCoord,
-			Data:       blockData,
-		}
-
-		// Send the block data to the appropriate shard writer
-		scaleStruct := &exportSpec.Scales[scale]
-		shardID := scaleStruct.computeShardID(chunkX, chunkY, chunkZ)
-		writer, err := handler.getWriter(shardID, scale, chunkCoord)
-		if err != nil {
-			dvid.Errorf("Failed to get writer for shard %d: %v", shardID, err)
-			continue
-		}
-		writer.ch <- blockInfo
-		numBlocks++
-		if numBlocks%100000 == 0 {
-			dvid.Infof("Exported %d blocks for labelmap %q. Most recent block is %s, scale %d\n",
-				numBlocks, d.DataName(), chunkCoord, scale)
-		}
-	}
-	handler.chunkWG.Done()
-	dvid.Infof("Chunk handler finished sending %d blocks for labelmap %q\n", numBlocks, d.DataName())
-}
-
-// readBlocksZYX reads blocks in native ZYX key order from the labelmap data and sends them to
-// appropriate shard writers.
+// readBlocksZYX reads blocks from database in a way that limits the number of shards
+// operated at a time thereby relieving memory pressure, while giving up perhaps a little
+// speed due to more complex DB scan paths.  Blocks are retrieved, passed to chunkHandler
+// goroutines that determine their shards, and then passed to the appropriate shardWriter.
 func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, handler *shardHandler, spec exportSpec) {
-	// Read blocks from the labelmap data and send them to the blocks channel.
-	// This is a long-running operation, so it should not block the main thread.
 	timedLog := dvid.NewTimeLog()
-
-	// Create a pool of workers to process blocks and send them to the appropriate shard writer.
-	const workers = 100
-	handler.chunkWG.Add(workers)
-	chunkCh := make(chan *storage.Chunk, 1000) // Buffered channel to hold chunks read from storage.
-	for i := 0; i < workers; i++ {
-		go d.chunkHandler(chunkCh, handler, spec)
-	}
 
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		dvid.Errorf("export from %q had error initializing store: %v", d.DataName(), err)
 		return
 	}
-	begTKey := NewBlockTKeyByCoord(0, dvid.MinIndexZYX.ToIZYXString())
-	endTKey := NewBlockTKeyByCoord(spec.NumScales-1, dvid.MaxIndexZYX.ToIZYXString())
 
-	// Go through all labelmap blocks and send them to the workers.
 	var numBlocks uint64
-	err = store.ProcessRange(ctx, begTKey, endTKey, nil, func(c *storage.Chunk) error {
-		if c == nil {
-			return fmt.Errorf("export: received nil chunk in count for data %q", d.DataName())
-		}
-		if c.V == nil {
-			return nil
-		}
-		chunkCh <- c
+	var scale uint8
+	for scale = 0; scale < spec.NumScales; scale++ {
+		// Iterate across shard volumes structured as long X-oriented strip of shard volumes
+		// (e.g., 2048^3 voxels or 32^3 blocks of 64^3 voxels).
+		shardDimVoxels := handler.shardDimVoxels[scale]
+		shardDimChunks := shardDimVoxels / dvidChunkVoxelsPerDim
+		volumeExtents := spec.Scales[scale].Size
+		volChunksX := volumeExtents[0] / dvidChunkVoxelsPerDim
 
-		numBlocks++
-		if numBlocks%100000 == 0 {
-			scale, indexZYX, err := DecodeBlockTKey(c.K)
-			if err != nil {
-				dvid.Errorf("Couldn't decode label block key %v for data %q\n", c.K, d.DataName())
-			} else {
-				chunkX, chunkY, chunkZ := indexZYX.Unpack()
-				timedLog.Infof("Read %d blocks. Recently at scale %d, chunk (%d,%d,%d)",
-					numBlocks, scale, chunkX, chunkY, chunkZ)
+		var shardZ, shardY int32 // z and y voxel coordinate of shard origin
+		for shardZ = 0; shardZ < volumeExtents[2]; shardZ += shardDimVoxels {
+			for shardY = 0; shardY < volumeExtents[1]; shardY += shardDimVoxels {
+				// Create a pool of workers to uncompress blocks and send them to the
+				// appropriate shard writer for this strip of shards.
+				chunkCh := handler.startShardSet(d.DataName(), 50)
+
+				// Read a bar of chunks that constitute shards along X.
+				for chunkZ := shardZ; chunkZ < shardZ+shardDimChunks; chunkZ++ {
+					for chunkY := shardY; chunkY < shardY+shardDimChunks; chunkY++ {
+						// Setup keys for a strip of chunks across X
+						chunkBeg := dvid.ChunkPoint3d{0, chunkY, chunkZ}
+						chunkEnd := dvid.ChunkPoint3d{volChunksX, chunkY, chunkZ}
+						begTKey := NewBlockTKeyByCoord(scale, chunkBeg.ToIZYXString())
+						endTKey := NewBlockTKeyByCoord(scale, chunkEnd.ToIZYXString())
+
+						// Scan the chunks across X and send them to the chunkHandlers.
+						err = store.ProcessRange(ctx, begTKey, endTKey, nil, func(c *storage.Chunk) error {
+							if c == nil {
+								return fmt.Errorf("export: received nil chunk in count for data %q", d.DataName())
+							}
+							if c.V == nil {
+								return nil
+							}
+							chunkCh <- c
+
+							numBlocks++
+							if numBlocks%100000 == 0 {
+								scale, indexZYX, err := DecodeBlockTKey(c.K)
+								if err != nil {
+									dvid.Errorf("Couldn't decode label block key %v for data %q\n", c.K, d.DataName())
+								} else {
+									chunkX, chunkY, chunkZ := indexZYX.Unpack()
+									timedLog.Infof("Read %d blocks. Recently at scale %d, chunk (%d,%d,%d)",
+										numBlocks, scale, chunkX, chunkY, chunkZ)
+								}
+							}
+							return nil
+						})
+						if err != nil {
+							dvid.Errorf("export: problem during process range: %v\n", err)
+						}
+					}
+				}
+
+				// We've completed a strip of shards so shutdown this epoch for the strip of shards.
+				close(chunkCh)
+				timedLog.Infof("Completed strip of shards at (0, %d, %d): %s blocks read",
+					shardY, shardZ, commaUint64(numBlocks))
 			}
 		}
-		return nil
-	})
-	if err != nil {
-		dvid.Errorf("export: problem during process range: %v\n", err)
 	}
-	timedLog.Infof("Finished reading labelmap %q %d blocks to exporting workers", d.DataName(), numBlocks)
-	close(chunkCh)
-	handler.chunkWG.Wait()
-	timedLog.Infof("All chunk handlers finished for labelmap %q", d.DataName())
-	handler.closeWriters(FinalShardZ)
+
+	// Go through all labelmap blocks and send them to the workers.
+	timedLog.Infof("Finished reading labelmap %q %d blocks to exporting workers", d.DataName(), commaUint64(numBlocks))
+}
+
+// utility to write large integers with commas
+func commaUint64(n uint64) string {
+	s := strconv.FormatUint(n, 10)
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	pre := len(s) % 3
+	if pre == 0 {
+		pre = 3
+	}
+	b.WriteString(s[:pre])
+	for i := pre; i < len(s); i += 3 {
+		b.WriteByte(',')
+		b.WriteString(s[i : i+3])
+	}
+	return b.String()
 }
 
 // startResourceMonitor starts a goroutine that periodically logs key runtime metrics.
