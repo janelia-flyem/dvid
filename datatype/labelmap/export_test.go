@@ -244,7 +244,8 @@ func TestShardCalcs(t *testing.T) {
 			}
 
 			// Verify a shard writer uses the expected filename
-			w, err := handler.getWriter(actualShardID, 0, tc.chunkCoord)
+			ep := &epoch{writers: make(map[uint64]*shardWriter, handler.shardsInStrip)}
+			w, err := handler.getWriter(actualShardID, 0, tc.chunkCoord, ep)
 			if err != nil {
 				t.Fatalf("Failed to get shard writer for chunk %v: %v", tc.chunkCoord, err)
 			}
@@ -278,11 +279,12 @@ func TestShardCalcs(t *testing.T) {
 				chunk1, chunk2, shardID1, shardID2)
 		}
 
-		w1, err := handler.getWriter(shardID1, 0, chunk1)
+		ep := &epoch{writers: make(map[uint64]*shardWriter, handler.shardsInStrip)}
+		w1, err := handler.getWriter(shardID1, 0, chunk1, ep)
 		if err != nil {
 			t.Fatalf("Failed to get shard writer for chunk %v: %v", chunk1, err)
 		}
-		w2, err := handler.getWriter(shardID2, 0, chunk2)
+		w2, err := handler.getWriter(shardID2, 0, chunk2, ep)
 		if err != nil {
 			t.Fatalf("Failed to get shard writer for chunk %v: %v", chunk2, err)
 		}

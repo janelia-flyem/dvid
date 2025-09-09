@@ -222,7 +222,7 @@ type shardWriter struct {
 }
 
 // Start a goroutine to listen on the channel and write incoming block data to the shard file
-func (w *shardWriter) start() error {
+func (w *shardWriter) start(wg *sync.WaitGroup) error {
 	// Initialize Arrow writer.
 	// See ExportArchitectureAnalysis.md in labelmap package for discussion.
 	base := memory.NewGoAllocator()
@@ -250,6 +250,7 @@ func (w *shardWriter) start() error {
 		return fmt.Errorf("write index header: %w", err)
 	}
 
+	wg.Add(1)
 	go func() {
 		// Create Arrow record builders
 		var ab arrowBuilders
@@ -299,6 +300,8 @@ func (w *shardWriter) start() error {
 						fname, w.shardPath, ca.CurrentAlloc())
 				}
 			}
+
+			wg.Done()
 		}()
 
 		for block := range w.ch {
@@ -408,23 +411,28 @@ func (w *shardWriter) writeIndexCSV(x, y, z int32, rec uint64) {
 	w.scratch = b[:0]
 }
 
+// epoch handles processing of each strip of shards.
+type epoch struct {
+	writers   map[uint64]*shardWriter
+	writersWG sync.WaitGroup // allows wait for all shardWriters to finish
+	chunkWG   sync.WaitGroup // allows wait for all chunkHandlers to finish
+	mu        sync.RWMutex
+}
+
 // Manage all shard files and channels
 type shardHandler struct {
 	path           string // Path to the directory where shard files are stored
 	scales         []ngScale
 	shardDimVoxels []int32 // Size of each shard in Z direction at each scale
-	writers        map[uint64]*shardWriter
-
-	closeCh chan bool // signal sent when all current shardWriters should close their channel
+	shardsInStrip  int32
 
 	mapping        *VCache // Cache for mapping supervoxels to agglomerated labels
 	mappedVersions distFromRoot
 
-	mu      sync.RWMutex
-	chunkWG sync.WaitGroup
+	mu sync.RWMutex
 }
 
-func (sh *shardHandler) Initialize(ctx *datastore.VersionedCtx, exportSpec exportSpec) error {
+func (sh *shardHandler) Initialize(ctx *datastore.VersionedCtx, spec exportSpec) error {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 
@@ -436,12 +444,12 @@ func (sh *shardHandler) Initialize(ctx *datastore.VersionedCtx, exportSpec expor
 	sh.mappedVersions = sh.mapping.getMappedVersionsDist(ctx.VersionID())
 
 	// Initialize the scale information and shard Z sizes
-	sh.scales = exportSpec.Scales
-	sh.path = exportSpec.Directory
-	sh.shardDimVoxels = make([]int32, len(exportSpec.Scales))
+	sh.scales = spec.Scales
+	sh.path = spec.Directory
+	sh.shardDimVoxels = make([]int32, len(spec.Scales))
 
-	for level := range exportSpec.Scales {
-		scale := &exportSpec.Scales[level]
+	for level := range spec.Scales {
+		scale := &spec.Scales[level]
 		if err := scale.initialize(); err != nil {
 			return fmt.Errorf("Aborting export-shards after initializing neuroglancer scale %d: %v", level, err)
 		}
@@ -454,11 +462,9 @@ func (sh *shardHandler) Initialize(ctx *datastore.VersionedCtx, exportSpec expor
 		dvid.Infof("Exporting labelmap at scale %d with chunk size %v and shard voxels along axes = %d\n", level, scale.ChunkSizes[0], sh.shardDimVoxels[level])
 	}
 
-	// Set capacity of map to # of shards in XY in scale 0
-	hiresChunkSize := exportSpec.Scales[0].ChunkSizes[0]
-	shardArea := sh.shardDimVoxels[0] * sh.shardDimVoxels[0]
-	minNumShards := (hiresChunkSize[0] * hiresChunkSize[1]) / shardArea
-	sh.writers = make(map[uint64]*shardWriter, minNumShards)
+	// Calculate # of shards along a X strip since that's how we define an epoch
+	volumeX := spec.Scales[0].Size[0]
+	sh.shardsInStrip = volumeX / sh.shardDimVoxels[0]
 	return nil
 }
 
@@ -477,21 +483,21 @@ func (sh *shardHandler) shardOriginFromChunkCoord(scale uint8, chunkCoord dvid.C
 	}
 }
 
-func (sh *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.ChunkPoint3d) (w *shardWriter, err error) {
+func (sh *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.ChunkPoint3d, ep *epoch) (w *shardWriter, err error) {
 	// First, check if writer already exists with read lock
-	sh.mu.RLock()
-	if w, ok := sh.writers[shardID]; ok {
-		sh.mu.RUnlock()
+	ep.mu.RLock()
+	if w, ok := ep.writers[shardID]; ok {
+		ep.mu.RUnlock()
 		return w, nil
 	}
-	sh.mu.RUnlock()
+	ep.mu.RUnlock()
 
 	// Writer doesn't exist, need to create it with write lock
-	sh.mu.Lock()
-	defer sh.mu.Unlock()
+	ep.mu.Lock()
+	defer ep.mu.Unlock()
 
 	// Double-check in case another goroutine created it while we were waiting for the lock
-	if w, ok := sh.writers[shardID]; ok {
+	if w, ok := ep.writers[shardID]; ok {
 		return w, nil
 	}
 
@@ -518,30 +524,31 @@ func (sh *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.C
 	if err != nil {
 		return nil, fmt.Errorf("failed to open shard file %s: %v", filename, err)
 	}
-	sh.writers[shardID] = w
-	if err := w.start(); err != nil {
+	ep.writers[shardID] = w
+	if err := w.start(&ep.writersWG); err != nil {
 		return nil, fmt.Errorf("failed to start shard writer for %s: %v", filename, err)
 	}
 	dvid.Infof("Created shard writer %d -> shard file %s\n", shardID, filename)
 	return w, nil
 }
 
-// startShardSet fires off parallel chunkHandler goroutines that will stop when
+// startShardEpoch fires off parallel chunkHandler goroutines that will stop when
 // the returned chunk channel is closed.
-func (sh *shardHandler) startShardSet(dataname dvid.InstanceName, workers int) (chunkCh chan *storage.Chunk) {
-	sh.chunkWG.Add(workers)
+func (sh *shardHandler) startShardEpoch(dataname dvid.InstanceName, workers int) (chunkCh chan *storage.Chunk, ep *epoch) {
+	ep = &epoch{writers: make(map[uint64]*shardWriter, sh.shardsInStrip)}
+	ep.chunkWG.Add(workers)
 	chunkCh = make(chan *storage.Chunk, 1000) // Buffered channel to hold chunks read from storage.
 	for i := 0; i < workers; i++ {
-		go sh.chunkHandler(dataname, chunkCh)
+		go sh.chunkHandler(dataname, chunkCh, ep)
 	}
-	return chunkCh
+	return chunkCh, ep
 }
 
 // goroutine to receive stream of block data over channel, decode, and send to correct shard writer.
 // Shards are closed after receiving a signal BlockData
 // from the labelmap data and sends them to
 // appropriate shard writers.
-func (sh *shardHandler) chunkHandler(dataname dvid.InstanceName, ch <-chan *storage.Chunk) {
+func (sh *shardHandler) chunkHandler(dataname dvid.InstanceName, ch <-chan *storage.Chunk, ep *epoch) {
 	var numBlocks uint64
 	for c := range ch {
 		// Block keys are in ZYX order, but we will compute the morton code of block coordinates
@@ -606,7 +613,7 @@ func (sh *shardHandler) chunkHandler(dataname dvid.InstanceName, ch <-chan *stor
 		// Send the block data to the appropriate shard writer
 		scaleStruct := &sh.scales[scale]
 		shardID := scaleStruct.computeShardID(chunkX, chunkY, chunkZ)
-		writer, err := sh.getWriter(shardID, scale, chunkCoord)
+		writer, err := sh.getWriter(shardID, scale, chunkCoord, ep)
 		if err != nil {
 			dvid.Errorf("Failed to get writer for shard %d: %v", shardID, err)
 			continue
@@ -618,7 +625,7 @@ func (sh *shardHandler) chunkHandler(dataname dvid.InstanceName, ch <-chan *stor
 				numBlocks, dataname, chunkCoord, scale)
 		}
 	}
-	sh.chunkWG.Done()
+	ep.chunkWG.Done()
 	dvid.Infof("Chunk handler finished sending %d blocks for labelmap %q\n", numBlocks, dataname)
 }
 
@@ -642,7 +649,7 @@ func (d *Data) ExportData(ctx *datastore.VersionedCtx, spec exportSpec) error {
 // operated at a time thereby relieving memory pressure, while giving up perhaps a little
 // speed due to more complex DB scan paths.  Blocks are retrieved, passed to chunkHandler
 // goroutines that determine their shards, and then passed to the appropriate shardWriter.
-func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, handler *shardHandler, spec exportSpec) {
+func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec exportSpec) {
 	timedLog := dvid.NewTimeLog()
 
 	store, err := datastore.GetOrderedKeyValueDB(d)
@@ -656,7 +663,7 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, handler *shardHandler,
 	for scale = 0; scale < spec.NumScales; scale++ {
 		// Iterate across shard volumes structured as long X-oriented strip of shard volumes
 		// (e.g., 2048^3 voxels or 32^3 blocks of 64^3 voxels).
-		shardDimVoxels := handler.shardDimVoxels[scale]
+		shardDimVoxels := sh.shardDimVoxels[scale]
 		shardDimChunks := shardDimVoxels / dvidChunkVoxelsPerDim
 		volumeExtents := spec.Scales[scale].Size
 		volChunksX := volumeExtents[0] / dvidChunkVoxelsPerDim
@@ -666,7 +673,7 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, handler *shardHandler,
 			for shardY = 0; shardY < volumeExtents[1]; shardY += shardDimVoxels {
 				// Create a pool of workers to uncompress blocks and send them to the
 				// appropriate shard writer for this strip of shards.
-				chunkCh := handler.startShardSet(d.DataName(), 50)
+				chunkCh, ep := sh.startShardEpoch(d.DataName(), 50)
 
 				// Read a bar of chunks that constitute shards along X.
 				for chunkZ := shardZ; chunkZ < shardZ+shardDimChunks; chunkZ++ {
@@ -707,9 +714,24 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, handler *shardHandler,
 				}
 
 				// We've completed a strip of shards so shutdown this epoch for the strip of shards.
+				// First, we close the channel to the pool of shardHandler.chunkHandler goroutines
+				// and wait until they're drained and exited.
 				close(chunkCh)
-				timedLog.Infof("Completed strip of shards at (0, %d, %d): %s blocks read",
-					shardY, shardZ, commaUint64(numBlocks))
+				go func(sy, sz int32, blocksSoFar uint64, ep *epoch) {
+					ep.chunkWG.Wait()
+
+					// Now the blocks are only within the shardHandler channels, so it's OK to close
+					// those channels and let them drain.
+					ep.mu.Lock()
+					for _, w := range ep.writers {
+						close(w.ch)
+					}
+					ep.writers = nil
+					ep.mu.Unlock()
+
+					timedLog.Infof("Completed strip of shards at (0, %d, %d): %s blocks read",
+						sy, sz, commaUint64(blocksSoFar))
+				}(shardY, shardZ, numBlocks, ep)
 			}
 		}
 	}
