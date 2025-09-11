@@ -73,7 +73,8 @@ Each Arrow record contains the following fields:
 | `chunk_z` | int32 | Z coordinate of the chunk |
 | `labels` | list\<uint64\> | Agglomerated label IDs |
 | `supervoxels` | list\<uint64\> | Original supervoxel IDs |
-| `dvid_compressed_block` | binary | DVID compressed block data |
+| `dvid_compressed_block` | binary | DVID compressed block data (zstd) |
+| `uncompressed_size` | uint32 | Size of block data before compression |
 
 ```python
 import pyarrow as pa
@@ -84,7 +85,8 @@ SCHEMA = pa.schema([
     pa.field('chunk_z', pa.int32(), nullable=False),
     pa.field('labels', pa.list_(pa.uint64()), nullable=False),
     pa.field('supervoxels', pa.list_(pa.uint64()), nullable=False),
-    pa.field('dvid_compressed_block', pa.binary(), nullable=False)
+    pa.field('dvid_compressed_block', pa.binary(), nullable=False),
+    pa.field('uncompressed_size', pa.uint32(), nullable=False)
 ])
 ```
 
@@ -146,10 +148,12 @@ if chunk_coord in chunk_index:
     labels = table['labels'][record_idx].as_py()
     supervoxels = table['supervoxels'][record_idx].as_py()
     compressed_data = table['dvid_compressed_block'][record_idx].as_py()
+    uncompressed_size = table['uncompressed_size'][record_idx].as_py()
     
     print(f"Chunk ({chunk_x}, {chunk_y}, {chunk_z})")
     print(f"Labels: {labels}")
     print(f"Supervoxels: {supervoxels}")
+    print(f"Compressed size: {len(compressed_data)} bytes, uncompressed: {uncompressed_size} bytes")
 ```
 
 ### Advanced Reader Class
@@ -171,7 +175,8 @@ class ArrowShardReader:
             'coordinates': (x, y, z),
             'labels': self.table['labels'][record_idx].as_py(),
             'supervoxels': self.table['supervoxels'][record_idx].as_py(),
-            'compressed_data': self.table['dvid_compressed_block'][record_idx].as_py()
+            'compressed_data': self.table['dvid_compressed_block'][record_idx].as_py(),
+            'uncompressed_size': self.table['uncompressed_size'][record_idx].as_py()
         }
     
     def list_chunks(self):

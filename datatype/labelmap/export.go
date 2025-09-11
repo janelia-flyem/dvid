@@ -626,7 +626,6 @@ func (sh *shardHandler) chunkHandler(dataname dvid.InstanceName, ch <-chan *stor
 		}
 	}
 	ep.chunkWG.Done()
-	dvid.Infof("Chunk handler finished sending %d blocks for labelmap %q\n", numBlocks, dataname)
 }
 
 // ExportData dumps the label blocks to local shard files corresponding to neuroglancer precomputed
@@ -670,14 +669,18 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 
 		var shardZ, shardY int32 // z and y voxel coordinate of shard origin
 		for shardZ = 0; shardZ < volumeExtents[2]; shardZ += shardDimVoxels {
+			shardChunkZ := shardZ / dvidChunkVoxelsPerDim // Convert shard voxel origin to chunk coordinates.
 			for shardY = 0; shardY < volumeExtents[1]; shardY += shardDimVoxels {
+				// Convert from shard origin to chunk coordinates.
+				shardChunkY := shardY / dvidChunkVoxelsPerDim
+
 				// Create a pool of workers to uncompress blocks and send them to the
 				// appropriate shard writer for this strip of shards.
 				chunkCh, ep := sh.startShardEpoch(d.DataName(), 50)
 
 				// Read a bar of chunks that constitute shards along X.
-				for chunkZ := shardZ; chunkZ < shardZ+shardDimChunks; chunkZ++ {
-					for chunkY := shardY; chunkY < shardY+shardDimChunks; chunkY++ {
+				for chunkZ := shardChunkZ; chunkZ < shardChunkZ+shardDimChunks; chunkZ++ {
+					for chunkY := shardChunkY; chunkY < shardChunkY+shardDimChunks; chunkY++ {
 						// Setup keys for a strip of chunks across X
 						chunkBeg := dvid.ChunkPoint3d{0, chunkY, chunkZ}
 						chunkEnd := dvid.ChunkPoint3d{volChunksX, chunkY, chunkZ}
@@ -701,8 +704,8 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 									dvid.Errorf("Couldn't decode label block key %v for data %q\n", c.K, d.DataName())
 								} else {
 									chunkX, chunkY, chunkZ := indexZYX.Unpack()
-									timedLog.Infof("Read %d blocks. Recently at scale %d, chunk (%d,%d,%d)",
-										numBlocks, scale, chunkX, chunkY, chunkZ)
+									timedLog.Infof("Read %s blocks. Recently at scale %d, chunk (%d,%d,%d)",
+										commaUint64(numBlocks), scale, chunkX, chunkY, chunkZ)
 								}
 							}
 							return nil
@@ -717,6 +720,7 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 				// First, we close the channel to the pool of shardHandler.chunkHandler goroutines
 				// and wait until they're drained and exited.
 				close(chunkCh)
+				// TODO: this can print out strips that really have no new blocks so track delta
 				go func(sy, sz int32, blocksSoFar uint64, ep *epoch) {
 					ep.chunkWG.Wait()
 
@@ -729,15 +733,17 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 					ep.writers = nil
 					ep.mu.Unlock()
 
-					timedLog.Infof("Completed strip of shards at (0, %d, %d): %s blocks read",
-						sy, sz, commaUint64(blocksSoFar))
+					if blocksSoFar > 0 {
+						timedLog.Infof("Completed strip of shards at (0, %d, %d): %s blocks read",
+							sy, sz, commaUint64(blocksSoFar))
+					}
 				}(shardY, shardZ, numBlocks, ep)
 			}
 		}
 	}
 
 	// Go through all labelmap blocks and send them to the workers.
-	timedLog.Infof("Finished reading labelmap %q %d blocks to exporting workers", d.DataName(), commaUint64(numBlocks))
+	timedLog.Infof("Finished reading labelmap %q %s blocks to exporting workers", d.DataName(), commaUint64(numBlocks))
 }
 
 // utility to write large integers with commas
