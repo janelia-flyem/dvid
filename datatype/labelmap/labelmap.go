@@ -143,7 +143,36 @@ $ dvid node <UUID> <data name> dump <dump type> <file path>
 	data name     Name of data to add.
 	dump type     One of "svcount", "mappings", or "indices".
 	file path     Absolute path to a writable file that the dvid server has write privileges to.
+
+$ dvid node <UUID> <data name> export-shards <spec path> <dest> <num scales>
+
+	Exports the labelmap data to local shard files corresponding to blocks that would be within different
+	shards using neuroglancer precomputed volume specification.
+
+	The json spec path should be a JSON file that meets the neuroglancer multiscale volume specification
+	with documentation at https://github.com/google/neuroglancer/blob/master/src/datasource/precomputed/volume.md#info-json-file-specification
 	
+	For an example, see https://storage.googleapis.com/cns-full-clahe/info
+
+	This is an asynchronous operation that will write an Arrow IPC file format to each shard file.
+	Shard files will include Arrow records for each block in the shard with the following fields:
+	{
+		"chunk_x": <int32>,
+		"chunk_y": <int32>,
+		"chunk_z": <int32>,
+		"labels": [<uint64>, ...],
+		"supervoxels": [<uint64>, ...],
+		"compressed_data": <byte array>
+	}
+
+    Arguments:
+
+    UUID         Hexadecimal string with enough characters to uniquely identify a version node.
+	data name	 Name of data to add.
+	spec path    Absolute path to a JSON file with the volume specification.
+	dest     	 Absolute path to a writable directory that the dvid server has write privileges to.
+	num scales   Number of scales to export starting with scale 0.  (e.g., 3 means scales 0, 1, and 2)
+
 $ dvid node <UUID> <data name> set-nextlabel <label>
 
 	Sets the counter for new labels repo-wide for the given labelmap instance.
@@ -2679,6 +2708,49 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 			reply.Text = fmt.Sprintf("Asynchronously writing label indices for data %q, uuid %s to file: %s\n", d.DataName(), uuid, outPath)
 		default:
 		}
+		return nil
+
+	case "export-shards":
+		if len(req.Command) < 6 {
+			return fmt.Errorf("poorly formatted export-shards command.  See command-line help")
+		}
+		// Parse the request
+		var uuidStr, dataName, cmdStr, specPath, outPath, numScalesStr string
+		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &specPath, &outPath, &numScalesStr)
+
+		uuid, v, err := datastore.MatchingUUID(uuidStr)
+		if err != nil {
+			return err
+		}
+
+		ctx := datastore.NewVersionedCtx(d, v)
+
+		// Load and verify the JSON volSpec from the given file path.
+		specBytes, err := os.ReadFile(specPath)
+		if err != nil {
+			return fmt.Errorf("error reading volume specification file %q: %v", specPath, err)
+		}
+		var spec ngVolume
+		if err := json.Unmarshal(specBytes, &spec); err != nil {
+			return fmt.Errorf("error unmarshalling volume specification file %q: %v", specPath, err)
+		}
+
+		// Make sure the outPath is a directory we can write to.
+		if err := os.MkdirAll(outPath, 0755); err != nil {
+			return fmt.Errorf("error creating output directory %q: %v", outPath, err)
+		}
+
+		// Export the data asynchronously.
+		numScalesInt, err := strconv.Atoi(numScalesStr)
+		if err != nil {
+			return fmt.Errorf("error parsing numScales %q: %v", numScalesStr, err)
+		}
+		if numScalesInt < 1 || numScalesInt > 255 {
+			return fmt.Errorf("numScales must be between 1 and 255, got %d", numScalesInt)
+		}
+		go d.ExportData(ctx, exportSpec{ngVolume: spec, Directory: outPath, NumScales: uint8(numScalesInt)})
+
+		reply.Text = fmt.Sprintf("Asynchronously exporting shard files for data %q, uuid %s to directory: %s\n", d.DataName(), uuid, outPath)
 		return nil
 
 	default:

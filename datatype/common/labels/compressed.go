@@ -529,7 +529,9 @@ func MakeBlock(uint64array []byte, bsize dvid.Point3d) (*Block, error) {
 // allows easy sharing of labels between sub-blocks, and sub-block storage can be
 // more efficient due to the smaller index (at the cost of an indirection) and
 // better encoded value packing (at the cost of byte alignment).  In both cases
-// memory is gained for increased computation.
+// memory is gained for increased computation. It is assumed that block
+// compression and decompression is handled on CPU and not GPU. The neuroglancer
+// segmentation compression was designed for GPU decompression.
 //
 // Blocks cover nx * ny * nz voxels.  This implementation allows any choice of nx,
 // ny, and nz with two restrictions: (1) nx, ny, and nz must be a multiple of 8
