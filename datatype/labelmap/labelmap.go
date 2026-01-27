@@ -196,7 +196,31 @@ $ dvid node <UUID> <data name> set-nextlabel <label>
     UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of data to add.
 	label     	  A uint64 label ID
-	
+
+$ dvid node <UUID> <data name> fvdb <label> <file path>
+
+	Exports a label's sparse volume topology to a NanoVDB IndexGrid file (.nvdb format).
+	This binary format can be loaded directly by fVDB (https://github.com/openvdb/fvdb-core)
+	for GPU-accelerated spatial operations.
+
+	This is an asynchronous operation that writes the IndexGrid to the specified file path.
+	Progress and completion are logged to the DVID server logs.
+
+	The output file can be loaded in Python using:
+		import fvdb
+		grid = fvdb.load("/path/to/label.nvdb")
+
+    Example:
+
+	$ dvid node 3f8c segmentation fvdb 12345 /data/exports/label_12345.nvdb
+
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of labelmap data instance.
+	label         The uint64 label ID to export.
+	file path     Absolute path to write the .nvdb file (server must have write access).
+
     ------------------
 
 HTTP API (Level 2 REST):
@@ -1197,6 +1221,33 @@ GET <api URL>/node/<UUID>/<data name>/sparsevols-coarse/<start label>/<end label
 			int32   Block coordinate of run start (dimension 1)
 			int32   Block coordinate of run start (dimension 2)
 			int32   Length of run
+
+
+GET <api URL>/node/<UUID>/<data name>/fvdb/<label>[?queryopts]
+
+	Returns a sparse volume representation of the given label in NanoVDB IndexGrid format.
+	This binary format is suitable for loading directly into fVDB (https://github.com/openvdb/fvdb-core)
+	for GPU-accelerated spatial operations.
+
+	The output is a NanoVDB binary file (.nvdb) containing an OnIndex grid that stores only
+	the topology (active voxel positions) of the label. The grid can be loaded in Python using:
+
+		import fvdb
+		grid = fvdb.load("label.nvdb")
+
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of labelmap data.
+    label         The uint64 label ID to export.
+
+    Query-string Options:
+
+	supervoxels   If "true", interprets the given label as a supervoxel id.
+	scale         A number from 0 (default) to MaxDownresLevel for resolution level.
+	name          Optional grid name in the output file (default: "label_<id>").
+
+	Returns 404 (Not Found) if the label does not exist.
 
 
 POST <api URL>/node/<UUID>/<data name>/renumber
@@ -2753,6 +2804,35 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		reply.Text = fmt.Sprintf("Asynchronously exporting shard files for data %q, uuid %s to directory: %s\n", d.DataName(), uuid, outPath)
 		return nil
 
+	case "fvdb":
+		// dvid node <UUID> <data name> fvdb <label> <file path>
+		if len(req.Command) < 6 {
+			return fmt.Errorf("poorly formatted fvdb command. Usage: dvid node <UUID> <data name> fvdb <label> <file path>")
+		}
+		var uuidStr, dataName, cmdStr, labelStr, outPath string
+		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &labelStr, &outPath)
+
+		uuid, v, err := datastore.MatchingUUID(uuidStr)
+		if err != nil {
+			return err
+		}
+
+		label, err := strconv.ParseUint(labelStr, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid label %q: %v", labelStr, err)
+		}
+		if label == 0 {
+			return fmt.Errorf("label 0 is protected background value and cannot be exported")
+		}
+
+		ctx := datastore.NewVersionedCtx(d, v)
+
+		// Start async export
+		go d.exportLabelToFVDB(ctx, label, outPath)
+
+		reply.Text = fmt.Sprintf("Asynchronously exporting label %d for data %q, uuid %s to file: %s\n", label, d.DataName(), uuid, outPath)
+		return nil
+
 	default:
 		return fmt.Errorf("unknown command.  Data type '%s' [%s] does not support '%s' command",
 			d.DataName(), d.TypeName(), req.TypeCommand())
@@ -2829,7 +2909,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	// Prevent use of APIs that require IndexedLabels when it is not set.
 	if !d.IndexedLabels {
 		switch parts[3] {
-		case "sparsevol", "sparsevol-by-point", "sparsevol-coarse", "maxlabel", "nextlabel", "split-supervoxel", "cleave", "merge":
+		case "sparsevol", "sparsevol-by-point", "sparsevol-coarse", "maxlabel", "nextlabel", "split-supervoxel", "cleave", "merge", "fvdb":
 			server.BadRequest(w, r, "data %q is not label indexed (IndexedLabels=false): %q endpoint is not supported", d.DataName(), parts[3])
 			return
 		}
@@ -3028,6 +3108,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 	case "sparsevols-coarse":
 		d.handleSparsevolsCoarse(ctx, w, r, parts)
+
+	case "fvdb":
+		d.handleFVDB(ctx, w, r, parts)
 
 	case "maxlabel":
 		d.handleMaxlabel(ctx, w, r, parts)

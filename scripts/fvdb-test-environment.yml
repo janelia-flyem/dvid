@@ -1,0 +1,46 @@
+# Conda environment for testing DVID's fVDB export functionality
+#
+# This environment includes fVDB and its dependencies for verifying
+# that DVID's /fvdb endpoint produces valid NanoVDB files.
+#
+# Usage:
+#   conda env create -f scripts/fvdb-test-environment.yml
+#   conda activate dvid-fvdb-test
+#   python scripts/test_fvdb_export.py --help
+#
+# Note: This environment requires a CUDA-capable GPU for full fVDB functionality.
+# For CPU-only testing, some features may be limited.
+#
+# See: https://github.com/openvdb/fvdb-core for fVDB documentation
+
+name: dvid-fvdb-test
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  # Python and basic tools
+  - python=3.12
+  - pip>=23.3.1
+
+  # CUDA support (adjust version as needed for your GPU)
+  - cuda-version=12.9
+
+  # PyTorch (required by fVDB)
+  - pytorch-gpu=2.8.0
+
+  # Testing dependencies
+  - numpy
+  - requests
+  - pytest
+
+  # fVDB - installed via pip from PyPI or source
+  - pip:
+    # Install fVDB from PyPI when available, or build from source
+    # - fvdb
+    #
+    # For now, install from the cloned repository:
+    # pip install -e /path/to/fvdb-core
+    - requests
+
+platforms:
+  - linux-64
