@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/janelia-flyem/dvid/datatype/common/nanovdb"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 // denseBlockSize is the size of a fully dense 64³ block of uint64 labels
@@ -54,6 +56,71 @@ func newFvdbExportStats() *fvdbExportStats {
 		compressionFormats: make(map[string]int),
 	}
 }
+
+// grayscaleSource holds configuration for fetching grayscale data alongside segmentation.
+type grayscaleSource struct {
+	instanceName string                   // Name of the grayscale data instance
+	store        storage.OrderedKeyValueDB // Store for grayscale data
+	ctx          *datastore.VersionedCtx  // Context for grayscale data
+	values       map[nanovdb.Coord]uint8  // Collected grayscale values keyed by coord
+}
+
+// newGrayscaleSource creates a grayscale source for the given instance name.
+func newGrayscaleSource(uuid dvid.UUID, instanceName string) (*grayscaleSource, error) {
+	// Look up the grayscale data instance
+	data, err := datastore.GetDataByUUIDName(uuid, dvid.InstanceName(instanceName))
+	if err != nil {
+		return nil, fmt.Errorf("grayscale instance %q not found: %w", instanceName, err)
+	}
+
+	// Verify it's a uint8blk type
+	typeName := data.TypeName()
+	if typeName != "uint8blk" {
+		return nil, fmt.Errorf("grayscale instance %q is type %q, expected uint8blk", instanceName, typeName)
+	}
+
+	// Get the store
+	store, err := datastore.GetOrderedKeyValueDB(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get store for grayscale instance %q: %w", instanceName, err)
+	}
+
+	// Create versioned context
+	_, versionID, err := datastore.MatchingUUID(string(uuid))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get version ID for UUID %s: %w", uuid, err)
+	}
+	ctx := datastore.NewVersionedCtx(data, versionID)
+
+	return &grayscaleSource{
+		instanceName: instanceName,
+		store:        store,
+		ctx:          ctx,
+		values:       make(map[nanovdb.Coord]uint8),
+	}, nil
+}
+
+// getBlock fetches a grayscale block by its coordinate string.
+func (gs *grayscaleSource) getBlock(izyx dvid.IZYXString) ([]byte, error) {
+	// Create the TKey for this block (same format as imageblk)
+	tk := storage.NewTKey(keyImageBlock, []byte(izyx))
+	data, err := gs.store.Get(gs.ctx, tk)
+	if err != nil {
+		return nil, err
+	}
+	if data == nil {
+		return nil, nil // Block doesn't exist
+	}
+	// Decompress the block
+	blockData, _, err := dvid.DeserializeData(data, true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deserialize grayscale block: %w", err)
+	}
+	return blockData, nil
+}
+
+// Key class for imageblk blocks (must match imageblk/keys.go)
+const keyImageBlock = 0xD0
 
 func (s *fvdbExportStats) updateBoundingBox(x, y, z int32) {
 	if !s.coordsSet {
@@ -377,8 +444,8 @@ func (d *Data) handleFVDB(ctx *datastore.VersionedCtx, w http.ResponseWriter, r 
 		return
 	}
 
-	// Export the label topology as IndexGrid (no stats for HTTP endpoint)
-	data, err := d.exportLabelToIndexGrid(ctx, labelBlockMeta, gridName, nil)
+	// Export the label topology as IndexGrid (no stats or grayscale for HTTP endpoint)
+	data, _, err := d.exportLabelToIndexGrid(ctx, labelBlockMeta, gridName, nil, nil)
 	if err != nil {
 		server.BadRequest(w, r, "failed to export label %d: %v", label, err)
 		return
@@ -400,10 +467,12 @@ func (d *Data) handleFVDB(ctx *datastore.VersionedCtx, w http.ResponseWriter, r 
 
 // exportLabelToIndexGrid creates a NanoVDB IndexGrid from the label's voxels.
 // If stats is non-nil, it will be populated with export statistics.
-func (d *Data) exportLabelToIndexGrid(ctx *datastore.VersionedCtx, blockMeta *labelBlockMetadata, gridName string, stats *fvdbExportStats) ([]byte, error) {
+// If gs is non-nil, grayscale values will be collected for active voxels.
+// Returns the IndexGrid bytes and optionally grayscale values (sorted by voxel index).
+func (d *Data) exportLabelToIndexGrid(ctx *datastore.VersionedCtx, blockMeta *labelBlockMetadata, gridName string, stats *fvdbExportStats, gs *grayscaleSource) ([]byte, []byte, error) {
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get store: %w", err)
+		return nil, nil, fmt.Errorf("failed to get store: %w", err)
 	}
 
 	// Create the IndexGrid builder
@@ -424,7 +493,7 @@ func (d *Data) exportLabelToIndexGrid(ctx *datastore.VersionedCtx, blockMeta *la
 	// Get block size
 	blockSize, ok := d.BlockSize().(dvid.Point3d)
 	if !ok {
-		return nil, fmt.Errorf("labelmap %q does not have 3D block size", d.DataName())
+		return nil, nil, fmt.Errorf("labelmap %q does not have 3D block size", d.DataName())
 	}
 
 	// Progress tracking
@@ -443,7 +512,7 @@ func (d *Data) exportLabelToIndexGrid(ctx *datastore.VersionedCtx, blockMeta *la
 		tk := NewBlockTKeyByCoord(blockMeta.scale, izyx)
 		data, err := store.Get(ctx, tk)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get block %s: %w", izyx, err)
+			return nil, nil, fmt.Errorf("failed to get block %s: %w", izyx, err)
 		}
 		if data == nil {
 			dvid.Infof("expected block %s to have data but found none", izyx)
@@ -455,14 +524,14 @@ func (d *Data) exportLabelToIndexGrid(ctx *datastore.VersionedCtx, blockMeta *la
 		// Decompress and parse the block
 		blockData, compressionFormat, err := dvid.DeserializeData(data, true)
 		if err != nil {
-			return nil, fmt.Errorf("failed to deserialize block %s: %w", izyx, err)
+			return nil, nil, fmt.Errorf("failed to deserialize block %s: %w", izyx, err)
 		}
 
 		serializedSize := len(blockData)
 
 		var block labels.Block
 		if err := block.UnmarshalBinary(blockData); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal block %s: %w", izyx, err)
+			return nil, nil, fmt.Errorf("failed to unmarshal block %s: %w", izyx, err)
 		}
 
 		// Track block stats
@@ -471,18 +540,28 @@ func (d *Data) exportLabelToIndexGrid(ctx *datastore.VersionedCtx, blockMeta *la
 			stats.addBlockLabelCount(len(block.Labels))
 		}
 
+		// Fetch grayscale block if needed
+		var grayscaleBlock []byte
+		if gs != nil {
+			grayscaleBlock, err = gs.getBlock(izyx)
+			if err != nil {
+				dvid.Errorf("failed to get grayscale block %s: %v\n", izyx, err)
+				// Continue without grayscale for this block
+			}
+		}
+
 		// Get block origin in voxel coordinates
 		// DVID block coordinates are in units of blocks, need to convert to voxels
 		blockCoord, err := izyx.IndexZYX()
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse block coord %s: %w", izyx, err)
+			return nil, nil, fmt.Errorf("failed to parse block coord %s: %w", izyx, err)
 		}
 		blockOriginX := int32(blockCoord[0]) * blockSize[0]
 		blockOriginY := int32(blockCoord[1]) * blockSize[1]
 		blockOriginZ := int32(blockCoord[2]) * blockSize[2]
 
 		// Extract voxels belonging to this label's supervoxels from the block
-		voxels := extractLabelVoxelsWithStats(&block, blockMeta.supervoxels, blockOriginX, blockOriginY, blockOriginZ, blockSize, stats)
+		voxels := extractLabelVoxelsWithStats(&block, blockMeta.supervoxels, blockOriginX, blockOriginY, blockOriginZ, blockSize, stats, grayscaleBlock, gs)
 		builder.AddVoxels(voxels)
 		totalVoxels += int64(len(voxels))
 
@@ -502,22 +581,37 @@ func (d *Data) exportLabelToIndexGrid(ctx *datastore.VersionedCtx, blockMeta *la
 	// Build the IndexGrid
 	grid := builder.Build()
 	if grid == nil {
-		return nil, fmt.Errorf("failed to build IndexGrid (no voxels found)")
+		return nil, nil, fmt.Errorf("failed to build IndexGrid (no voxels found)")
 	}
 
 	// Serialize to NanoVDB format
 	writer := nanovdb.NewWriter()
 	if _, err := writer.WriteIndexGrid(grid); err != nil {
-		return nil, fmt.Errorf("failed to serialize IndexGrid: %w", err)
+		return nil, nil, fmt.Errorf("failed to serialize IndexGrid: %w", err)
 	}
 
-	return writer.Bytes(), nil
+	// If grayscale was collected, output values in sorted voxel order
+	var grayscaleData []byte
+	if gs != nil && len(gs.values) > 0 {
+		sortedVoxels := builder.GetSortedVoxels()
+		grayscaleData = make([]byte, len(sortedVoxels))
+		for i, coord := range sortedVoxels {
+			if val, ok := gs.values[coord]; ok {
+				grayscaleData[i] = val
+			}
+			// If not found, defaults to 0
+		}
+		dvid.Infof("Collected %d grayscale values for %d voxels\n", len(gs.values), len(sortedVoxels))
+	}
+
+	return writer.Bytes(), grayscaleData, nil
 }
 
 // extractLabelVoxelsWithStats extracts all voxels belonging to the given supervoxels from a block.
 // Returns the voxel coordinates in absolute (not block-relative) coordinates.
 // If stats is non-nil, updates bounding box and unique labels.
-func extractLabelVoxelsWithStats(block *labels.Block, supervoxels labels.Set, originX, originY, originZ int32, blockSize dvid.Point3d, stats *fvdbExportStats) []nanovdb.Coord {
+// If grayscaleBlock is non-nil, collects grayscale values for active voxels into gs.values.
+func extractLabelVoxelsWithStats(block *labels.Block, supervoxels labels.Set, originX, originY, originZ int32, blockSize dvid.Point3d, stats *fvdbExportStats, grayscaleBlock []byte, gs *grayscaleSource) []nanovdb.Coord {
 	// Get the full label volume from the compressed block
 	labelData, _ := block.MakeLabelVolume()
 	if len(labelData) == 0 {
@@ -528,23 +622,23 @@ func extractLabelVoxelsWithStats(block *labels.Block, supervoxels labels.Set, or
 	var voxels []nanovdb.Coord
 	nx, ny, nz := int32(blockSize[0]), int32(blockSize[1]), int32(blockSize[2])
 
-	idx := 0
+	labelIdx := 0
 	for z := int32(0); z < nz; z++ {
 		for y := int32(0); y < ny; y++ {
 			for x := int32(0); x < nx; x++ {
 				// Read the label at this voxel (uint64, little-endian)
-				if idx+8 > len(labelData) {
+				if labelIdx+8 > len(labelData) {
 					break
 				}
-				label := uint64(labelData[idx]) |
-					uint64(labelData[idx+1])<<8 |
-					uint64(labelData[idx+2])<<16 |
-					uint64(labelData[idx+3])<<24 |
-					uint64(labelData[idx+4])<<32 |
-					uint64(labelData[idx+5])<<40 |
-					uint64(labelData[idx+6])<<48 |
-					uint64(labelData[idx+7])<<56
-				idx += 8
+				label := uint64(labelData[labelIdx]) |
+					uint64(labelData[labelIdx+1])<<8 |
+					uint64(labelData[labelIdx+2])<<16 |
+					uint64(labelData[labelIdx+3])<<24 |
+					uint64(labelData[labelIdx+4])<<32 |
+					uint64(labelData[labelIdx+5])<<40 |
+					uint64(labelData[labelIdx+6])<<48 |
+					uint64(labelData[labelIdx+7])<<56
+				labelIdx += 8
 
 				// Track unique labels in the block (for stats)
 				if stats != nil && label != 0 {
@@ -557,14 +651,21 @@ func extractLabelVoxelsWithStats(block *labels.Block, supervoxels labels.Set, or
 						vx := originX + x
 						vy := originY + y
 						vz := originZ + z
-						voxels = append(voxels, nanovdb.Coord{
-							X: vx,
-							Y: vy,
-							Z: vz,
-						})
+						coord := nanovdb.Coord{X: vx, Y: vy, Z: vz}
+						voxels = append(voxels, coord)
+
 						// Update bounding box
 						if stats != nil {
 							stats.updateBoundingBox(vx, vy, vz)
+						}
+
+						// Collect grayscale value if available
+						if gs != nil && grayscaleBlock != nil {
+							// Grayscale block layout: uint8 values in Z, Y, X order
+							gsIdx := int(z)*int(ny)*int(nx) + int(y)*int(nx) + int(x)
+							if gsIdx < len(grayscaleBlock) {
+								gs.values[coord] = grayscaleBlock[gsIdx]
+							}
 						}
 					}
 				}
@@ -586,11 +687,17 @@ func countVoxelsInMeta(blockMeta *labelBlockMetadata) int {
 // exportLabelToFVDB exports a label's topology to a NanoVDB IndexGrid file.
 // This is called asynchronously from the RPC "fvdb" command.
 //
-// Usage: dvid node <UUID> <data name> fvdb <label> <file path>
-func (d *Data) exportLabelToFVDB(ctx *datastore.VersionedCtx, label uint64, outPath string) {
+// Usage: dvid node <UUID> <data name> fvdb <label> <file path> [grayscale=<instance>]
+// If grayscale is specified, a sidecar .bin file with uint8 values will be created.
+func (d *Data) exportLabelToFVDB(ctx *datastore.VersionedCtx, label uint64, outPath string, grayscaleInstance string) {
 	timedLog := dvid.NewTimeLog()
 
-	dvid.Infof("Starting fVDB export of label %d for data %q to %s\n", label, d.DataName(), outPath)
+	if grayscaleInstance != "" {
+		dvid.Infof("Starting fVDB export of label %d for data %q to %s (with grayscale from %q)\n",
+			label, d.DataName(), outPath, grayscaleInstance)
+	} else {
+		dvid.Infof("Starting fVDB export of label %d for data %q to %s\n", label, d.DataName(), outPath)
+	}
 
 	// Get the label index to find which blocks contain this label
 	bounds := dvid.Bounds{} // No bounds restriction
@@ -615,14 +722,25 @@ func (d *Data) exportLabelToFVDB(ctx *datastore.VersionedCtx, label uint64, outP
 	// Create stats collector for RPC command
 	stats := newFvdbExportStats()
 
+	// Create grayscale source if specified
+	var gs *grayscaleSource
+	if grayscaleInstance != "" {
+		gs, err = newGrayscaleSource(ctx.VersionUUID(), grayscaleInstance)
+		if err != nil {
+			dvid.Errorf("fVDB export failed: %v\n", err)
+			return
+		}
+		dvid.Infof("fVDB export: using grayscale from instance %q\n", grayscaleInstance)
+	}
+
 	// Export the label topology as IndexGrid
-	data, err := d.exportLabelToIndexGrid(ctx, labelBlockMeta, gridName, stats)
+	data, grayscaleData, err := d.exportLabelToIndexGrid(ctx, labelBlockMeta, gridName, stats, gs)
 	if err != nil {
 		dvid.Errorf("fVDB export failed for label %d: %v\n", label, err)
 		return
 	}
 
-	// Write to file
+	// Write IndexGrid to file
 	f, err := os.Create(outPath)
 	if err != nil {
 		dvid.Errorf("fVDB export failed: cannot create file %s: %v\n", outPath, err)
@@ -638,6 +756,28 @@ func (d *Data) exportLabelToFVDB(ctx *datastore.VersionedCtx, label uint64, outP
 
 	timedLog.Infof("fVDB export complete: label %d -> %s (%d bytes, %d blocks)",
 		label, outPath, n, len(labelBlockMeta.sortedBlocks))
+
+	// Write grayscale sidecar file if we have grayscale data
+	if len(grayscaleData) > 0 {
+		// Generate grayscale filename: replace .nvdb with -<instance>.bin
+		ext := filepath.Ext(outPath)
+		basePath := strings.TrimSuffix(outPath, ext)
+		grayscalePath := fmt.Sprintf("%s-%s.bin", basePath, grayscaleInstance)
+
+		gf, err := os.Create(grayscalePath)
+		if err != nil {
+			dvid.Errorf("fVDB export: failed to create grayscale file %s: %v\n", grayscalePath, err)
+		} else {
+			defer gf.Close()
+			gn, err := gf.Write(grayscaleData)
+			if err != nil {
+				dvid.Errorf("fVDB export: failed to write grayscale file %s: %v\n", grayscalePath, err)
+			} else {
+				dvid.Infof("fVDB export: wrote grayscale sidecar %s (%d bytes, %d voxels)\n",
+					grayscalePath, gn, len(grayscaleData))
+			}
+		}
+	}
 
 	// Print comprehensive statistics
 	stats.printSummary(label, n)

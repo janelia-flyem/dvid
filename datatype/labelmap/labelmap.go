@@ -2805,9 +2805,9 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		return nil
 
 	case "fvdb":
-		// dvid node <UUID> <data name> fvdb <label> <file path>
+		// dvid node <UUID> <data name> fvdb <label> <file path> [grayscale=<instance>]
 		if len(req.Command) < 6 {
-			return fmt.Errorf("poorly formatted fvdb command. Usage: dvid node <UUID> <data name> fvdb <label> <file path>")
+			return fmt.Errorf("poorly formatted fvdb command. Usage: dvid node <UUID> <data name> fvdb <label> <file path> [grayscale=<instance>]")
 		}
 		var uuidStr, dataName, cmdStr, labelStr, outPath string
 		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &labelStr, &outPath)
@@ -2825,12 +2825,28 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 			return fmt.Errorf("label 0 is protected background value and cannot be exported")
 		}
 
+		// Parse optional grayscale argument
+		var grayscaleInstance string
+		if len(req.Command) >= 7 {
+			for _, arg := range req.Command[6:] {
+				if strings.HasPrefix(arg, "grayscale=") {
+					grayscaleInstance = strings.TrimPrefix(arg, "grayscale=")
+					break
+				}
+			}
+		}
+
 		ctx := datastore.NewVersionedCtx(d, v)
 
 		// Start async export
-		go d.exportLabelToFVDB(ctx, label, outPath)
+		go d.exportLabelToFVDB(ctx, label, outPath, grayscaleInstance)
 
-		reply.Text = fmt.Sprintf("Asynchronously exporting label %d for data %q, uuid %s to file: %s\n", label, d.DataName(), uuid, outPath)
+		if grayscaleInstance != "" {
+			reply.Text = fmt.Sprintf("Asynchronously exporting label %d for data %q, uuid %s to file: %s (with grayscale from %q)\n",
+				label, d.DataName(), uuid, outPath, grayscaleInstance)
+		} else {
+			reply.Text = fmt.Sprintf("Asynchronously exporting label %d for data %q, uuid %s to file: %s\n", label, d.DataName(), uuid, outPath)
+		}
 		return nil
 
 	default:

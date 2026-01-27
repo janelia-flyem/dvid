@@ -197,6 +197,15 @@ func (b *IndexGridBuilder) Build() *IndexGrid {
 	}
 }
 
+// GetSortedVoxels returns a copy of the sorted, deduplicated voxel coordinates.
+// This must be called after Build() to get the final voxel ordering that corresponds
+// to the IndexGrid's voxel indices.
+func (b *IndexGridBuilder) GetSortedVoxels() []Coord {
+	result := make([]Coord, len(b.voxels))
+	copy(result, b.voxels)
+	return result
+}
+
 // buildLeafNodes creates leaf nodes from voxels
 func (b *IndexGridBuilder) buildLeafNodes() {
 	for _, v := range b.voxels {
