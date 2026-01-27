@@ -19,6 +19,9 @@ import (
 	"github.com/janelia-flyem/dvid/server"
 )
 
+// denseBlockSize is the size of a fully dense 64³ block of uint64 labels
+const denseBlockSize = 64 * 64 * 64 * 8 // 2,097,152 bytes
+
 // fvdbExportStats holds statistics collected during fVDB export.
 type fvdbExportStats struct {
 	// Voxel statistics
@@ -28,19 +31,27 @@ type fvdbExportStats struct {
 	coordsSet   bool // true once we've seen at least one voxel
 
 	// Block data statistics
-	totalCompressedBytes   int64
-	totalUncompressedBytes int64
-	blockSizes             []int // uncompressed sizes for histogram
+	// "Storage" = data as stored (typically gzip compressed)
+	// "Serialized" = after decompression but still in DVID's native block format
+	//                (label dictionary + sub-block encoding)
+	totalStorageBytes    int64            // compressed/stored size
+	totalSerializedBytes int64            // DVID native format size (after gzip decompression)
+	blockSerializedSizes []int            // serialized sizes for histogram
+	compressionFormats   map[string]int   // count of blocks by compression format
 
-	// Unique labels in processed blocks
+	// Labels per block statistics
+	labelsPerBlock []int // number of unique labels in each block's dictionary
+
+	// Unique labels across all processed blocks
 	uniqueLabels map[uint64]struct{}
 }
 
 func newFvdbExportStats() *fvdbExportStats {
 	return &fvdbExportStats{
-		minCoord:     [3]int32{math.MaxInt32, math.MaxInt32, math.MaxInt32},
-		maxCoord:     [3]int32{math.MinInt32, math.MinInt32, math.MinInt32},
-		uniqueLabels: make(map[uint64]struct{}),
+		minCoord:           [3]int32{math.MaxInt32, math.MaxInt32, math.MaxInt32},
+		maxCoord:           [3]int32{math.MinInt32, math.MinInt32, math.MinInt32},
+		uniqueLabels:       make(map[uint64]struct{}),
+		compressionFormats: make(map[string]int),
 	}
 }
 
@@ -71,10 +82,15 @@ func (s *fvdbExportStats) updateBoundingBox(x, y, z int32) {
 	}
 }
 
-func (s *fvdbExportStats) addBlockStats(compressedSize, uncompressedSize int) {
-	s.totalCompressedBytes += int64(compressedSize)
-	s.totalUncompressedBytes += int64(uncompressedSize)
-	s.blockSizes = append(s.blockSizes, uncompressedSize)
+func (s *fvdbExportStats) addBlockStats(storageSize, serializedSize int, compressionFormat string) {
+	s.totalStorageBytes += int64(storageSize)
+	s.totalSerializedBytes += int64(serializedSize)
+	s.blockSerializedSizes = append(s.blockSerializedSizes, serializedSize)
+	s.compressionFormats[compressionFormat]++
+}
+
+func (s *fvdbExportStats) addBlockLabelCount(numLabels int) {
+	s.labelsPerBlock = append(s.labelsPerBlock, numLabels)
 }
 
 func (s *fvdbExportStats) addLabel(label uint64) {
@@ -83,58 +99,86 @@ func (s *fvdbExportStats) addLabel(label uint64) {
 
 // printSummary logs a comprehensive summary of the export statistics.
 func (s *fvdbExportStats) printSummary(label uint64, outputBytes int) {
-	dvid.Infof("=== fVDB Export Statistics for label %d ===", label)
+	dvid.Infof("=== fVDB Export Statistics for label %d ===\n", label)
 
 	// Voxel statistics
-	dvid.Infof("Voxels: %d total", s.totalVoxels)
+	dvid.Infof("Voxels: %d total\n", s.totalVoxels)
 	if s.coordsSet {
 		extentX := s.maxCoord[0] - s.minCoord[0] + 1
 		extentY := s.maxCoord[1] - s.minCoord[1] + 1
 		extentZ := s.maxCoord[2] - s.minCoord[2] + 1
 		boundingBoxVol := int64(extentX) * int64(extentY) * int64(extentZ)
 		fillRatio := float64(s.totalVoxels) / float64(boundingBoxVol) * 100
-		dvid.Infof("Bounding box: (%d, %d, %d) to (%d, %d, %d)",
+		dvid.Infof("Bounding box: (%d, %d, %d) to (%d, %d, %d)\n",
 			s.minCoord[0], s.minCoord[1], s.minCoord[2],
 			s.maxCoord[0], s.maxCoord[1], s.maxCoord[2])
-		dvid.Infof("Extent: %d x %d x %d = %d voxels (%.2f%% fill ratio)",
+		dvid.Infof("Extent: %d x %d x %d = %d voxels (%.2f%% fill ratio)\n",
 			extentX, extentY, extentZ, boundingBoxVol, fillRatio)
 	}
 
-	// Block data statistics
-	dvid.Infof("Segmentation data read: %s compressed, %s uncompressed",
-		formatBytes(s.totalCompressedBytes), formatBytes(s.totalUncompressedBytes))
-	if s.totalCompressedBytes > 0 {
-		compressionRatio := float64(s.totalUncompressedBytes) / float64(s.totalCompressedBytes)
-		dvid.Infof("Compression ratio: %.2fx", compressionRatio)
+	// Block data statistics with terminology explanation
+	numBlocks := len(s.blockSerializedSizes)
+	dvid.Infof("Blocks processed: %d\n", numBlocks)
+
+	// Compression formats used
+	if len(s.compressionFormats) > 0 {
+		dvid.Infof("Compression formats:\n")
+		for format, count := range s.compressionFormats {
+			dvid.Infof("  %s: %d blocks\n", format, count)
+		}
 	}
 
-	// Block size histogram
-	if len(s.blockSizes) > 0 {
+	// Storage vs serialized vs dense comparison
+	// Storage = as stored on disk (compressed)
+	// Serialized = DVID native format (label dictionary + sub-block encoding)
+	// Dense = hypothetical 64³ × uint64 per block
+	totalDenseBytes := int64(numBlocks) * denseBlockSize
+	dvid.Infof("Block data sizes:\n")
+	dvid.Infof("  Storage (on-disk compressed): %s\n", formatBytes(s.totalStorageBytes))
+	dvid.Infof("  Serialized (DVID native format): %s\n", formatBytes(s.totalSerializedBytes))
+	dvid.Infof("  Dense (64³ × uint64 per block): %s\n", formatBytes(totalDenseBytes))
+
+	if s.totalStorageBytes > 0 {
+		storageToSerializedRatio := float64(s.totalSerializedBytes) / float64(s.totalStorageBytes)
+		dvid.Infof("  Compression ratio (serialized/storage): %.2fx\n", storageToSerializedRatio)
+	}
+	if s.totalSerializedBytes > 0 {
+		denseToSerializedRatio := float64(totalDenseBytes) / float64(s.totalSerializedBytes)
+		dvid.Infof("  DVID efficiency (dense/serialized): %.2fx\n", denseToSerializedRatio)
+	}
+
+	// Block serialized size histogram
+	if len(s.blockSerializedSizes) > 0 {
 		s.printBlockSizeHistogram()
 	}
 
-	// Unique labels
-	dvid.Infof("Unique labels in processed blocks: %d", len(s.uniqueLabels))
-
-	// Output file statistics
-	dvid.Infof("Output IndexGrid: %s", formatBytes(int64(outputBytes)))
-	if s.totalVoxels > 0 {
-		bytesPerVoxel := float64(outputBytes) / float64(s.totalVoxels)
-		dvid.Infof("IndexGrid efficiency: %.2f bytes/voxel", bytesPerVoxel)
+	// Labels per block histogram
+	if len(s.labelsPerBlock) > 0 {
+		s.printLabelsPerBlockHistogram()
 	}
 
-	dvid.Infof("=== End fVDB Export Statistics ===")
+	// Unique labels across all blocks
+	dvid.Infof("Unique labels in processed blocks: %d\n", len(s.uniqueLabels))
+
+	// Output file statistics
+	dvid.Infof("Output IndexGrid: %s\n", formatBytes(int64(outputBytes)))
+	if s.totalVoxels > 0 {
+		bytesPerVoxel := float64(outputBytes) / float64(s.totalVoxels)
+		dvid.Infof("IndexGrid efficiency: %.2f bytes/voxel\n", bytesPerVoxel)
+	}
+
+	dvid.Infof("=== End fVDB Export Statistics ===\n")
 }
 
-// printBlockSizeHistogram prints a histogram of block sizes.
+// printBlockSizeHistogram prints a histogram of block serialized sizes.
 func (s *fvdbExportStats) printBlockSizeHistogram() {
-	if len(s.blockSizes) == 0 {
+	if len(s.blockSerializedSizes) == 0 {
 		return
 	}
 
 	// Sort to find min/max/median
-	sorted := make([]int, len(s.blockSizes))
-	copy(sorted, s.blockSizes)
+	sorted := make([]int, len(s.blockSerializedSizes))
+	copy(sorted, s.blockSerializedSizes)
 	sort.Ints(sorted)
 
 	minSize := sorted[0]
@@ -148,7 +192,7 @@ func (s *fvdbExportStats) printBlockSizeHistogram() {
 	}
 	avgSize := float64(sum) / float64(len(sorted))
 
-	dvid.Infof("Block sizes: min=%s, max=%s, median=%s, avg=%s",
+	dvid.Infof("Serialized block sizes: min=%s, max=%s, median=%s, avg=%s\n",
 		formatBytes(int64(minSize)), formatBytes(int64(maxSize)),
 		formatBytes(int64(medianSize)), formatBytes(int64(avgSize)))
 
@@ -172,7 +216,7 @@ func (s *fvdbExportStats) printBlockSizeHistogram() {
 		{"256KB+", 262144, math.MaxInt32, 0},
 	}
 
-	for _, size := range s.blockSizes {
+	for _, size := range s.blockSerializedSizes {
 		for i := range buckets {
 			if size >= buckets[i].min && size < buckets[i].max {
 				buckets[i].count++
@@ -182,11 +226,71 @@ func (s *fvdbExportStats) printBlockSizeHistogram() {
 	}
 
 	// Print non-empty buckets
-	dvid.Infof("Block size distribution:")
+	dvid.Infof("Serialized block size distribution:\n")
 	for _, b := range buckets {
 		if b.count > 0 {
-			pct := float64(b.count) / float64(len(s.blockSizes)) * 100
-			dvid.Infof("  %s: %d blocks (%.1f%%)", b.label, b.count, pct)
+			pct := float64(b.count) / float64(len(s.blockSerializedSizes)) * 100
+			dvid.Infof("  %s: %d blocks (%.1f%%)\n", b.label, b.count, pct)
+		}
+	}
+}
+
+// printLabelsPerBlockHistogram prints a histogram of labels per block.
+func (s *fvdbExportStats) printLabelsPerBlockHistogram() {
+	if len(s.labelsPerBlock) == 0 {
+		return
+	}
+
+	// Sort to find min/max/median
+	sorted := make([]int, len(s.labelsPerBlock))
+	copy(sorted, s.labelsPerBlock)
+	sort.Ints(sorted)
+
+	minLabels := sorted[0]
+	maxLabels := sorted[len(sorted)-1]
+	medianLabels := sorted[len(sorted)/2]
+
+	// Calculate average
+	var sum int64
+	for _, count := range sorted {
+		sum += int64(count)
+	}
+	avgLabels := float64(sum) / float64(len(sorted))
+
+	dvid.Infof("Labels per block: min=%d, max=%d, median=%d, avg=%.1f\n",
+		minLabels, maxLabels, medianLabels, avgLabels)
+
+	// Create histogram buckets: 1, 2-5, 6-10, 11-20, 21-50, 51-100, 100+
+	buckets := []struct {
+		label string
+		min   int
+		max   int
+		count int
+	}{
+		{"1", 1, 2, 0},
+		{"2-5", 2, 6, 0},
+		{"6-10", 6, 11, 0},
+		{"11-20", 11, 21, 0},
+		{"21-50", 21, 51, 0},
+		{"51-100", 51, 101, 0},
+		{"100+", 101, math.MaxInt32, 0},
+	}
+
+	for _, count := range s.labelsPerBlock {
+		for i := range buckets {
+			if count >= buckets[i].min && count < buckets[i].max {
+				buckets[i].count++
+				break
+			}
+		}
+	}
+
+	// Print non-empty buckets
+	dvid.Infof("Labels per block distribution:\n")
+	for _, b := range buckets {
+		if b.count > 0 {
+			pct := float64(b.count) / float64(len(s.labelsPerBlock)) * 100
+			dvid.Infof("  %s labels: %d blocks (%.1f%%)\n", b.label, b.count, pct)
 		}
 	}
 }
@@ -346,24 +450,25 @@ func (d *Data) exportLabelToIndexGrid(ctx *datastore.VersionedCtx, blockMeta *la
 			continue
 		}
 
-		compressedSize := len(data)
+		storageSize := len(data)
 
 		// Decompress and parse the block
-		blockData, _, err := dvid.DeserializeData(data, true)
+		blockData, compressionFormat, err := dvid.DeserializeData(data, true)
 		if err != nil {
 			return nil, fmt.Errorf("failed to deserialize block %s: %w", izyx, err)
 		}
 
-		uncompressedSize := len(blockData)
-
-		// Track block stats
-		if stats != nil {
-			stats.addBlockStats(compressedSize, uncompressedSize)
-		}
+		serializedSize := len(blockData)
 
 		var block labels.Block
 		if err := block.UnmarshalBinary(blockData); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal block %s: %w", izyx, err)
+		}
+
+		// Track block stats
+		if stats != nil {
+			stats.addBlockStats(storageSize, serializedSize, compressionFormat.String())
+			stats.addBlockLabelCount(len(block.Labels))
 		}
 
 		// Get block origin in voxel coordinates
@@ -389,7 +494,7 @@ func (d *Data) exportLabelToIndexGrid(ctx *datastore.VersionedCtx, blockMeta *la
 		// Log progress periodically
 		if (i+1)%progressInterval == 0 || i+1 == totalBlocks {
 			pct := float64(i+1) / float64(totalBlocks) * 100
-			dvid.Infof("fVDB export progress: %d/%d blocks (%.1f%%), %d voxels so far",
+			dvid.Infof("fVDB export progress: %d/%d blocks (%.1f%%), %d voxels so far\n",
 				i+1, totalBlocks, pct, totalVoxels)
 		}
 	}
