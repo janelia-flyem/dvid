@@ -85,6 +85,8 @@ type IndexGrid struct {
 }
 
 // IndexGridBuilder constructs an IndexGrid from a set of voxel coordinates.
+// Voxels are inserted directly into the tree structure incrementally, avoiding
+// the need to store all coordinates in memory.
 type IndexGridBuilder struct {
 	// Configuration
 	name      string
@@ -92,11 +94,14 @@ type IndexGridBuilder struct {
 	origin    Vec3d
 	gridClass GridClass
 
-	// Temporary storage during building
-	voxels    []Coord // All active voxel coordinates
+	// Tree structure (built incrementally)
 	leafMap   map[Coord]*IndexLeafNode
 	lowerMap  map[Coord]*IndexLowerNode
 	upperMap  map[Coord]*IndexUpperNode
+
+	// Statistics tracked incrementally
+	voxelCount uint64
+	bbox       CoordBBox
 }
 
 // NewIndexGridBuilder creates a new builder for constructing an IndexGrid.
@@ -106,10 +111,10 @@ func NewIndexGridBuilder(name string) *IndexGridBuilder {
 		voxelSize: Vec3d{1.0, 1.0, 1.0},
 		origin:    Vec3d{0.0, 0.0, 0.0},
 		gridClass: GridClassIndexGrid,
-		voxels:    make([]Coord, 0),
 		leafMap:   make(map[Coord]*IndexLeafNode),
 		lowerMap:  make(map[Coord]*IndexLowerNode),
 		upperMap:  make(map[Coord]*IndexUpperNode),
+		bbox:      NewEmptyBBox(),
 	}
 }
 
@@ -132,48 +137,62 @@ func (b *IndexGridBuilder) SetGridClass(class GridClass) *IndexGridBuilder {
 }
 
 // AddVoxel adds a single active voxel coordinate.
+// The voxel is inserted directly into the tree structure.
 func (b *IndexGridBuilder) AddVoxel(x, y, z int32) {
-	b.voxels = append(b.voxels, Coord{x, y, z})
+	b.insertVoxel(Coord{X: x, Y: y, Z: z})
 }
 
 // AddVoxels adds multiple active voxel coordinates.
+// Each voxel is inserted directly into the tree structure.
 func (b *IndexGridBuilder) AddVoxels(coords []Coord) {
-	b.voxels = append(b.voxels, coords...)
+	for _, c := range coords {
+		b.insertVoxel(c)
+	}
+}
+
+// insertVoxel inserts a single voxel into the leaf node tree.
+// This is idempotent - inserting the same voxel twice has no effect.
+func (b *IndexGridBuilder) insertVoxel(v Coord) {
+	origin := leafOrigin(v.X, v.Y, v.Z)
+
+	leaf, exists := b.leafMap[origin]
+	if !exists {
+		leaf = &IndexLeafNode{
+			Origin: origin,
+			BBox:   NewEmptyBBox(),
+		}
+		b.leafMap[origin] = leaf
+	}
+
+	// Compute local offset within leaf (0-511)
+	localX := int(v.X - origin.X)
+	localY := int(v.Y - origin.Y)
+	localZ := int(v.Z - origin.Z)
+	offset := coordToLeafOffset(localX, localY, localZ)
+
+	// Only count if this is a new voxel (bit not already set)
+	if !leaf.ValueMask.GetBit(offset) {
+		leaf.ValueMask.SetBit(offset)
+		b.voxelCount++
+		b.bbox.ExpandBBox(v)
+		leaf.BBox.ExpandBBox(v)
+	}
 }
 
 // Build constructs the IndexGrid from all added voxels.
+// The leaf nodes were built incrementally during AddVoxel/AddVoxels calls.
+// This method builds the upper tree levels and assigns offsets.
 func (b *IndexGridBuilder) Build() *IndexGrid {
-	if len(b.voxels) == 0 {
+	if b.voxelCount == 0 {
 		return nil
 	}
 
-	// Sort voxels by Z, Y, X for cache-friendly access
-	sort.Slice(b.voxels, func(i, j int) bool {
-		if b.voxels[i].Z != b.voxels[j].Z {
-			return b.voxels[i].Z < b.voxels[j].Z
-		}
-		if b.voxels[i].Y != b.voxels[j].Y {
-			return b.voxels[i].Y < b.voxels[j].Y
-		}
-		return b.voxels[i].X < b.voxels[j].X
-	})
-
-	// Remove duplicates
-	b.voxels = removeDuplicateCoords(b.voxels)
-
-	// Build the tree bottom-up
-	b.buildLeafNodes()
+	// Build upper tree levels from leaf nodes
 	b.buildLowerNodes()
 	b.buildUpperNodes()
 
 	// Create the root node
 	root := b.buildRootNode()
-
-	// Compute bounding box
-	bbox := NewEmptyBBox()
-	for _, v := range b.voxels {
-		bbox.ExpandBBox(v)
-	}
 
 	// Collect nodes into slices (sorted by origin for deterministic output)
 	leafNodes := b.collectLeafNodes()
@@ -192,43 +211,43 @@ func (b *IndexGridBuilder) Build() *IndexGrid {
 		UpperNodes:       upperNodes,
 		LowerNodes:       lowerNodes,
 		LeafNodes:        leafNodes,
-		ActiveVoxelCount: uint64(len(b.voxels)),
-		BBox:             bbox,
+		ActiveVoxelCount: b.voxelCount,
+		BBox:             b.bbox,
 	}
 }
 
-// GetSortedVoxels returns a copy of the sorted, deduplicated voxel coordinates.
+// GetSortedVoxels reconstructs the voxel coordinates from the tree in index order.
+// This traverses leaf nodes sorted by origin and enumerates active voxels within each leaf.
 // This must be called after Build() to get the final voxel ordering that corresponds
 // to the IndexGrid's voxel indices.
+// Note: For very large grids (billions of voxels), this may use significant memory.
 func (b *IndexGridBuilder) GetSortedVoxels() []Coord {
-	result := make([]Coord, len(b.voxels))
-	copy(result, b.voxels)
-	return result
-}
+	// Collect and sort leaf nodes by origin
+	leaves := b.collectLeafNodes()
 
-// buildLeafNodes creates leaf nodes from voxels
-func (b *IndexGridBuilder) buildLeafNodes() {
-	for _, v := range b.voxels {
-		origin := leafOrigin(v.X, v.Y, v.Z)
+	// Pre-allocate result slice
+	result := make([]Coord, 0, b.voxelCount)
 
-		leaf, exists := b.leafMap[origin]
-		if !exists {
-			leaf = &IndexLeafNode{
-				Origin: origin,
-				BBox:   NewEmptyBBox(),
+	// Enumerate voxels in each leaf in order
+	for _, leaf := range leaves {
+		// Iterate through all 512 potential voxels in the leaf
+		for z := int32(0); z < LeafDim; z++ {
+			for y := int32(0); y < LeafDim; y++ {
+				for x := int32(0); x < LeafDim; x++ {
+					offset := coordToLeafOffset(int(x), int(y), int(z))
+					if leaf.ValueMask.GetBit(offset) {
+						result = append(result, Coord{
+							X: leaf.Origin.X + x,
+							Y: leaf.Origin.Y + y,
+							Z: leaf.Origin.Z + z,
+						})
+					}
+				}
 			}
-			b.leafMap[origin] = leaf
 		}
-
-		// Compute local offset within leaf (0-511)
-		localX := int(v.X - origin.X)
-		localY := int(v.Y - origin.Y)
-		localZ := int(v.Z - origin.Z)
-		offset := coordToLeafOffset(localX, localY, localZ)
-
-		leaf.ValueMask.SetBit(offset)
-		leaf.BBox.ExpandBBox(v)
 	}
+
+	return result
 }
 
 // buildLowerNodes creates lower internal nodes from leaf nodes
@@ -368,24 +387,6 @@ func coordLess(a, b Coord) bool {
 		return a.Y < b.Y
 	}
 	return a.X < b.X
-}
-
-// removeDuplicateCoords removes duplicate coordinates from a sorted slice
-func removeDuplicateCoords(coords []Coord) []Coord {
-	if len(coords) == 0 {
-		return coords
-	}
-
-	result := make([]Coord, 0, len(coords))
-	result = append(result, coords[0])
-
-	for i := 1; i < len(coords); i++ {
-		if coords[i] != coords[i-1] {
-			result = append(result, coords[i])
-		}
-	}
-
-	return result
 }
 
 // GetActiveVoxelCount returns the number of active voxels in the grid
