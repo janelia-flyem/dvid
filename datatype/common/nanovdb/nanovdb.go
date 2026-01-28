@@ -75,8 +75,10 @@ const (
 	GridTypeInt64      GridType = 5
 	GridTypeVec3f      GridType = 6
 	GridTypeVec3d      GridType = 7
-	GridTypeUInt32     GridType = 9
-	GridTypeUInt64     GridType = 10 // Used for label/segmentation data
+	GridTypeMask       GridType = 8  // No value, just active state
+	GridTypeHalf       GridType = 9  // IEEE 754 half-precision float
+	GridTypeUInt32     GridType = 10
+	GridTypeBoolean    GridType = 11 // Boolean value, encoded in bit array
 	GridTypeIndex      GridType = 19 // Index into external array (active + inactive)
 	GridTypeOnIndex    GridType = 20 // Index into external array (active only)
 	GridTypeIndexMask  GridType = 21 // Index with mutable mask
@@ -206,9 +208,10 @@ type GridData struct {
 // TreeData contains metadata about the tree structure.
 // Size: 64 bytes, immediately follows GridData
 type TreeData struct {
-	NodeOffset [4]uint64 // 32 bytes: byte offsets to each node level [leaf, lower, upper, root]
-	NodeCount  [4]uint32 // 16 bytes: number of nodes at each level
-	Reserved   [16]byte  // 16 bytes: reserved for future use
+	NodeOffset [4]int64  // 32 bytes: byte offsets from TreeData to [leaf, lower, upper, root]
+	NodeCount  [3]uint32 // 12 bytes: number of nodes [leaf, lower, upper]
+	TileCount  [3]uint32 // 12 bytes: active tile counts [lower, upper, root]
+	VoxelCount uint64    // 8 bytes: total active voxels
 }
 
 // GridBlindMetaData describes blind (opaque) data attached to a grid.
