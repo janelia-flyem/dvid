@@ -16,6 +16,7 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/common/nanovdb"
+	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
@@ -58,15 +59,19 @@ func newFvdbExportStats() *fvdbExportStats {
 }
 
 // grayscaleSource holds configuration for fetching grayscale data alongside segmentation.
+// Supports both standard key-value storage (uint8blk) and GridStoreGetter (ngprecomputed).
 type grayscaleSource struct {
-	instanceName string                   // Name of the grayscale data instance
-	store        storage.OrderedKeyValueDB // Store for grayscale data
-	ctx          *datastore.VersionedCtx  // Context for grayscale data
-	values       map[nanovdb.Coord]uint8  // Collected grayscale values keyed by coord
-	blocksFound  int                      // Number of grayscale blocks successfully fetched
+	instanceName string                    // Name of the grayscale data instance
+	store        storage.OrderedKeyValueDB // Standard key-value store (nil if using gridStore)
+	gridStore    storage.GridStoreGetter   // Grid store for ngprecomputed (nil if using standard store)
+	scaleLevel   int                       // Scale level for gridStore access
+	ctx          *datastore.VersionedCtx   // Context for standard store access
+	values       map[nanovdb.Coord]uint8   // Collected grayscale values keyed by coord
+	blocksFound  int                       // Number of grayscale blocks successfully fetched
 }
 
 // newGrayscaleSource creates a grayscale source for the given instance name.
+// Supports both standard uint8blk storage and ngprecomputed (GridStoreGetter).
 func newGrayscaleSource(uuid dvid.UUID, instanceName string) (*grayscaleSource, error) {
 	// Look up the grayscale data instance
 	data, err := datastore.GetDataByUUIDName(uuid, dvid.InstanceName(instanceName))
@@ -80,7 +85,37 @@ func newGrayscaleSource(uuid dvid.UUID, instanceName string) (*grayscaleSource, 
 		return nil, fmt.Errorf("grayscale instance %q is type %q, expected uint8blk", instanceName, typeName)
 	}
 
-	// Get the store
+	// Try to get imageblk.Data to check for GridStore
+	imgData, ok := data.(*imageblk.Data)
+	if !ok {
+		return nil, fmt.Errorf("grayscale instance %q is not an imageblk.Data type", instanceName)
+	}
+
+	gs := &grayscaleSource{
+		instanceName: instanceName,
+		values:       make(map[nanovdb.Coord]uint8),
+	}
+
+	// Check if this data uses a GridStore (ngprecomputed)
+	if imgData.GridStore != "" {
+		store, err := storage.GetStoreByAlias(imgData.GridStore)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get GridStore %q for grayscale instance %q: %w",
+				imgData.GridStore, instanceName, err)
+		}
+		gridStore, ok := store.(storage.GridStoreGetter)
+		if !ok {
+			return nil, fmt.Errorf("store %q for grayscale instance %q is not a GridStoreGetter",
+				imgData.GridStore, instanceName)
+		}
+		gs.gridStore = gridStore
+		gs.scaleLevel = imgData.ScaleLevel
+		dvid.Infof("Grayscale source %q using GridStore %q at scale level %d\n",
+			instanceName, imgData.GridStore, imgData.ScaleLevel)
+		return gs, nil
+	}
+
+	// Standard key-value storage
 	store, err := datastore.GetOrderedKeyValueDB(data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get store for grayscale instance %q: %w", instanceName, err)
@@ -93,17 +128,37 @@ func newGrayscaleSource(uuid dvid.UUID, instanceName string) (*grayscaleSource, 
 	}
 	ctx := datastore.NewVersionedCtx(data, versionID)
 
-	return &grayscaleSource{
-		instanceName: instanceName,
-		store:        store,
-		ctx:          ctx,
-		values:       make(map[nanovdb.Coord]uint8),
-	}, nil
+	gs.store = store
+	gs.ctx = ctx
+	dvid.Infof("Grayscale source %q using standard key-value storage\n", instanceName)
+	return gs, nil
 }
 
 // getBlock fetches a grayscale block by its coordinate string.
+// Handles both standard key-value storage and GridStoreGetter (ngprecomputed).
 func (gs *grayscaleSource) getBlock(izyx dvid.IZYXString) ([]byte, error) {
-	// Create the TKey for this block (same format as imageblk)
+	// Parse the block coordinate
+	blockCoord, err := izyx.IndexZYX()
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse block coord %s: %w", izyx, err)
+	}
+
+	// Handle GridStore (ngprecomputed) access
+	if gs.gridStore != nil {
+		chunkPt := dvid.ChunkPoint3d{int32(blockCoord[0]), int32(blockCoord[1]), int32(blockCoord[2])}
+		data, err := gs.gridStore.GridGet(gs.scaleLevel, chunkPt)
+		if err != nil {
+			return nil, fmt.Errorf("GridGet failed for block %s: %w", izyx, err)
+		}
+		if data == nil {
+			return nil, nil // Block doesn't exist
+		}
+		// GridStore returns raw block data (not serialized)
+		gs.blocksFound++
+		return data, nil
+	}
+
+	// Handle standard key-value storage
 	tk := storage.NewTKey(keyImageBlock, []byte(izyx))
 	data, err := gs.store.Get(gs.ctx, tk)
 	if err != nil {
@@ -112,7 +167,7 @@ func (gs *grayscaleSource) getBlock(izyx dvid.IZYXString) ([]byte, error) {
 	if data == nil {
 		return nil, nil // Block doesn't exist
 	}
-	// Decompress the block
+	// Decompress the block (standard storage is serialized)
 	blockData, _, err := dvid.DeserializeData(data, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to deserialize grayscale block: %w", err)
