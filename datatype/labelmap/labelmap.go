@@ -197,7 +197,7 @@ $ dvid node <UUID> <data name> set-nextlabel <label>
 	data name     Name of data to add.
 	label     	  A uint64 label ID
 
-$ dvid node <UUID> <data name> fvdb <label> <file path>
+$ dvid node <UUID> <data name> fvdb <label> <file path> [grayscale=<instance>]
 
 	Exports a label's sparse volume topology to a NanoVDB IndexGrid file (.nvdb format).
 	This binary format can be loaded directly by fVDB (https://github.com/openvdb/fvdb-core)
@@ -206,13 +206,20 @@ $ dvid node <UUID> <data name> fvdb <label> <file path>
 	This is an asynchronous operation that writes the IndexGrid to the specified file path.
 	Progress and completion are logged to the DVID server logs.
 
-	The output file can be loaded in Python using:
-		import fvdb
-		grid = fvdb.load("/path/to/label.nvdb")
+	If grayscale=<instance> is specified, a binary sidecar file will be created containing
+	the uint8 grayscale values for each active voxel, in the same order as the IndexGrid's
+	voxel indices. The sidecar file is named <file path base>-<instance>.bin.
 
-    Example:
+	The output files can be loaded in Python using:
+		import fvdb
+		import numpy as np
+		grid = fvdb.load("/path/to/label.nvdb")
+		grayscale = np.fromfile("/path/to/label-grayscale.bin", dtype=np.uint8)
+
+    Examples:
 
 	$ dvid node 3f8c segmentation fvdb 12345 /data/exports/label_12345.nvdb
+	$ dvid node 3f8c segmentation fvdb 12345 /data/exports/label_12345.nvdb grayscale=grayscale
 
     Arguments:
 
