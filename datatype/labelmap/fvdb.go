@@ -63,6 +63,7 @@ type grayscaleSource struct {
 	store        storage.OrderedKeyValueDB // Store for grayscale data
 	ctx          *datastore.VersionedCtx  // Context for grayscale data
 	values       map[nanovdb.Coord]uint8  // Collected grayscale values keyed by coord
+	blocksFound  int                      // Number of grayscale blocks successfully fetched
 }
 
 // newGrayscaleSource creates a grayscale source for the given instance name.
@@ -116,11 +117,12 @@ func (gs *grayscaleSource) getBlock(izyx dvid.IZYXString) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to deserialize grayscale block: %w", err)
 	}
+	gs.blocksFound++
 	return blockData, nil
 }
 
 // Key class for imageblk blocks (must match imageblk/keys.go)
-const keyImageBlock = 0xD0
+const keyImageBlock = 23
 
 func (s *fvdbExportStats) updateBoundingBox(x, y, z int32) {
 	if !s.coordsSet {
@@ -590,18 +592,27 @@ func (d *Data) exportLabelToIndexGrid(ctx *datastore.VersionedCtx, blockMeta *la
 		return nil, nil, fmt.Errorf("failed to serialize IndexGrid: %w", err)
 	}
 
-	// If grayscale was collected, output values in sorted voxel order
+	// If grayscale was requested, output values in sorted voxel order
 	var grayscaleData []byte
-	if gs != nil && len(gs.values) > 0 {
-		sortedVoxels := builder.GetSortedVoxels()
-		grayscaleData = make([]byte, len(sortedVoxels))
-		for i, coord := range sortedVoxels {
-			if val, ok := gs.values[coord]; ok {
-				grayscaleData[i] = val
+	if gs != nil {
+		if gs.blocksFound == 0 {
+			dvid.Errorf("Grayscale export failed: no grayscale blocks found for instance %q (checked %d block locations)\n",
+				gs.instanceName, totalBlocks)
+		} else if len(gs.values) == 0 {
+			dvid.Errorf("Grayscale export failed: found %d grayscale blocks but no values matched active voxels\n",
+				gs.blocksFound)
+		} else {
+			sortedVoxels := builder.GetSortedVoxels()
+			grayscaleData = make([]byte, len(sortedVoxels))
+			for i, coord := range sortedVoxels {
+				if val, ok := gs.values[coord]; ok {
+					grayscaleData[i] = val
+				}
+				// If not found, defaults to 0
 			}
-			// If not found, defaults to 0
+			dvid.Infof("Grayscale: found %d/%d blocks, collected %d values for %d voxels\n",
+				gs.blocksFound, totalBlocks, len(gs.values), len(sortedVoxels))
 		}
-		dvid.Infof("Collected %d grayscale values for %d voxels\n", len(gs.values), len(sortedVoxels))
 	}
 
 	return writer.Bytes(), grayscaleData, nil
