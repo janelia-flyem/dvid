@@ -1,0 +1,377 @@
+
+API for label block data type (github.com/janelia-flyem/dvid/datatype/labelblk)
+===============================================================================
+
+Note: UUIDs referenced below are strings that may either be a unique prefix of a
+hexadecimal UUID string (e.g., 3FA22) or a branch leaf specification that adds
+a colon (":") followed by the case-dependent branch name.  In the case of a
+branch leaf specification, the unique UUID prefix just identifies the repo of
+the branch, and the UUID referenced is really the leaf of the branch name.
+For example, if we have a DAG with root A -> B -> C where C is the current
+HEAD or leaf of the "master" (default) branch, then asking for "B:master" is
+the same as asking for "C".  If we add another version so A -> B -> C -> D, then
+references to "B:master" now return the data from "D".
+
+------
+
+Denormalizations like sparse volumes are *not* performed for the "0" label, which is
+considered a special label useful for designating background.  This allows users to define
+sparse labeled structures in a large volume without requiring processing of entire volume.
+
+
+Command-line:
+
+$ dvid repo <UUID> new labelblk <data name> <settings...>
+
+	Adds newly named data of the 'type name' to repo with specified UUID.
+
+	Example (note anisotropic resolution specified instead of default 8 nm isotropic):
+
+	$ dvid repo 3f8c new labelblk superpixels VoxelSize=3.2,3.2,40.0
+
+    Arguments:
+
+    UUID           Hexadecimal string with enough characters to uniquely identify a version node.
+    data name      Name of data to create, e.g., "superpixels"
+    settings       Configuration settings in "key=value" format separated by spaces.
+
+    Configuration Settings (case-insensitive keys)
+
+    BlockSize      Size in pixels  (default: %s)
+    VoxelSize      Resolution of voxels (default: 8.0, 8.0, 8.0)
+    VoxelUnits     Resolution units (default: "nanometers")
+
+$ dvid node <UUID> <data name> load <offset> <image glob> <settings...>
+
+    Initializes version node to a set of XY label images described by glob of filenames.
+    The DVID server must have access to the named files.  Currently, XY images are required.
+
+    Example: 
+
+    $ dvid node 3f8c superpixels load 0,0,100 "data/*.png" proc=noindex
+
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
+    image glob    Filenames of label images, preferably in quotes, e.g., "foo-xy-*.png"
+
+    Configuration Settings (case-insensitive keys)
+
+    Proc          "noindex": prevents creation of denormalized data to speed up obtaining sparse 
+    				 volumes and size query responses using the loaded labels.
+
+$ dvid node <UUID> <data name> composite <uint8 data name> <new rgba8 data name>
+
+    Creates a RGBA8 image where the RGB is a hash of the labels and the A is the
+    grayscale intensity.
+
+    Example: 
+
+    $ dvid node 3f8c bodies composite grayscale bodyview
+
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+	
+	
+    ------------------
+
+HTTP API (Level 2 REST):
+
+GET  <api URL>/node/<UUID>/<data name>/help
+
+	Returns data-specific help message.
+
+
+GET  <api URL>/node/<UUID>/<data name>/info
+POST <api URL>/node/<UUID>/<data name>/info
+
+    Retrieves or puts DVID-specific data properties for these voxels.
+
+    Example: 
+
+    GET <api URL>/node/3f8c/segmentation/info
+
+    Returns JSON with configuration settings that include location in DVID space and
+    min/max block indices.
+
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of voxels data.
+
+POST  <api URL>/node/<UUID>/<data name>/resolution
+  
+  	Sets the resolution for the image volume. 
+  
+  	Extents should be in JSON in the following format:
+  	[8,8,8]
+
+POST <api URL>/node/<UUID>/<data name>/sync?<options>
+
+    Appends data instances with which this labelblk is synced.  Expects JSON to be POSTed
+    with the following format:
+
+    { "sync": "bodies" }
+
+	To delete syncs, pass an empty string of names with query string "replace=true":
+
+	{ "sync": "" }
+
+    The "sync" property should be followed by a comma-delimited list of data instances that MUST
+    already exist.  Currently, syncs should be created before any annotations are pushed to
+    the server.  If annotations already exist, these are currently not synced.
+
+    The labelblk data type accepts syncs to labelvol and other labelblk data instances.  Syncs to
+	labelblk instances automatically create a 2x downsampling compared to the synced labelblk,
+	for use in multiscale.
+
+    GET Query-string Options:
+
+    replace    Set to "true" if you want passed syncs to replace and not be appended to current syncs.
+			   Default operation is false.
+
+
+GET  <api URL>/node/<UUID>/<data name>/metadata
+
+	Retrieves a JSON schema (application/vnd.dvid-nd-data+json) that describes the layout
+	of bytes returned for n-d images.
+
+
+GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>][?queryopts]
+
+    Retrieves either 2d images (PNG by default) or 3d binary data, depending on the dims parameter.  
+    The 3d binary data response has "Content-type" set to "application/octet-stream" and is an array of 
+    voxel values in ZYX order (X iterates most rapidly).
+
+    Example: 
+
+    GET <api URL>/node/3f8c/segmentation/isotropic/0_1/512_256/0_0_100/jpg:80
+
+    Returns an isotropic XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
+    height (y) of 256 voxels with offset (0,0,100) in JPG format with quality 80.
+    Additional processing is applied based on voxel resolutions to make sure the retrieved image 
+    has isotropic pixels.  For example, if an XZ image is requested and the image volume has 
+    X resolution 3 nm and Z resolution 40 nm, the returned image's height will be magnified 40/3
+    relative to the raw data.
+    The example offset assumes the "grayscale" data in version node "3f8c" is 3d.
+    The "Content-type" of the HTTP response should agree with the requested format.
+    For example, returned PNGs will have "Content-type" of "image/png", and returned
+    nD data will be "application/octet-stream".
+
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
+                    Slice strings ("xy", "xz", or "yz") are also accepted.
+    size          Size in voxels along each dimension specified in <dims>.
+    offset        Gives coordinate of first voxel using dimensionality of data.
+    format        Valid formats depend on the dimensionality of the request and formats
+                    available in server implementation.
+                  2D: "png", "jpg" (default: "png")
+                    jpg allows lossy quality setting, e.g., "jpg:80"
+                  nD: uses default "octet-stream".
+
+    Query-string Options:
+
+    roi       	  Name of roi data instance used to mask the requested data.
+    compression   Allows retrieval or submission of 3d data in "lz4" and "gzip"
+                    compressed format.  The 2d data will ignore this and use
+                    the image-based codec.
+    throttle      Only works for 3d data requests.  If "true", makes sure only N compute-intense operation 
+    				(all API calls that can be throttled) are handled.  If the server can't initiate the API 
+    				call right away, a 503 (Service Unavailable) status code is returned.
+
+
+GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?queryopts]
+
+    Retrieves either 2d images (PNG by default) or 3d binary data, depending on the dims parameter.  
+    The 3d binary data response has "Content-type" set to "application/octet-stream" and is an array of 
+    voxel values in ZYX order (X iterates most rapidly).
+
+    Example: 
+
+    GET <api URL>/node/3f8c/segmentation/raw/0_1/512_256/0_0_100/jpg:80
+
+    Returns a raw XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
+    height (y) of 256 voxels with offset (0,0,100) in JPG format with quality 80.
+    By "raw", we mean that no additional processing is applied based on voxel
+    resolutions to make sure the retrieved image has isotropic pixels.
+    The example offset assumes the "grayscale" data in version node "3f8c" is 3d.
+    The "Content-type" of the HTTP response should agree with the requested format.
+    For example, returned PNGs will have "Content-type" of "image/png", and returned
+    nD data will be "application/octet-stream". 
+
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    dims          The axes of data extraction in form "i_j_k,..."  
+                    Slice strings ("xy", "xz", or "yz") are also accepted.
+                    Example: "0_2" is XZ, and "0_1_2" is a 3d subvolume.
+    size          Size in voxels along each dimension specified in <dims>.
+    offset        Gives coordinate of first voxel using dimensionality of data.
+    format        Valid formats depend on the dimensionality of the request and formats
+                    available in server implementation.
+                  2D: "png", "jpg" (default: "png")
+                    jpg allows lossy quality setting, e.g., "jpg:80"
+                  nD: uses default "octet-stream".
+
+    Query-string Options:
+
+    roi           Name of roi data instance used to mask the requested data.
+    compression   Allows retrieval or submission of 3d data in "lz4","gzip", "google"
+		            (neuroglancer compression format), "googlegzip" (google + gzip)
+                    compressed format.  The 2d data will ignore this and use
+                    the image-based codec.
+    throttle      Only works for 3d data requests.  If "true", makes sure only N compute-intense operation 
+    				(all API calls that can be throttled) are handled.  If the server can't initiate the API 
+    				call right away, a 503 (Service Unavailable) status code is returned.
+
+
+POST <api URL>/node/<UUID>/<data name>/raw/0_1_2/<size>/<offset>[?queryopts]
+
+    Puts block-aligned voxel data using the block sizes defined for  this data instance.  
+    For example, if the BlockSize = 32, offset and size must be multiples of 32.
+
+    Example: 
+
+    POST <api URL>/node/3f8c/segmentation/raw/0_1_2/512_256_128/0_0_32
+
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    size          Size in voxels along each dimension specified in <dims>.
+    offset        Gives coordinate of first voxel using dimensionality of data.
+
+    Query-string Options:
+
+    roi           Name of roi data instance used to mask the requested data.
+    mutate        Default "false" corresponds to ingestion, i.e., the first write of the given block.
+                    Use "true" to indicate the POST is a mutation of prior data, which allows any
+                    synced data instance to cleanup prior denormalizations.  If "mutate=true", the
+                    POST operations will be slower due to a required GET to retrieve past data.
+    compression   Allows retrieval or submission of 3d data in "lz4" and "gzip"
+                    compressed format.
+    throttle      If "true", makes sure only N compute-intense operation (all API calls that can be throttled) 
+                    are handled.  If the server can't initiate the API call right away, a 503 (Service Unavailable) 
+                    status code is returned.
+
+GET  <api URL>/node/<UUID>/<data name>/pseudocolor/<dims>/<size>/<offset>[?queryopts]
+
+    Retrieves label data as pseudocolored 2D PNG color images where each label hashed to a different RGB.
+
+    Example: 
+
+    GET <api URL>/node/3f8c/segmentation/pseudocolor/0_1/512_256/0_0_100
+
+    Returns an XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
+    height (y) of 256 voxels with offset (0,0,100) in PNG format.
+
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    dims          The axes of data extraction.  Example: "0_2" can be XZ.
+                    Slice strings ("xy", "xz", or "yz") are also accepted.
+    size          Size in voxels along each dimension specified in <dims>.
+    offset        Gives coordinate of first voxel using dimensionality of data.
+
+    Query-string Options:
+
+    roi       	  Name of roi data instance used to mask the requested data.
+    compression   Allows retrieval or submission of 3d data in "lz4" and "gzip"
+                    compressed format.
+    throttle      If "true", makes sure only N compute-intense operation (all API calls that can be throttled) 
+                    are handled.  If the server can't initiate the API call right away, a 503 (Service Unavailable) 
+                    status code is returned.
+
+GET <api URL>/node/<UUID>/<data name>/label/<coord>
+
+	Returns JSON for the label at the given coordinate:
+	{ "Label": 23 }
+	
+    Arguments:
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of label data.
+    coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
+
+GET <api URL>/node/<UUID>/<data name>/labels[?queryopts]
+
+	Returns JSON for the labels at a list of coordinates.  Expects JSON in GET body:
+
+	[ [x0, y0, z0], [x1, y1, z1], ...]
+
+	Returns for each POSTed coordinate the corresponding label:
+
+	[ 23, 911, ...]
+	
+    Arguments:
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of label data.
+
+    Query-string Options:
+
+    hash          MD5 hash of request body content in hexadecimal string format.
+
+GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
+
+    Retrieves blocks corresponding to the extents specified by the size and offset.  The
+    subvolume request must be block aligned.  This is the most server-efficient way of
+    retrieving labelblk data, where data read from the underlying storage engine
+    is written directly to the HTTP connection.
+
+    Example: 
+
+    GET <api URL>/node/3f8c/segmentation/blocks/64_64_64/0_0_0
+
+	If block size is 32x32x32, this call retrieves up to 8 blocks where the first potential
+	block is at 0, 0, 0.  The returned byte stream has a list of blocks with a leading block 
+	coordinate (3 x int32) plus int32 giving the # of bytes in this block, and  then the 
+	bytes for the value.  If blocks are unset within the span, they will not appear in the stream,
+	so the returned data will be equal to or less than spanX blocks worth of data.  
+
+    The returned data format has the following format where int32 is in little endian and the bytes of
+    block data have been compressed in LZ4 format.
+
+        int32  Block 1 coordinate X (Note that this may not be starting block coordinate if it is unset.)
+        int32  Block 1 coordinate Y
+        int32  Block 1 coordinate Z
+        int32  # bytes for first block (N1)
+        byte0  Block N1 serialization using chosen compression format (see "compression" option below)
+        byte1
+        ...
+        byteN1
+
+        int32  Block 2 coordinate X
+        int32  Block 2 coordinate Y
+        int32  Block 2 coordinate Z
+        int32  # bytes for second block (N2)
+        byte0  Block N2 serialization using chosen compression format (see "compression" option below)
+        byte1
+        ...
+        byteN2
+
+        ...
+
+    If no data is available for given block span, nothing is returned.
+
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    size          Size in voxels along each dimension specified in <dims>.
+    offset        Gives coordinate of first voxel using dimensionality of data.
+
+    Query-string Options:
+
+    compression   Allows retrieval of block data in "lz4" (default) or "uncompressed".
+    throttle      If "true", makes sure only N compute-intense operation (all API calls that can be 
+                  throttled) are handled.  If the server can't initiate the API call right away, a 503 
+                  (Service Unavailable) status code is returned.
+

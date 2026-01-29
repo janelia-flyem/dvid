@@ -1,0 +1,371 @@
+
+API for synapse data type (github.com/janelia-flyem/dvid/datatype/annotation)
+=======================================================================================
+
+Note: UUIDs referenced below are strings that may either be a unique prefix of a
+hexadecimal UUID string (e.g., 3FA22) or a branch leaf specification that adds
+a colon (":") followed by the case-dependent branch name.  In the case of a
+branch leaf specification, the unique UUID prefix just identifies the repo of
+the branch, and the UUID referenced is really the leaf of the branch name.
+For example, if we have a DAG with root A -> B -> C where C is the current
+HEAD or leaf of the "master" (default) branch, then asking for "B:master" is
+the same as asking for "C".  If we add another version so A -> B -> C -> D, then
+references to "B:master" now return the data from "D".
+
+Command-line:
+
+$ dvid repo <UUID> new annotation <data name> <settings...>
+
+	Adds newly named data of the 'type name' to repo with specified UUID.
+
+	Example:
+
+	$ dvid repo 3f8c new annotation synapses
+
+    Arguments:
+
+    UUID           Hexadecimal string with enough characters to uniquely identify a version node.
+    data name      Name of data to create, e.g., "synapses"
+    settings       Configuration settings in "key=value" format separated by spaces.
+	
+$ dvid node <UUID> <data name> reload <settings...>
+
+	Forces asynchronous denormalization of all annotations for labels and tags.  Because
+	this is a special request for mass mutations that require static "normalized" data
+	(only verifies and changes the label and tag denormalizations), any POST requests
+	while this is running results in an error.
+
+    Configuration Settings (case-insensitive keys)
+
+	check 		"true": (default "false") check denormalizations, writing to log when issues
+					are detected, and only replacing denormalization when it is incorrect.
+	inmemory 	"false": (default "true") use in-memory reload, which assumes the server
+					has enough memory to hold all annotations in memory.
+
+    ------------------
+
+HTTP API (Level 2 REST):
+
+GET  <api URL>/node/<UUID>/<data name>/help
+
+	Returns data-specific help message.
+
+
+GET  <api URL>/node/<UUID>/<data name>/info
+POST <api URL>/node/<UUID>/<data name>/info
+
+    Retrieves or puts DVID-specific data properties for these voxels.
+
+    Example: 
+
+    GET <api URL>/node/3f8c/synapses/info
+
+    Returns JSON with configuration settings.
+
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of annotation data.
+
+
+POST <api URL>/node/<UUID>/<data name>/sync?<options>
+
+    Appends to list of data instances with which the annotations are synced.  Expects JSON to be POSTed
+    with the following format:
+
+    { "sync": "labels,bodies" }
+
+    To delete syncs, pass an empty string of names with query string "replace=true":
+
+    { "sync": "" }
+
+    The "sync" property should be followed by a comma-delimited list of data instances that MUST
+    already exist.  Currently, syncs should be created before any annotations are pushed to
+    the server.  If annotations already exist, these are currently not synced.
+
+	The annotations data type only accepts syncs to label-oriented datatypes: labelblk, labelvol,
+	labelarray, and labelmap.
+
+    POST Query-string Options:
+
+    replace    Set to "true" if you want passed syncs to replace and not be appended to current syncs.
+			   Default operation is false.
+
+
+GET <api URL>/node/<UUID>/<data name>/tags
+POST <api URL>/node/<UUID>/<data name>/tags?<options>
+
+	GET retrieves JSON of tags for this instance.
+	POST appends or replaces tags provided in POST body.  Expects JSON to be POSTed
+	with the following format:
+
+	{ "tag1": "anything you want", "tag2": "something else" }
+
+	To delete tags, pass an empty object with query string "replace=true".
+
+	POST Query-string Options:
+
+	replace   Set to "true" if you want passed tags to replace and not be appended to current tags.
+			  Default operation is false (append).
+		   
+		   
+Note: For the following URL endpoints that return and accept POSTed JSON values, see the JSON format
+at end of this documentation.
+
+GET <api URL>/node/<UUID>/<data name>/label/<label>[?<options>]
+
+	Returns all point annotations within the given label as an array of elements.
+	This endpoint is only available if the annotation data instance is synced with
+	voxel label data instances (labelblk, labelarray, labelmap).
+	
+	GET Query-string Option:
+
+	relationships   Set to "true" to return all relationships for each annotation.
+	                Set to "verbose" to return relationships with full partner properties.
+
+	Example:
+
+	GET http://foo.com/api/node/83af/myannotations/label/23?relationships=true
+	GET http://foo.com/api/node/83af/myannotations/label/23?relationships=verbose
+
+
+POST <api URL>/node/<UUID>/<data name>/labels
+
+	Ingest point annotations for labels. The POSTed JSON should be an object
+	with label string keys (allowing uint64) and a string that contains the
+	JSON array of annotations (without relationships) for that label.  For example:
+
+	{ "23": "[{...},{...}]", "45": "[{...},{...}]" }
+
+
+GET <api URL>/node/<UUID>/<data name>/tag/<tag>[?<options>]
+
+	Returns all point annotations with the given tag as an array of elements.
+	By default, the Relationships of an annotation to other annotations is not
+	returned.  If you want the Relationships, use the query string below.
+
+	GET Query-string Option:
+
+	relationships   Set to "true" to return all relationships for each annotation.
+	                Set to "verbose" to return relationships with full partner properties.
+
+	Example:
+
+	GET http://foo.com/api/node/83af/myannotations/tag/goodstuff?relationships=true
+	GET http://foo.com/api/node/83af/myannotations/tag/goodstuff?relationships=verbose
+	
+
+DELETE <api URL>/node/<UUID>/<data name>/element/<coord>[?<options>]
+
+	Deletes a point annotation given its location.
+
+	Kafka JSON message generated by this request where "User" is optional:
+		{ 
+			"Action": "element-delete",
+			"Point": <3d point>,
+			"UUID": <UUID on which delete was done>,
+			"User": <user name>
+		}
+
+	POST Query-string Options:
+
+	kafkalog    Set to "off" if you don't want this mutation logged to kafka.
+
+
+GET <api URL>/node/<UUID>/<data name>/roi/<ROI specification>
+
+	Returns all point annotations within the ROI.  The ROI specification must be specified
+	using a string of format "roiname,uuid".  If just "roiname" is specified without
+	a full UUID string, the current UUID of the request will be used.  Currently, this 
+	request will only work for ROIs that have same block size as the annotation data instance.
+
+	The returned point annotations will be an array of elements.
+
+GET <api URL>/node/<UUID>/<data name>/elements/<size>/<offset>
+
+	Returns all point annotations within subvolume of given size with upper left corner
+	at given offset.  The size and offset should be voxels separated by underscore, e.g.,
+	"400_300_200" can describe a 400 x 300 x 200 volume or an offset of (400,300,200).
+
+	The returned point annotations will be an array of elements with relationships.
+
+POST <api URL>/node/<UUID>/<data name>/elements[?<options>]
+
+	Adds or modifies point annotations.  The POSTed content is an array of elements.
+	Note that deletes are handled via a separate API (see above).
+
+	Kafka JSON message generated by this request where "User" is optional:
+		{ 
+			"Action": "element-post",
+			"DataRef": <string for reference to posted binary data>,
+			"UUID": <UUID on which POST was done>,
+			"User": <user name>
+		}
+	
+	The data reference above can be used to download the binary data by calling
+	this data instance's BlobStore API.  See the node-level HTTP API documentation.
+
+		GET /api/node/{uuid}/{data name}/blobstore/{reference}
+
+	POST Query-string Options:
+
+	kafkalog    Set to "off" if you don't want this mutation logged to kafka.
+
+GET <api URL>/node/<UUID>/<data name>/scan[?<options>]
+
+	Scans the annotations stored in blocks and returns simple stats on usage
+	in JSON format.
+
+	GET Query-string Options:
+
+	byCoord    If "true" (not set by default), the scan bounds will be by min/max 
+			    block coord instead of internal constants.
+	keysOnly   If "true" (not set by default), scans using keys only range query
+	            and will not check if value is empty.
+
+
+GET <api URL>/node/<UUID>/<data name>/all-elements
+
+	Returns all point annotations in the entire data instance, which could exceed data
+	response sizes (set by server) if too many elements are present.  This should be
+	equivalent to the /blocks endpoint but without the need to determine extents.
+
+	The returned stream of data is the same as /blocks endpoint below.
+
+
+GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>
+
+	Returns all point annotations within all blocks intersecting the subvolume of given size 
+	with upper left corner at given offset.  The size and offset should be voxels separated by 
+	underscore, e.g., "400_300_200" can describe a 400 x 300 x 200 volume or an offset of (400,300,200).
+
+	Unlike the /elements endpoint, the /blocks endpoint is the fastest way to retrieve
+	all point annotations within a bounding box.  It does not screen points based on the specified 
+	subvolume but simply streams all elements (including relationships) in the intersecting blocks.
+	The fastest way to get all point annotations in entire volume (no bounding box) is via /all-elements.
+
+	The returned stream of data is an object with block coordinate as keys and an array of point
+	annotation elements within that block, meeting the JSON described below.
+
+	If the data instance has Tag "ScanAllForBlocks" is set to "true", it's assumed there are
+	relatively few annotations across blocks so a single range query is used rather than many
+	range queries to span the given X range of the bounding box.
+
+	Returned JSON:
+
+	{
+		"10,381,28": [ array of point annotation elements ],
+		"11,381,28": [ array of point annotation elements ],
+		...
+	}
+
+POST <api URL>/node/<UUID>/<data name>/blocks[?<options>]
+
+	Unlike the POST /elements endpoint, the /blocks endpoint is the fastest way to store
+	all point annotations and assumes the caller has (1) properly partitioned the elements
+	int the appropriate block for the block size (default 64) and (2) will do a POST /reload
+	to create the denormalized Label and Tag versions of the annotations after all
+	ingestion is completed.
+
+	This low-level ingestion also does not transmit subscriber events to associated
+	synced data (e.g., labelsz).
+
+	The POSTed JSON should be similar to the GET version with the block coordinate as 
+	the key:
+
+	{
+		"10,381,28": [ array of point annotation elements ],
+		"11,381,28": [ array of point annotation elements ],
+		...
+	}
+
+	POST Query-string Options:
+
+	kafkalog    Set to "off" if you don't want this mutation logged to kafka.
+
+
+POST <api URL>/node/<UUID>/<data name>/move/<from_coord>/<to_coord>[?<options>]
+
+	Moves the point annotation from <from_coord> to <to_coord> where
+	<from_coord> and <to_coord> are of the form X_Y_Z.
+
+	Kafka JSON message generated by this request where "User" is optional:
+		{ 
+			"Action": "element-move",
+			"From": <3d point>,
+			"To": <3d point>,
+			"UUID": <UUID on which move was done>,
+			User: <user name>
+		}
+
+	POST Query-string Options:
+
+	kafkalog    Set to "off" if you don't want this mutation logged to kafka.
+
+		
+
+------
+
+Example JSON Format of point annotation elements with ... marking omitted elements:
+
+[
+	{
+		"Pos":[33,30,31],
+		"Kind":"PostSyn",
+		"Rels":[ 
+			{"Rel":"PostSynTo", "To":[15,27,35]} 
+		],
+		"Tags":["Synapse1"],
+		"Prop": {
+			"SomeVar": "SomeValue",
+			"Another Var": "A More Complex Value"
+		}
+	},
+	{
+		"Pos":[15,27,35],
+		"Kind":"PreSyn",
+		"Rels":[
+			{"Rel":"PreSynTo", "To":[20,30,40]},
+			{"Rel":"PreSynTo", "To":[14,25,37]},
+			{"Rel":"PreSynTo", "To":[33,30,31]}
+		],
+		"Tags":["Synapse1"]
+	},
+	{
+		"Pos":[20,30,40],
+		"Kind":"PostSyn",
+		"Rels":[
+			{"Rel":"PostSynTo","To":[15,27,35]}
+		],
+		"Tags":["Synapse1"],
+		"Prop": {
+			"SomeVar": "SomeValue",
+			"Another Var 2": "A More Complex Value 2"
+		}
+	},
+	...
+]
+
+The "Kind" property can be one of "Unknown", "PostSyn", "PreSyn", "Gap", or "Note".
+
+The "Rel" property can be one of "UnknownRelationship", "PostSynTo", "PreSynTo", "ConvergentTo", or "GroupedWith".
+
+The "Tags" property will be indexed and so can be costly if used for very large numbers of synapse elements.
+
+The "Prop" property is an arbitrary object with string values.  The "Prop" object's key are not indexed.
+
+--------
+
+POST <api URL>/node/<UUID>/<data name>/reload[?<options>]
+
+	Forces asynchronous recreation of its tag and label indexed denormalizations.  Can be 
+	used to initialize a newly added instance.  Note that this instance will return errors
+	for any POST request while denormalization is ongoing.
+
+	POST Query-string Options:
+
+	check 		"true": (default "false") check denormalizations, writing to log when issues
+					are detected, and only replacing denormalization when it is incorrect.
+	inmemory 	"false": (default "true") use in-memory reload, which assumes the server
+					has enough memory to hold all annotations in memory.
+

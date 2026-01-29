@@ -1,0 +1,191 @@
+
+API for labelsz data type (github.com/janelia-flyem/dvid/datatype/labelsz)
+=======================================================================================
+
+Note: UUIDs referenced below are strings that may either be a unique prefix of a
+hexadecimal UUID string (e.g., 3FA22) or a branch leaf specification that adds
+a colon (":") followed by the case-dependent branch name.  In the case of a
+branch leaf specification, the unique UUID prefix just identifies the repo of
+the branch, and the UUID referenced is really the leaf of the branch name.
+For example, if we have a DAG with root A -> B -> C where C is the current
+HEAD or leaf of the "master" (default) branch, then asking for "B:master" is
+the same as asking for "C".  If we add another version so A -> B -> C -> D, then
+references to "B:master" now return the data from "D".
+
+Command-line:
+
+$ dvid repo <UUID> new labelsz <data name> <settings...>
+
+	Adds newly named data of the 'type name' to repo with specified UUID.
+
+	Example:
+
+	$ dvid repo 3f8c new labelsz labelrankings
+
+    Arguments:
+
+    UUID           Hexadecimal string with enough characters to uniquely identify a version node.
+    data name      Name of data to create, e.g., "labelrankings"
+    settings       Configuration settings in "key=value" format separated by spaces.
+
+    Configuration Settings (case-insensitive keys)
+
+    ROI            Value must be in "<roiname>,<uuid>" format where <roiname> is the name of the
+				   static ROI that defines the extent of tracking and <uuid> is the immutable
+				   version used for this labelsz.
+	
+    ------------------
+
+HTTP API (Level 2 REST):
+
+GET  <api URL>/node/<UUID>/<data name>/help
+
+	Returns data-specific help message.
+
+
+GET  <api URL>/node/<UUID>/<data name>/info
+POST <api URL>/node/<UUID>/<data name>/info
+
+    Retrieves or puts DVID-specific data properties for this labelsz data instance.
+
+    Example: 
+
+    GET <api URL>/node/3f8c/labelrankings/info
+
+    Returns JSON with configuration settings.
+
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of labelsz data.
+
+
+ POST /api/repo/{uuid}/instance
+
+	Creates a new instance of the given data type.  Expects configuration data in JSON
+	as the body of the POST.  Configuration data is a JSON object with each property
+	corresponding to a configuration keyword for the particular data type.  
+
+	JSON name/value pairs:
+
+	REQUIRED "typename"   Should equal "labelsz"
+	REQUIRED "dataname"   Name of the new instance
+	OPTIONAL "versioned"  If "false" or "0", the data is unversioned and acts as if 
+	                      all UUIDs within a repo become the root repo UUID.  (True by default.)
+	
+    OPTIONAL "ROI"        Value must be in "<roiname>,<uuid>" format where <roiname> is the name of the
+				   		  static ROI that defines the extent of tracking and <uuid> is the immutable
+				   		  version used for this labelsz.
+							 
+POST <api URL>/node/<UUID>/<data name>/sync?<options>
+
+    Establishes data instances for which the label sizes are computed.  Expects JSON to be POSTed
+    with the following format:
+
+    { "sync": "synapses" }
+
+	To delete syncs, pass an empty string of names with query string "replace=true":
+
+	{ "sync": "" }
+
+    The "sync" property should be followed by a comma-delimited list of data instances that MUST
+    already exist.  After this sync request, the labelsz data are computed for the first time
+	and then kept in sync thereafter.  It is not allowed to change syncs.  You can, however,
+	create a new labelsz data instance and sync it as required.
+
+    The labelsz data type only accepts syncs to annotation data instances.
+
+    GET Query-string Options:
+
+    replace    Set to "true" if you want passed syncs to replace and not be appended to current syncs.
+			   Default operation is false.
+
+
+GET <api URL>/node/<UUID>/<data name>/count/<label>/<index type>
+
+	Returns the count of the given annotation element type for the given label.
+	The index type may be any annotation element type ("PostSyn", "PreSyn", "Gap", "Note"),
+	the catch-all for synapses "AllSyn", or the number of voxels "Voxels".
+
+	For synapse indexing, the labelsz data instance must be synced with an annotations instance.
+	(future) For # voxel indexing, the labelsz data instance must be synced with a labelvol instance.
+
+	Example:
+
+	GET <api URL>/node/3f8c/labelrankings/size/21847/PreSyn 
+
+	Returns:
+
+	{ "Label": 21847,  "PreSyn": 81 }
+
+
+Note: For the following URL endpoints that return and accept POSTed JSON values, see the JSON format
+at end of this documentation.
+
+GET <api URL>/node/<UUID>/<data name>/counts/<index type>
+
+	Returns the count of the given annotation element type for the POSTed labels.
+	Note "counts" is plural. 
+	<index type> is the same as individual GET call (eg, PostSyn, AllSyn, etc).
+	
+	The body of the request will contain a json list of labels. 
+	Return value should be like the /top endpoint: 
+	
+	[ 
+		{ "Label": 188, "PreSyn": 81 }, 
+		{ "Label": 23, "PreSyn": 65 }, 
+		{ "Label": 8137, "PreSyn": 58 } 
+	]
+
+GET <api URL>/node/<UUID>/<data name>/top/<N>/<index type>
+
+	Returns a list of the top N labels with respect to number of the specified index type.
+	The index type may be any annotation element type ("PostSyn", "PreSyn", "Gap", "Note"),
+	the catch-all for synapses "AllSyn", or the number of voxels "Voxels".
+
+	For synapse indexing, the labelsz data instance must be synced with an annotations instance.
+	(future) For # voxel indexing, the labelsz data instance must be synced with a labelvol instance.
+
+	Example:
+
+	GET <api URL>/node/3f8c/labelrankings/top/3/PreSyn 
+
+	Returns:
+
+	[ { "Label": 188,  "PreSyn": 81 }, { "Label": 23, "PreSyn": 65 }, { "Label": 8137, "PreSyn": 58 } ]
+
+GET <api URL>/node/<UUID>/<data name>/threshold/<T>/<index type>[?<options>]
+
+	Returns a list of up to 10,000 labels per request that have # given element types >= T.
+	The "page" size is 10,000 labels so a call without any query string will return the 
+	largest labels with # given element types >= T.  If there are more than 10,000 labels,
+	you can access the next 10,000 by including "?offset=10001".
+
+	The index type may be any annotation element type ("PostSyn", "PreSyn", "Gap", "Note"),
+	the catch-all for synapses "AllSyn", or the number of voxels "Voxels".
+
+	For synapse indexing, the labelsz data instance must be synced with an annotations instance.
+	(future) For # voxel indexing, the labelsz data instance must be synced with a labelvol instance.
+
+    GET Query-string Options:
+
+    offset  The starting rank in the sorted list (in descending order) of labels with # given element types >= T.
+    n       Number of labels to return.
+
+	Example:
+
+	GET <api URL>/node/3f8c/labelrankings/threshold/10/PreSyn?offset=10001&n=3
+
+	Returns:
+
+	[ { "Label": 188,  "PreSyn": 38 }, { "Label": 23, "PreSyn": 38 }, { "Label": 8137, "PreSyn": 37 } ]
+
+	In the above example, the query returns the labels ranked #10,001 to #10,003 in the sorted list, in
+	descending order of # PreSyn >= 10.
+
+POST <api URL>/node/<UUID>/<data name>/reload
+
+	Forces asynchronous denormalization from its synced annotations instance.  Can be 
+	used to initialize a newly added instance.  Note that the labelsz will be locked until
+	the denormalization is finished with a log message.
+

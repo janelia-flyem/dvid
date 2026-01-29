@@ -1,0 +1,531 @@
+
+API for 'neuronjson' datatype (github.com/janelia-flyem/dvid/datatype/neuronjson)
+=============================================================================
+
+The neuronjson datatype is similar supports most of the keyvalue datatype methods
+but extends them to include queries.  
+
+The keys are body identifier uint64 that are represented as strings for 
+backward-compatibility with clients that used to use the keyvalue datatype 
+for these neuron JSON annotations. The values are assumed to be JSON data, 
+and the queries are similar to how Firestore handles queries.
+
+Any keys that end with _user or _time are considered metadata in describing
+by who and at what time that field's value was modified. So you must not
+create JSON field names ending with _user or _time unless they are used
+as metadata.
+Example: Do not use "my_user" as a field name. "myuser" or "myUser" is OK
+  and will have "myuser_user" and "myuser_time" fields auto-generated.
+
+Note: UUIDs referenced below are strings that may either be a unique prefix of a
+hexadecimal UUID string (e.g., 3FA22) or a branch leaf specification that adds
+a colon (":") followed by the case-dependent branch name.  In the case of a
+branch leaf specification, the unique UUID prefix just identifies the repo of
+the branch, and the UUID referenced is really the leaf of the branch name.
+For example, if we have a DAG with root A -> B -> C where C is the current
+HEAD or leaf of the "master" (default) branch, then asking for "B:master" is
+the same as asking for "C".  If we add another version so A -> B -> C -> D, then
+references to "B:master" now return the data from "D".
+
+Command-line:
+
+$ dvid repo <UUID> new neuronjson <data name> <settings...>
+
+	Adds newly named neuronjson data to repo with specified UUID.
+
+	Example:
+
+	$ dvid repo 3f8c new neuronjson stuff
+
+	Arguments:
+
+	UUID           Hexadecimal string with enough characters to uniquely identify a version node.
+	data name      Name of data to create, e.g., "myblobs"
+	settings       Configuration settings in "key=value" format separated by spaces.
+
+	Configuration Settings (case-insensitive keys):
+
+	Versioned      Set to "false" or "0" if the neuronjson instance is unversioned (repo-wide).
+				   An unversioned neuronjson will only use the UUIDs to look up the repo and
+				   not differentiate between versions in the same repo.  Note that unlike
+				   versioned data, distribution (push/pull) of unversioned data is not defined 
+				   at this time.
+
+$ dvid -stdin node <UUID> <data name> put <key> < data
+
+	Puts stdin data into the neuronjson data instance under the given key.
+
+$ dvid node <UUID> <dataname> import-kv <keyvalue instance name>
+
+	Imports the data from a keyvalue instance within the same repo into a
+	new neuronjson instance.
+
+	Example:
+
+	$ dvid repo 3f8c myNeuronJSON import-kv myOldKV
+
+	The above imports data from the keyvalue instance "myOldKV" into the neuronjson
+	instance "myNeuronJSON".
+
+$ dvid node <UUID> <dataname> ingest-neuronjson <input-file>
+
+	Reads a JSON file and ingests it into the neuronjson instance.
+	Expects a JSON array of objects, each with at least a bodyid field.
+
+	Example:
+
+	$ dvid node 3f8c myNeuronJSON ingest-neuronjson myfile.json
+
+$ dvid node <UUID> <data name> version-changes <output-dir-path>
+
+	Creates a directory at the given output-dir-path if one doesn't already exist,
+	then writes a file per version that has annotation changes. 
+
+	The annotation changes are a JSON object containing a list of all JSON annotations 
+	added/modified in that version as well as a special tombstone annotation for deleted 
+	annotations.
+
+	Example JSON for each "<uuid>.json" file within output directory:
+
+		[ {<annotation1>}, {<annotation2>}, {"bodyid":2000, "tombstone":true}, ...]
+
+	Note the tombstone example at end where bodyid 2000 annotation was deleted.
+						
+	------------------
+
+HTTP API (Level 2 REST):
+
+Note that browsers support HTTP PUT and DELETE via javascript but only GET/POST are
+included in HTML specs.  For ease of use in constructing clients, HTTP POST is used
+to create or modify resources in an idempotent fashion.
+
+GET  <api URL>/node/<UUID>/<data name>/help
+
+	Returns data-specific help message.
+
+
+GET  <api URL>/node/<UUID>/<data name>/info
+POST <api URL>/node/<UUID>/<data name>/info
+
+	Retrieves or puts data properties.
+
+	Example: 
+
+	GET <api URL>/node/3f8c/stuff/info
+
+	Returns JSON with configuration settings.
+
+	Arguments:
+
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of neuronjson data instance.
+
+GET <api URL>/node/<UUID>/<data name>/tags
+POST <api URL>/node/<UUID>/<data name>/tags?<options>
+
+	GET retrieves JSON of tags for this instance.
+	POST appends or replaces tags provided in POST body.  Expects JSON to be POSTed
+	with the following format:
+
+	{ "tag1": "anything you want", "tag2": "something else" }
+
+	To delete tags, pass an empty object with query string "replace=true".
+
+	POST Query-string Options:
+
+	replace   Set to "true" if you want passed tags to replace and not be appended to current tags.
+				Default operation is false (append).
+
+GET  <api URL>/node/<UUID>/<data name>/<schema type>
+POST <api URL>/node/<UUID>/<data name>/<schema type>
+DEL  <api URL>/node/<UUID>/<data name>/<schema type> 
+HEAD <api URL>/node/<UUID>/<data name>/<schema type> 
+
+	Performs operations on metadata schema depending on the HTTP verb.  
+	If the "json_schema" type is POSTed, it will be used to validate
+	future writes of neuron annotations via POST /key, /keyvalues, etc.
+
+	Example: 
+
+	GET <api URL>/node/3f8c/neuron_annotations/json_schema
+
+	Returns any JSON schema for validation stored for version node 3f8c.
+
+	The "Content-type" of the HTTP response (and usually the request) are "application/json".
+
+	Arguments:
+
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of keyvalue data instance.
+	schema type	  One of "json_schema" (validation), "schema" (neutu/neu3), "schema_batch" (neutu/neu3)
+				
+GET  <api URL>/node/<UUID>/<data name>/all[?query-options]
+
+	Returns a list of all JSON annotations
+
+	GET Query-string Options:
+
+	show		If "user", shows *_user fields.
+				If "time", shows *_time fields.
+				If "all", shows both *_user and *_time fields.
+				If unset (default), shows neither *_user or *_time fields.
+	
+	fields      Limit return to this list of field names separated by commas.
+                Example: ?fields=type,instance
+				Note that the above "show" query string still applies to the fields.
+			
+GET  <api URL>/node/<UUID>/<data name>/keys
+
+	Returns all keys for this data instance in JSON format:
+
+	[key1, key2, ...]
+
+GET  <api URL>/node/<UUID>/<data name>/fields[?counts=true]
+
+	By default, returns all field names in annotations for the given version:
+
+	["field1", "field2", ...]
+
+	If the query string "counts=true" is set, the response will be a JSON object:
+
+	{"field1": count1, "field2": count2, ...}
+
+GET  <api URL>/node/<UUID>/<data name>/fieldtimes
+
+	Returns the RFC3339 timestamps for each field in the most recent version:
+
+	{"field1": "timestamp1", "field2": "timestamp2", ...}
+
+GET  <api URL>/node/<UUID>/<data name>/keyrange/<key1>/<key2>
+
+	Returns all keys between 'key1' and 'key2' for this data instance in JSON format:
+
+	[key1, key2, ...]
+
+	Arguments:
+
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of neuronjson data instance.
+	key1          Lexicographically lowest alphanumeric key in range.
+	key2          Lexicographically highest alphanumeric key in range.
+
+GET  <api URL>/node/<UUID>/<data name>/keyrangevalues/<key1>/<key2>?<options>
+
+	This has the same response as the GET /keyvalues endpoint but a different way of
+	specifying the keys.  In this endpoint, you specify a range of keys.  In the other
+	endpoint, you must explicitly send the keys in a GET payload, which may not be
+	fully supported.
+
+	Note that this endpoint streams data to the requester, which prevents setting HTTP
+	status to error if the streaming has already started.  Instead, malformed output
+	will inform the requester of an error.
+
+	Response types:
+
+	1) json (values are expected to be valid JSON or an error is returned)
+
+		{
+			"key1": value1,
+			"key2": value2,
+			...
+		}
+
+	2) tar
+
+		A tarfile is returned with each keys specifying the file names and
+		values as the file bytes.
+
+	3) protobuf3
+	
+		neuronjson data needs to be serialized in a format defined by the following 
+		protobuf3 definitions:
+
+		message KeyValue {
+			string key = 1;
+			bytes value = 2;
+		}
+
+		message KeyValues {
+			repeated KeyValue kvs = 1;
+		}
+
+	Arguments:
+
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of neuronjson data instance.
+	key1          Lexicographically lowest alphanumeric key in range.
+	key2          Lexicographically highest alphanumeric key in range.
+
+	Query-string Options (only one of these allowed):
+
+	json        If set to "true", the response will be JSON as above and the values must
+				  be valid JSON or an error will be returned.
+	tar			If set to "true", the response will be a tarfile with keys as file names.
+	protobuf	Default, or can be set to "true". Response will be protobuf KeyValues response
+
+	Additional query option:
+
+	check		If json=true, setting check=false will tell server to trust that the
+				  values will be valid JSON instead of parsing it as a check.
+
+	show		If "user", shows *_user fields.
+				If "time", shows *_time fields.
+				If "all", shows both *_user and *_time fields.
+				If unset (default), shows neither *_user or *_time fields.
+	
+	fields      Limit return to this list of field names separated by commas.
+                Example: ?fields=type,instance
+				Note that the above "show" query string still applies to the fields.
+
+
+GET  <api URL>/node/<UUID>/<data name>/key/<key>[?query-options]
+
+	For a given neuron id key, returns a value depending on the options.  
+
+	Example: 
+
+	GET <api URL>/node/3f8c/stuff/key/myfile.dat
+
+	Returns the data associated with the key "myfile.dat" of instance "stuff" in version
+	node 3f8c.
+
+	The "Content-type" of the HTTP response (and usually the request) are
+	"application/octet-stream" for arbitrary binary data.
+
+	Arguments:
+
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of neuronjson data instance.
+	key           The uint64 of a neuron identifier
+
+	GET Query-string Options:
+
+	show		If "user", shows *_user fields.
+				If "time", shows *_time fields.
+				If "all", shows both *_user and *_time fields.
+				If unset (default), shows neither *_user or *_time fields.
+	
+	fields      Limit return to this list of field names separated by commas.
+                Example: ?fields=type,instance
+				Note that the above "show" query string still applies to the fields.
+
+
+POST <api URL>/node/<UUID>/<data name>/key/<key>
+
+	Updates a key-value pair, modifying the fields with the POSTed JSON fields.
+	Note that unlike POST /key in keyvalue datatype instances, this operation updates
+	fields by default (using old fields not overwritten) rather than replacing
+	the entire annotation. The replace behavior can be explicitly set if desired
+	to match old keyvalue semantics.  
+
+	NOTE: A user query string in the form of ?u=someuserid *must* be present or an 
+	error will be returned.
+
+	For each field, a *_user and *_time field will be added to the annotation unless
+	one is already present.  The *_user field will be set to the user making the
+	request and the *_time field will be set to the current time. If the current
+	field value is the same as the new value, the *_user and *_time fields will
+	not be updated.
+
+	Example: 
+
+	POST <api URL>/node/3f8c/stuff/key/15319
+
+	Arguments:
+
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of neuronjson data instance.
+	key           The uint64 of a neuron identifier
+	
+	POSTs will be logged as a Kafka JSON message with the following format:
+	{ 
+		"Action": "postkv",
+		"Key": <key>,
+		"Bytes": <number of bytes in data>,
+		"UUID": <UUID on which POST was done>
+	}
+
+	POST Query-string Options:
+
+	conditional	List of fields separated by commas that should not be overwritten if set.
+
+	replace		If "true" will remove any fields not present
+
+
+DELETE <api URL>/node/<UUID>/<data name>/key/<key> 
+HEAD   <api URL>/node/<UUID>/<data name>/key/<key> 
+
+	Performs operations on a key-value pair depending on the HTTP verb.  
+
+	For HEAD returns:
+	200 (OK) if a sparse volume of the given label exists within any optional bounds.
+	404 (File not Found) if there is no sparse volume for the given label within any optional bounds.
+
+	Arguments:
+
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of neuronjson data instance.
+	key           The uint64 of a neuron identifier
+				
+
+GET <api URL>/node/<UUID>/<data name>/keyvalues[?query-options]
+
+	Allows batch query of data. 
+
+	Unless using one of the JSON query options listed below, requested keys and
+	returned neuronjson data is serialized in a format defined by the following 
+	protobuf3 definitions:
+
+		message KeyValue {
+			string key = 1;
+			bytes value = 2;
+		}
+
+		message Keys {
+			repeated string keys = 1;
+		}
+		
+		message KeyValues {
+			repeated KeyValue kvs = 1;
+		}
+	
+	The query body must include a Keys serialization and a KeyValues serialization is
+	returned.
+
+	Arguments:
+
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of neuronjson data instance.
+
+	Query-string Options:
+
+	show		If "user", shows *_user fields.
+				If "time", shows *_time fields.
+				If "all", shows both *_user and *_time fields.
+				If unset (default), shows neither *_user or *_time fields.
+	
+	fields      Limit return to this list of field names separated by commas.
+                Example: ?fields=type,instance
+				Note that the above "show" query string still applies to the fields.
+
+	Only one of the following are allowed in a single query:
+
+	json        If true (default false), query body must be JSON array of keys and returns JSON.
+	jsontar		If set to any value for GET, query body must be JSON array of string keys
+				  and the returned data will be a tarfile with keys as file names.
+	protobuf	If set to "true", the response will be protobuf KeyValues response
+
+	Response types:
+
+	1) json (values are expected to be valid JSON or an error is returned)
+
+		{
+			"key1": value1,
+			"key2": value2,
+			...
+		}
+
+	2) tar
+
+		A tarfile is returned with each keys specifying the file names and
+		values as the file bytes.
+
+	3) protobuf3
+	
+		KeyValue data needs to be serialized in a format defined by the following 
+		protobuf3 definitions:
+
+		message KeyValue {
+			string key = 1;
+			bytes value = 2;
+		}
+
+		message KeyValues {
+			repeated KeyValue kvs = 1;
+		}
+
+
+POST <api URL>/node/<UUID>/<data name>/keyvalues[?query-options]
+
+	Allows batch ingest of data. Each POSTed neuron annotation is handled in same
+	was as described in POST /key.
+	
+	NOTE: A user query string in the form of ?u=someuserid *must* be present or an 
+	error will be returned.
+
+	The POST body must include a KeyValues serialization as defined by the following
+	protobuf3 definitions:
+
+		message KeyValue {
+			string key = 1;
+			bytes value = 2;
+		}
+
+		message Keys {
+			repeated string keys = 1;
+		}
+		
+		message KeyValues {
+			repeated KeyValue kvs = 1;
+		}
+	
+	
+	POSTs will be logged as a series of Kafka JSON messages, each with the format equivalent
+	to the single POST /key:
+	{ 
+		"Action": "postkv",
+		"Key": <key>,
+		"Bytes": <number of bytes in data>,
+		"UUID": <UUID on which POST was done>
+	}
+
+	Arguments:
+
+	UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of neuronjson data instance.
+
+	Query-string Options:
+
+	replace		If "true" will remove any fields not present
+
+
+GET <api URL>/node/<UUID>/<data name>/query[?show=...]
+POST <api URL>/node/<UUID>/<data name>/query[?show=...]
+
+	Both GET and POST methods are permitted to launch queries, however the
+	POST method is deprecated because it will be blocked for committed versions.
+	The JSON query format uses field names as the keys, and desired values.
+	Example:
+	{ "bodyid": 23, "hemilineage": "0B", ... }
+	Each field value must be true, i.e., the conditions are ANDed together.
+
+	If a list of queries (JSON object per query) is POSTed, the results for each query are ORed
+	together with duplicate annotations removed.
+
+	A JSON list of objects that matches the query is returned in ascending order of body ID.
+
+	Query fields can include two special types of values:
+	1. Regular expressions: a string value that starts with "re/" is treated as a regex with
+	   the remainder of the string being the regex.  The regex is anchored to the beginning.
+	2. Field existence: a string value that starts with "exists/" checks if a field exists.
+	   If "exists/0" is specified, the field must not exist or be set to null.  If "exists/1" 
+	   is specified, the field must exist.
+
+	Arguments:
+
+	UUID 		Hexadecimal string with enough characters to uniquely identify a version node.
+	data name	Name of neuronjson data instance.
+
+	GET Query-string Options:
+
+	onlyid		If true (false by default), will only return a list of body ids that match.
+
+	show		If "user", shows *_user fields.
+				If "time", shows *_time fields.
+				If "all", shows both *_user and *_time fields.
+				If unset (default), shows neither *_user or *_time fields.
+
+	fields      Limit return to this list of field names separated by commas.
+                Example: ?fields=type,instance
+				Note that the above "show" query string still applies to the fields.
+

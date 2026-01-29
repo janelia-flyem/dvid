@@ -1,0 +1,349 @@
+
+API for label sparse volume data type (github.com/janelia-flyem/dvid/datatype/labelvol)
+=======================================================================================
+
+Note: UUIDs referenced below are strings that may either be a unique prefix of a
+hexadecimal UUID string (e.g., 3FA22) or a branch leaf specification that adds
+a colon (":") followed by the case-dependent branch name.  In the case of a
+branch leaf specification, the unique UUID prefix just identifies the repo of
+the branch, and the UUID referenced is really the leaf of the branch name.
+For example, if we have a DAG with root A -> B -> C where C is the current
+HEAD or leaf of the "master" (default) branch, then asking for "B:master" is
+the same as asking for "C".  If we add another version so A -> B -> C -> D, then
+references to "B:master" now return the data from "D".
+
+-----
+
+Denormalizations like sparse volumes are *not* performed for the "0" label, which is
+considered a special label useful for designating background.  This allows users to define
+sparse labeled structures in a large volume without requiring processing of entire volume.
+
+
+Command-line:
+
+$ dvid repo <UUID> new labelvol <data name> <settings...>
+
+	Adds newly named data of the 'type name' to repo with specified UUID.
+
+	Example:
+
+	$ dvid repo 3f8c new labelvol sparsevols
+
+    Arguments:
+
+    UUID           Hexadecimal string with enough characters to uniquely identify a version node.
+    data name      Name of data to create, e.g., "sparsevols"
+    settings       Configuration settings in "key=value" format separated by spaces.
+
+    Configuration Settings (case-insensitive keys)
+
+    BlockSize      Size in pixels  (default: %s)
+    VoxelSize      Resolution of voxels (default: 8.0, 8.0, 8.0)
+    VoxelUnits     Resolution units (default: "nanometers")
+
+$ dvid node <UUID> <data name> dump <server-accessible directory>
+
+	Dumps files, one per 512^3 voxel subvolume, for all block RLEs for each label within the subvolume.
+	File names will be formatted as subvols-X_Y_Z.dat, where (X,Y,Z) is the subvolume index; for example,
+	the file subvols-0_1_2.dat has all label block RLEs for the subvolume with smallest voxel coordinate
+	at (0, 512, 1024).	The encoding has the following format where integers are little endian and the 
+	order of data is exactly as specified below:
+
+	    uint64    Label ID
+	    uint32    # Spans
+	    Repeating unit of:
+	        int32   Coordinate of run start (dimension 0)
+	        int32   Coordinate of run start (dimension 1)
+	        int32   Coordinate of run start (dimension 2)
+	        int32   Length of run
+			  ...
+
+	This is similar to the voxel RLEs returned by the sparsevol endpoint, except the initial 8 byte header
+	is replaced with a label identifier.  Spans are always in X direction.
+	
+
+------------------
+
+HTTP API (Level 2 REST):
+
+GET  <api URL>/node/<UUID>/<data name>/help
+
+	Returns data-specific help message.
+
+
+GET  <api URL>/node/<UUID>/<data name>/info
+POST <api URL>/node/<UUID>/<data name>/info
+
+    Retrieves or puts DVID-specific data properties for these voxels.
+
+    Example: 
+
+    GET <api URL>/node/3f8c/bodies/info
+
+    Returns JSON with configuration settings that include location in DVID space and
+    min/max block indices.
+
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of labelvol data.
+
+
+POST <api URL>/node/<UUID>/<data name>/sync?<options>
+
+    Establishes labelblk data instances with which the annotations are synced.  Expects JSON to be POSTed
+    with the following format:
+
+    { "sync": "labels" }
+
+	To delete syncs, pass an empty string of names with query string "replace=true":
+
+	{ "sync": "" }
+
+    The "sync" property should be followed by a comma-delimited list of data instances that MUST
+    already exist.  Currently, syncs should be created before any annotations are pushed to
+    the server.  If annotations already exist, these are currently not synced.
+
+    The labelvol data type only accepts syncs to labelblk data instances.
+
+    GET Query-string Options:
+
+    replace    Set to "true" if you want passed syncs to replace and not be appended to current syncs.
+			   Default operation is false.
+
+
+GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
+
+	Returns a sparse volume with voxels of the given label in encoded RLE format.  The returned
+	data can be optionally compressed using the "compression" option below.
+
+	The encoding has the following format where integers are little endian and the order
+	of data is exactly as specified below:
+
+	    byte     Payload descriptor:
+	               Bit 0 (LSB) - 8-bit grayscale
+	               Bit 1 - 16-bit grayscale
+	               Bit 2 - 16-bit normal
+	               If set to all 0, there is no payload and it's a binary sparse volume.
+	    uint8    Number of dimensions
+	    uint8    Dimension of run (typically 0 = X)
+	    byte     Reserved (to be used later)
+	    uint32    # Voxels [TODO.  0 for now]
+	    uint32    # Spans
+	    Repeating unit of:
+	        int32   Coordinate of run start (dimension 0)
+	        int32   Coordinate of run start (dimension 1)
+	        int32   Coordinate of run start (dimension 2)
+	        int32   Length of run
+	        bytes   Optional payload dependent on first byte descriptor
+			  ...
+
+    GET Query-string Options:
+
+    minx    Spans must be equal to or larger than this minimum x voxel coordinate.
+    maxx    Spans must be equal to or smaller than this maximum x voxel coordinate.
+    miny    Spans must be equal to or larger than this minimum y voxel coordinate.
+    maxy    Spans must be equal to or smaller than this maximum y voxel coordinate.
+    minz    Spans must be equal to or larger than this minimum z voxel coordinate.
+    maxz    Spans must be equal to or smaller than this maximum z voxel coordinate.
+    exact   "false" if RLEs can extend a bit outside voxel bounds within border blocks.
+            This will give slightly faster responses. 
+
+    compression   Allows retrieval of data in "lz4" and "gzip"
+                  compressed format.
+
+
+HEAD <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
+
+	Returns:
+		200 (OK) if a sparse volume of the given label exists within any optional bounds.
+		204 (No Content) if there is no sparse volume for the given label within any optional bounds.
+		404 (Not found) if the label has no sparse volume.
+
+	Note that for speed, the optional bounds are always expanded to the block-aligned containing
+	subvolume, i.e., it's as if exact=false for the corresponding GET.
+
+    GET Query-string Options:
+
+    minx    Spans must be equal to or larger than this minimum x voxel coordinate.
+    maxx    Spans must be equal to or smaller than this maximum x voxel coordinate.
+    miny    Spans must be equal to or larger than this minimum y voxel coordinate.
+    maxy    Spans must be equal to or smaller than this maximum y voxel coordinate.
+    minz    Spans must be equal to or larger than this minimum z voxel coordinate.
+    maxz    Spans must be equal to or smaller than this maximum z voxel coordinate.
+
+
+GET <api URL>/node/<UUID>/<data name>/sparsevol-by-point/<coord>
+
+	Returns a sparse volume with voxels that pass through a given voxel.
+	The encoding is described in the "sparsevol" request above.
+	
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of mapping data.
+    coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
+
+
+GET <api URL>/node/<UUID>/<data name>/sparsevol-coarse/<label>
+
+	Returns a sparse volume with blocks of the given label in encoded RLE format.
+	The encoding has the following format where integers are little endian and the order
+	of data is exactly as specified below:
+
+	    byte     Set to 0
+	    uint8    Number of dimensions
+	    uint8    Dimension of run (typically 0 = X)
+	    byte     Reserved (to be used later)
+	    uint32    # Blocks [TODO.  0 for now]
+	    uint32    # Spans
+	    Repeating unit of:
+	        int32   Block coordinate of run start (dimension 0)
+	        int32   Block coordinate of run start (dimension 1)
+	        int32   Block coordinate of run start (dimension 2)
+			  ...
+	        int32   Length of run
+
+	Note that the above format is the RLE encoding of sparsevol, where voxel coordinates
+	have been replaced by block coordinates.
+
+
+GET <api URL>/node/<UUID>/<data name>/maxlabel
+
+	GET returns the maximum label for the version of data in JSON form:
+
+		{ "maxlabel": <label #> }
+
+
+GET <api URL>/node/<UUID>/<data name>/nextlabel
+POST <api URL>/node/<UUID>/<data name>/nextlabel
+
+	GET returns the next label for the version of data in JSON form:
+
+		{ "nextlabel": <label #> }
+
+	POST allows the client to request some # of labels that will be reserved.
+	This is used if the client wants to introduce new labels.
+
+	The request:
+
+		{ "needed": <# of labels> }
+
+	Response:
+
+		{ "start": <starting label #>, "end": <ending label #> }
+
+
+POST <api URL>/node/<UUID>/<data name>/merge
+
+	Merges labels.  Requires JSON in request body using the following format:
+
+	[toLabel1, fromLabel1, fromLabel2, fromLabel3, ...]
+
+	The first element of the JSON array specifies the label to be used as the merge result.
+	Note that it's computationally more efficient to group a number of merges into the
+	same toLabel as a single merge request instead of multiple merge requests.
+
+
+POST <api URL>/node/<UUID>/<data name>/split/<label>[?splitlabel=X]
+
+	Splits a portion of a label's voxels into a new label or, if "splitlabel" is specified
+	as an optional query string, the given split label.  Returns the following JSON:
+
+		{ "label": <new label> }
+
+	This request requires a binary sparse volume in the POSTed body with the following 
+	encoded RLE format, which is compatible with the format returned by a GET on the 
+	"sparsevol" endpoint described above:
+
+		All integers are in little-endian format.
+
+	    byte     Payload descriptor:
+	               Set to 0 to indicate it's a binary sparse volume.
+	    uint8    Number of dimensions
+	    uint8    Dimension of run (typically 0 = X)
+	    byte     Reserved (to be used later)
+	    uint32    # Voxels [TODO.  0 for now]
+	    uint32    # Spans
+	    Repeating unit of:
+	        int32   Coordinate of run start (dimension 0)
+	        int32   Coordinate of run start (dimension 1)
+	        int32   Coordinate of run start (dimension 2)
+			  ...
+	        int32   Length of run
+
+	NOTE 1: The POSTed split sparse volume must be a subset of the given label's voxels.  You cannot
+	give an arbitrary sparse volume that may span multiple labels.
+
+	NOTE 2: If a split label is specified, it is the client's responsibility to make sure the given
+	label will not create conflict with labels in other versions.  It should primarily be used in
+	chain operations like "split-coarse" followed by "split" using voxels, where the new label
+	created by the split coarse is used as the split label for the smaller, higher-res "split".
+
+POST <api URL>/node/<UUID>/<data name>/split-coarse/<label>[?splitlabel=X]
+
+	Splits a portion of a label's blocks into a new label or, if "splitlabel" is specified
+	as an optional query string, the given split label.  Returns the following JSON:
+
+		{ "label": <new label> }
+
+	This request requires a binary sparse volume in the POSTed body with the following 
+	encoded RLE format, which is similar to the "split" request format but uses block
+	instead of voxel coordinates:
+
+		All integers are in little-endian format.
+
+	    byte     Payload descriptor:
+	               Set to 0 to indicate it's a binary sparse volume.
+	    uint8    Number of dimensions
+	    uint8    Dimension of run (typically 0 = X)
+	    byte     Reserved (to be used later)
+	    uint32    # Blocks [TODO.  0 for now]
+	    uint32    # Spans
+	    Repeating unit of:
+	        int32   Coordinate of run start (dimension 0)
+	        int32   Coordinate of run start (dimension 1)
+	        int32   Coordinate of run start (dimension 2)
+			  ...
+	        int32   Length of run
+
+	The Notes for "split" endpoint above are applicable to this "split-coarse" endpoint.
+
+POST <api URL>/node/<UUID>/<data name>/resync/<label>
+
+	Regenerates the sparse volume for the given label from its synced labelblk.
+	This is used to repair databases that have been inadvertently shutdown or
+	crashed while undergoing merges/splits.
+
+	This request requires a binary sparse volume in the POSTed body with the following 
+	encoded RLE format, which is similar to the "split" request format but uses block
+	instead of voxel coordinates:
+
+		All integers are in little-endian format.
+
+	    byte     Payload descriptor:
+	               Set to 0 to indicate it's a binary sparse volume.
+	    uint8    Number of dimensions
+	    uint8    Dimension of run (typically 0 = X)
+	    byte     Reserved (to be used later)
+	    uint32    # Blocks [TODO.  0 for now]
+	    uint32    # Spans
+	    Repeating unit of:
+	        int32   Coordinate of run start (dimension 0)
+	        int32   Coordinate of run start (dimension 1)
+	        int32   Coordinate of run start (dimension 2)
+			  ...
+	        int32   Length of run
+
+DELETE <api URL>/node/<UUID>/<data name>/area/<label>/<size>/<offset>
+
+	NOTE: Does not honor syncs and is intended purely for low-level mods.
+	Deletes all of a label's sparse volume within a given 3d volume from a 3d offset.
+
+	Example: 
+
+	DELETE <api URL>/node/3f8c/bodies/area/23/512_512_512/0_0_128
+
+	The above example deletes all sparsevol associated with label 23 in subvolume
+	that is 512 x 512 x 512 starting at offset (0,0,128).
+

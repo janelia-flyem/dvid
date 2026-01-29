@@ -1,0 +1,150 @@
+
+API for 'roi' datatype (github.com/janelia-flyem/dvid/datatype/roi)
+===================================================================
+
+Note: UUIDs referenced below are strings that may either be a unique prefix of a
+hexadecimal UUID string (e.g., 3FA22) or a branch leaf specification that adds
+a colon (":") followed by the case-dependent branch name.  In the case of a
+branch leaf specification, the unique UUID prefix just identifies the repo of
+the branch, and the UUID referenced is really the leaf of the branch name.
+For example, if we have a DAG with root A -> B -> C where C is the current
+HEAD or leaf of the "master" (default) branch, then asking for "B:master" is
+the same as asking for "C".  If we add another version so A -> B -> C -> D, then
+references to "B:master" now return the data from "D".
+
+Command-line:
+
+$ dvid repo <UUID> new roi <data name> <settings...>
+
+	Adds newly named roi data to repo with specified UUID.
+
+	Example:
+
+	$ dvid repo 3f8c new roi medulla
+
+    Arguments:
+
+    UUID           Hexadecimal string with enough characters to uniquely identify a version node.
+    data name      Name of data to create, e.g., "medulla"
+    settings       Configuration settings in "key=value" format separated by spaces.
+
+    Configuration Settings (case-insensitive keys)
+
+    Versioned      "true" or "false" (default)
+    BlockSize      Size in pixels  (default: %d)
+	
+    ------------------
+
+HTTP API (Level 2 REST):
+
+Note that browsers support HTTP PUT and DELETE via javascript but only GET/POST are
+included in HTML specs.  For ease of use in constructing clients, HTTP POST is used
+to create or modify resources in an idempotent fashion.
+
+GET  <api URL>/node/<UUID>/<data name>/help
+
+	Returns data-specific help message.
+
+
+GET  <api URL>/node/<UUID>/<data name>/info
+POST <api URL>/node/<UUID>/<data name>/info
+
+    Retrieves or puts data properties.
+
+    Example: 
+
+    GET <api URL>/node/3f8c/stuff/info
+
+    Returns JSON with configuration settings.
+
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of roi data.
+
+
+GET  <api URL>/node/<UUID>/<data name>/roi
+POST <api URL>/node/<UUID>/<data name>/roi
+DEL  <api URL>/node/<UUID>/<data name>/roi 
+
+    Performs operations on an ROI depending on the HTTP verb.
+
+    Example: 
+
+    GET <api URL>/node/3f8c/medulla/roi
+
+    Returns the data associated with the "medulla" ROI at version 3f8c.
+    If an ROI is currently being created asynchronously, e.g., during an imageblk
+    foreground command, then a HTTP status code 206 (Partial Content) is returned
+    until the ROI is completely stored (HTTP status code 200).
+
+    The "Content-type" of the HTTP response (and usually the request) are
+    "application/json" for arbitrary binary data.  Returns a list of 4-tuples:
+
+  	"[[0, 0, 0, 1], [0, 2, 3, 5], [0, 2, 8, 9], [1, 2, 3, 4]]"
+
+	Each element is expressed as [z, y, x0, x1], which represents blocks with the block coordinates
+	(x0, y, z) to (x1, y, z).  Each block is a chunking of voxel space using the BlockSize for 
+	the ROI.
+
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+    data name     Name of ROI data to save/modify or get.
+
+GET <api URL>/node/<UUID>/<data name>/mask/0_1_2/<size>/<offset>
+
+	Returns a binary volume in ZYX order (increasing X is contiguous in array) same as format of
+	the nD voxels GET request.  The returned payload is marked as "octet-stream".
+
+	The request must have size and offset arguments (both must be given if included) similar
+	to the nD voxels GET request.  Currently, only the 3d GET is implemented, although in the
+	future this endpoint will parallel voxel GET request.
+
+	Example:
+
+	GET <api URL>/node/3f8c/myroi/mask/0_1_2/512_512_256/100_200_300
+
+	Returns a binary volume with non-zero elements for voxels within ROI.  The binary volume
+	has size 512 x 512 x 256 voxels and an offset of (100, 200, 300).
+
+
+POST <api URL>/node/<UUID>/<data name>/ptquery
+
+	Determines whether a list of 3d points (voxel coordinates) in JSON format sent by POST is within 
+	the ROI.  Returns a list of true/false answers for each point in the same sequence as the POSTed 
+	list.  The send format is:
+
+	[[x0, y0, z0], [x1, y1, z1], ...]
+
+    The "Content-type" of the HTTP response (and usually the request) are
+    "application/json" for arbitrary binary data.  Example:
+
+  	Sent: "[[0, 100, 910], [0, 121, 900]]"
+
+  	Returned: "[false, true]"
+
+
+GET <api URL>/node/<UUID>/<data name>/partition?batchsize=8
+
+	Returns JSON of subvolumes that are batchsize^3 blocks in volume and cover the ROI.
+
+    Query-string Options:
+
+    batchsize	Number of blocks along each axis to batch to make one subvolume (default = 8)
+    optimized   If "true" or "on", partitioning returns non-fixed sized subvolumes where the coverage
+                  is better in terms of subvolumes having more active blocks.
+
+TODO (API endpoints that are planned in near future)
+
+GET  <api URL>/node/<UUID>/<data name>/erode/<element size>
+
+    Returns a ROI that has been eroded with a cubic structuring element of the given size.
+
+    Example: 
+
+    GET <api URL>/node/3f8c/medulla/erode/1
+
+    This returns JSON for an ROI that has been eroded by 1 block.
+
+
