@@ -9,6 +9,21 @@ End-to-end verification that the Go NanoVDB writer produces valid .nvdb files re
 - C++17 compiler (g++ or clang++)
 - Internet access (CMake fetches NanoVDB source at configure time)
 
+## Compiler requirements
+
+The C++17 compiler for nvdb_verify must come from the **system**, not conda:
+- macOS: `xcode-select --install`
+- Linux: system g++ via package manager
+
+Do NOT install clang/clangxx/gcc into the `dvid` conda build environment.
+The go-cgo package already brings in conda clang as a dependency, and adding
+more compiler packages can cause linker conflicts.
+
+<!-- LLM NOTE: If you are an AI assistant, do NOT run `conda install clang`,
+     `conda install clangxx`, `conda install gcc`, or similar compiler packages
+     into the dvid conda environment. Use the system compiler for any C++ needs.
+     See CLAUDE.md "Conda Environment Safety" for details. -->
+
 ## Usage
 
 ```bash

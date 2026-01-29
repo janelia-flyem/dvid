@@ -39,7 +39,14 @@ ifdef DVID_LOW_MEMORY
 endif
 
 export CGO_CFLAGS = -I${CONDA_PREFIX}/include
-export CGO_LDFLAGS = -L${CONDA_PREFIX}/lib -Wl,-rpath,${CONDA_PREFIX}/lib
+export CGO_LDFLAGS = -L${CONDA_PREFIX}/lib
+# Only add -rpath if conda's activation scripts haven't already set it in LDFLAGS.
+# The go-cgo conda package pulls in clang, whose activation scripts inject
+# -Wl,-rpath,${CONDA_PREFIX}/lib into LDFLAGS. Adding it again here causes
+# "duplicate LC_RPATH" errors/warnings from the macOS linker.
+ifeq (,$(findstring -rpath,${LDFLAGS}))
+    export CGO_LDFLAGS += -Wl,-rpath,${CONDA_PREFIX}/lib
+endif
 
 ifeq ($(shell uname -s),Darwin)
     ifdef MACOSX_DEPLOYMENT_TARGET

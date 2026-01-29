@@ -68,3 +68,15 @@ See the embedded documentation string `webHelp` in `server/web.go`.
 4. Configuration examples in `scripts/distro-files/`
 
 DVID is actively used for connectomics datasets like the Janelia FlyEM hemibrain and other large-scale neural reconstruction projects.
+
+## Conda Environment Safety
+
+The `dvid` conda environment includes `go-cgo`, which depends on conda's clang
+compiler packages. These packages inject `-Wl,-rpath,${CONDA_PREFIX}/lib` into
+`LDFLAGS` via activation scripts. DVID's Makefile accounts for this and avoids
+adding a duplicate rpath.
+
+NEVER install additional C/C++ compiler packages into the `dvid` conda env beyond
+what go-cgo already pulls in. For C++ compilation needs (e.g.,
+`testing/fvdb/nvdb_verify.cpp`), use the system compiler (Xcode Command Line
+Tools on macOS, system g++ on Linux) or a separate conda environment.

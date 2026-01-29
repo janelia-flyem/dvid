@@ -8,6 +8,10 @@
 #   conda activate dvid-fvdb-test
 #   python scripts/test_fvdb_export.py --help
 #
+# IMPORTANT: The C++ verifier (testing/fvdb/nvdb_verify.cpp) must be compiled
+# with the SYSTEM C++ compiler, not conda-installed compilers. Do NOT add
+# clang/clangxx to any conda env used for building DVID.
+#
 # Note: This environment requires a CUDA-capable GPU for full fVDB functionality.
 # For CPU-only testing, some features may be limited.
 #

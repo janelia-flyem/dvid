@@ -9,6 +9,16 @@
 
 set -euo pipefail
 
+# Warn if LDFLAGS contains duplicate -rpath entries (conda activation stacking).
+# This doesn't block execution since cmake uses system compiler, but alerts users.
+if [ -n "${LDFLAGS:-}" ]; then
+    rpath_count=$(echo "$LDFLAGS" | grep -o '\-rpath' | wc -l)
+    if [ "$rpath_count" -gt 1 ]; then
+        echo "WARNING: LDFLAGS contains $rpath_count -rpath entries (conda activation stacking)." >&2
+        echo "This won't affect this script (uses system compiler) but may affect DVID's make." >&2
+    fi
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
