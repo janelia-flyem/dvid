@@ -1346,7 +1346,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, string(jsonBytes))
+		fmt.Fprint(w, string(jsonBytes))
 		return
 	default:
 	}
@@ -1367,7 +1367,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintf(w, string(jsonBytes))
+			fmt.Fprint(w, string(jsonBytes))
 			comment = fmt.Sprintf("HTTP GET ROI %q: %d bytes", d.DataName(), len(jsonBytes))
 		case "post":
 			data, err := io.ReadAll(r.Body)
@@ -1443,7 +1443,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintf(w, string(jsonBytes))
+			fmt.Fprint(w, string(jsonBytes))
 			comment = fmt.Sprintf("HTTP POST ptquery '%s'", d.DataName())
 		}
 	case "partition":
@@ -1474,7 +1474,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, string(jsonBytes))
+		fmt.Fprint(w, string(jsonBytes))
 		comment = fmt.Sprintf("HTTP partition '%s' with batch size %d", d.DataName(), batchsize)
 	default:
 		server.BadAPIRequest(w, r, d)

@@ -295,5 +295,5 @@ func serverTokenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	dvid.Infof("Returning JWT for user %s.\n", email)
 	w.Header().Set("Content-Type", "text/plain")
-	fmt.Fprintf(w, tokenString)
+	fmt.Fprint(w, tokenString)
 }

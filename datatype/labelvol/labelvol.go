@@ -959,7 +959,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, string(jsonBytes))
+		fmt.Fprint(w, string(jsonBytes))
 
 	case "sync":
 		if action != "post" {
@@ -1038,7 +1038,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				}
 				if n != outSize {
 					errmsg := fmt.Sprintf("Only able to write %d of %d lz4 compressed bytes\n", n, outSize)
-					dvid.Errorf(errmsg)
+					dvid.Errorf("%s", errmsg)
 					server.BadRequest(w, r, errmsg)
 					return
 				}

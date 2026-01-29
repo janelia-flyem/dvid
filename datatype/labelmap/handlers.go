@@ -180,7 +180,7 @@ func (d *Data) handleSupervoxelSplits(ctx *datastore.VersionedCtx, w http.Respon
 	}
 
 	w.Header().Set("Content-type", "application/json")
-	fmt.Fprintf(w, splitsJSON)
+	fmt.Fprint(w, splitsJSON)
 
 	timedLog.Infof("HTTP GET supervoxel splits query (%s)", r.URL)
 }
@@ -317,7 +317,7 @@ func (d *Data) handleProximity(ctx *datastore.VersionedCtx, w http.ResponseWrite
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, string(jsonBytes))
+	fmt.Fprint(w, string(jsonBytes))
 
 	timedLog.Infof("HTTP %s proximity for labels %d, %d (%s)", r.Method, label1, label2, r.URL)
 }
