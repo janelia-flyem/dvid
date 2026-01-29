@@ -44,7 +44,7 @@ func (slog stdLogger) Debug(s string) {
 	if logger.Logger != nil {
 		logger.Write([]byte(" DEBUG " + s))
 	} else {
-		log.Printf(" DEBUG " + s)
+		log.Printf("%s", " DEBUG "+s)
 	}
 }
 
@@ -53,7 +53,7 @@ func (slog stdLogger) Info(s string) {
 	if logger.Logger != nil {
 		logger.Write([]byte(" INFO " + s))
 	} else {
-		log.Printf(" INFO " + s)
+		log.Printf("%s", " INFO "+s)
 	}
 }
 
@@ -62,7 +62,7 @@ func (slog stdLogger) Warning(s string) {
 	if logger.Logger != nil {
 		logger.Write([]byte(" WARNING " + s))
 	} else {
-		log.Printf(" WARNING " + s)
+		log.Printf("%s", " WARNING "+s)
 	}
 }
 
@@ -71,7 +71,7 @@ func (slog stdLogger) Error(s string) {
 	if logger.Logger != nil {
 		logger.Write([]byte(" ERROR " + s))
 	} else {
-		log.Printf(" ERROR " + s)
+		log.Printf("%s", " ERROR "+s)
 	}
 }
 
@@ -80,7 +80,7 @@ func (slog stdLogger) Critical(s string) {
 	if logger.Logger != nil {
 		logger.Write([]byte(" CRITICAL " + s))
 	} else {
-		log.Printf(" CRITICAL " + s)
+		log.Printf("%s", " CRITICAL "+s)
 	}
 }
 

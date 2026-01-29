@@ -231,7 +231,7 @@ func writeCompressedToHTTP(compression string, data []byte, subvol *dvid.Subvolu
 		}
 		if n != outSize {
 			errmsg := fmt.Sprintf("Only able to write %d of %d lz4 compressed bytes\n", n, outSize)
-			dvid.Errorf(errmsg)
+			dvid.Errorf("%s", errmsg)
 			return err
 		}
 	case "gzip":

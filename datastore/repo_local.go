@@ -3044,7 +3044,7 @@ func (d *dagT) getSequenceUUID(startV, endV dvid.VersionID) (sequence []dvid.UUI
 		cur, found = d.nodes[parentV]
 		if !found {
 			err = fmt.Errorf("node %s has parent version %d that doesn't exist", cur.uuid, parentV)
-			dvid.Criticalf(err.Error())
+			dvid.Criticalf("%s", err.Error())
 			return
 		}
 	}

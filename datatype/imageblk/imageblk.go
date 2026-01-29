@@ -1276,7 +1276,7 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 	} else {
 		addedFiles = fmt.Sprintf("filenames: %s [%d more]", filenames[0], len(filenames)-1)
 	}
-	dvid.Debugf(addedFiles + "\n")
+	dvid.Debugf("%s\n", addedFiles)
 
 	// Get plane
 	plane, err := dvid.DataShapeString(planeStr).DataShape()
@@ -1748,7 +1748,7 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		} else {
 			addedFiles = fmt.Sprintf("filenames: %s [%d more]", filenames[0], len(filenames)-1)
 		}
-		dvid.Debugf(addedFiles + "\n")
+		dvid.Debugf("%s\n", addedFiles)
 
 		uuid, versionID, err := datastore.MatchingUUID(uuidStr)
 		if err != nil {

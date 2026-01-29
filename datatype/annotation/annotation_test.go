@@ -660,15 +660,15 @@ func testResponse(t *testing.T, expected Elements, template string, args ...inte
 }
 
 func testResponseLabel(t *testing.T, expected interface{}, template string, args ...interface{}) {
+	url := fmt.Sprintf(template, args...)
 	var useRels bool
 	var useVerbose bool
-	if strings.HasSuffix(template, "?relationships=true") {
+	if strings.HasSuffix(url, "?relationships=true") {
 		useRels = true
-	} else if strings.HasSuffix(template, "?relationships=verbose") {
+	} else if strings.HasSuffix(url, "?relationships=verbose") {
 		useRels = true
 		useVerbose = true
 	}
-	url := fmt.Sprintf(template, args...)
 	returnValue := server.TestHTTP(t, "GET", url, nil)
 
 	if useRels {
@@ -1599,7 +1599,7 @@ func testLabels(t *testing.T, uuid dvid.UUID, labelblkName, labelvolName dvid.In
 	}
 	testResponseLabel(t, expectedLabel2c, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
 	url2 := fmt.Sprintf("%snode/%s/mysynapses/label/%d?relationships=true", server.WebAPIPath, uuid, splitLabel)
-	testResponseLabel(t, expectedLabel7, url2)
+	testResponseLabel(t, expectedLabel7, "%s", url2)
 
 	// Change the name of the annotations.
 	if err = datastore.RenameData(uuid, "mysynapses", labelvolName, "foobar"); err == nil {
@@ -1745,7 +1745,7 @@ func testMappedLabels(t *testing.T, uuid dvid.UUID, labelblkName, labelvolName d
 	}
 	testResponseLabel(t, expectedLabel2c, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
 	url2 := fmt.Sprintf("%snode/%s/mysynapses/label/%d?relationships=true", server.WebAPIPath, uuid, splitLabel)
-	testResponseLabel(t, expectedLabel7, url2)
+	testResponseLabel(t, expectedLabel7, "%s", url2)
 
 	// Change the name of the annotations.
 	if err = datastore.RenameData(uuid, "mysynapses", labelvolName, "foobar"); err == nil {

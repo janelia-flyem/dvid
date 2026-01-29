@@ -673,7 +673,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, string(jsonBytes))
+		fmt.Fprint(w, string(jsonBytes))
 
 	case "sync":
 		if action != "post" {

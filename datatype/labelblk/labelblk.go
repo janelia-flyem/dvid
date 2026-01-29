@@ -919,7 +919,7 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		} else {
 			addedFiles = fmt.Sprintf("filenames: %s [%d more]", filenames[0], len(filenames)-1)
 		}
-		dvid.Debugf(addedFiles + "\n")
+		dvid.Debugf("%s\n", addedFiles)
 
 		uuid, versionID, err := datastore.MatchingUUID(uuidStr)
 		if err != nil {
@@ -1144,7 +1144,7 @@ func sendBinaryData(compression string, data []byte, subvol *dvid.Subvolume, w h
 		}
 		if n != outSize {
 			errmsg := fmt.Sprintf("Only able to write %d of %d lz4 compressed bytes\n", n, outSize)
-			dvid.Errorf(errmsg)
+			dvid.Errorf("%s", errmsg)
 			return err
 		}
 	case "gzip":
@@ -1340,7 +1340,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, string(jsonBytes))
+		fmt.Fprint(w, string(jsonBytes))
 
 	case "sync":
 		if action != "post" {
@@ -1371,7 +1371,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		w.Header().Set("Content-type", "application/json")
 		jsonStr := fmt.Sprintf(`{"Label": %d}`, label)
-		fmt.Fprintf(w, jsonStr)
+		fmt.Fprint(w, jsonStr)
 		timedLog.Infof("HTTP %s: label at %s (%s)", r.Method, coord, r.URL)
 
 	case "labels":

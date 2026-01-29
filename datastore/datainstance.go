@@ -42,7 +42,7 @@ type Response struct {
 // Writes a RPC response to a writer.
 func (r *Response) Write(w io.Writer) error {
 	if len(r.Response.Text) != 0 {
-		fmt.Fprintf(w, r.Response.Text)
+		fmt.Fprint(w, r.Response.Text)
 		return nil
 	} else if len(r.Output) != 0 {
 		_, err := w.Write(r.Output)

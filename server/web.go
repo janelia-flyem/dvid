@@ -1049,7 +1049,7 @@ func latencyHandler(c *web.C, h http.Handler) http.Handler {
 
 func notFound(w http.ResponseWriter, r *http.Request) {
 	errorMsg := fmt.Sprintf("Could not find the URL: %s", r.URL.Path)
-	dvid.Infof(errorMsg)
+	dvid.Infof("%s", errorMsg)
 	http.Error(w, errorMsg, http.StatusNotFound)
 }
 
@@ -1079,7 +1079,7 @@ func BadRequest(w http.ResponseWriter, r *http.Request, format interface{}, args
 		message = fmt.Sprintf(message, args...)
 	}
 	errorMsg := fmt.Sprintf("%s (%s).", message, r.URL.Path)
-	dvid.Errorf(errorMsg + "\n")
+	dvid.Errorf("%s\n", errorMsg)
 	http.Error(w, errorMsg, http.StatusBadRequest)
 }
 
@@ -1539,7 +1539,7 @@ func serverInfoHandler(w http.ResponseWriter, r *http.Request) {
 
 func serverNoteHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
-	fmt.Fprintf(w, tc.Server.Note)
+	fmt.Fprint(w, tc.Server.Note)
 }
 
 func serverConfigHandler(w http.ResponseWriter, r *http.Request) {
@@ -1694,7 +1694,7 @@ func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, string(jsonBytes))
+	fmt.Fprint(w, string(jsonBytes))
 }
 
 // TODO -- Maybe allow assignment of child UUID via JSON in POST.  Right now, we only
@@ -1771,7 +1771,7 @@ func repoInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, jsonStr)
+	fmt.Fprint(w, jsonStr)
 }
 
 func repoPostInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
@@ -1827,7 +1827,7 @@ func repoBranchVersionsHandler(c web.C, w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, jsonStr)
+	fmt.Fprint(w, jsonStr)
 }
 
 func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
@@ -1905,7 +1905,7 @@ func getRepoLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, err)
 		return
 	}
-	fmt.Fprintf(w, string(jsonStr))
+	fmt.Fprint(w, string(jsonStr))
 }
 
 func postRepoLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
@@ -1943,7 +1943,7 @@ func getNodeNoteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, err)
 		return
 	}
-	fmt.Fprintf(w, string(jsonStr))
+	fmt.Fprint(w, string(jsonStr))
 }
 
 func getNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
@@ -1963,7 +1963,7 @@ func getNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, err)
 		return
 	}
-	fmt.Fprintf(w, string(jsonStr))
+	fmt.Fprint(w, string(jsonStr))
 }
 
 func postNodeNoteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
