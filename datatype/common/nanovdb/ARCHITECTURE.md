@@ -1,10 +1,13 @@
-# Go Native NanoVDB IndexGrid Exporter Architecture
+# Go Native NanoVDB Exporter Architecture
 
-This document describes the design and implementation of DVID's pure Go exporter for NanoVDB IndexGrid files, enabling direct export of label topology to the fVDB-compatible format without CGO or external dependencies.
+This document describes the design and implementation of DVID's pure Go exporter for NanoVDB files, enabling direct export of label topology and values to the fVDB-compatible format without CGO or external dependencies. Both OnIndex (topology-only) and Int64 (value) grids are supported.
 
 ## Motivation
 
-The goal was to export DVID labelmap segmentation topology (which voxels belong to a given label) in a format compatible with [fVDB](https://github.com/openvdb/fvdb-core), a GPU-accelerated sparse voxel library. fVDB uses the NanoVDB binary format, specifically the "IndexGrid" (OnIndex) variant that stores only topology—which voxels are active—without storing per-voxel values.
+The goal was to export DVID labelmap segmentation data in a format compatible with [fVDB](https://github.com/openvdb/fvdb-core), a GPU-accelerated sparse voxel library. fVDB uses the NanoVDB binary format. Two grid types are supported:
+
+- **OnIndex (IndexGrid)** — stores only topology (which voxels are active) without per-voxel values. Ideal for recording which voxels belong to a label.
+- **Int64** — stores signed 64-bit values per voxel. Used for exporting label IDs directly. Since NanoVDB has no UInt64 GridType, DVID's uint64 labels are stored as int64 with overflow checking (values must be ≤ math.MaxInt64).
 
 Key requirements:
 1. **Pure Go implementation** - No CGO dependencies, enabling easy cross-compilation and deployment
@@ -18,9 +21,11 @@ Key requirements:
 
 NanoVDB is a linearized, GPU-friendly representation of OpenVDB's hierarchical sparse volume structure. The key insight is that NanoVDB uses a static tree structure that can be memory-mapped directly to GPU memory.
 
-The format was reverse-engineered primarily from:
+The format is based on:
 - [NanoVDB.h](https://github.com/AcademySoftwareFoundation/openvdb/blob/master/nanovdb/nanovdb/NanoVDB.h) - The authoritative C++ header (10,000+ lines)
 - fVDB source code in `llm-research/fvdb-core/` for understanding IndexGrid specifics
+
+**Important**: The Go GridType constants must match the C++ `nanovdb::GridType` enum exactly. NanoVDB has no UInt64 type; the enum includes Half (9) and UInt32 (10) where earlier versions of this package incorrectly mapped UInt32 and UInt64.
 
 ### Tree Structure
 
@@ -38,13 +43,26 @@ Each level covers progressively finer spatial regions:
 - **Lower nodes**: 128³ voxels (16 × 8 × 8)
 - **Leaf nodes**: 8³ = 512 voxels
 
-### IndexGrid (OnIndex) Specifics
+### Grid Type Specifics
+
+#### OnIndex (IndexGrid)
 
 For IndexGrid, we only store topology—no per-voxel values. Each leaf node contains:
 - A 512-bit mask indicating which of its 8³ voxels are "active"
 - An offset for indexing into external data arrays (used by fVDB for features)
 
-This is ideal for our use case: we want to record which voxels belong to a label without storing redundant label values.
+Leaf node size: **96 bytes**.
+
+#### Int64 (Value Grid)
+
+For Int64 grids, each leaf node stores both topology and per-voxel int64 values:
+- A 512-bit mask indicating active voxels
+- 512 × int64 values (one per voxel slot)
+- Min/max/average/stddev statistics
+
+Leaf node size: **4224 bytes**. The values array is `alignas(32)` in C++, requiring 16 bytes of padding before it.
+
+Internal nodes (Upper and Lower) and the Root node have identical binary layouts for both grid types.
 
 ### Binary Layout
 
@@ -70,8 +88,9 @@ Critical details:
 ```
 datatype/common/nanovdb/
 ├── nanovdb.go      # Core types, constants, and data structures
-├── indexgrid.go    # Tree builder - constructs IndexGrid from coordinates
-├── writer.go       # Binary serializer - writes NanoVDB format
+├── indexgrid.go    # Tree builder for OnIndex grids from coordinates
+├── int64grid.go    # Tree builder for Int64 value grids from coordinates + values
+├── writer.go       # Binary serializer - writes NanoVDB format (both grid types)
 └── nanovdb_test.go # Unit tests
 ```
 
@@ -176,10 +195,26 @@ func (w *Writer) writeGridData(grid *IndexGrid, ...) error {
 
 #### Node Serialization
 
-Leaf nodes (96 bytes each):
+OnIndex leaf nodes (96 bytes each):
 ```
-[CoordBBox - 24 bytes] [Flags - 1 byte] [Prefix - 1 byte]
-[Padding - 6 bytes] [ValueMask - 64 bytes]
+[BBoxMin - 12B] [BBoxDif - 3B] [Flags - 1B]
+[ValueMask - 64B] [Padding - 16B]
+```
+
+Int64 leaf nodes (4224 bytes each):
+```
+Offset  Size   Field
+0       12     mBBoxMin (3 × int32)
+12      3      mBBoxDif (3 × uint8)
+15      1      mFlags (uint8)
+16      64     mValueMask (8 × uint64)
+80      8      mMinimum (int64)
+88      8      mMaximum (int64)
+96      8      mAverage (float64)
+104     8      mStdDevi (float64)
+112     16     padding (alignas(32) before mValues)
+128     4096   mValues (512 × int64)
+Total:  4224 bytes
 ```
 
 Internal nodes include child offset tables that point to their children's positions in the file.
@@ -247,27 +282,28 @@ The `nanovdb_test.go` file includes:
 
 ### Integration Testing
 
-A Python test script (`scripts/test_fvdb_export.py`) validates that output files can be loaded by fVDB:
-```python
-grid = fvdb.load("label.nvdb")
-assert grid.total_voxels == expected_count
-```
+The `testing/fvdb/` directory contains an end-to-end verification suite:
+1. A Go test generator (`generate_test_grids.go`) produces .nvdb files using this package
+2. A C++ verifier (`nvdb_verify.cpp`) reads them back using the official NanoVDB header
+3. A shell script (`run_tests.sh`) orchestrates the pipeline
+
+This verifies binary compatibility across 8 test grids (4 OnIndex + 4 Int64), including edge cases like math.MaxInt64.
 
 ## Limitations and Future Work
 
 ### Current Limitations
 
-1. **IndexGrid only** - No support for value grids (float, int, etc.)
+1. **Two grid types only** - Only OnIndex and Int64 are supported (no Float, Double, Vec3, etc.)
 2. **No blind data** - NanoVDB supports "blind data" attachments; not implemented
 3. **No compression** - Output is uncompressed (Blosc compression not implemented)
 4. **Single grid per file** - Multi-grid files not supported
+5. **No UInt64** - NanoVDB has no UInt64 GridType; uint64 labels > math.MaxInt64 cannot be represented
 
 ### Potential Improvements
 
 1. **Streaming construction** - Process voxels without holding all in memory
 2. **Parallel building** - Parallelize leaf/node creation
-3. **Value grid support** - Export actual label values, not just topology
-4. **Compression** - Add Blosc compression for smaller files
+3. **Compression** - Add Blosc compression for smaller files
 
 ## References
 
