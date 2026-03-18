@@ -2024,30 +2024,15 @@ func TestCompleteSplitSupervoxel(t *testing.T) {
 		t.Fatalf("Expected supervoxel 4 to be mapped to itself before split.  Got %d instead.\n", mappedSV)
 	}
 
-	// Submit the split sparsevol for supervoxel 4 using its entire body
+	// Submit the split sparsevol for supervoxel 4 using its entire body.
+	// This should fail because splitSize == svSize would create a ghost remain supervoxel.
 	reqStr = fmt.Sprintf("%snode/%s/labels/split-supervoxel/4", server.WebAPIPath, uuid)
-	r := server.TestHTTP(t, "POST", reqStr, buf)
-	var jsonVal struct {
-		SplitSupervoxel  uint64
-		RemainSupervoxel uint64
-	}
-	if err := json.Unmarshal(r, &jsonVal); err != nil {
-		t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
-	}
-	if jsonVal.SplitSupervoxel != 5 {
-		t.Errorf("Expected split label to be 5, instead got %d\n", jsonVal.SplitSupervoxel)
-	}
-	if jsonVal.RemainSupervoxel != 6 {
-		t.Errorf("Expected remain label to be 6, instead got %d\n", jsonVal.RemainSupervoxel)
-	}
-	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
-		t.Fatalf("Error blocking on sync of labels: %v\n", err)
-	}
+	server.TestBadHTTP(t, "POST", reqStr, buf)
 
-	// Make sure the split supervoxel is now mapped to 0.
+	// Make sure supervoxel 4 is still mapped to itself (split was rejected).
 	mappedSV = getSVMapping(t, uuid, "labels", 4)
-	if mappedSV != 0 {
-		t.Fatalf("Expected supervoxel 4 to map to 0 after split.  Got %d instead.\n", mappedSV)
+	if mappedSV != 4 {
+		t.Fatalf("Expected supervoxel 4 to still be mapped to itself after rejected split.  Got %d instead.\n", mappedSV)
 	}
 
 	// Make sure retrieved body voxels are same as original
@@ -2057,10 +2042,11 @@ func TestCompleteSplitSupervoxel(t *testing.T) {
 		t.Errorf("Retrieved post-split volume is incorrect size\n")
 	}
 	if err := original.equals(retrieved); err != nil {
-		t.Errorf("Post-supervoxel split label volume not equal to expected volume: %v\n", err)
+		t.Errorf("Post-rejected split label volume not equal to expected volume: %v\n", err)
 	}
 
-	// Submit the split sparsevol for supervoxel 4 using no RLEs
+	// Submit the split sparsevol for supervoxel 4 using no RLEs.
+	// This should fail because splitSize == 0 would create a ghost split supervoxel.
 	buf = new(bytes.Buffer)
 	buf.WriteByte(dvid.EncodingBinary)
 	binary.Write(buf, binary.LittleEndian, uint8(3))  // # of dimensions
@@ -2069,19 +2055,13 @@ func TestCompleteSplitSupervoxel(t *testing.T) {
 	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # voxels
 	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # spans
 
-	reqStr = fmt.Sprintf("%snode/%s/labels/split-supervoxel/5", server.WebAPIPath, uuid)
-	r = server.TestHTTP(t, "POST", reqStr, buf)
-	if err := json.Unmarshal(r, &jsonVal); err != nil {
-		t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
-	}
-	if jsonVal.SplitSupervoxel != 7 {
-		t.Errorf("Expected split label to be 5, instead got %d\n", jsonVal.SplitSupervoxel)
-	}
-	if jsonVal.RemainSupervoxel != 8 {
-		t.Errorf("Expected remain label to be 6, instead got %d\n", jsonVal.RemainSupervoxel)
-	}
-	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
-		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	reqStr = fmt.Sprintf("%snode/%s/labels/split-supervoxel/4", server.WebAPIPath, uuid)
+	server.TestBadHTTP(t, "POST", reqStr, buf)
+
+	// Make sure supervoxel 4 is still mapped to itself (split was rejected).
+	mappedSV = getSVMapping(t, uuid, "labels", 4)
+	if mappedSV != 4 {
+		t.Fatalf("Expected supervoxel 4 to still be mapped to itself after rejected zero split.  Got %d instead.\n", mappedSV)
 	}
 
 	// Make sure retrieved body voxels are same as original
@@ -2091,7 +2071,7 @@ func TestCompleteSplitSupervoxel(t *testing.T) {
 		t.Errorf("Retrieved post-split volume is incorrect size\n")
 	}
 	if err := original.equals(retrieved); err != nil {
-		t.Errorf("Post-supervoxel split label volume not equal to expected volume: %v\n", err)
+		t.Errorf("Post-rejected zero split label volume not equal to expected volume: %v\n", err)
 	}
 }
 

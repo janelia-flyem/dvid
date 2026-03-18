@@ -885,25 +885,6 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser, 
 func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabel uint64, r io.ReadCloser, info dvid.ModInfo, downscale bool) (splitSupervoxel, remainSupervoxel, mutID uint64, err error) {
 	timedLog := dvid.NewTimeLog()
 
-	// Create new labels for this split that will persist to store
-	if splitlabel != 0 {
-		splitSupervoxel = splitlabel
-		if _, err = d.updateMaxLabel(v, splitlabel); err != nil {
-			return
-		}
-	} else if splitSupervoxel, err = d.newLabel(v); err != nil {
-		return
-	}
-	if remainlabel != 0 {
-		remainSupervoxel = remainlabel
-		if _, err = d.updateMaxLabel(v, remainlabel); err != nil {
-			return
-		}
-	} else if remainSupervoxel, err = d.newLabel(v); err != nil {
-		return
-	}
-	dvid.Debugf("Splitting subset of label %d into new label %d and renaming remainder to label %d...\n", svlabel, splitSupervoxel, remainSupervoxel)
-
 	// Read the sparse volume from reader.
 	var split dvid.RLEs
 	split, err = dvid.ReadRLEs(r)
@@ -912,7 +893,8 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 	}
 	splitSize, _ := split.Stats()
 	if splitSize == 0 {
-		dvid.Infof("split on supervoxel %d -> %d was given split size of 0\n", svlabel, remainlabel)
+		err = fmt.Errorf("split on supervoxel %d has zero voxels in split sparse volume", svlabel)
+		return
 	}
 
 	// read parent label index and do simple check on split size
@@ -926,6 +908,7 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 		if mapped, found := mapping.MappedLabel(v, svlabel); found {
 			if mapped == 0 {
 				err = fmt.Errorf("cannot get label for supervoxel %d, which has been split and doesn't exist anymore", svlabel)
+				return
 			}
 			label = mapped
 		}
@@ -944,14 +927,30 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel, splitlabel, remainlabe
 		return
 	}
 	svSize := idx.GetSupervoxelCount(svlabel)
-	if splitSize > svSize {
-		err = fmt.Errorf("split volume of %d > %d of supervoxel %d", splitSize, svSize, svlabel)
+	if splitSize >= svSize {
+		err = fmt.Errorf("split on supervoxel %d was given split volume of %d >= %d of supervoxel", svlabel, splitSize, svSize)
 		return
 	}
 	remainSize := svSize - splitSize
-	if remainSize == 0 {
-		dvid.Infof("split on supervoxel %d -> %d was given split size %d, which is entire supervoxel\n", svlabel, splitlabel, splitSize)
+
+	// Create new labels for this split that will persist to store
+	if splitlabel != 0 {
+		splitSupervoxel = splitlabel
+		if _, err = d.updateMaxLabel(v, splitlabel); err != nil {
+			return
+		}
+	} else if splitSupervoxel, err = d.newLabel(v); err != nil {
+		return
 	}
+	if remainlabel != 0 {
+		remainSupervoxel = remainlabel
+		if _, err = d.updateMaxLabel(v, remainlabel); err != nil {
+			return
+		}
+	} else if remainSupervoxel, err = d.newLabel(v); err != nil {
+		return
+	}
+	dvid.Debugf("Splitting subset of label %d into new label %d and renaming remainder to label %d...\n", svlabel, splitSupervoxel, remainSupervoxel)
 
 	// Only do voxel-based mutations one at a time.  This lets us remove handling for block-level concurrency.
 	d.voxelMu.Lock()
