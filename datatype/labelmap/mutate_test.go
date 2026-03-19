@@ -2075,6 +2075,80 @@ func TestCompleteSplitSupervoxel(t *testing.T) {
 	}
 }
 
+func TestCleaveGhostSupervoxel(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	config.Set("BlockSize", "32,32,32")
+	server.CreateTestInstance(t, uuid, "labelmap", "labels", config)
+
+	// Post standard label 1-4 volume
+	_ = createLabelTestVolume(t, uuid, "labels")
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	// Merge body 3 into body 4 so that SVs 3 and 4 both map to body 4.
+	testMerge := mergeJSON(`[4, 3]`)
+	testMerge.send(t, uuid, "labels")
+
+	// Inject a ghost supervoxel: SV 9999 maps to body 4 in the VCache
+	// but has no voxels in the label index. This simulates a degenerate split.
+	v, err := datastore.VersionFromUUID(uuid)
+	if err != nil {
+		t.Fatalf("couldn't get version from UUID: %v\n", err)
+	}
+	d, err := datastore.GetDataByUUIDName(uuid, "labels")
+	if err != nil {
+		t.Fatalf("can't get labels instance: %v\n", err)
+	}
+	mapping, err := getMapping(d, v)
+	if err != nil {
+		t.Fatalf("can't get mapping: %v\n", err)
+	}
+	mapping.setMapping(v, 9999, 4) // ghost SV 9999 → body 4
+
+	// Verify the ghost SV is mapped to body 4.
+	mappedSV := getSVMapping(t, uuid, "labels", 9999)
+	if mappedSV != 4 {
+		t.Fatalf("Expected ghost SV 9999 to map to body 4, got %d\n", mappedSV)
+	}
+
+	// Cleave the ghost SV out of body 4. This should succeed.
+	reqStr := fmt.Sprintf("%snode/%s/labels/cleave/4", server.WebAPIPath, uuid)
+	r := server.TestHTTP(t, "POST", reqStr, bytes.NewBufferString("[9999]"))
+	var jsonVal struct {
+		CleavedLabel uint64
+	}
+	if err := json.Unmarshal(r, &jsonVal); err != nil {
+		t.Fatalf("Unable to get new label from ghost cleave: %v\n", err)
+	}
+	if jsonVal.CleavedLabel == 0 {
+		t.Fatalf("Expected non-zero cleaved label for ghost SV\n")
+	}
+
+	// Verify: ghost SV 9999 should now map to the new cleaved label, not body 4.
+	mappedSV = getSVMapping(t, uuid, "labels", 9999)
+	if mappedSV != jsonVal.CleavedLabel {
+		t.Fatalf("Expected ghost SV 9999 to map to cleaved label %d, got %d\n", jsonVal.CleavedLabel, mappedSV)
+	}
+
+	// Verify: SVs 3 and 4 should still be in body 4 (the real SVs are unaffected).
+	mappedSV = getSVMapping(t, uuid, "labels", 3)
+	if mappedSV != 4 {
+		t.Fatalf("Expected SV 3 to still map to body 4, got %d\n", mappedSV)
+	}
+	mappedSV = getSVMapping(t, uuid, "labels", 4)
+	if mappedSV != 4 {
+		t.Fatalf("Expected SV 4 to still map to body 4, got %d\n", mappedSV)
+	}
+}
+
 type labelType interface {
 	GetLabelPoints(dvid.VersionID, []dvid.Point3d, uint8, bool) ([]uint64, error)
 	GetPointsInSupervoxels(dvid.VersionID, []dvid.Point3d, []uint64) ([]bool, error)

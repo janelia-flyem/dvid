@@ -679,8 +679,20 @@ func (d *Data) cleaveIndex(v dvid.VersionID, op labels.CleaveOp, info dvid.ModIn
 	supervoxels := idx.GetSupervoxels()
 	for _, supervoxel := range op.CleavedSupervoxels {
 		if _, found := supervoxels[supervoxel]; !found {
-			err = fmt.Errorf("cannot cleave supervoxel %d, which does not exist in label %d", supervoxel, op.Target)
-			return
+			// Check if this is a ghost supervoxel (exists in mapping but not in label index).
+			// Ghost SVs are created by degenerate splits where all voxels end up on one side.
+			var isGhost bool
+			if mapping, mapErr := getMapping(d, v); mapErr == nil && mapping != nil {
+				if mapped, mapFound := mapping.MappedLabel(v, supervoxel); mapFound && mapped == op.Target {
+					isGhost = true
+				}
+			}
+			if !isGhost {
+				err = fmt.Errorf("cannot cleave supervoxel %d, which does not exist in label %d (%s)", supervoxel, op.Target, d.DataName())
+				return
+			}
+			dvid.Infof("cleave of label %d: supervoxel %d is a ghost (in mapping but not in label index), proceeding\n", op.Target, supervoxel)
+			continue
 		}
 		delete(supervoxels, supervoxel)
 	}
