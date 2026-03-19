@@ -165,6 +165,204 @@ type BlockData struct {
 	Data        []byte
 }
 
+// shardReport holds per-shard statistics collected locally by each shardWriter goroutine.
+type shardReport struct {
+	scale            uint8
+	filename         string
+	records          uint64
+	totalUncompressed uint64
+	totalCompressed  uint64
+	minBlockUncomp   uint64
+	maxBlockUncomp   uint64
+	minBlockComp     uint64
+	maxBlockComp     uint64
+	fileSize         int64
+}
+
+// exportMetrics collects metrics from all shard writers and writes an export.log summary.
+type exportMetrics struct {
+	startTime time.Time
+	dataName  string
+	uuid      string
+	directory string
+	numScales uint8
+	scales    []ngScale
+
+	mu      sync.Mutex
+	reports []shardReport
+}
+
+func (m *exportMetrics) reportShard(r shardReport) {
+	m.mu.Lock()
+	m.reports = append(m.reports, r)
+	m.mu.Unlock()
+}
+
+func (m *exportMetrics) writeLog() {
+	endTime := time.Now()
+	duration := endTime.Sub(m.startTime)
+
+	logPath := path.Join(m.directory, "export.log")
+	f, err := os.Create(logPath)
+	if err != nil {
+		dvid.Errorf("Failed to create export log %s: %v", logPath, err)
+		return
+	}
+	defer f.Close()
+
+	w := bufio.NewWriter(f)
+	defer w.Flush()
+
+	fmt.Fprintf(w, "=====================================\n")
+	fmt.Fprintf(w, "DVID Export-Shards Report\n")
+	fmt.Fprintf(w, "=====================================\n")
+	fmt.Fprintf(w, "Data:        %s\n", m.dataName)
+	fmt.Fprintf(w, "UUID:        %s\n", m.uuid)
+	fmt.Fprintf(w, "Directory:   %s\n", m.directory)
+	fmt.Fprintf(w, "Start:       %s\n", m.startTime.Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(w, "End:         %s\n", endTime.Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(w, "Duration:    %s\n", duration.Round(time.Second))
+
+	// Aggregate per-scale stats
+	type scaleStats struct {
+		chunks          uint64
+		shards          uint64
+		totalUncomp     uint64
+		totalComp       uint64
+		minBlockUncomp  uint64
+		maxBlockUncomp  uint64
+		minBlockComp    uint64
+		maxBlockComp    uint64
+		minShardRecords uint64
+		maxShardRecords uint64
+		totalFileSize   int64
+		minFileSize     int64
+		maxFileSize     int64
+	}
+	perScale := make(map[uint8]*scaleStats)
+	for _, r := range m.reports {
+		s, ok := perScale[r.scale]
+		if !ok {
+			s = &scaleStats{
+				minBlockUncomp:  math.MaxUint64,
+				minBlockComp:    math.MaxUint64,
+				minShardRecords: math.MaxUint64,
+				minFileSize:     math.MaxInt64,
+			}
+			perScale[r.scale] = s
+		}
+		s.chunks += r.records
+		s.shards++
+		s.totalUncomp += r.totalUncompressed
+		s.totalComp += r.totalCompressed
+		if r.records > 0 {
+			if r.minBlockUncomp < s.minBlockUncomp {
+				s.minBlockUncomp = r.minBlockUncomp
+			}
+			if r.maxBlockUncomp > s.maxBlockUncomp {
+				s.maxBlockUncomp = r.maxBlockUncomp
+			}
+			if r.minBlockComp < s.minBlockComp {
+				s.minBlockComp = r.minBlockComp
+			}
+			if r.maxBlockComp > s.maxBlockComp {
+				s.maxBlockComp = r.maxBlockComp
+			}
+			if r.records < s.minShardRecords {
+				s.minShardRecords = r.records
+			}
+			if r.records > s.maxShardRecords {
+				s.maxShardRecords = r.records
+			}
+		}
+		s.totalFileSize += r.fileSize
+		if r.fileSize < s.minFileSize {
+			s.minFileSize = r.fileSize
+		}
+		if r.fileSize > s.maxFileSize {
+			s.maxFileSize = r.fileSize
+		}
+	}
+
+	var totalChunks, totalShards, totalUncomp, totalComp uint64
+	var totalFileSize int64
+
+	for scale := uint8(0); scale < m.numScales; scale++ {
+		s, ok := perScale[scale]
+		if !ok {
+			continue
+		}
+		totalChunks += s.chunks
+		totalShards += s.shards
+		totalUncomp += s.totalUncomp
+		totalComp += s.totalComp
+		totalFileSize += s.totalFileSize
+
+		fmt.Fprintf(w, "\n--- Scale %d ---\n", scale)
+		if int(scale) < len(m.scales) {
+			sc := m.scales[scale]
+			fmt.Fprintf(w, "  Volume:              %s x %s x %s voxels\n",
+				commaInt32(sc.Size[0]), commaInt32(sc.Size[1]), commaInt32(sc.Size[2]))
+			if len(sc.ChunkSizes) > 0 {
+				cs := sc.ChunkSizes[0]
+				fmt.Fprintf(w, "  Chunk size:          %d x %d x %d voxels\n", cs[0], cs[1], cs[2])
+			}
+		}
+		fmt.Fprintf(w, "  Chunks exported:     %s\n", commaUint64(s.chunks))
+		fmt.Fprintf(w, "  Shard files:         %s\n", commaUint64(s.shards))
+
+		fmt.Fprintf(w, "\n  Block sizes (uncompressed):\n")
+		fmt.Fprintf(w, "    Total:   %s\n", humanBytes(s.totalUncomp))
+		if s.chunks > 0 {
+			fmt.Fprintf(w, "    Min:     %s\n", humanBytes(s.minBlockUncomp))
+			fmt.Fprintf(w, "    Max:     %s\n", humanBytes(s.maxBlockUncomp))
+			fmt.Fprintf(w, "    Mean:    %s\n", humanBytes(s.totalUncomp/s.chunks))
+		}
+
+		fmt.Fprintf(w, "\n  Block sizes (compressed, zstd):\n")
+		fmt.Fprintf(w, "    Total:   %s\n", humanBytes(s.totalComp))
+		if s.chunks > 0 {
+			fmt.Fprintf(w, "    Min:     %s\n", humanBytes(s.minBlockComp))
+			fmt.Fprintf(w, "    Max:     %s\n", humanBytes(s.maxBlockComp))
+			fmt.Fprintf(w, "    Mean:    %s\n", humanBytes(s.totalComp/s.chunks))
+		}
+
+		if s.totalComp > 0 {
+			fmt.Fprintf(w, "\n  Compression ratio:   %.2fx\n", float64(s.totalUncomp)/float64(s.totalComp))
+		}
+
+		if s.shards > 0 {
+			fmt.Fprintf(w, "\n  Records per shard file:\n")
+			fmt.Fprintf(w, "    Min:     %s\n", commaUint64(s.minShardRecords))
+			fmt.Fprintf(w, "    Max:     %s\n", commaUint64(s.maxShardRecords))
+			fmt.Fprintf(w, "    Mean:    %s\n", commaUint64(s.chunks/s.shards))
+
+			fmt.Fprintf(w, "\n  Shard file sizes (arrow):\n")
+			fmt.Fprintf(w, "    Total:   %s\n", humanBytes(uint64(s.totalFileSize)))
+			fmt.Fprintf(w, "    Min:     %s\n", humanBytes(uint64(s.minFileSize)))
+			fmt.Fprintf(w, "    Max:     %s\n", humanBytes(uint64(s.maxFileSize)))
+			fmt.Fprintf(w, "    Mean:    %s\n", humanBytes(uint64(s.totalFileSize)/s.shards))
+		}
+	}
+
+	fmt.Fprintf(w, "\n--- Totals ---\n")
+	fmt.Fprintf(w, "  Chunks:        %s\n", commaUint64(totalChunks))
+	fmt.Fprintf(w, "  Shard files:   %s\n", commaUint64(totalShards))
+	fmt.Fprintf(w, "  Uncompressed:  %s\n", humanBytes(totalUncomp))
+	if totalComp > 0 {
+		fmt.Fprintf(w, "  Compressed:    %s  (%.2fx ratio)\n", humanBytes(totalComp), float64(totalUncomp)/float64(totalComp))
+	}
+	fmt.Fprintf(w, "  File sizes:    %s\n", humanBytes(uint64(totalFileSize)))
+	secs := duration.Seconds()
+	if secs > 0 && totalChunks > 0 {
+		fmt.Fprintf(w, "  Throughput:    %s chunks/sec  (%s/sec uncompressed)\n",
+			commaUint64(uint64(float64(totalChunks)/secs)),
+			humanBytes(uint64(float64(totalUncomp)/secs)))
+	}
+
+	dvid.Infof("Export metrics written to %s\n", logPath)
+}
+
 // Basic schema without metadata for initial writing
 var blockSchema = arrow.NewSchema([]arrow.Field{
 	{Name: "chunk_x", Type: arrow.PrimitiveTypes.Int32},
@@ -219,6 +417,16 @@ type shardWriter struct {
 	scratch []byte // reused per line
 
 	mu sync.Mutex // Mutex to protect indexMap and recordNum
+
+	// Metrics tracking (local to this goroutine, no contention)
+	scale          uint8
+	metrics        *exportMetrics
+	totalUncomp    uint64
+	totalComp      uint64
+	minBlockUncomp uint64
+	maxBlockUncomp uint64
+	minBlockComp   uint64
+	maxBlockComp   uint64
 }
 
 // Start a goroutine to listen on the channel and write incoming block data to the shard file
@@ -301,6 +509,28 @@ func (w *shardWriter) start(wg *sync.WaitGroup) error {
 				}
 			}
 
+			dvid.Infof("Shard writer for file %s finished after writing %d records\n", fname, w.recordNum)
+
+			// Report metrics for this shard (after file is closed so size is accurate)
+			if w.metrics != nil {
+				var fsize int64
+				if fi, err := os.Stat(fname); err == nil {
+					fsize = fi.Size()
+				}
+				w.metrics.reportShard(shardReport{
+					scale:             w.scale,
+					filename:          fname,
+					records:           w.recordNum,
+					totalUncompressed: w.totalUncomp,
+					totalCompressed:   w.totalComp,
+					minBlockUncomp:    w.minBlockUncomp,
+					maxBlockUncomp:    w.maxBlockUncomp,
+					minBlockComp:      w.minBlockComp,
+					maxBlockComp:      w.maxBlockComp,
+					fileSize:          fsize,
+				})
+			}
+
 			wg.Done()
 		}()
 
@@ -315,7 +545,6 @@ func (w *shardWriter) start(wg *sync.WaitGroup) error {
 				dvid.Errorf("Error writing block %s (record %d) to shard file %s: %v", block.ChunkCoord, currentRecord, w.f.Name(), err)
 			}
 		}
-		dvid.Infof("Shard writer for file %s finished after writing %d records\n", w.f.Name(), w.recordNum)
 	}()
 
 	return nil
@@ -356,6 +585,24 @@ func (w *shardWriter) writeBlock(block *BlockData, ab *arrowBuilders) error {
 	}
 	compressed := w.zenc.EncodeAll(block.Data, make([]byte, 0, len(block.Data)/2))
 	ab.compressedBuilder.Append(compressed)
+
+	// Update local metrics (no contention — single goroutine per shardWriter)
+	usize := uint64(len(block.Data))
+	csize := uint64(len(compressed))
+	w.totalUncomp += usize
+	w.totalComp += csize
+	if usize < w.minBlockUncomp {
+		w.minBlockUncomp = usize
+	}
+	if usize > w.maxBlockUncomp {
+		w.maxBlockUncomp = usize
+	}
+	if csize < w.minBlockComp {
+		w.minBlockComp = csize
+	}
+	if csize > w.maxBlockComp {
+		w.maxBlockComp = csize
+	}
 
 	// Build arrays
 	coordXArray := ab.coordXBuilder.NewArray()
@@ -428,6 +675,8 @@ type shardHandler struct {
 
 	mapping        *VCache // Cache for mapping supervoxels to agglomerated labels
 	mappedVersions distFromRoot
+
+	metrics *exportMetrics
 
 	mu sync.RWMutex
 }
@@ -503,7 +752,11 @@ func (sh *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.C
 
 	// If writer does not exist for this shard ID, create a goroutine with its own block channel.
 	w = &shardWriter{
-		ch: make(chan *BlockData, 100), // Buffered channel to hold block data for this shard
+		ch:             make(chan *BlockData, 100), // Buffered channel to hold block data for this shard
+		scale:          scale,
+		metrics:        sh.metrics,
+		minBlockUncomp: math.MaxUint64,
+		minBlockComp:   math.MaxUint64,
 	}
 
 	// Create scale directory (e.g., s0, s1, s2)
@@ -632,7 +885,19 @@ func (sh *shardHandler) chunkHandler(dataname dvid.InstanceName, ch <-chan *stor
 // volume specification. This is a goroutine that is called asynchronously so should provide feedback
 // via log and no response to client.
 func (d *Data) ExportData(ctx *datastore.VersionedCtx, spec exportSpec) error {
+	versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
+
+	m := &exportMetrics{
+		startTime: time.Now(),
+		dataName:  string(d.DataName()),
+		uuid:      string(versionuuid),
+		directory: spec.Directory,
+		numScales: spec.NumScales,
+		scales:    spec.Scales,
+	}
+
 	var handler shardHandler
+	handler.metrics = m
 	if err := handler.Initialize(ctx, spec); err != nil {
 		return fmt.Errorf("couldn't initialize shard handler for labelmap %q: %v", d.DataName(), err)
 	}
@@ -657,6 +922,7 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 		return
 	}
 
+	var epochsWG sync.WaitGroup // tracks all epoch cleanup goroutines
 	var numBlocks uint64
 	var scale uint8
 	for scale = 0; scale < spec.NumScales; scale++ {
@@ -721,6 +987,7 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 				// and wait until they're drained and exited.
 				close(chunkCh)
 				// TODO: this can print out strips that really have no new blocks so track delta
+				epochsWG.Add(1)
 				go func(sy, sz int32, blocksSoFar uint64, ep *epoch) {
 					ep.chunkWG.Wait()
 
@@ -733,10 +1000,14 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 					ep.writers = nil
 					ep.mu.Unlock()
 
+					// Wait for all shard writers to finish before marking epoch as done.
+					ep.writersWG.Wait()
+
 					if blocksSoFar > 0 {
 						timedLog.Infof("Completed strip of shards at (0, %d, %d): %s blocks read",
 							sy, sz, commaUint64(blocksSoFar))
 					}
+					epochsWG.Done()
 				}(shardY, shardZ, numBlocks, ep)
 			}
 		}
@@ -744,6 +1015,14 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 
 	// Go through all labelmap blocks and send them to the workers.
 	timedLog.Infof("Finished reading labelmap %q %s blocks to exporting workers", d.DataName(), commaUint64(numBlocks))
+
+	// Wait for all epoch cleanup goroutines (and their shard writers) to complete.
+	epochsWG.Wait()
+
+	// Write the export metrics log.
+	if sh.metrics != nil {
+		sh.metrics.writeLog()
+	}
 }
 
 // utility to write large integers with commas
@@ -763,6 +1042,31 @@ func commaUint64(n uint64) string {
 		b.WriteString(s[i : i+3])
 	}
 	return b.String()
+}
+
+func commaInt32(n int32) string {
+	return commaUint64(uint64(n))
+}
+
+func humanBytes(b uint64) string {
+	const (
+		KB = 1024
+		MB = 1024 * KB
+		GB = 1024 * MB
+		TB = 1024 * GB
+	)
+	switch {
+	case b >= TB:
+		return fmt.Sprintf("%.2f TB", float64(b)/float64(TB))
+	case b >= GB:
+		return fmt.Sprintf("%.2f GB", float64(b)/float64(GB))
+	case b >= MB:
+		return fmt.Sprintf("%.2f MB", float64(b)/float64(MB))
+	case b >= KB:
+		return fmt.Sprintf("%.2f KB", float64(b)/float64(KB))
+	default:
+		return fmt.Sprintf("%d bytes", b)
+	}
 }
 
 // startResourceMonitor starts a goroutine that periodically logs key runtime metrics.
