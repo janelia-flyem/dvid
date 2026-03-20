@@ -37,8 +37,9 @@ const FinalShardZ = -2
 
 type exportSpec struct {
 	ngVolume
-	Directory string `json:"directory"`
-	NumScales uint8  `json:"num_scales"`
+	Directory   string `json:"directory"`
+	NumScales   uint8  `json:"num_scales"`
+	AnalyzeOnly bool   // When true, collect stats without writing files
 }
 
 type ngVolume struct {
@@ -165,6 +166,60 @@ type BlockData struct {
 	Data        []byte
 }
 
+// log2Histogram counts values in power-of-2 buckets.
+// Bucket i holds count of values where bits.Len64(v) == i.
+// Bucket 0: v==0, bucket 1: v==1, bucket 2: v in [2,3], bucket 3: v in [4,7], etc.
+type log2Histogram struct {
+	buckets [65]uint64 // bits.Len64 returns 0..64
+}
+
+func (h *log2Histogram) add(v uint64) {
+	h.buckets[bits.Len64(v)]++
+}
+
+func (h *log2Histogram) merge(other *log2Histogram) {
+	for i := range h.buckets {
+		h.buckets[i] += other.buckets[i]
+	}
+}
+
+// formatByteHistogram writes a histogram where values represent byte sizes.
+func (h *log2Histogram) formatByteHistogram(w *bufio.Writer) {
+	for i := range h.buckets {
+		if h.buckets[i] == 0 {
+			continue
+		}
+		var lo, hi uint64
+		if i == 0 {
+			lo, hi = 0, 0
+		} else {
+			lo = 1 << (i - 1)
+			hi = (1 << i) - 1
+		}
+		fmt.Fprintf(w, "      %s - %s:  %s\n", humanBytes(lo), humanBytes(hi), commaUint64(h.buckets[i]))
+	}
+}
+
+// formatCountHistogram writes a histogram where values represent counts (not bytes).
+func (h *log2Histogram) formatCountHistogram(w *bufio.Writer) {
+	for i := range h.buckets {
+		if h.buckets[i] == 0 {
+			continue
+		}
+		var label string
+		if i == 0 {
+			label = "0"
+		} else if i == 1 {
+			label = "1"
+		} else {
+			lo := uint64(1) << (i - 1)
+			hi := (uint64(1) << i) - 1
+			label = fmt.Sprintf("%s - %s", commaUint64(lo), commaUint64(hi))
+		}
+		fmt.Fprintf(w, "      %-20s %s\n", label+":", commaUint64(h.buckets[i]))
+	}
+}
+
 // shardReport holds per-shard statistics collected locally by each shardWriter goroutine.
 type shardReport struct {
 	scale             uint8
@@ -183,16 +238,21 @@ type shardReport struct {
 	totalAgglo        uint64 // total distinct agglomerated labels summed across all blocks
 	minBlockAgglo     uint64 // min distinct agglomerated labels in a single block
 	maxBlockAgglo     uint64 // max distinct agglomerated labels in a single block
+	histUncomp        log2Histogram
+	histComp          log2Histogram
+	histSVs           log2Histogram
+	histAgglo         log2Histogram
 }
 
 // exportMetrics collects metrics from all shard writers and writes an export.log summary.
 type exportMetrics struct {
-	startTime time.Time
-	dataName  string
-	uuid      string
-	directory string
-	numScales uint8
-	scales    []ngScale
+	startTime   time.Time
+	dataName    string
+	uuid        string
+	directory   string
+	numScales   uint8
+	scales      []ngScale
+	analyzeOnly bool
 
 	mu      sync.Mutex
 	reports []shardReport
@@ -208,7 +268,13 @@ func (m *exportMetrics) writeLog() {
 	endTime := time.Now()
 	duration := endTime.Sub(m.startTime)
 
-	logPath := path.Join(m.directory, "export.log")
+	logName := "export.log"
+	reportTitle := "DVID Export-Shards Report"
+	if m.analyzeOnly {
+		logName = "analyze.log"
+		reportTitle = "DVID Analyze-Shards Report"
+	}
+	logPath := path.Join(m.directory, logName)
 	f, err := os.Create(logPath)
 	if err != nil {
 		dvid.Errorf("Failed to create export log %s: %v", logPath, err)
@@ -220,7 +286,7 @@ func (m *exportMetrics) writeLog() {
 	defer w.Flush()
 
 	fmt.Fprintf(w, "=====================================\n")
-	fmt.Fprintf(w, "DVID Export-Shards Report\n")
+	fmt.Fprintf(w, "%s\n", reportTitle)
 	fmt.Fprintf(w, "=====================================\n")
 	fmt.Fprintf(w, "Data:        %s\n", m.dataName)
 	fmt.Fprintf(w, "UUID:        %s\n", m.uuid)
@@ -250,6 +316,10 @@ func (m *exportMetrics) writeLog() {
 		totalAgglo      uint64
 		minBlockAgglo   uint64
 		maxBlockAgglo   uint64
+		histUncomp      log2Histogram
+		histComp        log2Histogram
+		histSVs         log2Histogram
+		histAgglo       log2Histogram
 	}
 	perScale := make(map[uint8]*scaleStats)
 	for _, r := range m.reports {
@@ -271,6 +341,10 @@ func (m *exportMetrics) writeLog() {
 		s.totalComp += r.totalCompressed
 		s.totalSVs += r.totalSVs
 		s.totalAgglo += r.totalAgglo
+		s.histUncomp.merge(&r.histUncomp)
+		s.histComp.merge(&r.histComp)
+		s.histSVs.merge(&r.histSVs)
+		s.histAgglo.merge(&r.histAgglo)
 		if r.records > 0 {
 			if r.minBlockUncomp < s.minBlockUncomp {
 				s.minBlockUncomp = r.minBlockUncomp
@@ -345,18 +419,24 @@ func (m *exportMetrics) writeLog() {
 			fmt.Fprintf(w, "    Min:     %s\n", humanBytes(s.minBlockUncomp))
 			fmt.Fprintf(w, "    Max:     %s\n", humanBytes(s.maxBlockUncomp))
 			fmt.Fprintf(w, "    Mean:    %s\n", humanBytes(s.totalUncomp/s.chunks))
+			fmt.Fprintf(w, "    Distribution:\n")
+			s.histUncomp.formatByteHistogram(w)
 		}
 
-		fmt.Fprintf(w, "\n  Block sizes (compressed, zstd):\n")
-		fmt.Fprintf(w, "    Total:   %s\n", humanBytes(s.totalComp))
-		if s.chunks > 0 {
-			fmt.Fprintf(w, "    Min:     %s\n", humanBytes(s.minBlockComp))
-			fmt.Fprintf(w, "    Max:     %s\n", humanBytes(s.maxBlockComp))
-			fmt.Fprintf(w, "    Mean:    %s\n", humanBytes(s.totalComp/s.chunks))
-		}
+		if !m.analyzeOnly {
+			fmt.Fprintf(w, "\n  Block sizes (compressed, zstd):\n")
+			fmt.Fprintf(w, "    Total:   %s\n", humanBytes(s.totalComp))
+			if s.chunks > 0 {
+				fmt.Fprintf(w, "    Min:     %s\n", humanBytes(s.minBlockComp))
+				fmt.Fprintf(w, "    Max:     %s\n", humanBytes(s.maxBlockComp))
+				fmt.Fprintf(w, "    Mean:    %s\n", humanBytes(s.totalComp/s.chunks))
+				fmt.Fprintf(w, "    Distribution:\n")
+				s.histComp.formatByteHistogram(w)
+			}
 
-		if s.totalComp > 0 {
-			fmt.Fprintf(w, "\n  Compression ratio:   %.2fx\n", float64(s.totalUncomp)/float64(s.totalComp))
+			if s.totalComp > 0 {
+				fmt.Fprintf(w, "\n  Compression ratio:   %.2fx\n", float64(s.totalUncomp)/float64(s.totalComp))
+			}
 		}
 
 		if s.chunks > 0 {
@@ -364,11 +444,15 @@ func (m *exportMetrics) writeLog() {
 			fmt.Fprintf(w, "    Min:     %s\n", commaUint64(s.minBlockSVs))
 			fmt.Fprintf(w, "    Max:     %s\n", commaUint64(s.maxBlockSVs))
 			fmt.Fprintf(w, "    Mean:    %s\n", commaUint64(s.totalSVs/s.chunks))
+			fmt.Fprintf(w, "    Distribution:\n")
+			s.histSVs.formatCountHistogram(w)
 
 			fmt.Fprintf(w, "\n  Distinct agglomerated labels per block:\n")
 			fmt.Fprintf(w, "    Min:     %s\n", commaUint64(s.minBlockAgglo))
 			fmt.Fprintf(w, "    Max:     %s\n", commaUint64(s.maxBlockAgglo))
 			fmt.Fprintf(w, "    Mean:    %s\n", commaUint64(s.totalAgglo/s.chunks))
+			fmt.Fprintf(w, "    Distribution:\n")
+			s.histAgglo.formatCountHistogram(w)
 		}
 
 		if s.shards > 0 {
@@ -377,11 +461,13 @@ func (m *exportMetrics) writeLog() {
 			fmt.Fprintf(w, "    Max:     %s\n", commaUint64(s.maxShardRecords))
 			fmt.Fprintf(w, "    Mean:    %s\n", commaUint64(s.chunks/s.shards))
 
-			fmt.Fprintf(w, "\n  Shard file sizes (arrow):\n")
-			fmt.Fprintf(w, "    Total:   %s\n", humanBytes(uint64(s.totalFileSize)))
-			fmt.Fprintf(w, "    Min:     %s\n", humanBytes(uint64(s.minFileSize)))
-			fmt.Fprintf(w, "    Max:     %s\n", humanBytes(uint64(s.maxFileSize)))
-			fmt.Fprintf(w, "    Mean:    %s\n", humanBytes(uint64(s.totalFileSize)/s.shards))
+			if !m.analyzeOnly {
+				fmt.Fprintf(w, "\n  Shard file sizes (arrow):\n")
+				fmt.Fprintf(w, "    Total:   %s\n", humanBytes(uint64(s.totalFileSize)))
+				fmt.Fprintf(w, "    Min:     %s\n", humanBytes(uint64(s.minFileSize)))
+				fmt.Fprintf(w, "    Max:     %s\n", humanBytes(uint64(s.maxFileSize)))
+				fmt.Fprintf(w, "    Mean:    %s\n", humanBytes(uint64(s.totalFileSize)/s.shards))
+			}
 		}
 	}
 
@@ -389,10 +475,12 @@ func (m *exportMetrics) writeLog() {
 	fmt.Fprintf(w, "  Chunks:        %s\n", commaUint64(totalChunks))
 	fmt.Fprintf(w, "  Shard files:   %s\n", commaUint64(totalShards))
 	fmt.Fprintf(w, "  Uncompressed:  %s\n", humanBytes(totalUncomp))
-	if totalComp > 0 {
+	if !m.analyzeOnly && totalComp > 0 {
 		fmt.Fprintf(w, "  Compressed:    %s  (%.2fx ratio)\n", humanBytes(totalComp), float64(totalUncomp)/float64(totalComp))
 	}
-	fmt.Fprintf(w, "  File sizes:    %s\n", humanBytes(uint64(totalFileSize)))
+	if !m.analyzeOnly {
+		fmt.Fprintf(w, "  File sizes:    %s\n", humanBytes(uint64(totalFileSize)))
+	}
 	secs := duration.Seconds()
 	if secs > 0 && totalChunks > 0 {
 		fmt.Fprintf(w, "  Throughput:    %s chunks/sec  (%s/sec uncompressed)\n",
@@ -461,6 +549,7 @@ type shardWriter struct {
 	// Metrics tracking (local to this goroutine, no contention)
 	scale          uint8
 	metrics        *exportMetrics
+	analyzeOnly    bool
 	totalUncomp    uint64
 	totalComp      uint64
 	minBlockUncomp uint64
@@ -473,10 +562,88 @@ type shardWriter struct {
 	totalAgglo     uint64
 	minBlockAgglo  uint64
 	maxBlockAgglo  uint64
+	histUncomp     log2Histogram
+	histComp       log2Histogram
+	histSVs        log2Histogram
+	histAgglo      log2Histogram
+}
+
+// analyzeBlock collects per-block metrics without compression or file I/O.
+func (w *shardWriter) analyzeBlock(block *BlockData) {
+	usize := uint64(len(block.Data))
+	w.totalUncomp += usize
+	if usize < w.minBlockUncomp {
+		w.minBlockUncomp = usize
+	}
+	if usize > w.maxBlockUncomp {
+		w.maxBlockUncomp = usize
+	}
+	w.histUncomp.add(usize)
+
+	svSet := make(map[uint64]struct{}, len(block.Supervoxels))
+	for _, sv := range block.Supervoxels {
+		svSet[sv] = struct{}{}
+	}
+	numSVs := uint64(len(svSet))
+	w.totalSVs += numSVs
+	if numSVs < w.minBlockSVs {
+		w.minBlockSVs = numSVs
+	}
+	if numSVs > w.maxBlockSVs {
+		w.maxBlockSVs = numSVs
+	}
+	w.histSVs.add(numSVs)
+
+	aggloSet := make(map[uint64]struct{}, len(block.AggloLabels))
+	for _, label := range block.AggloLabels {
+		aggloSet[label] = struct{}{}
+	}
+	numAgglo := uint64(len(aggloSet))
+	w.totalAgglo += numAgglo
+	if numAgglo < w.minBlockAgglo {
+		w.minBlockAgglo = numAgglo
+	}
+	if numAgglo > w.maxBlockAgglo {
+		w.maxBlockAgglo = numAgglo
+	}
+	w.histAgglo.add(numAgglo)
 }
 
 // Start a goroutine to listen on the channel and write incoming block data to the shard file
 func (w *shardWriter) start(wg *sync.WaitGroup) error {
+	if w.analyzeOnly {
+		wg.Add(1)
+		go func() {
+			defer func() {
+				dvid.Infof("Analyze writer finished after processing %d blocks\n", w.recordNum)
+				if w.metrics != nil {
+					w.metrics.reportShard(shardReport{
+						scale:             w.scale,
+						records:           w.recordNum,
+						totalUncompressed: w.totalUncomp,
+						minBlockUncomp:    w.minBlockUncomp,
+						maxBlockUncomp:    w.maxBlockUncomp,
+						totalSVs:          w.totalSVs,
+						minBlockSVs:       w.minBlockSVs,
+						maxBlockSVs:       w.maxBlockSVs,
+						totalAgglo:        w.totalAgglo,
+						minBlockAgglo:     w.minBlockAgglo,
+						maxBlockAgglo:     w.maxBlockAgglo,
+						histUncomp:        w.histUncomp,
+						histSVs:           w.histSVs,
+						histAgglo:         w.histAgglo,
+					})
+				}
+				wg.Done()
+			}()
+			for block := range w.ch {
+				w.recordNum++
+				w.analyzeBlock(block)
+			}
+		}()
+		return nil
+	}
+
 	// Initialize Arrow writer.
 	// See ExportArchitectureAnalysis.md in labelmap package for discussion.
 	base := memory.NewGoAllocator()
@@ -580,6 +747,10 @@ func (w *shardWriter) start(wg *sync.WaitGroup) error {
 					totalAgglo:        w.totalAgglo,
 					minBlockAgglo:     w.minBlockAgglo,
 					maxBlockAgglo:     w.maxBlockAgglo,
+					histUncomp:        w.histUncomp,
+					histComp:          w.histComp,
+					histSVs:           w.histSVs,
+					histAgglo:         w.histAgglo,
 				})
 			}
 
@@ -655,6 +826,8 @@ func (w *shardWriter) writeBlock(block *BlockData, ab *arrowBuilders) error {
 	if csize > w.maxBlockComp {
 		w.maxBlockComp = csize
 	}
+	w.histUncomp.add(usize)
+	w.histComp.add(csize)
 
 	// Count distinct supervoxels and agglomerated labels in this block
 	svSet := make(map[uint64]struct{}, len(block.Supervoxels))
@@ -669,6 +842,7 @@ func (w *shardWriter) writeBlock(block *BlockData, ab *arrowBuilders) error {
 	if numSVs > w.maxBlockSVs {
 		w.maxBlockSVs = numSVs
 	}
+	w.histSVs.add(numSVs)
 
 	aggloSet := make(map[uint64]struct{}, len(block.AggloLabels))
 	for _, label := range block.AggloLabels {
@@ -682,6 +856,7 @@ func (w *shardWriter) writeBlock(block *BlockData, ab *arrowBuilders) error {
 	if numAgglo > w.maxBlockAgglo {
 		w.maxBlockAgglo = numAgglo
 	}
+	w.histAgglo.add(numAgglo)
 
 	// Build arrays
 	coordXArray := ab.coordXBuilder.NewArray()
@@ -755,7 +930,8 @@ type shardHandler struct {
 	mapping        *VCache // Cache for mapping supervoxels to agglomerated labels
 	mappedVersions distFromRoot
 
-	metrics *exportMetrics
+	metrics     *exportMetrics
+	analyzeOnly bool
 
 	mu sync.RWMutex
 }
@@ -834,35 +1010,42 @@ func (sh *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.C
 		ch:             make(chan *BlockData, 100), // Buffered channel to hold block data for this shard
 		scale:          scale,
 		metrics:        sh.metrics,
+		analyzeOnly:    sh.analyzeOnly,
 		minBlockUncomp: math.MaxUint64,
 		minBlockComp:   math.MaxUint64,
 		minBlockSVs:    math.MaxUint64,
 		minBlockAgglo:  math.MaxUint64,
 	}
 
-	// Create scale directory (e.g., s0, s1, s2)
-	scaleDir := fmt.Sprintf("s%d", scale)
-	scalePath := path.Join(sh.path, scaleDir)
-	if err = os.MkdirAll(scalePath, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create scale directory %s: %v", scalePath, err)
-	}
+	if !sh.analyzeOnly {
+		// Create scale directory (e.g., s0, s1, s2)
+		scaleDir := fmt.Sprintf("s%d", scale)
+		scalePath := path.Join(sh.path, scaleDir)
+		if err = os.MkdirAll(scalePath, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create scale directory %s: %v", scalePath, err)
+		}
 
-	// Calculate voxel coordinates that correspond to this shard ID
-	shardOrigin := sh.shardOriginFromChunkCoord(scale, chunkCoord)
+		// Calculate voxel coordinates that correspond to this shard ID
+		shardOrigin := sh.shardOriginFromChunkCoord(scale, chunkCoord)
 
-	// Create shard filename using voxel coordinates
-	baseName := fmt.Sprintf("%d_%d_%d", shardOrigin[0], shardOrigin[1], shardOrigin[2])
-	w.shardPath = path.Join(scalePath, baseName)
-	filename := w.shardPath + ".arrow"
-	w.f, err = os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open shard file %s: %v", filename, err)
+		// Create shard filename using voxel coordinates
+		baseName := fmt.Sprintf("%d_%d_%d", shardOrigin[0], shardOrigin[1], shardOrigin[2])
+		w.shardPath = path.Join(scalePath, baseName)
+		filename := w.shardPath + ".arrow"
+		w.f, err = os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open shard file %s: %v", filename, err)
+		}
 	}
 	ep.writers[shardID] = w
 	if err := w.start(&ep.writersWG); err != nil {
-		return nil, fmt.Errorf("failed to start shard writer for %s: %v", filename, err)
+		return nil, fmt.Errorf("failed to start shard writer for shard %d: %v", shardID, err)
 	}
-	dvid.Infof("Created shard writer %d -> shard file %s\n", shardID, filename)
+	if sh.analyzeOnly {
+		dvid.Infof("Created analyze writer for shard %d\n", shardID)
+	} else {
+		dvid.Infof("Created shard writer %d -> shard file %s\n", shardID, w.shardPath+".arrow")
+	}
 	return w, nil
 }
 
@@ -969,16 +1152,18 @@ func (d *Data) ExportData(ctx *datastore.VersionedCtx, spec exportSpec) error {
 	versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
 
 	m := &exportMetrics{
-		startTime: time.Now(),
-		dataName:  string(d.DataName()),
-		uuid:      string(versionuuid),
-		directory: spec.Directory,
-		numScales: spec.NumScales,
-		scales:    spec.Scales,
+		startTime:   time.Now(),
+		dataName:    string(d.DataName()),
+		uuid:        string(versionuuid),
+		directory:   spec.Directory,
+		numScales:   spec.NumScales,
+		scales:      spec.Scales,
+		analyzeOnly: spec.AnalyzeOnly,
 	}
 
 	var handler shardHandler
 	handler.metrics = m
+	handler.analyzeOnly = spec.AnalyzeOnly
 	if err := handler.Initialize(ctx, spec); err != nil {
 		return fmt.Errorf("couldn't initialize shard handler for labelmap %q: %v", d.DataName(), err)
 	}
@@ -986,7 +1171,11 @@ func (d *Data) ExportData(ctx *datastore.VersionedCtx, spec exportSpec) error {
 	// Start the process to read blocks from storage and send them to the appropriate shard writers.
 	go d.readBlocksZYX(ctx, &handler, spec)
 
-	dvid.Infof("Beginning export of %d scale levels of labelmap %q data to %s ...\n", spec.NumScales, d.DataName(), spec.Directory)
+	action := "export"
+	if spec.AnalyzeOnly {
+		action = "analyze"
+	}
+	dvid.Infof("Beginning %s of %d scale levels of labelmap %q data to %s ...\n", action, spec.NumScales, d.DataName(), spec.Directory)
 	return nil
 }
 

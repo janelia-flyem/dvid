@@ -2811,6 +2811,48 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		reply.Text = fmt.Sprintf("Asynchronously exporting shard files for data %q, uuid %s to directory: %s\n", d.DataName(), uuid, outPath)
 		return nil
 
+	case "analyze-shards":
+		if len(req.Command) < 6 {
+			return fmt.Errorf("poorly formatted analyze-shards command.  See command-line help")
+		}
+		// Parse the request
+		var uuidStr, dataName, cmdStr, specPath, outPath, numScalesStr string
+		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &specPath, &outPath, &numScalesStr)
+
+		uuid, v, err := datastore.MatchingUUID(uuidStr)
+		if err != nil {
+			return err
+		}
+
+		ctx := datastore.NewVersionedCtx(d, v)
+
+		// Load and verify the JSON volSpec from the given file path.
+		specBytes, err := os.ReadFile(specPath)
+		if err != nil {
+			return fmt.Errorf("error reading volume specification file %q: %v", specPath, err)
+		}
+		var spec ngVolume
+		if err := json.Unmarshal(specBytes, &spec); err != nil {
+			return fmt.Errorf("error unmarshalling volume specification file %q: %v", specPath, err)
+		}
+
+		// Make sure the outPath is a directory we can write to (for analyze.log).
+		if err := os.MkdirAll(outPath, 0755); err != nil {
+			return fmt.Errorf("error creating output directory %q: %v", outPath, err)
+		}
+
+		numScalesInt, err := strconv.Atoi(numScalesStr)
+		if err != nil {
+			return fmt.Errorf("error parsing numScales %q: %v", numScalesStr, err)
+		}
+		if numScalesInt < 1 || numScalesInt > 255 {
+			return fmt.Errorf("numScales must be between 1 and 255, got %d", numScalesInt)
+		}
+		go d.ExportData(ctx, exportSpec{ngVolume: spec, Directory: outPath, NumScales: uint8(numScalesInt), AnalyzeOnly: true})
+
+		reply.Text = fmt.Sprintf("Asynchronously analyzing shard data for data %q, uuid %s (log to: %s)\n", d.DataName(), uuid, outPath)
+		return nil
+
 	case "fvdb":
 		// dvid node <UUID> <data name> fvdb <label> <file path> [grayscale=<instance>]
 		if len(req.Command) < 6 {
