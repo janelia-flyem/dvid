@@ -167,16 +167,22 @@ type BlockData struct {
 
 // shardReport holds per-shard statistics collected locally by each shardWriter goroutine.
 type shardReport struct {
-	scale            uint8
-	filename         string
-	records          uint64
+	scale             uint8
+	filename          string
+	records           uint64
 	totalUncompressed uint64
-	totalCompressed  uint64
-	minBlockUncomp   uint64
-	maxBlockUncomp   uint64
-	minBlockComp     uint64
-	maxBlockComp     uint64
-	fileSize         int64
+	totalCompressed   uint64
+	minBlockUncomp    uint64
+	maxBlockUncomp    uint64
+	minBlockComp      uint64
+	maxBlockComp      uint64
+	fileSize          int64
+	totalSVs          uint64 // total distinct supervoxels summed across all blocks
+	minBlockSVs       uint64 // min distinct supervoxels in a single block
+	maxBlockSVs       uint64 // max distinct supervoxels in a single block
+	totalAgglo        uint64 // total distinct agglomerated labels summed across all blocks
+	minBlockAgglo     uint64 // min distinct agglomerated labels in a single block
+	maxBlockAgglo     uint64 // max distinct agglomerated labels in a single block
 }
 
 // exportMetrics collects metrics from all shard writers and writes an export.log summary.
@@ -238,6 +244,12 @@ func (m *exportMetrics) writeLog() {
 		totalFileSize   int64
 		minFileSize     int64
 		maxFileSize     int64
+		totalSVs        uint64
+		minBlockSVs     uint64
+		maxBlockSVs     uint64
+		totalAgglo      uint64
+		minBlockAgglo   uint64
+		maxBlockAgglo   uint64
 	}
 	perScale := make(map[uint8]*scaleStats)
 	for _, r := range m.reports {
@@ -248,6 +260,8 @@ func (m *exportMetrics) writeLog() {
 				minBlockComp:    math.MaxUint64,
 				minShardRecords: math.MaxUint64,
 				minFileSize:     math.MaxInt64,
+				minBlockSVs:     math.MaxUint64,
+				minBlockAgglo:   math.MaxUint64,
 			}
 			perScale[r.scale] = s
 		}
@@ -255,6 +269,8 @@ func (m *exportMetrics) writeLog() {
 		s.shards++
 		s.totalUncomp += r.totalUncompressed
 		s.totalComp += r.totalCompressed
+		s.totalSVs += r.totalSVs
+		s.totalAgglo += r.totalAgglo
 		if r.records > 0 {
 			if r.minBlockUncomp < s.minBlockUncomp {
 				s.minBlockUncomp = r.minBlockUncomp
@@ -273,6 +289,18 @@ func (m *exportMetrics) writeLog() {
 			}
 			if r.records > s.maxShardRecords {
 				s.maxShardRecords = r.records
+			}
+			if r.minBlockSVs < s.minBlockSVs {
+				s.minBlockSVs = r.minBlockSVs
+			}
+			if r.maxBlockSVs > s.maxBlockSVs {
+				s.maxBlockSVs = r.maxBlockSVs
+			}
+			if r.minBlockAgglo < s.minBlockAgglo {
+				s.minBlockAgglo = r.minBlockAgglo
+			}
+			if r.maxBlockAgglo > s.maxBlockAgglo {
+				s.maxBlockAgglo = r.maxBlockAgglo
 			}
 		}
 		s.totalFileSize += r.fileSize
@@ -329,6 +357,18 @@ func (m *exportMetrics) writeLog() {
 
 		if s.totalComp > 0 {
 			fmt.Fprintf(w, "\n  Compression ratio:   %.2fx\n", float64(s.totalUncomp)/float64(s.totalComp))
+		}
+
+		if s.chunks > 0 {
+			fmt.Fprintf(w, "\n  Distinct supervoxels per block:\n")
+			fmt.Fprintf(w, "    Min:     %s\n", commaUint64(s.minBlockSVs))
+			fmt.Fprintf(w, "    Max:     %s\n", commaUint64(s.maxBlockSVs))
+			fmt.Fprintf(w, "    Mean:    %s\n", commaUint64(s.totalSVs/s.chunks))
+
+			fmt.Fprintf(w, "\n  Distinct agglomerated labels per block:\n")
+			fmt.Fprintf(w, "    Min:     %s\n", commaUint64(s.minBlockAgglo))
+			fmt.Fprintf(w, "    Max:     %s\n", commaUint64(s.maxBlockAgglo))
+			fmt.Fprintf(w, "    Mean:    %s\n", commaUint64(s.totalAgglo/s.chunks))
 		}
 
 		if s.shards > 0 {
@@ -427,6 +467,12 @@ type shardWriter struct {
 	maxBlockUncomp uint64
 	minBlockComp   uint64
 	maxBlockComp   uint64
+	totalSVs       uint64
+	minBlockSVs    uint64
+	maxBlockSVs    uint64
+	totalAgglo     uint64
+	minBlockAgglo  uint64
+	maxBlockAgglo  uint64
 }
 
 // Start a goroutine to listen on the channel and write incoming block data to the shard file
@@ -528,6 +574,12 @@ func (w *shardWriter) start(wg *sync.WaitGroup) error {
 					minBlockComp:      w.minBlockComp,
 					maxBlockComp:      w.maxBlockComp,
 					fileSize:          fsize,
+					totalSVs:          w.totalSVs,
+					minBlockSVs:       w.minBlockSVs,
+					maxBlockSVs:       w.maxBlockSVs,
+					totalAgglo:        w.totalAgglo,
+					minBlockAgglo:     w.minBlockAgglo,
+					maxBlockAgglo:     w.maxBlockAgglo,
 				})
 			}
 
@@ -602,6 +654,33 @@ func (w *shardWriter) writeBlock(block *BlockData, ab *arrowBuilders) error {
 	}
 	if csize > w.maxBlockComp {
 		w.maxBlockComp = csize
+	}
+
+	// Count distinct supervoxels and agglomerated labels in this block
+	svSet := make(map[uint64]struct{}, len(block.Supervoxels))
+	for _, sv := range block.Supervoxels {
+		svSet[sv] = struct{}{}
+	}
+	numSVs := uint64(len(svSet))
+	w.totalSVs += numSVs
+	if numSVs < w.minBlockSVs {
+		w.minBlockSVs = numSVs
+	}
+	if numSVs > w.maxBlockSVs {
+		w.maxBlockSVs = numSVs
+	}
+
+	aggloSet := make(map[uint64]struct{}, len(block.AggloLabels))
+	for _, label := range block.AggloLabels {
+		aggloSet[label] = struct{}{}
+	}
+	numAgglo := uint64(len(aggloSet))
+	w.totalAgglo += numAgglo
+	if numAgglo < w.minBlockAgglo {
+		w.minBlockAgglo = numAgglo
+	}
+	if numAgglo > w.maxBlockAgglo {
+		w.maxBlockAgglo = numAgglo
 	}
 
 	// Build arrays
@@ -757,6 +836,8 @@ func (sh *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.C
 		metrics:        sh.metrics,
 		minBlockUncomp: math.MaxUint64,
 		minBlockComp:   math.MaxUint64,
+		minBlockSVs:    math.MaxUint64,
+		minBlockAgglo:  math.MaxUint64,
 	}
 
 	// Create scale directory (e.g., s0, s1, s2)
