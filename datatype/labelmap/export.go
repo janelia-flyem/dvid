@@ -96,7 +96,9 @@ func (ng *ngScale) initialize() error {
 		}
 	}
 
-	// Calculate bits needed for each dimension and total bits
+	// Calculate bits needed for each dimension and total bits.
+	// Use bits.Len32(chunksNeeded - 1) to match tensorstore's bit_width(grid_size - 1),
+	// which computes bits needed for the maximum chunk index, not the count.
 	ng.totChunkCoordBits = 0
 	ng.gridSize = [3]uint32{}
 	for dim := 0; dim < 3; dim++ {
@@ -105,7 +107,11 @@ func (ng *ngScale) initialize() error {
 			chunksNeeded++
 		}
 		ng.gridSize[dim] = uint32(chunksNeeded)
-		ng.chunkCoordBits[dim] = uint8(bits.Len32(uint32(chunksNeeded)))
+		if chunksNeeded <= 1 {
+			ng.chunkCoordBits[dim] = 0
+		} else {
+			ng.chunkCoordBits[dim] = uint8(bits.Len32(uint32(chunksNeeded - 1)))
+		}
 		ng.totChunkCoordBits += ng.chunkCoordBits[dim]
 	}
 
@@ -122,13 +128,20 @@ func (ng *ngScale) initialize() error {
 }
 
 // mortonCode computes the compressed Morton code for given block coordinate.
-// From the reference implementation:
-// https://github.com/google/neuroglancer/blob/master/src/datasource/precomputed/volume.md#unsharded-chunk-storage
+// Matches tensorstore's EncodeCompressedZIndex: interleaves bits from each dimension,
+// using chunkCoordBits[dim] to determine how many bits each dimension contributes.
 func (ng *ngScale) mortonCode(blockCoord dvid.ChunkPoint3d) (morton_code uint64) {
+	maxBit := ng.chunkCoordBits[0]
+	if ng.chunkCoordBits[1] > maxBit {
+		maxBit = ng.chunkCoordBits[1]
+	}
+	if ng.chunkCoordBits[2] > maxBit {
+		maxBit = ng.chunkCoordBits[2]
+	}
 	j := 0
-	for i := 0; i < int(ng.totChunkCoordBits); i++ {
+	for i := uint8(0); i < maxBit; i++ {
 		for dim := 0; dim < 3; dim++ {
-			if (1 << i) < ng.gridSize[dim] {
+			if i < ng.chunkCoordBits[dim] {
 				morton_code |= ((uint64(blockCoord[dim]) >> i) & 1) << j
 				j++
 			}
@@ -958,11 +971,38 @@ func (sh *shardHandler) Initialize(ctx *datastore.VersionedCtx, spec exportSpec)
 			return fmt.Errorf("Aborting export-shards after initializing neuroglancer scale %d: %v", level, err)
 		}
 
-		// Determine max shard size in voxels based on bits allocated in sharding spec
-		// to chunk size, preshift bits, and minishard bits.
-		// Assumes no dimension extent is smaller than 1 shard.
-		shardSideBits := int(dvidChunkBitsTotal+scale.Sharding.PreshiftBits+scale.Sharding.MinishardBits) / 3
-		sh.shardDimVoxels[level] = int32(1) << shardSideBits
+		// Compute per-dimension shard extent using the same approach as tensorstore's
+		// CompressedMortonBitIterator + GetShardChunkHierarchy. Walk the compressed
+		// Morton code bit-by-bit, consuming (preshift + minishard) bits in interleaved
+		// X,Y,Z order, then compute the shard cell shape from the bits consumed per dim.
+		nonShardBits := int(scale.Sharding.PreshiftBits + scale.Sharding.MinishardBits)
+		totalZBits := int(scale.totChunkCoordBits)
+		if nonShardBits > totalZBits {
+			nonShardBits = totalZBits
+		}
+		curBit := [3]int{0, 0, 0}
+		dimI := 0
+		for i := 0; i < nonShardBits; i++ {
+			// Skip dimensions that have exhausted their bits
+			for curBit[dimI] == int(scale.chunkCoordBits[dimI]) {
+				dimI = (dimI + 1) % 3
+			}
+			curBit[dimI]++
+			dimI = (dimI + 1) % 3
+		}
+		// Shard extent in each dimension = min(gridSize, 1 << curBit) * chunkVoxels
+		var maxShardDimVoxels int32
+		for dim := 0; dim < 3; dim++ {
+			shardChunks := int32(1) << curBit[dim]
+			if shardChunks > int32(scale.gridSize[dim]) {
+				shardChunks = int32(scale.gridSize[dim])
+			}
+			dimVoxels := shardChunks * dvidChunkVoxelsPerDim
+			if dimVoxels > maxShardDimVoxels {
+				maxShardDimVoxels = dimVoxels
+			}
+		}
+		sh.shardDimVoxels[level] = maxShardDimVoxels
 		dvid.Infof("Exporting labelmap at scale %d with chunk size %v and shard voxels along axes = %d\n", level, scale.ChunkSizes[0], sh.shardDimVoxels[level])
 	}
 
