@@ -2,11 +2,14 @@ package dvid
 
 import (
 	"bytes"
+	stdgzip "compress/gzip"
 	"io"
 	"math/rand"
 	"os"
 	"reflect"
 	"testing"
+
+	klausgzip "github.com/klauspost/compress/gzip"
 
 	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
@@ -162,6 +165,134 @@ func testUncompressed(b *testing.B, checksum Checksum) {
 	s, _ = Serialize(complexObj, compression, checksum)
 	var returnComplexObj ComplexObj
 	_ = Deserialize(s, &returnComplexObj)
+}
+
+// TestGzipCompatibility verifies that klauspost/compress/gzip produces byte-identical
+// decompressed output to stdlib compress/gzip. This ensures the gzip library swap in
+// serialize.go doesn't subtly alter any data path.
+func TestGzipCompatibility(t *testing.T) {
+	// Create a representative payload: label block-sized data (64^3 uint64 values).
+	rng := rand.New(rand.NewSource(42))
+	payload := make([]byte, 64*64*64*8) // ~2 MB
+	for i := range payload {
+		payload[i] = byte(rng.Intn(256))
+	}
+
+	// Compress with stdlib gzip
+	var stdBuf bytes.Buffer
+	stdWriter, err := stdgzip.NewWriterLevel(&stdBuf, stdgzip.DefaultCompression)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdWriter.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := stdWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stdCompressed := stdBuf.Bytes()
+
+	// Decompress with klauspost gzip (the library now used in serialize.go)
+	klausReader, err := klausgzip.NewReader(bytes.NewReader(stdCompressed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	klausDecompressed, err := io.ReadAll(klausReader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := klausReader.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(klausDecompressed, payload) {
+		t.Errorf("klauspost gzip decompressed %d bytes, expected %d", len(klausDecompressed), len(payload))
+	}
+
+	// Also test the reverse: compress with klauspost, decompress with stdlib
+	var klausBuf bytes.Buffer
+	klausWriter, err := klausgzip.NewWriterLevel(&klausBuf, klausgzip.DefaultCompression)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := klausWriter.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := klausWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	klausCompressed := klausBuf.Bytes()
+
+	stdReader, err := stdgzip.NewReader(bytes.NewReader(klausCompressed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdDecompressed, err := io.ReadAll(stdReader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stdReader.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(stdDecompressed, payload) {
+		t.Errorf("stdlib gzip decompressed %d bytes from klauspost-compressed data, expected %d", len(stdDecompressed), len(payload))
+	}
+}
+
+// TestGzipSerializeDataRoundTrip verifies that SerializeData/DeserializeData produces
+// identical results after swapping to klauspost gzip.
+func TestGzipSerializeDataRoundTrip(t *testing.T) {
+	// Create realistic block-like data with some structure (not purely random)
+	payload := make([]byte, 100000)
+	rng := rand.New(rand.NewSource(99))
+	for i := 0; i < len(payload); i++ {
+		// Mix of repeated and random bytes to give gzip something to compress
+		if i%8 < 4 {
+			payload[i] = byte(i % 256)
+		} else {
+			payload[i] = byte(rng.Intn(256))
+		}
+	}
+
+	compression, err := NewCompression(Gzip, DefaultCompression)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Serialize with gzip compression (now uses klauspost)
+	serialized, err := SerializeData(payload, compression, NoChecksum)
+	if err != nil {
+		t.Fatalf("SerializeData with gzip failed: %v", err)
+	}
+
+	// Deserialize (also uses klauspost)
+	deserialized, format, err := DeserializeData(serialized, true)
+	if err != nil {
+		t.Fatalf("DeserializeData with gzip failed: %v", err)
+	}
+	if format != Gzip {
+		t.Errorf("expected Gzip format, got %v", format)
+	}
+	if !bytes.Equal(deserialized, payload) {
+		t.Errorf("gzip round-trip mismatch: got %d bytes, expected %d", len(deserialized), len(payload))
+	}
+
+	// Also verify that stdlib can decompress what klauspost produced
+	// (skip the DVID format byte to get raw gzip data)
+	rawGzip := serialized[1:] // format byte is 1 byte, no checksum for gzip
+	stdReader, err := stdgzip.NewReader(bytes.NewReader(rawGzip))
+	if err != nil {
+		t.Fatalf("stdlib gzip couldn't read klauspost-compressed data: %v", err)
+	}
+	stdResult, err := io.ReadAll(stdReader)
+	if err != nil {
+		t.Fatalf("stdlib gzip decompress failed: %v", err)
+	}
+	stdReader.Close()
+	if !bytes.Equal(stdResult, payload) {
+		t.Errorf("stdlib gzip decompressed %d bytes from klauspost SerializeData output, expected %d", len(stdResult), len(payload))
+	}
 }
 
 func BenchmarkUncompressedNoChecksum(b *testing.B) {

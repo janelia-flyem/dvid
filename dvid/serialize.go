@@ -6,7 +6,7 @@ package dvid
 
 import (
 	"bytes"
-	"compress/gzip"
+	"github.com/klauspost/compress/gzip"
 	"encoding/binary"
 	"encoding/gob"
 	"encoding/json"

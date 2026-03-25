@@ -2,7 +2,9 @@ package labelmap
 
 import (
 	"bufio"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"math"
 	"math/bits"
 	"os"
@@ -14,7 +16,6 @@ import (
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 
@@ -34,6 +35,31 @@ const dvidChunkBitsTotal = 18
 
 // FinalShardZ is a sentinel value indicating that all shard writers should be closed.
 const FinalShardZ = -2
+
+// arrowBatchSize is the number of blocks to accumulate before flushing an Arrow record batch.
+// Arrow is designed for columnar batches — 1-element arrays add substantial per-block overhead.
+const arrowBatchSize = 256
+
+// countingWriter wraps an io.Writer and counts bytes written.
+// Used to track byte offsets in the Arrow IPC stream.
+type countingWriter struct {
+	w     io.Writer
+	count int64
+}
+
+func (cw *countingWriter) Write(p []byte) (int, error) {
+	n, err := cw.w.Write(p)
+	cw.count += int64(n)
+	return n, err
+}
+
+// pendingBlock stores per-block metadata buffered until the batch is flushed
+// and the byte offset/size are known.
+type pendingBlock struct {
+	x, y, z  int32
+	rec      uint64
+	batchIdx int
+}
 
 type exportSpec struct {
 	ngVolume
@@ -547,15 +573,31 @@ type shardWriter struct {
 	f         *os.File
 	ch        chan *BlockData // Channel to receive block data for this shard
 
-	builders  arrowBuilders
-	writer    *ipc.Writer      // Arrow IPC writer
-	pool      memory.Allocator // Arrow memory allocator
-	recordNum uint64           // Counter for Arrow records written
-	zenc      *zstd.Encoder    // per-writer encoder, not shared across goroutines
+	builders   arrowBuilders
+	writer     *ipc.Writer      // Arrow IPC writer
+	pool       memory.Allocator // Arrow memory allocator
+	recordNum  uint64           // Counter for Arrow records written
+	batchCount int              // Blocks accumulated in current Arrow batch
+	zenc       *zstd.Encoder    // per-writer encoder, not shared across goroutines
+	zstdBuf    []byte           // Reusable zstd output buffer
+
+	// Reusable maps for counting distinct values per block (avoids per-block allocation)
+	svSet    map[uint64]struct{}
+	aggloSet map[uint64]struct{}
 
 	idxF    *os.File // CSV index file
 	idxBuf  *bufio.Writer
 	scratch []byte // reused per line
+
+	// Byte offset tracking for Arrow IPC stream
+	cw          *countingWriter  // wraps w.f to count bytes written
+	schemaSize  int64            // byte size of the Arrow schema message
+	batchOffset int64            // byte offset where the current batch starts
+	batchIdx    int              // per-block index within current batch (0-based)
+	pending     []pendingBlock   // blocks buffered for current batch (written to offsets CSV on flush)
+	offsetsF    *os.File         // -offsets.csv file
+	offsetsBuf  *bufio.Writer    // buffered writer for -offsets.csv
+	offsetsScratch []byte        // reusable buffer for offsets CSV lines
 
 	mu sync.Mutex // Mutex to protect indexMap and recordNum
 
@@ -657,18 +699,24 @@ func (w *shardWriter) start(wg *sync.WaitGroup) error {
 		return nil
 	}
 
-	// Initialize Arrow writer.
+	// Initialize Arrow writer with byte counting for offset tracking.
 	// See ExportArchitectureAnalysis.md in labelmap package for discussion.
 	base := memory.NewGoAllocator()
 	tracked := memory.NewCheckedAllocator(base)
 	w.pool = tracked
-	w.writer = ipc.NewWriter(w.f, ipc.WithSchema(blockSchema))
+	w.cw = &countingWriter{w: w.f}
+	w.writer = ipc.NewWriter(w.cw, ipc.WithSchema(blockSchema))
+	w.schemaSize = w.cw.count
+	w.batchOffset = w.cw.count
+	w.pending = make([]pendingBlock, 0, arrowBatchSize)
 
 	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
 	if err != nil {
 		return fmt.Errorf("zstd encoder create failed for %s: %v", w.shardPath, err)
 	}
 	w.zenc = enc
+	w.svSet = make(map[uint64]struct{}, 256)
+	w.aggloSet = make(map[uint64]struct{}, 256)
 
 	// --- CSV index setup ---
 	idxPath := w.shardPath + ".csv"
@@ -680,8 +728,24 @@ func (w *shardWriter) start(wg *sync.WaitGroup) error {
 	w.idxBuf = bufio.NewWriterSize(f, 1<<20) // 1 MiB buffer
 	w.scratch = make([]byte, 0, 128)         // reusable buffer for writing index lines
 
-	if _, err := w.idxBuf.WriteString("x,y,z,rec\n"); err != nil {
+	if _, err := w.idxBuf.WriteString("x,y,z,rec,batch_offset,batch_idx\n"); err != nil {
 		return fmt.Errorf("write index header: %w", err)
+	}
+
+	// --- Offsets CSV setup (for BRAID ShardRangeReader) ---
+	offsetsPath := w.shardPath + "-offsets.csv"
+	of, err := os.OpenFile(offsetsPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("open offsets file %s: %w", offsetsPath, err)
+	}
+	w.offsetsF = of
+	w.offsetsBuf = bufio.NewWriterSize(of, 1<<20)
+	w.offsetsScratch = make([]byte, 0, 128)
+
+	// Write header comment with schema_size, then column names
+	header := fmt.Sprintf("# schema_size=%d\nx,y,z,rec,offset,size,batch_idx\n", w.schemaSize)
+	if _, err := w.offsetsBuf.WriteString(header); err != nil {
+		return fmt.Errorf("write offsets header: %w", err)
 	}
 
 	wg.Add(1)
@@ -710,6 +774,16 @@ func (w *shardWriter) start(wg *sync.WaitGroup) error {
 			}
 			if w.idxF != nil {
 				_ = w.idxF.Close()
+			}
+
+			// flush/close offsets CSV
+			if w.offsetsBuf != nil {
+				if err := w.offsetsBuf.Flush(); err != nil {
+					dvid.Errorf("Error flushing offsets CSV for %s: %v", w.shardPath, err)
+				}
+			}
+			if w.offsetsF != nil {
+				_ = w.offsetsF.Close()
 			}
 
 			// close Arrow file after all data has been written
@@ -771,14 +845,31 @@ func (w *shardWriter) start(wg *sync.WaitGroup) error {
 		}()
 
 		for block := range w.ch {
-			// Write chunk index line to CSV file
 			currentRecord := w.recordNum
 			w.recordNum++
-			w.writeIndexCSV(block.ChunkCoord[0], block.ChunkCoord[1], block.ChunkCoord[2], currentRecord)
 
-			// Write the block data to the shard file in Arrow format
+			// Buffer this block's metadata for the offsets CSV (written on batch flush)
+			w.pending = append(w.pending, pendingBlock{
+				x: block.ChunkCoord[0], y: block.ChunkCoord[1], z: block.ChunkCoord[2],
+				rec:      currentRecord,
+				batchIdx: w.batchIdx,
+			})
+
+			// Write chunk index line to CSV (batch_offset is known; it's w.batchOffset)
+			w.writeIndexCSV(block.ChunkCoord[0], block.ChunkCoord[1], block.ChunkCoord[2],
+				currentRecord, w.batchOffset, w.batchIdx)
+
+			w.batchIdx++
+
+			// Accumulate block data into Arrow builders
 			if err := w.writeBlock(block, &ab); err != nil {
 				dvid.Errorf("Error writing block %s (record %d) to shard file %s: %v", block.ChunkCoord, currentRecord, w.f.Name(), err)
+			}
+		}
+		// Flush any remaining blocks in the batch
+		if w.batchCount > 0 {
+			if err := w.flushBatch(&ab); err != nil {
+				dvid.Errorf("Error flushing final batch to shard file %s: %v", w.f.Name(), err)
 			}
 		}
 	}()
@@ -786,7 +877,9 @@ func (w *shardWriter) start(wg *sync.WaitGroup) error {
 	return nil
 }
 
-// writeBlock writes a single block's data to the shard file in Arrow format.
+// writeBlock accumulates a single block's data into Arrow builders. When the batch
+// reaches arrowBatchSize, it flushes the batch to the Arrow IPC file. This amortizes
+// Arrow record construction and IPC framing overhead across many blocks.
 func (w *shardWriter) writeBlock(block *BlockData, ab *arrowBuilders) error {
 
 	// Append coordinate data
@@ -814,17 +907,16 @@ func (w *shardWriter) writeBlock(block *BlockData, ab *arrowBuilders) error {
 	}
 	ab.usizeBuilder.Append(uint32(len(block.Data)))
 
-	// zstd-compress the raw bytes.
-	// EncodeAll emits a full zstd frame. Pre-size dst to ~half to reduce allocs.
+	// zstd-compress the raw bytes, reusing the output buffer.
 	if w.zenc == nil {
 		return fmt.Errorf("zstd encoder not initialized for shard %s", w.shardPath)
 	}
-	compressed := w.zenc.EncodeAll(block.Data, make([]byte, 0, len(block.Data)/2))
-	ab.compressedBuilder.Append(compressed)
+	w.zstdBuf = w.zenc.EncodeAll(block.Data, w.zstdBuf[:0])
+	ab.compressedBuilder.Append(w.zstdBuf)
 
 	// Update local metrics (no contention — single goroutine per shardWriter)
 	usize := uint64(len(block.Data))
-	csize := uint64(len(compressed))
+	csize := uint64(len(w.zstdBuf))
 	w.totalUncomp += usize
 	w.totalComp += csize
 	if usize < w.minBlockUncomp {
@@ -842,12 +934,12 @@ func (w *shardWriter) writeBlock(block *BlockData, ab *arrowBuilders) error {
 	w.histUncomp.add(usize)
 	w.histComp.add(csize)
 
-	// Count distinct supervoxels and agglomerated labels in this block
-	svSet := make(map[uint64]struct{}, len(block.Supervoxels))
+	// Count distinct supervoxels and agglomerated labels using reusable maps
+	clear(w.svSet)
 	for _, sv := range block.Supervoxels {
-		svSet[sv] = struct{}{}
+		w.svSet[sv] = struct{}{}
 	}
-	numSVs := uint64(len(svSet))
+	numSVs := uint64(len(w.svSet))
 	w.totalSVs += numSVs
 	if numSVs < w.minBlockSVs {
 		w.minBlockSVs = numSVs
@@ -857,11 +949,11 @@ func (w *shardWriter) writeBlock(block *BlockData, ab *arrowBuilders) error {
 	}
 	w.histSVs.add(numSVs)
 
-	aggloSet := make(map[uint64]struct{}, len(block.AggloLabels))
+	clear(w.aggloSet)
 	for _, label := range block.AggloLabels {
-		aggloSet[label] = struct{}{}
+		w.aggloSet[label] = struct{}{}
 	}
-	numAgglo := uint64(len(aggloSet))
+	numAgglo := uint64(len(w.aggloSet))
 	w.totalAgglo += numAgglo
 	if numAgglo < w.minBlockAgglo {
 		w.minBlockAgglo = numAgglo
@@ -871,7 +963,17 @@ func (w *shardWriter) writeBlock(block *BlockData, ab *arrowBuilders) error {
 	}
 	w.histAgglo.add(numAgglo)
 
-	// Build arrays
+	w.batchCount++
+	if w.batchCount >= arrowBatchSize {
+		return w.flushBatch(ab)
+	}
+	return nil
+}
+
+// flushBatch builds Arrow arrays from the accumulated builders, writes a record batch
+// to the IPC file, records byte offsets, writes pending rows to the offsets CSV,
+// and resets batch state.
+func (w *shardWriter) flushBatch(ab *arrowBuilders) error {
 	coordXArray := ab.coordXBuilder.NewArray()
 	coordYArray := ab.coordYBuilder.NewArray()
 	coordZArray := ab.coordZBuilder.NewArray()
@@ -890,7 +992,6 @@ func (w *shardWriter) writeBlock(block *BlockData, ab *arrowBuilders) error {
 		usizeArray.Release()
 	}()
 
-	// Create record batch
 	record := array.NewRecord(blockSchema, []arrow.Array{
 		coordXArray,      // chunk_x
 		coordYArray,      // chunk_y
@@ -899,15 +1000,33 @@ func (w *shardWriter) writeBlock(block *BlockData, ab *arrowBuilders) error {
 		supervoxelsArray, // supervoxels
 		compressedArray,  // dvid_compressed_block  (zstd)
 		usizeArray,       // uncompressed_size      (bytes)
-	}, 1)
+	}, int64(w.batchCount))
 	defer record.Release()
 
-	// Write record to Arrow IPC file
-	return w.writer.Write(record)
+	// Snapshot offset before write
+	batchStart := w.cw.count
+	if err := w.writer.Write(record); err != nil {
+		return err
+	}
+	batchSize := w.cw.count - batchStart
+
+	// Write pending rows to offsets CSV now that offset/size are known
+	if w.offsetsBuf != nil {
+		for _, pb := range w.pending {
+			w.writeOffsetsCSV(pb.x, pb.y, pb.z, pb.rec, batchStart, batchSize, pb.batchIdx)
+		}
+	}
+
+	// Reset batch state
+	w.batchCount = 0
+	w.batchIdx = 0
+	w.pending = w.pending[:0]
+	w.batchOffset = w.cw.count
+	return nil
 }
 
-// writeIndexCSV writes a chunk index for an Arrow file
-func (w *shardWriter) writeIndexCSV(x, y, z int32, rec uint64) {
+// writeIndexCSV writes a chunk index line: x,y,z,rec,batch_offset,batch_idx
+func (w *shardWriter) writeIndexCSV(x, y, z int32, rec uint64, batchOffset int64, batchIdx int) {
 	b := w.scratch[:0]
 	b = strconv.AppendInt(b, int64(x), 10)
 	b = append(b, ',')
@@ -916,13 +1035,40 @@ func (w *shardWriter) writeIndexCSV(x, y, z int32, rec uint64) {
 	b = strconv.AppendInt(b, int64(z), 10)
 	b = append(b, ',')
 	b = strconv.AppendUint(b, rec, 10)
+	b = append(b, ',')
+	b = strconv.AppendInt(b, batchOffset, 10)
+	b = append(b, ',')
+	b = strconv.AppendInt(b, int64(batchIdx), 10)
 	b = append(b, '\n')
 
 	if _, err := w.idxBuf.Write(b); err != nil {
 		dvid.Errorf("write index CSV for %s failed: %v", w.shardPath, err)
 	}
-	// reuse capacity
 	w.scratch = b[:0]
+}
+
+// writeOffsetsCSV writes one row to the -offsets.csv: x,y,z,rec,offset,size,batch_idx
+func (w *shardWriter) writeOffsetsCSV(x, y, z int32, rec uint64, offset, size int64, batchIdx int) {
+	b := w.offsetsScratch[:0]
+	b = strconv.AppendInt(b, int64(x), 10)
+	b = append(b, ',')
+	b = strconv.AppendInt(b, int64(y), 10)
+	b = append(b, ',')
+	b = strconv.AppendInt(b, int64(z), 10)
+	b = append(b, ',')
+	b = strconv.AppendUint(b, rec, 10)
+	b = append(b, ',')
+	b = strconv.AppendInt(b, offset, 10)
+	b = append(b, ',')
+	b = strconv.AppendInt(b, size, 10)
+	b = append(b, ',')
+	b = strconv.AppendInt(b, int64(batchIdx), 10)
+	b = append(b, '\n')
+
+	if _, err := w.offsetsBuf.Write(b); err != nil {
+		dvid.Errorf("write offsets CSV for %s failed: %v", w.shardPath, err)
+	}
+	w.offsetsScratch = b[:0]
 }
 
 // epoch handles processing of each strip of shards.
@@ -1136,35 +1282,41 @@ func (sh *shardHandler) chunkHandler(dataname dvid.InstanceName, ch <-chan *stor
 			continue
 		}
 
-		// Parse the block to extract labels and supervoxels
-		var b labels.Block
-		if err := b.UnmarshalBinary(blockData); err != nil {
-			dvid.Errorf("failed to unmarshal block data for %s: %v\n", chunkCoord, err)
+		// Parse the compressed block header directly to extract labels, avoiding the
+		// UnmarshalBinary/MarshalBinary roundtrip which copies into an 8-byte-aligned
+		// buffer purely for AliasByteToUint64. We only need to read label values here
+		// and binary.LittleEndian.Uint64 doesn't require alignment.
+		// Header layout (see compressed.go:1815-1838):
+		//   [gx:u32][gy:u32][gz:u32][numLabels:u32][labels: numLabels × u64]...
+		if len(blockData) < 16 {
+			dvid.Errorf("block %s in data %q too short: %d bytes\n", chunkCoord, dataname, len(blockData))
+			continue
 		}
-
-		// Get the list of agglomerated labels for the given version.
-		aggloLabels := make([]uint64, len(b.Labels))
-		supervoxels := make([]uint64, len(b.Labels))
-		for i, sv := range b.Labels {
+		numLabels := binary.LittleEndian.Uint32(blockData[12:16])
+		labelsEnd := uint32(16 + numLabels*8)
+		if uint32(len(blockData)) < labelsEnd {
+			dvid.Errorf("block %s in data %q truncated: need %d bytes for %d labels, have %d\n",
+				chunkCoord, dataname, labelsEnd, numLabels, len(blockData))
+			continue
+		}
+		aggloLabels := make([]uint64, numLabels)
+		supervoxels := make([]uint64, numLabels)
+		for i := uint32(0); i < numLabels; i++ {
+			off := 16 + i*8
+			sv := binary.LittleEndian.Uint64(blockData[off : off+8])
 			supervoxels[i] = sv
-			mapped, found := sh.mapping.mapLabel(sv, sh.mappedVersions)
-			if found {
+			if mapped, found := sh.mapping.mapLabel(sv, sh.mappedVersions); found {
 				aggloLabels[i] = mapped
 			} else {
-				aggloLabels[i] = sv // if no mapping, use supervoxel ID
+				aggloLabels[i] = sv
 			}
-		}
-
-		raw, err := b.MarshalBinary()
-		if err != nil {
-			dvid.Errorf("failed to marshal block data for %s: %v\n", chunkCoord, err)
 		}
 
 		blockInfo := &BlockData{
 			ChunkCoord:  chunkCoord,
 			AggloLabels: aggloLabels,
 			Supervoxels: supervoxels,
-			Data:        raw,
+			Data:        blockData, // pass decompressed bytes directly, no copy
 		}
 
 		// Send the block data to the appropriate shard writer
