@@ -256,8 +256,10 @@ func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 				dvid.Errorf("unable to unmarshal renumber log message for version %d: %v\n", v, err)
 				continue
 			}
-			// We don't set op.Target to 0 because it could be the ID of a supervoxel.
-			vc.setMapping(v, op.Newlabel, 0)
+			// The newLabel -> 0 mapping (when needed) is now logged as a MappingOp
+			// by addRenumberToMapping, so it replays through the MappingOp handler.
+			// For old logs (before this fix), newLabel was always a brand-new unique
+			// label, so omitting the Z -> 0 is harmless — no supervoxel Z exists.
 
 		default:
 		}

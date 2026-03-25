@@ -92,10 +92,26 @@ func addRenumberToMapping(d dvid.Data, v dvid.VersionID, mutID, origLabel, newLa
 	if err != nil {
 		return err
 	}
+	// Only retire newLabel (map to 0) if it has no existing mapping in this
+	// version's ancestry. If it's already mapped (e.g., SV Z mapped to body W),
+	// leave it alone. Do this BEFORE the supervoxel loop so that if Z is one of
+	// body X's supervoxels, the loop overwrites Z -> 0 with Z -> Z.
+	_, alreadyMapped := lmap.MappedLabel(v, newLabel)
+	if !alreadyMapped {
+		lmap.setMapping(v, newLabel, 0)
+		// Log this so it replays correctly via the MappingOp handler.
+		zeroOp := labels.MappingOp{
+			MutID:    mutID,
+			Mapped:   0,
+			Original: labels.Set{newLabel: struct{}{}},
+		}
+		if err := labels.LogMapping(d, v, zeroOp); err != nil {
+			return err
+		}
+	}
 	for supervoxel := range supervoxels {
 		lmap.setMapping(v, supervoxel, newLabel)
 	}
-	lmap.setMapping(v, newLabel, 0)
 	op := labels.MappingOp{
 		MutID:    mutID,
 		Mapped:   newLabel,

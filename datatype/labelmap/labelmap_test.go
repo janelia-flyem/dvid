@@ -2636,6 +2636,103 @@ func TestBlocksWithRenumber(t *testing.T) {
 	}
 }
 
+// TestRenumberPreservesExistingSVMapping verifies that renumbering body X -> Z
+// does not corrupt the mapping of supervoxel Z when Z is already mapped to another body.
+// Scenario: SV 1, 2, 3 exist. Merge SV 3 into body 1 (SV 3 -> body 1).
+// Then renumber body 2 -> 3. SV 3 should still map to body 1, not 0.
+func TestRenumberPreservesExistingSVMapping(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := datastore.NewTestRepo()
+	if len(uuid) < 5 {
+		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
+	}
+	server.CreateTestInstance(t, uuid, "labelmap", "labels", dvid.Config{})
+
+	// Create a single block with 3 supervoxels:
+	//   x in [0,20)  -> SV 1
+	//   x in [20,40) -> SV 2
+	//   x in [40,64) -> SV 3
+	numVoxels := 64 * 64 * 64
+	blockVol := make([]uint64, numVoxels)
+	i := 0
+	for z := 0; z < 64; z++ {
+		for y := 0; y < 64; y++ {
+			for x := 0; x < 20; x++ {
+				blockVol[i] = 1
+				i++
+			}
+			for x := 20; x < 40; x++ {
+				blockVol[i] = 2
+				i++
+			}
+			for x := 40; x < 64; x++ {
+				blockVol[i] = 3
+				i++
+			}
+		}
+	}
+	block, err := labels.MakeBlock(dvid.AliasUint64ToByte(blockVol), dvid.Point3d{64, 64, 64})
+	if err != nil {
+		t.Fatalf("error making block: %v\n", err)
+	}
+	runtime.KeepAlive(&blockVol)
+	blockdata, err := block.CompressGZIP()
+	if err != nil {
+		t.Fatalf("error compressing block: %v\n", err)
+	}
+
+	var buf bytes.Buffer
+	writeTestInt32(t, &buf, 0) // block coord x
+	writeTestInt32(t, &buf, 0) // block coord y
+	writeTestInt32(t, &buf, 0) // block coord z
+	writeTestInt32(t, &buf, int32(len(blockdata)))
+	n, err := buf.Write(blockdata)
+	if err != nil || n != len(blockdata) {
+		t.Fatalf("unable to write block data: %v\n", err)
+	}
+
+	apiStr := fmt.Sprintf("%snode/%s/labels/blocks", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, &buf)
+
+	// Merge SV 3 into body 1: SV 3 now maps to body 1.
+	testMerge := mergeJSON(`[1, 3]`)
+	testMerge.send(t, uuid, "labels")
+
+	// Renumber body 2 -> 3.
+	// Body 3 no longer exists (SV 3 was merged into body 1), so this should succeed.
+	// SV 2 was body 2's only supervoxel, so it should now map to body 3.
+	testRenumber := renumberJSON(`[3, 2]`)
+	testRenumber.send(t, uuid, "labels")
+
+	// Query the mapping for SVs 1, 2, and 3.
+	apiStr = fmt.Sprintf("%snode/%s/labels/mapping", server.WebAPIPath, uuid)
+	mappingResp := server.TestHTTP(t, "GET", apiStr, bytes.NewBufferString(`[1, 2, 3]`))
+	var mapped []uint64
+	if err := json.Unmarshal(mappingResp, &mapped); err != nil {
+		t.Fatalf("couldn't unmarshal mapping response: %v\n", err)
+	}
+	if len(mapped) != 3 {
+		t.Fatalf("expected 3 mapped labels, got %d\n", len(mapped))
+	}
+
+	// SV 1 -> body 1 (was its own body, then had SV 3 merged into it)
+	if mapped[0] != 1 {
+		t.Errorf("SV 1: expected mapping to body 1, got %d\n", mapped[0])
+	}
+	// SV 2 -> body 3 (body 2 was renumbered to 3)
+	if mapped[1] != 3 {
+		t.Errorf("SV 2: expected mapping to body 3, got %d\n", mapped[1])
+	}
+	// SV 3 -> body 1 (was merged into body 1, must NOT be corrupted to 0 by the renumber)
+	if mapped[2] != 1 {
+		t.Errorf("SV 3: expected mapping to body 1, got %d (was incorrectly retired by renumber)\n", mapped[2])
+	}
+}
+
 func testLabels(t *testing.T, labelsIndexed bool) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
