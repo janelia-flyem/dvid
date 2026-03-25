@@ -73,23 +73,21 @@ copy. This eliminates one full allocation+copy per block (typically 10–200 KB)
 **Not implemented.** Downstream tensorstore-export is memory-limited, so output
 file sizes must not grow. Zstd stays at `SpeedDefault` (level 3).
 
-### 4. Batch Arrow records  (MEDIUM impact) ✅
+### 4. Configurable Arrow record batching  (MEDIUM impact) ✅
 
 **File:** `datatype/labelmap/export.go`, `writeBlock()` and shard writer goroutine
 
-Previously a new Arrow record batch (7 arrays + IPC frame) was created **per
-block**. Arrow is designed for columnar batches — creating 1-element arrays adds
-substantial per-block overhead from array finalization, record construction, and
-IPC framing.
+The batch size (blocks per Arrow record batch) is now configurable via the
+`batch_size` field in the export spec JSON. Default is 1 (preserving per-block
+random access for GCS range reads). Larger values (e.g., 256) reduce Arrow IPC
+framing overhead but make the smallest fetchable unit a batch of that many blocks.
 
-Now accumulates blocks in the builders and flushes every 256 blocks:
-
-- Added `const arrowBatchSize = 256`
-- Added `batchCount int` field to `shardWriter`
-- `writeBlock` only appends to builders; calls `flushBatch()` when the batch is
-  full
-- `flushBatch()` builds arrays, creates a record batch, and writes to IPC
-- Remaining blocks are flushed on channel close
+- Added `defaultArrowBatchSize = 1` constant
+- Added `BatchSize int` field to `exportSpec`, threaded to `shardWriter`
+- `writeBlock` appends to builders; calls `flushBatch()` when batch is full
+- `flushBatch()` builds arrays, writes the record batch, then writes pending
+  CSV rows with the now-known byte offset and size
+- Remaining blocks flushed on channel close
 
 ### 5. Reuse zstd output buffer per shardWriter  (LOW impact) ✅
 
@@ -133,24 +131,29 @@ distinct values. Now stored as `shardWriter` struct fields and cleared with
   - Arrow file readability from Python (`pyarrow.ipc.open_file(...)`)
   - Wall-clock time improvement
 
-### 7. Write byte offset CSVs during export  ✅
+### 7. Write byte offsets in CSV during export  ✅
 
 **File:** `datatype/labelmap/export.go`
 
-BRAID's `ShardRangeReader` uses a companion `-offsets.csv` to do GCS range reads
-of individual record batches without loading entire Arrow files. Previously this
-required a `compute_offsets.py` post-processing step.
+BRAID's `ShardRangeReader` does GCS range reads of individual record batches.
+Previously this required a `compute_offsets.py` post-processing step to generate
+a separate offsets file.
 
-Now DVID writes both CSV files during export using a `countingWriter` that wraps
-the Arrow IPC output file:
+Now DVID writes byte offsets directly into the single `.csv` index during export
+using a `countingWriter` that wraps the Arrow IPC output file. The CSV format is
+the same regardless of batch size:
 
-- **`.csv` index** — extended from `x,y,z,rec` to `x,y,z,rec,batch_offset,batch_idx`
-- **`-offsets.csv`** — new file with `# schema_size=N` header and
-  `x,y,z,rec,offset,size,batch_idx` columns (one row per block)
+```
+# schema_size=688
+x,y,z,offset,size,batch_idx
+```
 
-The `batch_idx` column gives BRAID the row index within a multi-row record batch
-(from the 256-block batching in #4). With 256-block batches, each GCS range read
-pulls 256 blocks at once — fewer requests, better throughput.
+- `offset,size`: byte position and length of the record batch (needed for GCS
+  range reads since HTTP Range requests require a byte count)
+- `batch_idx`: row index within the record batch (always 0 for batch_size=1)
+- `# schema_size=N`: bytes written before the first record batch (schema message)
+
+One format, one reader code path, works for any batch size.
 
 ---
 

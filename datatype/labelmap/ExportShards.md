@@ -1,70 +1,100 @@
 # The export-shards architecture
 
-The `export-shards` RPC command creates Arrow IPC files that are partitioned into neuroglancer shards, 
-where each DVID block is written as an Arrow record while traversing the segmentation database in ZYX 
-order. Since TensorStore may request blocks (chunks) in a non-ZYX Morton order, we need to use a shard file 
-format optimized for fast, random-access record reads.
+The `export-shards` RPC command creates Arrow IPC streaming files that are partitioned into neuroglancer
+shards, where DVID blocks are batched into Arrow record batches while traversing the segmentation
+database in ZYX order. A companion CSV file provides chunk coordinates, byte offsets, and batch
+positions for efficient random access via GCS range reads.
 
-For a large dataset like the segmentation for male CNS, the result are tens of thousands of shard files and
-accompanying CSV chunk index files. The total data will exceed 1TB after using zstd compression on the
+For a large dataset like the segmentation for male CNS, the result is tens of thousands of shard files
+and accompanying CSV index files. The total data will exceed 1TB after using zstd compression on the
 already compressed DVID segmentation.
 
 ## Code Architecture
 
-The functionality is contained in `datatype/labelmap/export.go`. It basically has three layers of goroutines: 
+The functionality is contained in `datatype/labelmap/export.go`. It has three layers of goroutines:
 
-1. `readBlocksZYX` is a function that as quickly as possible scans the embedded key-value 
-database in native ZYX key order (potentially across multiple scales) and sends data to a buffered 
+1. `readBlocksZYX` is a function that as quickly as possible scans the embedded key-value
+database in native ZYX key order (potentially across multiple scales) and sends data to a buffered
 `chunkCh` channel
 
-2. a layer of 50 `chunkHandler` goroutines that all consume from that single buffered `chunkCh`, 
-deserializes &  uncompresses the gzip DVID segmentation block data, computes a shard ID, and 
-then either reuses or starts a `shardWriter` goroutine and sends the block data
+2. a layer of 50 `chunkHandler` goroutines that all consume from that single buffered `chunkCh`,
+decompress gzip DVID segmentation block data using direct header parsing (avoiding the
+UnmarshalBinary/MarshalBinary copy overhead), compute a shard ID, and then either reuse or
+start a `shardWriter` goroutine and send the block data
 
-3. a layer of shard-specific goroutines that are launched within a `shardWriter.start` function, 
-reading from its buffered shardWriter channel, adding data for agglomerated labels from the 
-in-memory versioned label mapping system, and then converting the block data to an Arrow 
-record which is written to an Arrow IPC file as well as a sidecar CSV chunk index file  
-that gives chunk coordinates and Arrow record numbers.
+3. a layer of shard-specific goroutines that are launched within a `shardWriter.start` function,
+reading from its buffered shardWriter channel, adding data for agglomerated labels from the
+in-memory versioned label mapping system, zstd-compressing the block data, and accumulating
+blocks into Arrow record batches which are written to an Arrow IPC streaming file along with
+a sidecar CSV file for chunk indexing and byte offsets.
 
-## Shard Arrow File Formats
+## Configurable Batch Size
 
-Each shard consists of two files:
+The number of blocks per Arrow record batch is configurable via the `batch_size` field in the
+export spec JSON (default: 1). Setting `batch_size=1` preserves per-block random access for
+GCS range reads. Larger values (e.g., 256) reduce Arrow IPC framing overhead but make the
+smallest fetchable unit a batch of that many blocks.
 
-- **`{origin}.arrow`**: Standard Apache Arrow IPC format containing block records
-- **`{origin}.csv`**: CSV mapping of chunk coordinates to Arrow record indices
+## Shard Output Files
+
+Each shard produces two files:
+
+- **`{origin}.arrow`**: Arrow IPC streaming format containing record batches
+- **`{origin}.csv`**: CSV with chunk coordinates, byte offsets, and batch positions
 
 For example, a shard starting at origin (0,0,0) would have files:
-- `0_0_0.arrow` - Arrow IPC data
-- `0_0_0.csv` - Chunk coordinate index
+- `0_0_0.arrow` — Arrow IPC streaming data
+- `0_0_0.csv` — Chunk index with byte offsets
 
-## Arrow IPC File Format
+## Arrow IPC Streaming Format
 
-The implementation uses the **Arrow IPC File Format** (Feather V2) for the main data, which provides:
-- Built-in random access capabilities
-- Footer with byte offsets and lengths for every record batch
-- Standard compatibility with Arrow libraries
+The implementation uses the **Arrow IPC Streaming Format**, which writes a schema message followed
+by a sequence of record batches. This differs from the Arrow IPC File Format (Feather V2) in that
+the streaming format does not include a footer with random-access metadata — instead, byte offsets
+for each record batch are tracked by a `countingWriter` during export and written to the CSV file.
 
-## Record Structure
+## Chunk Index Format (.csv)
 
-Each DVID block is stored as a single Arrow record. The number of records per shard depends on the 
-shard size and chunk size configuration.
+The CSV has a comment header with the schema size (bytes written before the first record batch),
+followed by column headers and one row per block. The format is the same regardless of batch size.
 
-## Chunk Index Format
+| Column | Type | Description |
+|--------|------|-------------|
+| `x` | int | Chunk X coordinate |
+| `y` | int | Chunk Y coordinate |
+| `z` | int | Chunk Z coordinate |
+| `offset` | int | Byte offset of the record batch in the Arrow IPC stream |
+| `size` | int | Byte size of the record batch |
+| `batch_idx` | int | Row index within the record batch (0-based) |
 
-The chunk index is stored as a separate CSV file with the same base name as the Arrow file but with `.csv` extension. It contains rows mapping chunk coordinates to Arrow record indices:
-
-**Example: `0_0_0.csv`**
+**Example with batch_size=1: `0_0_0.csv`**
 ```csv
-x,y,z,rec
-1,1,0,1
-2,1,0,2
-2,2,1,3
+# schema_size=688
+x,y,z,offset,size,batch_idx
+1,1,0,688,792,0
+2,1,0,1480,2624,0
+2,2,1,4104,1192,0
 ```
+
+Each block has its own record batch, so `batch_idx` is always 0 and each row has a unique
+`offset`/`size`.
+
+**Example with batch_size=256: `0_0_0.csv`**
+```csv
+# schema_size=688
+x,y,z,offset,size,batch_idx
+1,1,0,688,153600,0
+2,1,0,688,153600,1
+2,2,1,688,153600,2
+...
+```
+
+Blocks within the same record batch share identical `offset` and `size` values but have
+distinct `batch_idx` values.
 
 ## Arrow Schema
 
-Each Arrow record contains the following fields:
+Each row in a record batch contains the following fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -90,171 +120,75 @@ SCHEMA = pa.schema([
 ])
 ```
 
-## Python Reading Utilities
+## Python Reading Examples
 
-### Basic Reader
+### Full table load
+
+```python
+import pyarrow as pa
+from pyarrow import ipc
+
+def read_shard(arrow_path):
+    """Read an Arrow IPC streaming file into a table."""
+    with open(arrow_path, "rb") as f:
+        data = f.read()
+    buf = pa.BufferReader(data)
+    try:
+        reader = ipc.open_file(buf)
+    except pa.ArrowInvalid:
+        buf = pa.BufferReader(data)
+        reader = ipc.open_stream(buf)
+    return reader.read_all()
+```
+
+### Range read of a single record batch
 
 ```python
 import csv
-import os
-import pyarrow as pa
 
-def read_shard_with_index(arrow_filename):
-    """
-    Read Arrow shard file with chunk index from separate CSV file.
-    
-    Args:
-        arrow_filename: Path to the .arrow file
-    
-    Returns:
-        tuple: (pyarrow.Table, dict) - Arrow table and chunk coordinate index
-    """
-    # Read the Arrow data
-    with pa.ipc.open_file(arrow_filename) as reader:
-        table = reader.read_all()
-    
-    # Read the chunk index from corresponding CSV file
-    csv_filename = os.path.splitext(arrow_filename)[0] + '.csv'
-    chunk_index = {}
-    if os.path.exists(csv_filename):
-        with open(csv_filename, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                # Use tuple of coordinates as key for efficient lookup by TensorStore
-                coord_key = (int(row['x']), int(row['y']), int(row['z']))
-                chunk_index[coord_key] = int(row['rec'])
-    
-    return table, chunk_index
-```
+def read_chunk_index(csv_path):
+    """Load CSV index as (x,y,z) -> (offset, size, batch_idx)."""
+    index = {}
+    with open(csv_path) as f:
+        # Skip comment line
+        first = f.readline()
+        if not first.startswith("#"):
+            f.seek(0)
+        for row in csv.DictReader(f):
+            coord = (int(row["x"]), int(row["y"]), int(row["z"]))
+            index[coord] = (int(row["offset"]), int(row["size"]), int(row["batch_idx"]))
+    return index
 
-### Usage Example
+def read_chunk(arrow_path, csv_path, x, y, z):
+    """Read a single chunk via range read."""
+    index = read_chunk_index(csv_path)
+    offset, size, batch_idx = index[(x, y, z)]
 
-```python
-# Read shard file and its index
-table, chunk_index = read_shard_with_index('s0/0_0_0.arrow')
+    with open(arrow_path, "rb") as f:
+        # Read schema (needed once, can be cached)
+        schema_data = f.read(offset)  # or use schema_size from CSV header
+        schema_reader = ipc.open_stream(pa.BufferReader(schema_data))
+        schema = schema_reader.schema
 
-# The chunk index was loaded from s0/0_0_0.csv
-print(f"Shard contains {len(chunk_index)} chunks")
+        # Range read the record batch
+        f.seek(offset)
+        raw = f.read(size)
 
-# Access specific chunk by coordinates (using tuple for efficient lookup)
-chunk_coord = (64, 64, 0)
-if chunk_coord in chunk_index:
-    record_idx = chunk_index[chunk_coord]
-    
-    # Get the specific record
-    chunk_x = table['chunk_x'][record_idx].as_py()
-    chunk_y = table['chunk_y'][record_idx].as_py()  
-    chunk_z = table['chunk_z'][record_idx].as_py()
-    labels = table['labels'][record_idx].as_py()
-    supervoxels = table['supervoxels'][record_idx].as_py()
-    compressed_data = table['dvid_compressed_block'][record_idx].as_py()
-    uncompressed_size = table['uncompressed_size'][record_idx].as_py()
-    
-    print(f"Chunk ({chunk_x}, {chunk_y}, {chunk_z})")
-    print(f"Labels: {labels}")
-    print(f"Supervoxels: {supervoxels}")
-    print(f"Compressed size: {len(compressed_data)} bytes, uncompressed: {uncompressed_size} bytes")
-```
+    msg = ipc.read_message(pa.BufferReader(raw))
+    batch = ipc.read_record_batch(msg, schema)
 
-### Advanced Reader Class
-
-```python
-class ArrowShardReader:
-    def __init__(self, arrow_filename):
-        self.arrow_filename = arrow_filename
-        self.table, self.chunk_index = read_shard_with_index(arrow_filename)
-    
-    def get_chunk(self, x, y, z):
-        """Get chunk data by coordinates."""
-        coord_key = (x, y, z)
-        if coord_key not in self.chunk_index:
-            return None
-            
-        record_idx = self.chunk_index[coord_key]
-        return {
-            'coordinates': (x, y, z),
-            'labels': self.table['labels'][record_idx].as_py(),
-            'supervoxels': self.table['supervoxels'][record_idx].as_py(),
-            'compressed_data': self.table['dvid_compressed_block'][record_idx].as_py(),
-            'uncompressed_size': self.table['uncompressed_size'][record_idx].as_py()
-        }
-    
-    def list_chunks(self):
-        """List all available chunk coordinates."""
-        return list(self.chunk_index.keys())
-    
-    def get_labels_for_chunk(self, x, y, z):
-        """Get just the labels for a specific chunk."""
-        chunk = self.get_chunk(x, y, z)
-        return chunk['labels'] if chunk else None
-
-# Usage
-reader = ArrowShardReader('s0/0_0_0.arrow')
-chunks = reader.list_chunks()
-labels = reader.get_labels_for_chunk(64, 64, 0)
-```
-
-### TensorStore Integration Example
-
-The tuple-based coordinate indexing integrates seamlessly with TensorStore's virtual_chunked driver:
-
-```python
-import tensorstore as ts
-import pandas as pd
-
-def create_tensorstore_reader(base_path):
-    """Create a TensorStore virtual chunked reader for the shard data."""
-    
-    # Load all CSV indices into a single mapping using pandas for efficiency
-    chunk_mapping = {}
-    arrow_files = {}
-    
-    # Scan for all shard files
-    import glob
-    for arrow_path in glob.glob(f"{base_path}/**/*.arrow", recursive=True):
-        table, index = read_shard_with_index(arrow_path)
-        arrow_files[arrow_path] = table
-        chunk_mapping.update(index)
-    
-    def read_chunk(output_array, read_params):
-        """Read function called by TensorStore for each chunk request."""
-        domain = output_array.domain()
-        # domain.origin() gives global coordinates as tuple - perfect for our index!
-        global_coords = tuple(domain.origin())
-        
-        record_idx = chunk_mapping.get(global_coords)
-        if record_idx is not None:
-            # Find which shard file contains this record
-            # (In practice, you'd optimize this lookup)
-            for arrow_path, table in arrow_files.items():
-                if record_idx < table.num_rows:
-                    # Extract compressed block data and decode
-                    compressed_data = table['dvid_compressed_block'][record_idx].as_py()
-                    # Decode DVID block format and fill output_array
-                    # ... (DVID decompression logic here)
-                    break
-        
-        return ts.TimestampedStorageGeneration()
-    
-    # Create virtual chunked TensorStore
-    return ts.VirtualChunked(
-        read_function=read_chunk,
-        dtype=ts.uint64,  # assuming label data
-        domain=ts.IndexDomain(...),  # your volume domain
-        chunk_layout=ts.ChunkLayout(chunk_shape=[64, 64, 64]),  # DVID chunk size
-    )
-
-# Usage
-store = create_tensorstore_reader("exported_shards/")
-# Now you can read data: store[100:164, 200:264, 300:364]
+    return {
+        "labels": batch.column("labels")[batch_idx].as_py(),
+        "supervoxels": batch.column("supervoxels")[batch_idx].as_py(),
+        "compressed_data": batch.column("dvid_compressed_block")[batch_idx].as_py(),
+    }
 ```
 
 ## Notes
 
-- The Arrow IPC data can be read by any standard Arrow library
-- The CSV chunk index provides O(1) tuple-based lookup perfect for TensorStore's coordinate system
-- Multiple chunks can be efficiently accessed from a single shard file  
-- The chunk index CSV file is human-readable for debugging and inspection
-- Standard Arrow tools can process the .arrow files without needing to understand the indexing
-- Global chunk coordinates in the CSV eliminate the need for coordinate translation in TensorStore
-
+- The Arrow IPC streaming data can be read by any standard Arrow library
+- The CSV provides O(1) tuple-based lookup by chunk coordinates with byte offsets for range reads
+- `offset` and `size` enable GCS range reads (HTTP Range requests require byte count)
+- `batch_idx` identifies the row within a multi-row record batch
+- The same CSV format works for any batch size — readers don't need to know the batch size
+- `schema_size` in the CSV header comment tells readers how many bytes precede the first batch

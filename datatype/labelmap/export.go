@@ -36,9 +36,9 @@ const dvidChunkBitsTotal = 18
 // FinalShardZ is a sentinel value indicating that all shard writers should be closed.
 const FinalShardZ = -2
 
-// arrowBatchSize is the number of blocks to accumulate before flushing an Arrow record batch.
-// Arrow is designed for columnar batches — 1-element arrays add substantial per-block overhead.
-const arrowBatchSize = 256
+// defaultArrowBatchSize is the default number of blocks per Arrow record batch.
+// 1 preserves per-block random access for GCS range reads.
+const defaultArrowBatchSize = 1
 
 // countingWriter wraps an io.Writer and counts bytes written.
 // Used to track byte offsets in the Arrow IPC stream.
@@ -57,7 +57,6 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 // and the byte offset/size are known.
 type pendingBlock struct {
 	x, y, z  int32
-	rec      uint64
 	batchIdx int
 }
 
@@ -65,6 +64,7 @@ type exportSpec struct {
 	ngVolume
 	Directory   string `json:"directory"`
 	NumScales   uint8  `json:"num_scales"`
+	BatchSize   int    `json:"batch_size"`   // Blocks per Arrow record batch (0 or omitted = default)
 	AnalyzeOnly bool   // When true, collect stats without writing files
 }
 
@@ -576,7 +576,8 @@ type shardWriter struct {
 	builders   arrowBuilders
 	writer     *ipc.Writer      // Arrow IPC writer
 	pool       memory.Allocator // Arrow memory allocator
-	recordNum  uint64           // Counter for Arrow records written
+	recordNum  uint64           // Counter for blocks written (used for logging/metrics)
+	batchSize  int              // Blocks per Arrow record batch
 	batchCount int              // Blocks accumulated in current Arrow batch
 	zenc       *zstd.Encoder    // per-writer encoder, not shared across goroutines
 	zstdBuf    []byte           // Reusable zstd output buffer
@@ -590,16 +591,12 @@ type shardWriter struct {
 	scratch []byte // reused per line
 
 	// Byte offset tracking for Arrow IPC stream
-	cw          *countingWriter  // wraps w.f to count bytes written
-	schemaSize  int64            // byte size of the Arrow schema message
-	batchOffset int64            // byte offset where the current batch starts
-	batchIdx    int              // per-block index within current batch (0-based)
-	pending     []pendingBlock   // blocks buffered for current batch (written to offsets CSV on flush)
-	offsetsF    *os.File         // -offsets.csv file
-	offsetsBuf  *bufio.Writer    // buffered writer for -offsets.csv
-	offsetsScratch []byte        // reusable buffer for offsets CSV lines
+	cw         *countingWriter // wraps w.f to count bytes written
+	schemaSize int64           // byte size of the Arrow schema message
+	batchIdx   int             // per-block index within current batch (0-based)
+	pending    []pendingBlock  // blocks buffered for current batch (written to CSV on flush)
 
-	mu sync.Mutex // Mutex to protect indexMap and recordNum
+	mu sync.Mutex
 
 	// Metrics tracking (local to this goroutine, no contention)
 	scale          uint8
@@ -707,8 +704,7 @@ func (w *shardWriter) start(wg *sync.WaitGroup) error {
 	w.cw = &countingWriter{w: w.f}
 	w.writer = ipc.NewWriter(w.cw, ipc.WithSchema(blockSchema))
 	w.schemaSize = w.cw.count
-	w.batchOffset = w.cw.count
-	w.pending = make([]pendingBlock, 0, arrowBatchSize)
+	w.pending = make([]pendingBlock, 0, w.batchSize)
 
 	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
 	if err != nil {
@@ -728,24 +724,9 @@ func (w *shardWriter) start(wg *sync.WaitGroup) error {
 	w.idxBuf = bufio.NewWriterSize(f, 1<<20) // 1 MiB buffer
 	w.scratch = make([]byte, 0, 128)         // reusable buffer for writing index lines
 
-	if _, err := w.idxBuf.WriteString("x,y,z,rec,batch_offset,batch_idx\n"); err != nil {
+	header := fmt.Sprintf("# schema_size=%d\nx,y,z,offset,size,batch_idx\n", w.schemaSize)
+	if _, err := w.idxBuf.WriteString(header); err != nil {
 		return fmt.Errorf("write index header: %w", err)
-	}
-
-	// --- Offsets CSV setup (for BRAID ShardRangeReader) ---
-	offsetsPath := w.shardPath + "-offsets.csv"
-	of, err := os.OpenFile(offsetsPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return fmt.Errorf("open offsets file %s: %w", offsetsPath, err)
-	}
-	w.offsetsF = of
-	w.offsetsBuf = bufio.NewWriterSize(of, 1<<20)
-	w.offsetsScratch = make([]byte, 0, 128)
-
-	// Write header comment with schema_size, then column names
-	header := fmt.Sprintf("# schema_size=%d\nx,y,z,rec,offset,size,batch_idx\n", w.schemaSize)
-	if _, err := w.offsetsBuf.WriteString(header); err != nil {
-		return fmt.Errorf("write offsets header: %w", err)
 	}
 
 	wg.Add(1)
@@ -774,16 +755,6 @@ func (w *shardWriter) start(wg *sync.WaitGroup) error {
 			}
 			if w.idxF != nil {
 				_ = w.idxF.Close()
-			}
-
-			// flush/close offsets CSV
-			if w.offsetsBuf != nil {
-				if err := w.offsetsBuf.Flush(); err != nil {
-					dvid.Errorf("Error flushing offsets CSV for %s: %v", w.shardPath, err)
-				}
-			}
-			if w.offsetsF != nil {
-				_ = w.offsetsF.Close()
 			}
 
 			// close Arrow file after all data has been written
@@ -845,25 +816,18 @@ func (w *shardWriter) start(wg *sync.WaitGroup) error {
 		}()
 
 		for block := range w.ch {
-			currentRecord := w.recordNum
 			w.recordNum++
 
-			// Buffer this block's metadata for the offsets CSV (written on batch flush)
+			// Buffer this block's metadata (written to CSV on batch flush when offset/size are known)
 			w.pending = append(w.pending, pendingBlock{
 				x: block.ChunkCoord[0], y: block.ChunkCoord[1], z: block.ChunkCoord[2],
-				rec:      currentRecord,
 				batchIdx: w.batchIdx,
 			})
-
-			// Write chunk index line to CSV (batch_offset is known; it's w.batchOffset)
-			w.writeIndexCSV(block.ChunkCoord[0], block.ChunkCoord[1], block.ChunkCoord[2],
-				currentRecord, w.batchOffset, w.batchIdx)
-
 			w.batchIdx++
 
 			// Accumulate block data into Arrow builders
 			if err := w.writeBlock(block, &ab); err != nil {
-				dvid.Errorf("Error writing block %s (record %d) to shard file %s: %v", block.ChunkCoord, currentRecord, w.f.Name(), err)
+				dvid.Errorf("Error writing block %s to shard file %s: %v", block.ChunkCoord, w.f.Name(), err)
 			}
 		}
 		// Flush any remaining blocks in the batch
@@ -964,7 +928,7 @@ func (w *shardWriter) writeBlock(block *BlockData, ab *arrowBuilders) error {
 	w.histAgglo.add(numAgglo)
 
 	w.batchCount++
-	if w.batchCount >= arrowBatchSize {
+	if w.batchCount >= w.batchSize {
 		return w.flushBatch(ab)
 	}
 	return nil
@@ -1010,53 +974,26 @@ func (w *shardWriter) flushBatch(ab *arrowBuilders) error {
 	}
 	batchSize := w.cw.count - batchStart
 
-	// Write pending rows to offsets CSV now that offset/size are known
-	if w.offsetsBuf != nil {
-		for _, pb := range w.pending {
-			w.writeOffsetsCSV(pb.x, pb.y, pb.z, pb.rec, batchStart, batchSize, pb.batchIdx)
-		}
+	// Write pending rows to CSV now that offset/size are known
+	for _, pb := range w.pending {
+		w.writeIndexCSV(pb.x, pb.y, pb.z, batchStart, batchSize, pb.batchIdx)
 	}
 
 	// Reset batch state
 	w.batchCount = 0
 	w.batchIdx = 0
 	w.pending = w.pending[:0]
-	w.batchOffset = w.cw.count
 	return nil
 }
 
-// writeIndexCSV writes a chunk index line: x,y,z,rec,batch_offset,batch_idx
-func (w *shardWriter) writeIndexCSV(x, y, z int32, rec uint64, batchOffset int64, batchIdx int) {
+// writeIndexCSV writes a chunk index line: x,y,z,offset,size,batch_idx
+func (w *shardWriter) writeIndexCSV(x, y, z int32, offset, size int64, batchIdx int) {
 	b := w.scratch[:0]
 	b = strconv.AppendInt(b, int64(x), 10)
 	b = append(b, ',')
 	b = strconv.AppendInt(b, int64(y), 10)
 	b = append(b, ',')
 	b = strconv.AppendInt(b, int64(z), 10)
-	b = append(b, ',')
-	b = strconv.AppendUint(b, rec, 10)
-	b = append(b, ',')
-	b = strconv.AppendInt(b, batchOffset, 10)
-	b = append(b, ',')
-	b = strconv.AppendInt(b, int64(batchIdx), 10)
-	b = append(b, '\n')
-
-	if _, err := w.idxBuf.Write(b); err != nil {
-		dvid.Errorf("write index CSV for %s failed: %v", w.shardPath, err)
-	}
-	w.scratch = b[:0]
-}
-
-// writeOffsetsCSV writes one row to the -offsets.csv: x,y,z,rec,offset,size,batch_idx
-func (w *shardWriter) writeOffsetsCSV(x, y, z int32, rec uint64, offset, size int64, batchIdx int) {
-	b := w.offsetsScratch[:0]
-	b = strconv.AppendInt(b, int64(x), 10)
-	b = append(b, ',')
-	b = strconv.AppendInt(b, int64(y), 10)
-	b = append(b, ',')
-	b = strconv.AppendInt(b, int64(z), 10)
-	b = append(b, ',')
-	b = strconv.AppendUint(b, rec, 10)
 	b = append(b, ',')
 	b = strconv.AppendInt(b, offset, 10)
 	b = append(b, ',')
@@ -1065,10 +1002,10 @@ func (w *shardWriter) writeOffsetsCSV(x, y, z int32, rec uint64, offset, size in
 	b = strconv.AppendInt(b, int64(batchIdx), 10)
 	b = append(b, '\n')
 
-	if _, err := w.offsetsBuf.Write(b); err != nil {
-		dvid.Errorf("write offsets CSV for %s failed: %v", w.shardPath, err)
+	if _, err := w.idxBuf.Write(b); err != nil {
+		dvid.Errorf("write index CSV for %s failed: %v", w.shardPath, err)
 	}
-	w.offsetsScratch = b[:0]
+	w.scratch = b[:0]
 }
 
 // epoch handles processing of each strip of shards.
@@ -1085,6 +1022,7 @@ type shardHandler struct {
 	scales         []ngScale
 	shardDimVoxels []int32 // Size of each shard in Z direction at each scale
 	shardsInStrip  int32
+	batchSize      int // Blocks per Arrow record batch
 
 	mapping        *VCache // Cache for mapping supervoxels to agglomerated labels
 	mappedVersions distFromRoot
@@ -1109,6 +1047,10 @@ func (sh *shardHandler) Initialize(ctx *datastore.VersionedCtx, spec exportSpec)
 	// Initialize the scale information and shard Z sizes
 	sh.scales = spec.Scales
 	sh.path = spec.Directory
+	sh.batchSize = spec.BatchSize
+	if sh.batchSize <= 0 {
+		sh.batchSize = defaultArrowBatchSize
+	}
 	sh.shardDimVoxels = make([]int32, len(spec.Scales))
 
 	for level := range spec.Scales {
@@ -1195,6 +1137,7 @@ func (sh *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.C
 	w = &shardWriter{
 		ch:             make(chan *BlockData, 100), // Buffered channel to hold block data for this shard
 		scale:          scale,
+		batchSize:      sh.batchSize,
 		metrics:        sh.metrics,
 		analyzeOnly:    sh.analyzeOnly,
 		minBlockUncomp: math.MaxUint64,
