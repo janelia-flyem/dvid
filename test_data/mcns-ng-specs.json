@@ -1,6 +1,7 @@
 {
+  "batch_size": 256,
   "@type": "neuroglancer_multiscale_volume",
-  "data_type": "uint8",
+  "data_type": "uint64",
   "num_channels": 1,
   "scales": [
     {
@@ -11,7 +12,7 @@
           64
         ]
       ],
-      "encoding": "jpeg",
+      "encoding": "compressed_segmentation",
       "key": "8x8x8",
       "resolution": [
         8.0,
@@ -40,7 +41,7 @@
           64
         ]
       ],
-      "encoding": "jpeg",
+      "encoding": "compressed_segmentation",
       "key": "16x16x16",
       "resolution": [
         16.0,
@@ -69,7 +70,7 @@
           64
         ]
       ],
-      "encoding": "jpeg",
+      "encoding": "compressed_segmentation",
       "key": "32x32x32",
       "resolution": [
         32.0,
@@ -98,7 +99,7 @@
           64
         ]
       ],
-      "encoding": "jpeg",
+      "encoding": "compressed_segmentation",
       "key": "64x64x64",
       "resolution": [
         64.0,
@@ -127,7 +128,7 @@
           64
         ]
       ],
-      "encoding": "jpeg",
+      "encoding": "compressed_segmentation",
       "key": "128x128x128",
       "resolution": [
         128.0,
@@ -156,7 +157,7 @@
           64
         ]
       ],
-      "encoding": "jpeg",
+      "encoding": "compressed_segmentation",
       "key": "256x256x256",
       "resolution": [
         256.0,
@@ -185,7 +186,7 @@
           64
         ]
       ],
-      "encoding": "jpeg",
+      "encoding": "compressed_segmentation",
       "key": "512x512x512",
       "resolution": [
         512.0,
@@ -214,7 +215,7 @@
           64
         ]
       ],
-      "encoding": "jpeg",
+      "encoding": "compressed_segmentation",
       "key": "1024x1024x1024",
       "resolution": [
         1024.0,
@@ -243,7 +244,7 @@
           64
         ]
       ],
-      "encoding": "jpeg",
+      "encoding": "compressed_segmentation",
       "key": "2048x2048x2048",
       "resolution": [
         2048.0,
@@ -272,7 +273,7 @@
           64
         ]
       ],
-      "encoding": "jpeg",
+      "encoding": "compressed_segmentation",
       "key": "4096x4096x4096",
       "resolution": [
         4096.0,
@@ -301,7 +302,7 @@
           64
         ]
       ],
-      "encoding": "jpeg",
+      "encoding": "compressed_segmentation",
       "key": "8192x8192x8192",
       "resolution": [
         8192.0,
@@ -321,7 +322,36 @@
         77,
         132
       ]
+    },
+    {
+      "chunk_sizes": [
+        [
+          64,
+          64,
+          64
+        ]
+      ],
+      "encoding": "compressed_segmentation",
+      "key": "16384x16384x16384",
+      "resolution": [
+        16384.0,
+        16384.0,
+        16384.0
+      ],
+      "sharding": {
+        "@type": "neuroglancer_uint64_sharded_v1",
+        "hash": "identity",
+        "minishard_bits": 0,
+        "minishard_index_encoding": "gzip",
+        "preshift_bits": 1,
+        "shard_bits": 0
+      },
+      "size": [
+        46,
+        39,
+        66
+      ]
     }
   ],
-  "type": "image"
+  "type": "segmentation"
 }
