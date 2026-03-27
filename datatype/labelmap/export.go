@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -40,6 +41,16 @@ const FinalShardZ = -2
 // 1 preserves per-block random access for GCS range reads.
 const defaultArrowBatchSize = 1
 
+// numReadWorkers is the number of concurrent Badger reader goroutines per epoch.
+// Each reader opens its own read-only transaction, enabling parallel I/O on NVMe/RAID.
+const numReadWorkers = 8
+
+// chunkRowWork describes a single X-strip range scan to be performed by a reader goroutine.
+type chunkRowWork struct {
+	begTKey storage.TKey
+	endTKey storage.TKey
+}
+
 // countingWriter wraps an io.Writer and counts bytes written.
 // Used to track byte offsets in the Arrow IPC stream.
 type countingWriter struct {
@@ -62,10 +73,11 @@ type pendingBlock struct {
 
 type exportSpec struct {
 	ngVolume
-	Directory   string `json:"directory"`
-	NumScales   uint8  `json:"num_scales"`
-	BatchSize   int    `json:"batch_size"`   // Blocks per Arrow record batch (0 or omitted = default)
-	AnalyzeOnly bool   // When true, collect stats without writing files
+	Directory   string         `json:"directory"`
+	NumScales   uint8          `json:"num_scales"`
+	BatchSize   int            `json:"batch_size"` // Blocks per Arrow record batch (0 or omitted = default)
+	AnalyzeOnly bool           // When true, collect stats without writing files
+	Done        chan struct{}   `json:"-"` // Closed when export completes; nil = fire-and-forget
 }
 
 type ngVolume struct {
@@ -1328,7 +1340,7 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 	}
 
 	var epochsWG sync.WaitGroup // tracks all epoch cleanup goroutines
-	var numBlocks uint64
+	var numBlocks atomic.Uint64
 	var scale uint8
 	for scale = 0; scale < spec.NumScales; scale++ {
 		// Iterate across shard volumes structured as long X-oriented strip of shard volumes
@@ -1349,48 +1361,59 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 				// appropriate shard writer for this strip of shards.
 				chunkCh, ep := sh.startShardEpoch(d.DataName(), 50)
 
-				// Read a bar of chunks that constitute shards along X.
+				// Build work items for all chunk rows in this strip.
+				rowCh := make(chan chunkRowWork, shardDimChunks*shardDimChunks)
 				for chunkZ := shardChunkZ; chunkZ < shardChunkZ+shardDimChunks; chunkZ++ {
 					for chunkY := shardChunkY; chunkY < shardChunkY+shardDimChunks; chunkY++ {
-						// Setup keys for a strip of chunks across X
 						chunkBeg := dvid.ChunkPoint3d{0, chunkY, chunkZ}
 						chunkEnd := dvid.ChunkPoint3d{volChunksX, chunkY, chunkZ}
-						begTKey := NewBlockTKeyByCoord(scale, chunkBeg.ToIZYXString())
-						endTKey := NewBlockTKeyByCoord(scale, chunkEnd.ToIZYXString())
-
-						// Scan the chunks across X and send them to the chunkHandlers.
-						err = store.ProcessRange(ctx, begTKey, endTKey, nil, func(c *storage.Chunk) error {
-							if c == nil {
-								return fmt.Errorf("export: received nil chunk in count for data %q", d.DataName())
-							}
-							if c.V == nil {
-								return nil
-							}
-							chunkCh <- c
-
-							numBlocks++
-							if numBlocks%100000 == 0 {
-								scale, indexZYX, err := DecodeBlockTKey(c.K)
-								if err != nil {
-									dvid.Errorf("Couldn't decode label block key %v for data %q\n", c.K, d.DataName())
-								} else {
-									chunkX, chunkY, chunkZ := indexZYX.Unpack()
-									timedLog.Infof("Read %s blocks. Recently at scale %d, chunk (%d,%d,%d)",
-										commaUint64(numBlocks), scale, chunkX, chunkY, chunkZ)
-								}
-							}
-							return nil
-						})
-						if err != nil {
-							dvid.Errorf("export: problem during process range: %v\n", err)
+						rowCh <- chunkRowWork{
+							begTKey: NewBlockTKeyByCoord(scale, chunkBeg.ToIZYXString()),
+							endTKey: NewBlockTKeyByCoord(scale, chunkEnd.ToIZYXString()),
 						}
 					}
 				}
+				close(rowCh)
 
-				// We've completed a strip of shards so shutdown this epoch for the strip of shards.
-				// First, we close the channel to the pool of shardHandler.chunkHandler goroutines
-				// and wait until they're drained and exited.
+				// Launch concurrent readers, each pulling row work and scanning Badger.
+				var readersWG sync.WaitGroup
+				readersWG.Add(numReadWorkers)
+				for r := 0; r < numReadWorkers; r++ {
+					go func() {
+						defer readersWG.Done()
+						for row := range rowCh {
+							if err := store.ProcessRange(ctx, row.begTKey, row.endTKey, nil, func(c *storage.Chunk) error {
+								if c == nil {
+									return fmt.Errorf("export: received nil chunk in count for data %q", d.DataName())
+								}
+								if c.V == nil {
+									return nil
+								}
+								chunkCh <- c
+
+								n := numBlocks.Add(1)
+								if n%100000 == 0 {
+									s, indexZYX, err := DecodeBlockTKey(c.K)
+									if err != nil {
+										dvid.Errorf("Couldn't decode label block key %v for data %q\n", c.K, d.DataName())
+									} else {
+										cx, cy, cz := indexZYX.Unpack()
+										timedLog.Infof("Read %s blocks. Recently at scale %d, chunk (%d,%d,%d)",
+											commaUint64(n), s, cx, cy, cz)
+									}
+								}
+								return nil
+							}); err != nil {
+								dvid.Errorf("export: problem during process range: %v\n", err)
+							}
+						}
+					}()
+				}
+
+				// Wait for all readers to finish, then close chunkCh to signal chunkHandlers.
+				readersWG.Wait()
 				close(chunkCh)
+
 				// TODO: this can print out strips that really have no new blocks so track delta
 				epochsWG.Add(1)
 				go func(sy, sz int32, blocksSoFar uint64, ep *epoch) {
@@ -1413,13 +1436,13 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 							sy, sz, commaUint64(blocksSoFar))
 					}
 					epochsWG.Done()
-				}(shardY, shardZ, numBlocks, ep)
+				}(shardY, shardZ, numBlocks.Load(), ep)
 			}
 		}
 	}
 
 	// Go through all labelmap blocks and send them to the workers.
-	timedLog.Infof("Finished reading labelmap %q %s blocks to exporting workers", d.DataName(), commaUint64(numBlocks))
+	timedLog.Infof("Finished reading labelmap %q %s blocks to exporting workers", d.DataName(), commaUint64(numBlocks.Load()))
 
 	// Wait for all epoch cleanup goroutines (and their shard writers) to complete.
 	epochsWG.Wait()
@@ -1427,6 +1450,11 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 	// Write the export metrics log.
 	if sh.metrics != nil {
 		sh.metrics.writeLog()
+	}
+
+	// Signal completion if a Done channel was provided.
+	if spec.Done != nil {
+		close(spec.Done)
 	}
 }
 
