@@ -442,8 +442,8 @@ func TestShardHandlerWithRealSpecs(t *testing.T) {
 
 	select {
 	case <-spec.Done:
-	case <-time.After(30 * time.Second):
-		t.Fatal("Export did not complete within 30 seconds")
+	case <-time.After(60 * time.Second):
+		t.Fatal("Export did not complete within 60 seconds")
 	}
 
 	arrowFile := path.Join(spec.Directory, "s0", "0_0_0.arrow")

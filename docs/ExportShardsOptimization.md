@@ -5,7 +5,7 @@
 The `export-shards` RPC takes 12+ hours for large datasets. The pipeline has a
 4-layer goroutine architecture:
 
-1. **readBlocksZYX** — 8 concurrent Badger reader goroutines per epoch
+1. **readBlocksZYX** — sequential Badger reader (one ProcessRange per chunk row)
 2. **chunkHandler** (50 goroutines) — Decompress blocks, extract/map labels,
    skip all-zero blocks, send to shard writers
 3. **shardWriter** (1 per shard) — Zstd-compress blocks, write Arrow IPC records
@@ -156,28 +156,21 @@ x,y,z,offset,size,batch_idx
 
 One format, one reader code path, works for any batch size.
 
-### 8. Parallelize Badger reads with 8 concurrent reader goroutines  (HIGH impact) ✅
+### 8. ~~Parallelize Badger reads with 8 concurrent reader goroutines~~  (REVERTED)
 
 **File:** `datatype/labelmap/export.go`, `readBlocksZYX`
 
-The original pipeline had a single goroutine calling `ProcessRange` sequentially
-for each chunk row within a shard strip epoch — e.g., 32×32 = 1024 sequential
-Badger scans at scale 0. This was the I/O bottleneck, especially when the
-dataset is larger than RAM and reads hit NVMe SSD or RAID.
+Attempted replacing the single sequential `ProcessRange` reader with a
+work-queue pattern using 8 concurrent Badger reader goroutines, each with its
+own read-only transaction.
 
-Replaced with a work-queue pattern: all chunk-row key ranges are enqueued into
-a `rowCh` channel, then 8 reader goroutines each pull work and call
-`ProcessRange` independently with their own Badger read-only transactions.
-
-```
-Before: readBlocksZYX → sequential ProcessRange × 1024 → chunkCh
-After:  readBlocksZYX → rowCh → 8 readers → each calls ProcessRange → chunkCh
-```
-
-- `numReadWorkers = 8` (hardcoded, reasonable default for NVMe)
-- `numBlocks` counter changed to `atomic.Uint64` for safe concurrent increments
-- `chunkCh` already handles concurrent sends (Go channels are safe for N writers)
-- Sequential epoch structure preserved — no additional memory pressure
+**Result:** Benchmarking on the mCNS dataset showed the parallel readers were
+~2% *slower* than the single reader at 72.7M blocks (1h13m20s vs 1h11m45s).
+Multiple Badger transactions contend on the same SST files and block cache,
+causing cache-line bouncing that outweighs any I/O parallelism gains. The
+decompress+route and write phases are already negligible (~0-16ms for 1M+
+blocks per epoch), confirming the bottleneck is Badger's internal read path
+rather than our pipeline concurrency. Reverted to sequential reads.
 
 ### 9. Skip all-zero label blocks  (MEDIUM impact) ✅
 
