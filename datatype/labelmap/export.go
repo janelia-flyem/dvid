@@ -1256,6 +1256,7 @@ func (sh *shardHandler) chunkHandler(dataname dvid.InstanceName, ch <-chan *stor
 		}
 		aggloLabels := make([]uint64, numLabels)
 		supervoxels := make([]uint64, numLabels)
+		allZero := true
 		for i := uint32(0); i < numLabels; i++ {
 			off := 16 + i*8
 			sv := binary.LittleEndian.Uint64(blockData[off : off+8])
@@ -1265,6 +1266,12 @@ func (sh *shardHandler) chunkHandler(dataname dvid.InstanceName, ch <-chan *stor
 			} else {
 				aggloLabels[i] = sv
 			}
+			if aggloLabels[i] != 0 {
+				allZero = false
+			}
+		}
+		if allZero {
+			continue
 		}
 
 		blockInfo := &BlockData{

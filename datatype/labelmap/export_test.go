@@ -665,6 +665,13 @@ func expectedBlockLabels(cx, cy, cz int32) (svs, agglos map[uint64]struct{}) {
 	return
 }
 
+// generateZeroBlock creates a compressed DVID label block filled entirely with label 0.
+func generateZeroBlock() (*labels.Block, error) {
+	blockSize := dvid.Point3d{64, 64, 64}
+	raw := make([]byte, 64*64*64*8) // zero-initialized = all label 0
+	return labels.MakeBlock(raw, blockSize)
+}
+
 // generateBlock creates a compressed DVID label block filled with the deterministic pattern.
 func generateBlock(cx, cy, cz int32) (*labels.Block, error) {
 	blockSize := dvid.Point3d{64, 64, 64}
@@ -967,5 +974,183 @@ func TestExportShardsIntegration(t *testing.T) {
 	// Verify export.log was written.
 	if _, err := os.Stat(path.Join(exportDir, "export.log")); err != nil {
 		t.Errorf("export.log not found: %v", err)
+	}
+}
+
+// ingestZeroBlocks generates and POSTs all-zero label blocks at the given chunk coordinates.
+func ingestZeroBlocks(t *testing.T, uuid dvid.UUID, name string, regions []struct{ origin, size dvid.ChunkPoint3d }) int {
+	t.Helper()
+	var totalBlocks int
+	for _, r := range regions {
+		var buf bytes.Buffer
+		count := 0
+		block, err := generateZeroBlock()
+		if err != nil {
+			t.Fatalf("generateZeroBlock failed: %v", err)
+		}
+		gzipped, err := block.CompressGZIP()
+		if err != nil {
+			t.Fatalf("CompressGZIP failed for zero block: %v", err)
+		}
+		for cz := r.origin[2]; cz < r.origin[2]+r.size[2]; cz++ {
+			for cy := r.origin[1]; cy < r.origin[1]+r.size[1]; cy++ {
+				for cx := r.origin[0]; cx < r.origin[0]+r.size[0]; cx++ {
+					writeTestBlockInt32(t, &buf, cx)
+					writeTestBlockInt32(t, &buf, cy)
+					writeTestBlockInt32(t, &buf, cz)
+					writeTestBlockInt32(t, &buf, int32(len(gzipped)))
+					if _, err := buf.Write(gzipped); err != nil {
+						t.Fatalf("buf.Write failed: %v", err)
+					}
+					count++
+				}
+			}
+		}
+		apiStr := fmt.Sprintf("%snode/%s/%s/blocks?downres=true", server.WebAPIPath, uuid, name)
+		server.TestHTTP(t, "POST", apiStr, &buf)
+		totalBlocks += count
+	}
+	return totalBlocks
+}
+
+// TestExportShardsSkipsZeroBlocks verifies that all-zero label blocks are excluded
+// from Arrow output, and shards containing only zero blocks produce no shard files.
+func TestExportShardsSkipsZeroBlocks(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, v := initTestRepo()
+	var config dvid.Config
+	config.Set("MaxDownresLevel", "0") // no downres needed for this test
+	server.CreateTestInstance(t, uuid, "labelmap", "labels", config)
+
+	// Region A: 4x4x4 non-zero blocks at origin — 64 blocks
+	nonZeroRegions := []struct{ origin, size dvid.ChunkPoint3d }{
+		{dvid.ChunkPoint3d{0, 0, 0}, dvid.ChunkPoint3d{4, 4, 4}},
+	}
+	nonZeroCount := ingestSyntheticBlocks(t, uuid, "labels", nonZeroRegions)
+
+	// Region B: 4x4x4 all-zero blocks at chunk (36,36,36) — 64 blocks in a different shard
+	zeroRegions := []struct{ origin, size dvid.ChunkPoint3d }{
+		{dvid.ChunkPoint3d{36, 36, 36}, dvid.ChunkPoint3d{4, 4, 4}},
+	}
+	zeroCount := ingestZeroBlocks(t, uuid, "labels", zeroRegions)
+	t.Logf("Ingested %d non-zero blocks and %d zero blocks", nonZeroCount, zeroCount)
+
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on labels updating: %v\n", err)
+	}
+
+	dataservice, err := datastore.GetDataByUUIDName(uuid, "labels")
+	if err != nil {
+		t.Fatalf("couldn't get labels data instance: %v\n", err)
+	}
+	lbls, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("Returned data instance was not labelmap.Data\n")
+	}
+
+	// Build export spec (single scale, no downres).
+	exportDir := t.TempDir()
+	spec := getIntegrationExportSpec(t, exportDir)
+	spec.NumScales = 1
+	spec.Done = make(chan struct{})
+	ctx := datastore.NewVersionedCtx(lbls, v)
+
+	if err := lbls.ExportData(ctx, spec); err != nil {
+		t.Fatalf("ExportData failed: %v", err)
+	}
+	select {
+	case <-spec.Done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Export did not complete within 30 seconds")
+	}
+
+	// Verify only non-zero blocks appear in Arrow output.
+	s0Dir := path.Join(exportDir, "s0")
+	arrowFiles, err := filepath.Glob(path.Join(s0Dir, "*.arrow"))
+	if err != nil {
+		t.Fatalf("glob for arrow files: %v", err)
+	}
+	if len(arrowFiles) == 0 {
+		t.Fatal("No arrow files found for scale 0")
+	}
+
+	totalRecords := 0
+	for _, arrowPath := range arrowFiles {
+		f, err := os.Open(arrowPath)
+		if err != nil {
+			t.Fatalf("open %s: %v", arrowPath, err)
+		}
+		reader, err := ipc.NewReader(bufio.NewReader(f), ipc.WithAllocator(memory.NewGoAllocator()))
+		if err != nil {
+			f.Close()
+			t.Fatalf("ipc.NewReader for %s: %v", arrowPath, err)
+		}
+		for reader.Next() {
+			rec := reader.Record()
+			nRows := int(rec.NumRows())
+			totalRecords += nRows
+
+			// Verify no block has all-zero labels.
+			labelsCol := rec.Column(3).(*array.List)
+			svsCol := rec.Column(4).(*array.List)
+			for i := 0; i < nRows; i++ {
+				if !svsCol.IsNull(i) {
+					start := int(svsCol.Offsets()[i])
+					end := int(svsCol.Offsets()[i+1])
+					vals := svsCol.ListValues().(*array.Uint64)
+					allZero := true
+					for j := start; j < end; j++ {
+						if vals.Value(j) != 0 {
+							allZero = false
+							break
+						}
+					}
+					if allZero {
+						cx := rec.Column(0).(*array.Int32).Value(i)
+						cy := rec.Column(1).(*array.Int32).Value(i)
+						cz := rec.Column(2).(*array.Int32).Value(i)
+						t.Errorf("Block (%d,%d,%d) has all-zero supervoxels but was not skipped", cx, cy, cz)
+					}
+				}
+				if !labelsCol.IsNull(i) {
+					start := int(labelsCol.Offsets()[i])
+					end := int(labelsCol.Offsets()[i+1])
+					vals := labelsCol.ListValues().(*array.Uint64)
+					allZero := true
+					for j := start; j < end; j++ {
+						if vals.Value(j) != 0 {
+							allZero = false
+							break
+						}
+					}
+					if allZero {
+						cx := rec.Column(0).(*array.Int32).Value(i)
+						cy := rec.Column(1).(*array.Int32).Value(i)
+						cz := rec.Column(2).(*array.Int32).Value(i)
+						t.Errorf("Block (%d,%d,%d) has all-zero agglo labels but was not skipped", cx, cy, cz)
+					}
+				}
+			}
+		}
+		reader.Release()
+		f.Close()
+	}
+
+	if totalRecords != nonZeroCount {
+		t.Errorf("Expected %d records (non-zero blocks only), got %d", nonZeroCount, totalRecords)
+	}
+	t.Logf("Verified %d records in Arrow output, all non-zero (skipped %d zero blocks)", totalRecords, zeroCount)
+
+	// Verify that the shard containing only zero blocks has no arrow file.
+	// Region B at chunk (36,36,36) is in a different shard from region A at origin.
+	// With mCNS scale 4 sharding (shard dim ~32 chunks), chunk (36,36,36) falls
+	// in a shard starting at voxel (2048, 2048, 2048).
+	zeroShardArrow := path.Join(s0Dir, "2048_2048_2048.arrow")
+	if _, err := os.Stat(zeroShardArrow); err == nil {
+		t.Errorf("Shard file %s should not exist (all-zero shard), but it does", zeroShardArrow)
 	}
 }
