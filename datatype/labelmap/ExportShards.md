@@ -11,22 +11,56 @@ already compressed DVID segmentation.
 
 ## Code Architecture
 
-The functionality is contained in `datatype/labelmap/export.go`. It has three layers of goroutines:
+The functionality is contained in `datatype/labelmap/export.go`. It has four layers of goroutines:
 
-1. `readBlocksZYX` is a function that as quickly as possible scans the embedded key-value
-database in native ZYX key order (potentially across multiple scales) and sends data to a buffered
-`chunkCh` channel
+1. `readBlocksZYX` orchestrates the export by iterating over scales and shard strips (epochs).
+For each epoch, it enqueues chunk-row work items (one per Y,Z row across the full X extent)
+into a `rowCh` channel and launches **8 concurrent reader goroutines**. Each reader pulls work
+from `rowCh` and calls `ProcessRange` on the Badger store with its own independent read-only
+transaction and iterator. This parallelism allows 8 concurrent disk I/O requests, which is
+critical for NVMe SSD and RAID storage where the previous single sequential reader was the
+pipeline bottleneck. All readers feed into a shared buffered `chunkCh` channel (capacity 1000).
+Block counts use `atomic.Uint64` for safe concurrent increments.
 
-2. a layer of 50 `chunkHandler` goroutines that all consume from that single buffered `chunkCh`,
+2. A layer of 50 `chunkHandler` goroutines that all consume from that single buffered `chunkCh`,
 decompress gzip DVID segmentation block data using direct header parsing (avoiding the
-UnmarshalBinary/MarshalBinary copy overhead), compute a shard ID, and then either reuse or
-start a `shardWriter` goroutine and send the block data
+UnmarshalBinary/MarshalBinary copy overhead), extract the supervoxel label list, map supervoxels
+to agglomerated labels via the in-memory versioned mapping cache, **skip all-zero blocks** (where
+every agglomerated label is 0, matching tensorstore's behavior of not writing background-only
+chunks), compute a shard ID via compressed Morton code, and then either reuse or start a
+`shardWriter` goroutine and send the block data.
 
-3. a layer of shard-specific goroutines that are launched within a `shardWriter.start` function,
-reading from its buffered shardWriter channel, adding data for agglomerated labels from the
-in-memory versioned label mapping system, zstd-compressing the block data, and accumulating
+3. A layer of shard-specific goroutines that are launched within a `shardWriter.start` function,
+reading from its buffered shardWriter channel, zstd-compressing the block data, and accumulating
 blocks into Arrow record batches which are written to an Arrow IPC streaming file along with
-a sidecar CSV file for chunk indexing and byte offsets.
+a sidecar CSV file for chunk indexing and byte offsets. Shards that would contain only zero blocks
+never have a writer allocated, so no empty shard files are produced.
+
+## Epoch Structure
+
+The volume is processed in **epochs** — strips of shards along the X axis at a fixed (shardY, shardZ)
+position. Within each epoch:
+
+```
+rowCh (work queue)  →  8 reader goroutines (parallel Badger scans)
+                          ↓
+                    chunkCh (buffered 1000)
+                          ↓
+                    50 chunkHandler goroutines (decompress, map labels, skip zeros)
+                          ↓
+                    per-shard shardWriter goroutines (zstd, Arrow IPC, CSV)
+```
+
+Epochs are processed sequentially to bound memory usage — only one strip of shards is active at a time.
+After all readers finish, `chunkCh` is closed, chunkHandlers drain, shard writer channels are closed,
+and all writers finish before the next epoch begins.
+
+## Completion Signaling
+
+`ExportData` is asynchronous — it launches `readBlocksZYX` in a goroutine and returns immediately.
+Callers that need to wait for completion can set the `Done chan struct{}` field on the `exportSpec`;
+it is closed when the export finishes (after metrics are written). A nil `Done` channel preserves
+the fire-and-forget behavior.
 
 ## Configurable Batch Size
 

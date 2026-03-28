@@ -3,11 +3,11 @@
 ## Context
 
 The `export-shards` RPC takes 12+ hours for large datasets. The pipeline has a
-3-layer goroutine architecture:
+4-layer goroutine architecture:
 
-1. **readBlocksZYX** — Sequential DB scan per strip of shards
+1. **readBlocksZYX** — 8 concurrent Badger reader goroutines per epoch
 2. **chunkHandler** (50 goroutines) — Decompress blocks, extract/map labels,
-   send to shard writers
+   skip all-zero blocks, send to shard writers
 3. **shardWriter** (1 per shard) — Zstd-compress blocks, write Arrow IPC records
 
 Profiling the data flow reveals several bottlenecks where CPU time and memory
@@ -120,7 +120,8 @@ distinct values. Now stored as `shardWriter` struct fields and cleared with
 |------|---------|
 | `dvid/serialize.go` | gzip import swap (#1) |
 | `dvid/serialize_test.go` | gzip compatibility tests (#1) |
-| `datatype/labelmap/export.go` | #2, #4, #5, #6, #7 |
+| `datatype/labelmap/export.go` | #2, #4, #5, #6, #7, #8, #9 |
+| `datatype/labelmap/export_test.go` | Integration test, zero-block test, tensorstore cross-validation |
 
 ## Verification
 
@@ -154,6 +155,43 @@ x,y,z,offset,size,batch_idx
 - `# schema_size=N`: bytes written before the first record batch (schema message)
 
 One format, one reader code path, works for any batch size.
+
+### 8. Parallelize Badger reads with 8 concurrent reader goroutines  (HIGH impact) ✅
+
+**File:** `datatype/labelmap/export.go`, `readBlocksZYX`
+
+The original pipeline had a single goroutine calling `ProcessRange` sequentially
+for each chunk row within a shard strip epoch — e.g., 32×32 = 1024 sequential
+Badger scans at scale 0. This was the I/O bottleneck, especially when the
+dataset is larger than RAM and reads hit NVMe SSD or RAID.
+
+Replaced with a work-queue pattern: all chunk-row key ranges are enqueued into
+a `rowCh` channel, then 8 reader goroutines each pull work and call
+`ProcessRange` independently with their own Badger read-only transactions.
+
+```
+Before: readBlocksZYX → sequential ProcessRange × 1024 → chunkCh
+After:  readBlocksZYX → rowCh → 8 readers → each calls ProcessRange → chunkCh
+```
+
+- `numReadWorkers = 8` (hardcoded, reasonable default for NVMe)
+- `numBlocks` counter changed to `atomic.Uint64` for safe concurrent increments
+- `chunkCh` already handles concurrent sends (Go channels are safe for N writers)
+- Sequential epoch structure preserved — no additional memory pressure
+
+### 9. Skip all-zero label blocks  (MEDIUM impact) ✅
+
+**File:** `datatype/labelmap/export.go`, `chunkHandler`
+
+After extracting the label list from the block header and mapping supervoxels
+to agglomerated labels, blocks where every agglomerated label is zero are
+skipped. This avoids shard writer creation, zstd compression, and Arrow
+writes for background-only blocks — matching tensorstore's behavior of not
+writing chunks with no data.
+
+The check is cheap: scan the `aggloLabels` slice (typically 1–8 entries per
+block). Shards that would contain only zero blocks never get a writer
+allocated, so no empty shard files are produced.
 
 ---
 

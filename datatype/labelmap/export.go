@@ -1383,6 +1383,7 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 				close(rowCh)
 
 				// Launch concurrent readers, each pulling row work and scanning Badger.
+				epochStart := time.Now()
 				var readersWG sync.WaitGroup
 				readersWG.Add(numReadWorkers)
 				for r := 0; r < numReadWorkers; r++ {
@@ -1419,12 +1420,13 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 
 				// Wait for all readers to finish, then close chunkCh to signal chunkHandlers.
 				readersWG.Wait()
+				readDone := time.Since(epochStart)
 				close(chunkCh)
 
-				// TODO: this can print out strips that really have no new blocks so track delta
 				epochsWG.Add(1)
-				go func(sy, sz int32, blocksSoFar uint64, ep *epoch) {
+				go func(sy, sz int32, blocksSoFar uint64, ep *epoch, epochStart time.Time, readDone time.Duration) {
 					ep.chunkWG.Wait()
+					chunkDone := time.Since(epochStart)
 
 					// Now the blocks are only within the shardHandler channels, so it's OK to close
 					// those channels and let them drain.
@@ -1437,13 +1439,17 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 
 					// Wait for all shard writers to finish before marking epoch as done.
 					ep.writersWG.Wait()
+					writeDone := time.Since(epochStart)
 
 					if blocksSoFar > 0 {
-						timedLog.Infof("Completed strip of shards at (0, %d, %d): %s blocks read",
-							sy, sz, commaUint64(blocksSoFar))
+						timedLog.Infof("Epoch (0, %d, %d): %s blocks — read %v, decompress+route %v, write %v",
+							sy, sz, commaUint64(blocksSoFar),
+							readDone.Round(time.Millisecond),
+							(chunkDone - readDone).Round(time.Millisecond),
+							(writeDone - chunkDone).Round(time.Millisecond))
 					}
 					epochsWG.Done()
-				}(shardY, shardZ, numBlocks.Load(), ep)
+				}(shardY, shardZ, numBlocks.Load(), ep, epochStart, readDone)
 			}
 		}
 	}
