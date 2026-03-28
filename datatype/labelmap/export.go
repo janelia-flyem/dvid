@@ -1389,6 +1389,12 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 				for r := 0; r < numReadWorkers; r++ {
 					go func() {
 						defer readersWG.Done()
+						var localCount uint64
+						defer func() {
+							if rem := localCount % 1000; rem > 0 {
+								numBlocks.Add(rem)
+							}
+						}()
 						for row := range rowCh {
 							if err := store.ProcessRange(ctx, row.begTKey, row.endTKey, nil, func(c *storage.Chunk) error {
 								if c == nil {
@@ -1399,15 +1405,18 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 								}
 								chunkCh <- c
 
-								n := numBlocks.Add(1)
-								if n%100000 == 0 {
-									s, indexZYX, err := DecodeBlockTKey(c.K)
-									if err != nil {
-										dvid.Errorf("Couldn't decode label block key %v for data %q\n", c.K, d.DataName())
-									} else {
-										cx, cy, cz := indexZYX.Unpack()
-										timedLog.Infof("Read %s blocks. Recently at scale %d, chunk (%d,%d,%d)",
-											commaUint64(n), s, cx, cy, cz)
+								localCount++
+								if localCount%1000 == 0 {
+									n := numBlocks.Add(1000)
+									if n/100000 != (n-1000)/100000 {
+										s, indexZYX, err := DecodeBlockTKey(c.K)
+										if err != nil {
+											dvid.Errorf("Couldn't decode label block key %v for data %q\n", c.K, d.DataName())
+										} else {
+											cx, cy, cz := indexZYX.Unpack()
+											timedLog.Infof("Read %s blocks. Recently at scale %d, chunk (%d,%d,%d)",
+												commaUint64(n), s, cx, cy, cz)
+										}
 									}
 								}
 								return nil
