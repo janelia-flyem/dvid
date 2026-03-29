@@ -144,7 +144,7 @@ $ dvid node <UUID> <data name> dump <dump type> <file path>
 	dump type     One of "svcount", "mappings", or "indices".
 	file path     Absolute path to a writable file that the dvid server has write privileges to.
 
-$ dvid node <UUID> <data name> export-shards <spec path> <dest> <num scales>
+$ dvid node <UUID> <data name> export-shards <spec path> <dest> [num scales]
 
 	Exports the labelmap data to local shard files corresponding to blocks that would be within different
 	shards using neuroglancer precomputed volume specification.
@@ -171,7 +171,8 @@ $ dvid node <UUID> <data name> export-shards <spec path> <dest> <num scales>
 	data name	 Name of data to add.
 	spec path    Absolute path to a JSON file with the volume specification.
 	dest     	 Absolute path to a writable directory that the dvid server has write privileges to.
-	num scales   Number of scales to export starting with scale 0.  (e.g., 3 means scales 0, 1, and 2)
+	num scales   (Optional) Number of scales to export starting with scale 0.  Defaults to 1 (scale 0 only).
+	             (e.g., 3 means scales 0, 1, and 2).  Capped at the number of scales in the spec and DVID data.
 
 $ dvid node <UUID> <data name> set-nextlabel <label>
 
@@ -2769,12 +2770,12 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		return nil
 
 	case "export-shards":
-		if len(req.Command) < 6 {
+		if len(req.Command) < 5 {
 			return fmt.Errorf("poorly formatted export-shards command.  See command-line help")
 		}
 		// Parse the request
-		var uuidStr, dataName, cmdStr, specPath, outPath, numScalesStr string
-		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &specPath, &outPath, &numScalesStr)
+		var uuidStr, dataName, cmdStr, specPath, outPath string
+		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &specPath, &outPath)
 
 		uuid, v, err := datastore.MatchingUUID(uuidStr)
 		if err != nil {
@@ -2799,12 +2800,17 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		}
 
 		// Export the data asynchronously.
-		numScalesInt, err := strconv.Atoi(numScalesStr)
-		if err != nil {
-			return fmt.Errorf("error parsing numScales %q: %v", numScalesStr, err)
-		}
-		if numScalesInt < 1 || numScalesInt > 255 {
-			return fmt.Errorf("numScales must be between 1 and 255, got %d", numScalesInt)
+		numScalesInt := 1 // default to scale 0 only
+		if len(req.Command) >= 7 {
+			var numScalesStr string
+			req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &specPath, &outPath, &numScalesStr)
+			numScalesInt, err = strconv.Atoi(numScalesStr)
+			if err != nil {
+				return fmt.Errorf("error parsing numScales %q: %v", numScalesStr, err)
+			}
+			if numScalesInt < 1 || numScalesInt > 255 {
+				return fmt.Errorf("numScales must be between 1 and 255, got %d", numScalesInt)
+			}
 		}
 		go d.ExportData(ctx, exportSpec{ngVolume: spec, Directory: outPath, NumScales: uint8(numScalesInt)})
 
@@ -2812,12 +2818,12 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		return nil
 
 	case "analyze-shards":
-		if len(req.Command) < 6 {
+		if len(req.Command) < 5 {
 			return fmt.Errorf("poorly formatted analyze-shards command.  See command-line help")
 		}
 		// Parse the request
-		var uuidStr, dataName, cmdStr, specPath, outPath, numScalesStr string
-		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &specPath, &outPath, &numScalesStr)
+		var uuidStr, dataName, cmdStr, specPath, outPath string
+		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &specPath, &outPath)
 
 		uuid, v, err := datastore.MatchingUUID(uuidStr)
 		if err != nil {
@@ -2841,12 +2847,17 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 			return fmt.Errorf("error creating output directory %q: %v", outPath, err)
 		}
 
-		numScalesInt, err := strconv.Atoi(numScalesStr)
-		if err != nil {
-			return fmt.Errorf("error parsing numScales %q: %v", numScalesStr, err)
-		}
-		if numScalesInt < 1 || numScalesInt > 255 {
-			return fmt.Errorf("numScales must be between 1 and 255, got %d", numScalesInt)
+		numScalesInt := 1 // default to scale 0 only
+		if len(req.Command) >= 7 {
+			var numScalesStr string
+			req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &specPath, &outPath, &numScalesStr)
+			numScalesInt, err = strconv.Atoi(numScalesStr)
+			if err != nil {
+				return fmt.Errorf("error parsing numScales %q: %v", numScalesStr, err)
+			}
+			if numScalesInt < 1 || numScalesInt > 255 {
+				return fmt.Errorf("numScales must be between 1 and 255, got %d", numScalesInt)
+			}
 		}
 		go d.ExportData(ctx, exportSpec{ngVolume: spec, Directory: outPath, NumScales: uint8(numScalesInt), AnalyzeOnly: true})
 

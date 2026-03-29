@@ -1292,6 +1292,17 @@ func (sh *shardHandler) chunkHandler(dataname dvid.InstanceName, ch <-chan *stor
 // volume specification. This is a goroutine that is called asynchronously so should provide feedback
 // via log and no response to client.
 func (d *Data) ExportData(ctx *datastore.VersionedCtx, spec exportSpec) error {
+	// Cap NumScales to the minimum of the requested value, the number of scales in the
+	// volume spec, and the number of scales actually stored in DVID.
+	if maxFromSpec := uint8(len(spec.Scales)); spec.NumScales > maxFromSpec {
+		dvid.Infof("Requested %d scales but volume spec only defines %d; capping to %d\n", spec.NumScales, maxFromSpec, maxFromSpec)
+		spec.NumScales = maxFromSpec
+	}
+	if maxFromData := d.MaxDownresLevel + 1; spec.NumScales > maxFromData {
+		dvid.Infof("Requested %d scales but labelmap %q only has data through scale %d; capping to %d\n", spec.NumScales, d.DataName(), d.MaxDownresLevel, maxFromData)
+		spec.NumScales = maxFromData
+	}
+
 	versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
 
 	m := &exportMetrics{
@@ -1336,9 +1347,14 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 	}
 
 	var epochsWG sync.WaitGroup // tracks all epoch cleanup goroutines
+	scaleWGs := make([]sync.WaitGroup, spec.NumScales)
 	var numBlocks uint64
 	var scale uint8
 	for scale = 0; scale < spec.NumScales; scale++ {
+		scaleStart := time.Now()
+		blocksBeforeScale := numBlocks
+		dvid.Infof("Starting export of scale %d ...\n", scale)
+
 		// Iterate across shard volumes structured as long X-oriented strip of shard volumes
 		// (e.g., 2048^3 voxels or 32^3 blocks of 64^3 voxels).
 		shardDimVoxels := sh.shardDimVoxels[scale]
@@ -1401,7 +1417,8 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 				close(chunkCh)
 
 				epochsWG.Add(1)
-				go func(sy, sz int32, blocksSoFar uint64, ep *epoch, epochStart time.Time, readDone time.Duration) {
+				scaleWGs[scale].Add(1)
+				go func(sy, sz int32, blocksSoFar uint64, ep *epoch, scaleIdx uint8, epochStart time.Time, readDone time.Duration) {
 					ep.chunkWG.Wait()
 					chunkDone := time.Since(epochStart)
 
@@ -1425,10 +1442,20 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 							(chunkDone - readDone).Round(time.Millisecond),
 							(writeDone - chunkDone).Round(time.Millisecond))
 					}
+					scaleWGs[scaleIdx].Done()
 					epochsWG.Done()
-				}(shardY, shardZ, numBlocks, ep, epochStart, readDone)
+				}(shardY, shardZ, numBlocks, ep, scale, epochStart, readDone)
 			}
 		}
+
+		// Log when all shards for this scale have been fully written.
+		// The reader has moved on but epoch cleanup goroutines may still be writing.
+		scaleBlocks := numBlocks - blocksBeforeScale
+		go func(s uint8, blocks uint64, start time.Time) {
+			scaleWGs[s].Wait()
+			dvid.Infof("SCALE %d COMPLETE: %s blocks written in %v\n",
+				s, commaUint64(blocks), time.Since(start).Round(time.Second))
+		}(scale, scaleBlocks, scaleStart)
 	}
 
 	// Go through all labelmap blocks and send them to the workers.
