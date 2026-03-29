@@ -190,11 +190,22 @@ func (vc *VCache) getMappedVersionsDist(v dvid.VersionID) distFromRoot {
 	return dist
 }
 
+// mappingWork is a supervoxel->label assignment dispatched to a per-shard worker.
+type mappingWork struct {
+	supervoxel uint64
+	label      uint64
+}
+
+const numShardWorkers = 8
+
 // goroutine-safe function for initializing the in-memory mapping with a version's mutations log
 // and caching the mapped versions with the distance from the root.
-// Uses a single consumer to preserve mutation ordering within a version — a supervoxel
-// remapped multiple times must apply mutations in log order so the last mapping wins.
-// Parallel version loading (in initToVersion) provides the main concurrency benefit.
+//
+// A single reader goroutine deserializes messages in log order and dispatches individual
+// (supervoxel, label) items to per-shard-group worker channels. Each worker owns a fixed
+// subset of the 100 VCache shards (shard % numShardWorkers == workerID), so all mutations
+// for a given supervoxel always reach the same worker in chronological order. This preserves
+// the ordering guarantee (last mutation wins) while parallelizing across shards.
 func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.InstanceName, ch chan storage.LogMessage, wg *sync.WaitGroup) {
 	defer wg.Done()
 	if len(ancestors) == 0 {
@@ -203,6 +214,34 @@ func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 	timedLog := dvid.NewTimeLog()
 
 	v := ancestors[0]
+
+	// Per-worker channels. Each worker handles shards where shard % numShardWorkers == workerID.
+	workerChs := make([]chan mappingWork, numShardWorkers)
+	for i := range workerChs {
+		workerChs[i] = make(chan mappingWork, 1024)
+	}
+
+	// Start shard workers. Each writes directly to its shards without locking since
+	// no other goroutine writes to those shards during init of this version.
+	var wwg sync.WaitGroup
+	wwg.Add(numShardWorkers)
+	for i := range numShardWorkers {
+		go func(workerID int) {
+			defer wwg.Done()
+			for work := range workerChs[workerID] {
+				vc.setMappingInit(v, work.supervoxel, work.label)
+			}
+		}(i)
+	}
+
+	// dispatch sends a supervoxel mapping to the correct shard worker.
+	dispatch := func(supervoxel, label uint64) {
+		shard := supervoxel % vc.numShards
+		workerID := shard % numShardWorkers
+		workerChs[workerID] <- mappingWork{supervoxel, label}
+	}
+
+	// Single reader: deserialize messages in log order and fan out to shard workers.
 	var splits []proto.SupervoxelSplitOp
 	numMsgs := map[string]uint64{
 		"Mapping":         0,
@@ -224,7 +263,7 @@ func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 			}
 			mapped := mappingOp.GetMapped()
 			for _, supervoxel := range mappingOp.GetOriginal() {
-				vc.setMappingInit(v, supervoxel, mapped)
+				dispatch(supervoxel, mapped)
 			}
 
 		case proto.SplitOpType:
@@ -241,7 +280,7 @@ func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 					Remainlabel: svsplit.Remainlabel,
 					Splitlabel:  svsplit.Splitlabel,
 				})
-				vc.setMappingInit(v, supervoxel, 0)
+				dispatch(supervoxel, 0)
 			}
 
 		case proto.SupervoxelSplitType:
@@ -257,7 +296,7 @@ func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 				Remainlabel: op.Remainlabel,
 				Splitlabel:  op.Splitlabel,
 			})
-			vc.setMappingInit(v, op.Supervoxel, 0)
+			dispatch(op.Supervoxel, 0)
 
 		case proto.CleaveOpType:
 			numMsgs["Cleave"]++
@@ -266,12 +305,18 @@ func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 				dvid.Errorf("unable to unmarshal cleave log message for version %d: %v\n", v, err)
 				continue
 			}
-			vc.setMappingInit(v, op.Cleavedlabel, 0)
+			dispatch(op.Cleavedlabel, 0)
 
 		case proto.RenumberOpType:
 			numMsgs["Renumber"]++
 		}
 	}
+
+	// Close worker channels and wait for workers to finish.
+	for _, wch := range workerChs {
+		close(wch)
+	}
+	wwg.Wait()
 
 	vc.splitsMu.Lock()
 	vc.splits[v] = splits
