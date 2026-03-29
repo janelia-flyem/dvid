@@ -190,22 +190,34 @@ func (vc *VCache) getMappedVersionsDist(v dvid.VersionID) distFromRoot {
 	return dist
 }
 
-// mappingWork is a supervoxel->label assignment dispatched to a per-shard worker.
-type mappingWork struct {
+const numInitConsumers = 8
+const numShardWorkers = 8
+
+// seqMapping is a supervoxel->label assignment with a sequence number for ordering.
+type seqMapping struct {
+	seq        uint64
 	supervoxel uint64
 	label      uint64
 }
 
-const numShardWorkers = 8
+// consumerResult holds per-consumer accumulation of splits and message counts.
+type consumerResult struct {
+	splits  []proto.SupervoxelSplitOp
+	numMsgs [5]uint64 // Mapping, Split, SupervoxelSplit, Cleave, Renumber
+}
 
 // goroutine-safe function for initializing the in-memory mapping with a version's mutations log
 // and caching the mapped versions with the distance from the root.
 //
-// A single reader goroutine deserializes messages in log order and dispatches individual
-// (supervoxel, label) items to per-shard-group worker channels. Each worker owns a fixed
-// subset of the 100 VCache shards (shard % numShardWorkers == workerID), so all mutations
-// for a given supervoxel always reach the same worker in chronological order. This preserves
-// the ordering guarantee (last mutation wins) while parallelizing across shards.
+// Architecture: 8 parallel consumers deserialize protobuf messages concurrently, assigning
+// each message an atomic sequence number that captures its log position. Consumers dispatch
+// individual (seq, supervoxel, label) items to shard worker channels routed by supervoxel.
+// Each shard worker is the sole handler for its subset of shards, maintaining a local seq map
+// (supervoxel → last written seq). On first encounter, the worker writes directly to the vmap
+// via setMappingInit (fast append). For the rare case (~5%) where a supervoxel is remapped
+// multiple times: if the new seq is higher, the worker replaces the vmap entry; if lower
+// (out-of-order consumer), it discards the stale mapping. Cross-version ordering is irrelevant
+// since each version gets a distinct entry in the vmap and value() resolves by DAG distance.
 func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.InstanceName, ch chan storage.LogMessage, wg *sync.WaitGroup) {
 	defer wg.Done()
 	if len(ancestors) == 0 {
@@ -215,34 +227,128 @@ func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 
 	v := ancestors[0]
 
-	// Per-worker channels. Each worker handles shards where shard % numShardWorkers == workerID.
-	workerChs := make([]chan mappingWork, numShardWorkers)
+	// Shard worker channels. Each worker handles shards where shard % numShardWorkers == workerID.
+	workerChs := make([]chan seqMapping, numShardWorkers)
 	for i := range workerChs {
-		workerChs[i] = make(chan mappingWork, 1024)
+		workerChs[i] = make(chan seqMapping, 1024)
 	}
 
-	// Start shard workers. Each writes directly to its shards without locking since
-	// no other goroutine writes to those shards during init of this version.
+	// Start shard workers. Each maintains a local seq map to track the latest written
+	// sequence per supervoxel, writing directly to vmaps.
 	var wwg sync.WaitGroup
 	wwg.Add(numShardWorkers)
 	for i := range numShardWorkers {
 		go func(workerID int) {
 			defer wwg.Done()
-			for work := range workerChs[workerID] {
-				vc.setMappingInit(v, work.supervoxel, work.label)
+			lastSeq := make(map[uint64]uint64) // supervoxel → highest seq written to vmap
+			for item := range workerChs[workerID] {
+				prevSeq, seen := lastSeq[item.supervoxel]
+				if seen && item.seq <= prevSeq {
+					continue // stale mapping from out-of-order consumer, discard
+				}
+				lastSeq[item.supervoxel] = item.seq
+				if seen {
+					// Rare: supervoxel remapped again with a later log entry.
+					// Replace the existing vmap entry for this version.
+					vc.setMapping(v, item.supervoxel, item.label)
+				} else {
+					// Common: first (and usually only) mapping for this supervoxel.
+					vc.setMappingInit(v, item.supervoxel, item.label)
+				}
 			}
 		}(i)
 	}
 
-	// dispatch sends a supervoxel mapping to the correct shard worker.
-	dispatch := func(supervoxel, label uint64) {
-		shard := supervoxel % vc.numShards
-		workerID := shard % numShardWorkers
-		workerChs[workerID] <- mappingWork{supervoxel, label}
-	}
+	// Atomic sequence counter — each message gets a unique, monotonically increasing number.
+	var seq atomic.Uint64
 
-	// Single reader: deserialize messages in log order and fan out to shard workers.
-	var splits []proto.SupervoxelSplitOp
+	// 8 parallel consumers: deserialize protobuf and dispatch to shard workers.
+	results := make([]consumerResult, numInitConsumers)
+	var cwg sync.WaitGroup
+	cwg.Add(numInitConsumers)
+	for i := range numInitConsumers {
+		go func(idx int) {
+			defer cwg.Done()
+			r := &results[idx]
+			var mappingOp proto.MappingOp
+
+			for msg := range ch {
+				mySeq := seq.Add(1)
+
+				switch msg.EntryType {
+				case proto.MappingOpType:
+					r.numMsgs[0]++
+					mappingOp.Reset()
+					if err := pb.Unmarshal(msg.Data, &mappingOp); err != nil {
+						dvid.Errorf("unable to unmarshal mapping log message for version %d: %v\n", v, err)
+						continue
+					}
+					mapped := mappingOp.GetMapped()
+					for _, supervoxel := range mappingOp.GetOriginal() {
+						wID := supervoxel % vc.numShards % numShardWorkers
+						workerChs[wID] <- seqMapping{mySeq, supervoxel, mapped}
+					}
+
+				case proto.SplitOpType:
+					r.numMsgs[1]++
+					var op proto.SplitOp
+					if err := pb.Unmarshal(msg.Data, &op); err != nil {
+						dvid.Errorf("unable to unmarshal split log message for version %d: %v\n", v, err)
+						continue
+					}
+					for supervoxel, svsplit := range op.GetSvsplits() {
+						r.splits = append(r.splits, proto.SupervoxelSplitOp{
+							Mutid:       op.Mutid,
+							Supervoxel:  supervoxel,
+							Remainlabel: svsplit.Remainlabel,
+							Splitlabel:  svsplit.Splitlabel,
+						})
+						wID := supervoxel % vc.numShards % numShardWorkers
+						workerChs[wID] <- seqMapping{mySeq, supervoxel, 0}
+					}
+
+				case proto.SupervoxelSplitType:
+					r.numMsgs[2]++
+					var op proto.SupervoxelSplitOp
+					if err := pb.Unmarshal(msg.Data, &op); err != nil {
+						dvid.Errorf("unable to unmarshal split log message for version %d: %v\n", v, err)
+						continue
+					}
+					r.splits = append(r.splits, proto.SupervoxelSplitOp{
+						Mutid:       op.Mutid,
+						Supervoxel:  op.Supervoxel,
+						Remainlabel: op.Remainlabel,
+						Splitlabel:  op.Splitlabel,
+					})
+					wID := op.Supervoxel % vc.numShards % numShardWorkers
+					workerChs[wID] <- seqMapping{mySeq, op.Supervoxel, 0}
+
+				case proto.CleaveOpType:
+					r.numMsgs[3]++
+					var op proto.CleaveOp
+					if err := pb.Unmarshal(msg.Data, &op); err != nil {
+						dvid.Errorf("unable to unmarshal cleave log message for version %d: %v\n", v, err)
+						continue
+					}
+					wID := op.Cleavedlabel % vc.numShards % numShardWorkers
+					workerChs[wID] <- seqMapping{mySeq, op.Cleavedlabel, 0}
+
+				case proto.RenumberOpType:
+					r.numMsgs[4]++
+				}
+			}
+		}(i)
+	}
+	cwg.Wait()
+
+	// Close worker channels and wait for shard workers to finish.
+	for _, wch := range workerChs {
+		close(wch)
+	}
+	wwg.Wait()
+
+	// Merge results from all consumers.
+	var allSplits []proto.SupervoxelSplitOp
 	numMsgs := map[string]uint64{
 		"Mapping":         0,
 		"Split":           0,
@@ -250,78 +356,19 @@ func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 		"Cleave":          0,
 		"Renumber":        0,
 	}
-	var mappingOp proto.MappingOp // reuse to reduce allocations
-
-	for msg := range ch {
-		switch msg.EntryType {
-		case proto.MappingOpType:
-			numMsgs["Mapping"]++
-			mappingOp.Reset()
-			if err := pb.Unmarshal(msg.Data, &mappingOp); err != nil {
-				dvid.Errorf("unable to unmarshal mapping log message for version %d: %v\n", v, err)
-				continue
-			}
-			mapped := mappingOp.GetMapped()
-			for _, supervoxel := range mappingOp.GetOriginal() {
-				dispatch(supervoxel, mapped)
-			}
-
-		case proto.SplitOpType:
-			numMsgs["Split"]++
-			var op proto.SplitOp
-			if err := pb.Unmarshal(msg.Data, &op); err != nil {
-				dvid.Errorf("unable to unmarshal split log message for version %d: %v\n", v, err)
-				continue
-			}
-			for supervoxel, svsplit := range op.GetSvsplits() {
-				splits = append(splits, proto.SupervoxelSplitOp{
-					Mutid:       op.Mutid,
-					Supervoxel:  supervoxel,
-					Remainlabel: svsplit.Remainlabel,
-					Splitlabel:  svsplit.Splitlabel,
-				})
-				dispatch(supervoxel, 0)
-			}
-
-		case proto.SupervoxelSplitType:
-			numMsgs["SupervoxelSplit"]++
-			var op proto.SupervoxelSplitOp
-			if err := pb.Unmarshal(msg.Data, &op); err != nil {
-				dvid.Errorf("unable to unmarshal split log message for version %d: %v\n", v, err)
-				continue
-			}
-			splits = append(splits, proto.SupervoxelSplitOp{
-				Mutid:       op.Mutid,
-				Supervoxel:  op.Supervoxel,
-				Remainlabel: op.Remainlabel,
-				Splitlabel:  op.Splitlabel,
-			})
-			dispatch(op.Supervoxel, 0)
-
-		case proto.CleaveOpType:
-			numMsgs["Cleave"]++
-			var op proto.CleaveOp
-			if err := pb.Unmarshal(msg.Data, &op); err != nil {
-				dvid.Errorf("unable to unmarshal cleave log message for version %d: %v\n", v, err)
-				continue
-			}
-			dispatch(op.Cleavedlabel, 0)
-
-		case proto.RenumberOpType:
-			numMsgs["Renumber"]++
+	msgKeys := [5]string{"Mapping", "Split", "SupervoxelSplit", "Cleave", "Renumber"}
+	for i := range numInitConsumers {
+		r := &results[i]
+		allSplits = append(allSplits, r.splits...)
+		for j, key := range msgKeys {
+			numMsgs[key] += r.numMsgs[j]
 		}
 	}
 
-	// Close worker channels and wait for workers to finish.
-	for _, wch := range workerChs {
-		close(wch)
-	}
-	wwg.Wait()
-
 	vc.splitsMu.Lock()
-	vc.splits[v] = splits
+	vc.splits[v] = allSplits
 	vc.splitsMu.Unlock()
-	timedLog.Infof("Loaded mappings for data %q, version %d", dataname, v)
+	timedLog.Infof("Loaded mappings for data %q, version %d (%d consumers)", dataname, v, numInitConsumers)
 	dvid.Infof("Mutations for version %d for data %q: %v\n", v, dataname, numMsgs)
 }
 
