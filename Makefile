@@ -68,6 +68,7 @@ analyze-block: bin/analyze-block
 analyze-index: bin/analyze-index
 body-blocks: bin/body-blocks
 filter-mutations: bin/filter-mutations
+compare-mappings: bin/compare-mappings
 
 # Install: Copy all executables to the CONDA_PREFIX
 install: dvid dvid-backup dvid-transfer analyze-block analyze-index body-blocks filter-mutations
@@ -130,6 +131,9 @@ bin/body-blocks: $(shell find cmd/labelmap-utils/body-blocks -name "*.go")
 
 bin/filter-mutations: $(shell find cmd/labelmap-utils/filter-mutations -name "*.go")
 	go build -o bin/filter-mutations -v -tags "${DVID_TAGS}" cmd/labelmap-utils/filter-mutations/*.go
+
+bin/compare-mappings: cmd/compare-mappings/main.go
+	go build -o bin/compare-mappings -v cmd/compare-mappings/main.go
 
 ##
 ## TEST
