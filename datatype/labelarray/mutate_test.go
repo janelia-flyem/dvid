@@ -1609,6 +1609,10 @@ func TestConcurrentMutations(t *testing.T) {
 	}()
 	wg.Wait()
 
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on updating of labels: %v\n", err)
+	}
+
 	retrieved2 := newTestVolume(192, 128, 128)
 	retrieved2.get(t, uuid, "labels")
 	if len(retrieved2.data) != 8*192*128*128 {
