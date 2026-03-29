@@ -149,11 +149,11 @@ ifdef TEST
     SPECIFIC_TEST = -test.run ${TEST}
 endif
 
-test: dvid 
-	go test ${SPECIFIC_TEST} -tags "${DVID_TAGS}" ${DVID_PACKAGES}
+test: dvid
+	go tool gotestsum --format short -- ${SPECIFIC_TEST} -tags "${DVID_TAGS}" ${DVID_PACKAGES}
 
 test-verbose: dvid
-	go test -v ${SPECIFIC_TEST} -tags "${DVID_TAGS}" ${DVID_PACKAGES}
+	go tool gotestsum --format standard-verbose -- ${SPECIFIC_TEST} -tags "${DVID_TAGS}" ${DVID_PACKAGES}
 
 # Coverage (does this repeat the test step above?)
 coverage: dvid
