@@ -206,18 +206,28 @@ type consumerResult struct {
 	numMsgs [5]uint64 // Mapping, Split, SupervoxelSplit, Cleave, Renumber
 }
 
+// seqLogMessage pairs a log message with a monotonic sequence number assigned by
+// a single dispatcher goroutine, guaranteeing that seq order matches channel order.
+type seqLogMessage struct {
+	seq uint64
+	msg storage.LogMessage
+}
+
 // goroutine-safe function for initializing the in-memory mapping with a version's mutations log
 // and caching the mapped versions with the distance from the root.
 //
-// Architecture: 8 parallel consumers deserialize protobuf messages concurrently, assigning
-// each message an atomic sequence number that captures its log position. Consumers dispatch
-// individual (seq, supervoxel, label) items to shard worker channels routed by supervoxel.
-// Each shard worker is the sole handler for its subset of shards, maintaining a local seq map
-// (supervoxel → last written seq). On first encounter, the worker writes directly to the vmap
-// via setMappingInit (fast append). For the rare case (~5%) where a supervoxel is remapped
-// multiple times: if the new seq is higher, the worker replaces the vmap entry; if lower
-// (out-of-order consumer), it discards the stale mapping. Cross-version ordering is irrelevant
-// since each version gets a distinct entry in the vmap and value() resolves by DAG distance.
+// Architecture: A single dispatcher goroutine reads from the storage channel and assigns each
+// message a monotonic sequence number, then forwards it to a shared seqCh. This ensures seq
+// order exactly matches log order (no race between channel receive and seq assignment).
+// 8 parallel consumers pull from seqCh, deserialize protobuf messages concurrently, and
+// dispatch individual (seq, supervoxel, label) items to shard worker channels routed by
+// supervoxel. Each shard worker is the sole handler for its subset of shards, maintaining
+// a local seq map (supervoxel → last written seq). On first encounter, the worker writes
+// directly to the vmap via setMappingInit (fast append). For the rare case (~5%) where a
+// supervoxel is remapped multiple times: if the new seq is higher, the worker replaces the
+// vmap entry; if lower (out-of-order consumer), it discards the stale mapping.
+// Cross-version ordering is irrelevant since each version gets a distinct entry in the vmap
+// and value() resolves by DAG distance.
 func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.InstanceName, ch chan storage.LogMessage, wg *sync.WaitGroup) {
 	defer wg.Done()
 	if len(ancestors) == 0 {
@@ -259,8 +269,17 @@ func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 		}(i)
 	}
 
-	// Atomic sequence counter — each message gets a unique, monotonically increasing number.
-	var seq atomic.Uint64
+	// Dispatcher: single goroutine reads from ch, assigns monotonic seq, forwards to seqCh.
+	// This ensures seq order exactly matches log order — no race between receive and increment.
+	seqCh := make(chan seqLogMessage, 1000)
+	go func() {
+		var seq uint64
+		for msg := range ch {
+			seq++
+			seqCh <- seqLogMessage{seq, msg}
+		}
+		close(seqCh)
+	}()
 
 	// 8 parallel consumers: deserialize protobuf and dispatch to shard workers.
 	results := make([]consumerResult, numInitConsumers)
@@ -272,14 +291,14 @@ func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 			r := &results[idx]
 			var mappingOp proto.MappingOp
 
-			for msg := range ch {
-				mySeq := seq.Add(1)
+			for smsg := range seqCh {
+				mySeq := smsg.seq
 
-				switch msg.EntryType {
+				switch smsg.msg.EntryType {
 				case proto.MappingOpType:
 					r.numMsgs[0]++
 					mappingOp.Reset()
-					if err := pb.Unmarshal(msg.Data, &mappingOp); err != nil {
+					if err := pb.Unmarshal(smsg.msg.Data, &mappingOp); err != nil {
 						dvid.Errorf("unable to unmarshal mapping log message for version %d: %v\n", v, err)
 						continue
 					}
@@ -292,7 +311,7 @@ func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 				case proto.SplitOpType:
 					r.numMsgs[1]++
 					var op proto.SplitOp
-					if err := pb.Unmarshal(msg.Data, &op); err != nil {
+					if err := pb.Unmarshal(smsg.msg.Data, &op); err != nil {
 						dvid.Errorf("unable to unmarshal split log message for version %d: %v\n", v, err)
 						continue
 					}
@@ -310,7 +329,7 @@ func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 				case proto.SupervoxelSplitType:
 					r.numMsgs[2]++
 					var op proto.SupervoxelSplitOp
-					if err := pb.Unmarshal(msg.Data, &op); err != nil {
+					if err := pb.Unmarshal(smsg.msg.Data, &op); err != nil {
 						dvid.Errorf("unable to unmarshal split log message for version %d: %v\n", v, err)
 						continue
 					}
@@ -326,7 +345,7 @@ func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 				case proto.CleaveOpType:
 					r.numMsgs[3]++
 					var op proto.CleaveOp
-					if err := pb.Unmarshal(msg.Data, &op); err != nil {
+					if err := pb.Unmarshal(smsg.msg.Data, &op); err != nil {
 						dvid.Errorf("unable to unmarshal cleave log message for version %d: %v\n", v, err)
 						continue
 					}
