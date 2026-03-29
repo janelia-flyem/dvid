@@ -400,62 +400,12 @@ func getExportSpec(t *testing.T) exportSpec {
 	}
 }
 
-func TestShardHandlerWithRealSpecs(t *testing.T) {
-	if err := server.OpenTest(); err != nil {
-		t.Fatalf("can't open test server: %v\n", err)
-	}
-	defer server.CloseTest()
-
-	// Add data to labelmap instance
-	// Create testbed volume and data instances
-	uuid, v := initTestRepo()
-	var config dvid.Config
-	config.Set("MaxDownresLevel", "2")
-	config.Set("BlockSize", "32,32,32") // Previous test data was on 32^3 blocks
-	server.CreateTestInstance(t, uuid, "labelmap", "labels", config)
-	createLabelTestVolume(t, uuid, "labels")
-
-	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
-		t.Fatalf("Error blocking on labels updating: %v\n", err)
-	}
-	if err := downres.BlockOnUpdating(uuid, "labels"); err != nil {
-		t.Fatalf("Error blocking on update for labels: %v\n", err)
-	}
-
-	dataservice, err := datastore.GetDataByUUIDName(uuid, "labels")
-	if err != nil {
-		t.Fatalf("couldn't get labels data instance from datastore: %v\n", err)
-	}
-	lbls, ok := dataservice.(*Data)
-	if !ok {
-		t.Fatalf("Returned data instance for 'labels' instance was not labelmap.Data!\n")
-	}
-
-	// Run the Export with a Done channel for clean completion signaling.
-	ctx := datastore.NewVersionedCtx(lbls, v)
-	spec := getExportSpec(t)
-	spec.Done = make(chan struct{})
-	err = lbls.ExportData(ctx, spec)
-	if err != nil {
-		t.Fatalf("Export failed: %v", err)
-	}
-
-	select {
-	case <-spec.Done:
-	case <-time.After(60 * time.Second):
-		t.Fatal("Export did not complete within 60 seconds")
-	}
-
-	arrowFile := path.Join(spec.Directory, "s0", "0_0_0.arrow")
-	csvFile := path.Join(spec.Directory, "s0", "0_0_0.csv")
-	if _, err := os.Stat(arrowFile); err != nil {
-		t.Fatalf("Expected shard arrow file %q not found: %v\n", arrowFile, err)
-	}
-	if _, err := os.Stat(csvFile); err != nil {
-		t.Fatalf("Expected shard csv file %q not found: %v\n", csvFile, err)
-	}
-	dvid.Infof("Found expected shard files %q and %q\n", arrowFile, csvFile)
-}
+// TestShardHandlerWithRealSpecs was removed — it used full mCNS s0-s2 specs
+// (94K×78K×134K volume extents) with a tiny 128^3 test volume, causing ~118K
+// empty shard-epoch iterations that took ~60s without -race and timed out with
+// -race. TestExportShardsIntegration covers the same code paths with properly
+// sized specs (mCNS scales 4-6), deterministic synthetic blocks, and full
+// Arrow + CSV content verification.
 
 func getTestDataInstance(t *testing.T) (*Data, dvid.UUID, dvid.VersionID) {
 	if err := server.OpenTest(); err != nil {

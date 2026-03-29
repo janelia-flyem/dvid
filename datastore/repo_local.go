@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
+	"golang.org/x/sync/errgroup"
 )
 
 // RepoFormatVersion is the current repo metadata format version
@@ -182,13 +184,12 @@ func Initialize(initMetadata bool, iconfig Config) error {
 		}
 	}
 
-	// Allow data instance to initialize after preliminary setup/syncs established.
+	// Validate log stores sequentially (fast, can return errors).
 	dvid.Infof("Initializing data instances: %v\n", m.iids)
 	for _, data := range m.iids {
 		if data.IsDeleted() {
 			continue
 		}
-		dvid.TimeInfof("Initializing data instance %q, type %q\n", data.DataName(), data.TypeName())
 		logwriter, ok := data.(storage.LogWritable)
 		if ok && logwriter.WriteLogRequired() {
 			writeLog := logwriter.GetWriteLog()
@@ -203,11 +204,31 @@ func Initialize(initMetadata bool, iconfig Config) error {
 				return fmt.Errorf("data %q (type %s) requires a read log yet has none assigned", data.DataName(), data.TypeName())
 			}
 		}
-		d, ok := data.(Initializer)
-		if ok {
-			d.Initialize() // Should be done sequentially in case its necessary to start receiving requests.
+	}
+
+	// Run data instance initialization concurrently. Each instance has its own
+	// independent state (VCache, memdbs, etc.) so there is no cross-instance contention.
+	// The HTTP server has not started yet so no requests can arrive during init.
+	var g errgroup.Group
+	g.SetLimit(runtime.NumCPU())
+	for _, data := range m.iids {
+		if data.IsDeleted() {
+			continue
 		}
-		dvid.TimeInfof("Finished initializing data instance %q\n", data.DataName())
+		d, ok := data.(Initializer)
+		if !ok {
+			continue
+		}
+		dvid.TimeInfof("Initializing data instance %q, type %q\n", data.DataName(), data.TypeName())
+		dataName := data.DataName()
+		g.Go(func() error {
+			d.Initialize()
+			dvid.TimeInfof("Finished initializing data instance %q\n", dataName)
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return err
 	}
 
 	return nil

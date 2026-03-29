@@ -147,7 +147,7 @@ func (d *Data) transcodeBlock(b blockData) (out []byte, err error) {
 		if mapping, err = getMapping(d, b.v); err != nil {
 			return
 		}
-		if mapping != nil && mapping.mapUsed {
+		if mapping != nil && mapping.mapUsed.Load() {
 			doMapping = true
 		}
 	}

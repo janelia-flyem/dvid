@@ -32,11 +32,13 @@ const (
 
 var (
 	indexCache   *freecache.Cache
+	indexCacheMu sync.Mutex
 	indexMu      [numIndexShards]sync.RWMutex
 	metaAttempts uint64
 	metaHits     uint64
 
-	mutcache map[dvid.UUID]storage.OrderedKeyValueDB
+	mutcache   map[dvid.UUID]storage.OrderedKeyValueDB
+	mutcacheMu sync.Mutex
 )
 
 // Initialize establishes the in-memory labelmap and other supporting
@@ -45,6 +47,7 @@ var (
 // - mutation cache for label indices if specified in server config.
 func (d *Data) Initialize() {
 	numBytes := server.CacheSize("labelmap")
+	indexCacheMu.Lock()
 	if indexCache == nil {
 		if numBytes > 0 {
 			indexCache = freecache.NewCache(numBytes)
@@ -56,6 +59,7 @@ func (d *Data) Initialize() {
 	} else {
 		indexCache.Clear()
 	}
+	indexCacheMu.Unlock()
 
 	mutcachePath := server.MutcachePath(d.DataName())
 	if mutcachePath != "" {
@@ -71,10 +75,12 @@ func (d *Data) Initialize() {
 			if !ok {
 				dvid.Criticalf("can't get proper ordered keyvalue DB for mutation cache %q for data %q\n", mutcachePath, d.DataName())
 			} else {
+				mutcacheMu.Lock()
 				if mutcache == nil {
 					mutcache = make(map[dvid.UUID]storage.OrderedKeyValueDB)
 				}
 				mutcache[d.DataUUID()] = okvDB
+				mutcacheMu.Unlock()
 			}
 		}
 	}
@@ -1670,7 +1676,7 @@ func (d *Data) writeMappings(w io.Writer, v dvid.VersionID, binaryFormat bool) e
 	if err != nil {
 		return fmt.Errorf("unable to retrieve mappings for data %q, version %d: %v", d.DataName(), v, err)
 	}
-	if !vc.mapUsed {
+	if !vc.mapUsed.Load() {
 		dvid.Infof("no mappings found for data %q\n", d.DataName())
 		return nil
 	}

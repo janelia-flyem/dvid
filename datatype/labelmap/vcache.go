@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/DmitriyVTitov/size"
 	"github.com/janelia-flyem/dvid/datastore"
@@ -14,6 +15,7 @@ import (
 	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
+	"golang.org/x/sync/errgroup"
 	pb "google.golang.org/protobuf/proto"
 )
 
@@ -27,7 +29,7 @@ type VCache struct {
 	// Sharded maps of label mappings.
 	numShards uint64
 	mapShards []*mapShard
-	mapUsed   bool // true if there's at least one mapping
+	mapUsed   atomic.Bool // true if there's at least one mapping
 
 	// Cache of versions with mappings and their distance from root (necessary for quick versioned value retrieval)
 	// Read/used very frequently (same as fm above), written heavily on server startup
@@ -94,13 +96,27 @@ func (vc *VCache) mapLabel(label uint64, mappedVersions distFromRoot) (uint64, b
 
 // set mapping with expectation that SVMap has been locked for write
 func (vc *VCache) setMapping(v dvid.VersionID, from, to uint64) {
-	vc.mapUsed = true
+	vc.mapUsed.Store(true)
 	shard := from % vc.numShards
 	lmap := vc.mapShards[shard]
 
 	lmap.fmMu.Lock()
 	vm := lmap.fm[from]
 	lmap.fm[from] = vm.modify(v, to, true)
+	lmap.fmMu.Unlock()
+}
+
+// setMappingInit is an optimized variant of setMapping for use during initialization.
+// It passes replace=false to modify(), skipping the O(N) excludeVersion() scan.
+// Safe because each version is loaded exactly once during initToVersion().
+func (vc *VCache) setMappingInit(v dvid.VersionID, from, to uint64) {
+	vc.mapUsed.Store(true)
+	shard := from % vc.numShards
+	lmap := vc.mapShards[shard]
+
+	lmap.fmMu.Lock()
+	vm := lmap.fm[from]
+	lmap.fm[from] = vm.modify(v, to, false)
 	lmap.fmMu.Unlock()
 }
 
@@ -174,16 +190,100 @@ func (vc *VCache) getMappedVersionsDist(v dvid.VersionID) distFromRoot {
 	return dist
 }
 
+const numConsumers = 8
+
+// consumerResult holds per-consumer accumulation of splits and message counts.
+type consumerResult struct {
+	splits  []proto.SupervoxelSplitOp
+	numMsgs [5]uint64 // Mapping, Split, SupervoxelSplit, Cleave, Renumber
+}
+
 // goroutine-safe function for initializing the in-memory mapping with a version's mutations log
 // and caching the mapped versions with the distance from the root.
+// Spawns multiple consumer goroutines to parallelize protobuf unmarshal + setMappingInit across shards.
 func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.InstanceName, ch chan storage.LogMessage, wg *sync.WaitGroup) {
+	defer wg.Done()
 	if len(ancestors) == 0 {
 		return
 	}
 	timedLog := dvid.NewTimeLog()
 
 	v := ancestors[0]
-	var splits []proto.SupervoxelSplitOp
+	results := make([]consumerResult, numConsumers)
+
+	var cwg sync.WaitGroup
+	cwg.Add(numConsumers)
+	for i := range numConsumers {
+		go func(idx int) {
+			defer cwg.Done()
+			r := &results[idx]
+			var mappingOp proto.MappingOp // reuse per consumer to reduce allocations
+
+			for msg := range ch {
+				switch msg.EntryType {
+				case proto.MappingOpType:
+					r.numMsgs[0]++
+					mappingOp.Reset()
+					if err := pb.Unmarshal(msg.Data, &mappingOp); err != nil {
+						dvid.Errorf("unable to unmarshal mapping log message for version %d: %v\n", v, err)
+						continue
+					}
+					mapped := mappingOp.GetMapped()
+					for _, supervoxel := range mappingOp.GetOriginal() {
+						vc.setMappingInit(v, supervoxel, mapped)
+					}
+
+				case proto.SplitOpType:
+					r.numMsgs[1]++
+					var op proto.SplitOp
+					if err := pb.Unmarshal(msg.Data, &op); err != nil {
+						dvid.Errorf("unable to unmarshal split log message for version %d: %v\n", v, err)
+						continue
+					}
+					for supervoxel, svsplit := range op.GetSvsplits() {
+						r.splits = append(r.splits, proto.SupervoxelSplitOp{
+							Mutid:       op.Mutid,
+							Supervoxel:  supervoxel,
+							Remainlabel: svsplit.Remainlabel,
+							Splitlabel:  svsplit.Splitlabel,
+						})
+						vc.setMappingInit(v, supervoxel, 0)
+					}
+
+				case proto.SupervoxelSplitType:
+					r.numMsgs[2]++
+					var op proto.SupervoxelSplitOp
+					if err := pb.Unmarshal(msg.Data, &op); err != nil {
+						dvid.Errorf("unable to unmarshal split log message for version %d: %v\n", v, err)
+						continue
+					}
+					r.splits = append(r.splits, proto.SupervoxelSplitOp{
+						Mutid:       op.Mutid,
+						Supervoxel:  op.Supervoxel,
+						Remainlabel: op.Remainlabel,
+						Splitlabel:  op.Splitlabel,
+					})
+					vc.setMappingInit(v, op.Supervoxel, 0)
+
+				case proto.CleaveOpType:
+					r.numMsgs[3]++
+					var op proto.CleaveOp
+					if err := pb.Unmarshal(msg.Data, &op); err != nil {
+						dvid.Errorf("unable to unmarshal cleave log message for version %d: %v\n", v, err)
+						continue
+					}
+					vc.setMappingInit(v, op.Cleavedlabel, 0)
+
+				case proto.RenumberOpType:
+					r.numMsgs[4]++
+				}
+			}
+		}(i)
+	}
+	cwg.Wait()
+
+	// Merge results from all consumers
+	var allSplits []proto.SupervoxelSplitOp
 	numMsgs := map[string]uint64{
 		"Mapping":         0,
 		"Split":           0,
@@ -191,86 +291,20 @@ func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.I
 		"Cleave":          0,
 		"Renumber":        0,
 	}
-
-	for msg := range ch { // expects channel to be closed on completion
-		switch msg.EntryType {
-		case proto.MappingOpType:
-			numMsgs["Mapping"]++
-			var op proto.MappingOp
-			if err := pb.Unmarshal(msg.Data, &op); err != nil {
-				dvid.Errorf("unable to unmarshal mapping log message for version %d: %v\n", v, err)
-				continue
-			}
-			mapped := op.GetMapped()
-			for _, supervoxel := range op.GetOriginal() {
-				vc.setMapping(v, supervoxel, mapped)
-			}
-
-		case proto.SplitOpType:
-			numMsgs["Split"]++
-			var op proto.SplitOp
-			if err := pb.Unmarshal(msg.Data, &op); err != nil {
-				dvid.Errorf("unable to unmarshal split log message for version %d: %v\n", v, err)
-				continue
-			}
-			for supervoxel, svsplit := range op.GetSvsplits() {
-				rec := proto.SupervoxelSplitOp{
-					Mutid:       op.Mutid,
-					Supervoxel:  supervoxel,
-					Remainlabel: svsplit.Remainlabel,
-					Splitlabel:  svsplit.Splitlabel,
-				}
-				splits = append(splits, rec)
-				vc.setMapping(v, supervoxel, 0)
-			}
-
-		case proto.SupervoxelSplitType:
-			numMsgs["SupervoxelSplit"]++
-			var op proto.SupervoxelSplitOp
-			if err := pb.Unmarshal(msg.Data, &op); err != nil {
-				dvid.Errorf("unable to unmarshal split log message for version %d: %v\n", v, err)
-				continue
-			}
-			rec := proto.SupervoxelSplitOp{
-				Mutid:       op.Mutid,
-				Supervoxel:  op.Supervoxel,
-				Remainlabel: op.Remainlabel,
-				Splitlabel:  op.Splitlabel,
-			}
-			splits = append(splits, rec)
-			vc.setMapping(v, op.Supervoxel, 0)
-
-		case proto.CleaveOpType:
-			numMsgs["Cleave"]++
-			var op proto.CleaveOp
-			if err := pb.Unmarshal(msg.Data, &op); err != nil {
-				dvid.Errorf("unable to unmarshal cleave log message for version %d: %v\n", v, err)
-				continue
-			}
-			vc.setMapping(v, op.Cleavedlabel, 0)
-
-		case proto.RenumberOpType:
-			numMsgs["Renumber"]++
-			var op proto.RenumberOp
-			if err := pb.Unmarshal(msg.Data, &op); err != nil {
-				dvid.Errorf("unable to unmarshal renumber log message for version %d: %v\n", v, err)
-				continue
-			}
-			// The newLabel -> 0 mapping (when needed) is now logged as a MappingOp
-			// by addRenumberToMapping, so it replays through the MappingOp handler.
-			// For old logs (before this fix), newLabel was always a brand-new unique
-			// label, so omitting the Z -> 0 is harmless — no supervoxel Z exists.
-
-		default:
+	msgKeys := [5]string{"Mapping", "Split", "SupervoxelSplit", "Cleave", "Renumber"}
+	for i := range numConsumers {
+		r := &results[i]
+		allSplits = append(allSplits, r.splits...)
+		for j, key := range msgKeys {
+			numMsgs[key] += r.numMsgs[j]
 		}
 	}
 
 	vc.splitsMu.Lock()
-	vc.splits[v] = splits
+	vc.splits[v] = allSplits
 	vc.splitsMu.Unlock()
-	timedLog.Infof("Loaded mappings for data %q, version %d", dataname, v)
+	timedLog.Infof("Loaded mappings for data %q, version %d (%d consumers)", dataname, v, numConsumers)
 	dvid.Infof("Mutations for version %d for data %q: %v\n", v, dataname, numMsgs)
-	wg.Done()
 }
 
 // makes sure that current map has been initialized with all forward mappings up to
@@ -285,28 +319,46 @@ func (vc *VCache) initToVersion(d dvid.Data, v dvid.VersionID, loadMutations boo
 	if err != nil {
 		return err
 	}
+
+	// Phase 1: Determine which versions need loading and pre-populate mappedVersions.
+	type versionToLoad struct {
+		pos      int
+		ancestor dvid.VersionID
+	}
+	var toLoad []versionToLoad
+
+	vc.mappedVersionsMu.Lock()
 	for pos, ancestor := range ancestors {
-		vc.mappedVersionsMu.Lock()
 		if _, found := vc.mappedVersions[ancestor]; found {
-			vc.mappedVersionsMu.Unlock()
-			return nil // we have already loaded this version and its ancestors
+			break // this version and all its ancestors are already loaded
 		}
 		vc.mappedVersions[ancestor] = getDistFromRoot(ancestors[pos:])
-		vc.mappedVersionsMu.Unlock()
+		toLoad = append(toLoad, versionToLoad{pos, ancestor})
+	}
+	vc.mappedVersionsMu.Unlock()
 
-		if loadMutations {
+	if len(toLoad) == 0 || !loadMutations {
+		return nil
+	}
+
+	// Phase 2: Load mutation logs concurrently, bounded by 8 goroutines.
+	var g errgroup.Group
+	g.SetLimit(numConsumers)
+	for _, vl := range toLoad {
+		g.Go(func() error {
 			ch := make(chan storage.LogMessage, 1000)
 			wg := new(sync.WaitGroup)
 			wg.Add(1)
-			go vc.loadVersionMapping(ancestors[pos:], d.DataName(), ch, wg)
+			go vc.loadVersionMapping(ancestors[vl.pos:], d.DataName(), ch, wg)
 
-			if err = labels.StreamLog(d, ancestor, ch); err != nil {
-				return fmt.Errorf("problem loading mapping logs for data %q, version %d: %v", d.DataName(), ancestor, err)
+			if err := labels.StreamLog(d, vl.ancestor, ch); err != nil {
+				return fmt.Errorf("problem loading mapping logs for data %q, version %d: %v", d.DataName(), vl.ancestor, err)
 			}
 			wg.Wait()
-		}
+			return nil
+		})
 	}
-	return nil
+	return g.Wait()
 }
 
 // SupervoxelSplitsJSON returns a JSON string giving all the supervoxel splits from
@@ -359,7 +411,7 @@ func (vc *VCache) MappedLabels(v dvid.VersionID, supervoxels []uint64) (mapped [
 	mapped = make([]uint64, len(supervoxels))
 	copy(mapped, supervoxels)
 
-	if vc == nil || !vc.mapUsed {
+	if vc == nil || !vc.mapUsed.Load() {
 		return
 	}
 	dist := vc.getMappedVersionsDist(v)
@@ -404,6 +456,15 @@ func createEncodedMapping(v dvid.VersionID, label uint64) []byte {
 	n := binary.PutUvarint(buf, uint64(v))
 	n += binary.PutUvarint(buf[n:], label)
 	return buf[:n]
+}
+
+// appendMapping appends a (version, label) encoding directly onto a vmap,
+// avoiding the heap allocation that createEncodedMapping makes on every call.
+func (vm vmap) appendMapping(v dvid.VersionID, label uint64) vmap {
+	var buf [binary.MaxVarintLen32 + binary.MaxVarintLen64]byte
+	n := binary.PutUvarint(buf[:], uint64(v))
+	n += binary.PutUvarint(buf[n:], label)
+	return append(vm, buf[:n]...)
 }
 
 func readEncodedMapping(buf []byte) (v dvid.VersionID, label uint64, nbytes int) {
@@ -489,13 +550,12 @@ func (vm vmap) excludeVersion(v dvid.VersionID) (out vmap) {
 // to false.
 func (vm vmap) modify(v dvid.VersionID, label uint64, replace bool) (out vmap) {
 	if len(vm) == 0 {
-		out = createEncodedMapping(v, label)
-		return
+		return createEncodedMapping(v, label)
 	}
 	if replace {
 		out = vm.excludeVersion(v)
 	} else {
 		out = vm
 	}
-	return append(out, createEncodedMapping(v, label)...)
+	return out.appendMapping(v, label)
 }

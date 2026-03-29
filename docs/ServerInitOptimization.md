@@ -2,12 +2,53 @@
 
 ## Problem
 
-DVID server startup takes ~30 minutes. Nearly all of this time is spent in the
-sequential `Initializer.Initialize()` loop in `datastore/repo_local.go:185-211`,
-which initializes each data instance one at a time. The dominant cost is labelmap's
-`VCache.initToVersion()`, which walks the entire version DAG (leaf → root), reading
-mutation log files from disk for each version and building the in-memory
-supervoxel-to-label mapping cache.
+DVID server startup takes ~18 minutes. Nearly all of this time is spent in
+`labelmap.Initialize()` → `VCache.initToVersion()`, which walks the version DAG
+(leaf → root), reading mutation log files from disk for each version and building
+the in-memory supervoxel-to-label mapping cache.
+
+### Real Performance Data (mCNS dataset)
+
+| Version | Mutations | Time | Notes |
+|---------|-----------|------|-------|
+| v2 | 68M Mapping | **6m00s** | Bulk initial mapping |
+| v5 | 501K Mapping | **2m20s** | Many supervoxels per MappingOp message |
+| v6 | 28K Map + 27K Cleave + 634 SVSplit | 14s | |
+| v22 | 2.7K Cleave + 23K Map + 322 SVSplit | 1.9s | |
+| All others combined | various | ~10 min | |
+
+The v5 count (501K) is *messages*, not supervoxels — each `MappingOp` has a
+`repeated uint64 original` field. The v5 log file is 1.4 GB, so each message
+averages ~2.8 KB → roughly 300-400 supervoxels per message → **~150-175M
+actual `setMapping()` calls**, more than version 2's 68M messages.
+
+### Mutation Log File Sizes (mCNS `segmentation` instance)
+
+All files are on Optane storage (`/optane/dbs/cns3/mutlogs/`). Total ~6 GB.
+Optane reads at near-memory speeds — the entire dataset loads from disk in
+2-3 seconds. **The full 18 minutes of startup time is CPU-bound processing,
+not I/O.**
+
+| File size | Version | Processing time |
+|-----------|---------|----------------|
+| 2.6 GB | v2 | 6m00s |
+| 1.4 GB | v5 | 2m20s |
+| 671 MB | ? | ~1-2 min |
+| 185 MB | ? | ~30s |
+| 165 MB | ? | ~30s |
+| 152 MB | ? | ~20s |
+| 138 MB | ? | ~20s |
+| ~80 files < 50 MB | various | seconds each |
+
+### Three Structural Problems
+
+1. **Single consumer goroutine per version** — for version 2's 68M messages,
+   one goroutine does all protobuf unmarshal + `setMapping()` work sequentially.
+   The 2.6 GB log file reads from Optane in ~1 second; the 6 minutes is entirely
+   single-threaded CPU processing.
+2. **Versions loaded sequentially** — version 2's 6 min blocks everything else
+3. **`replace=true` in `setMapping` during init** — every call does an O(N)
+   `excludeVersion()` scan that is unnecessary during initialization
 
 ## Current Startup Flow
 
@@ -40,295 +81,320 @@ main() → DoServe() → LoadConfig → Initialize → InitBackend
   - A goroutine consumes the channel: protobuf unmarshal → `setMapping()`
   - Waits for goroutine to finish before moving to next version
 
-**neuronjson `Initialize()`** (`datatype/neuronjson/neuronjson.go:1001-1068`):
-- Loads JSON schemas (fast)
-- Calls `initMemoryDB()` → `loadMemDB()` which does `ProcessRange` over all
-  annotation keys, JSON-unmarshaling each one into memory
+### Sequential Comment Is Only Relevant During Startup
 
-### Why It's Slow
+The comment "Should be done sequentially in case its necessary to start receiving
+requests" (`repo_local.go:208`) is moot because:
 
-1. **Sequential across instances**: If there are 3 labelmap instances each taking
-   10 min, total is 30 min instead of 10 min.
-2. **Sequential across versions within one instance**: Each version's mutation log
-   is read and processed before the next version starts.
-3. **`io.ReadAll()` per version**: Reads entire file before parsing begins.
+- `Initializer.Initialize()` is called ONLY at `datastore/repo_local.go:208`
+  during the startup loop
+- When a labelmap is created at runtime via the API, only
+  `DataInitializer.InitDataHandlers()` is called (`repo_local.go:2158`), which
+  starts sync goroutines but does NOT load mapping history
+- The HTTP server starts at `server.Serve()` AFTER `datastore.Initialize()`
+  returns
+
+---
 
 ## Proposed Optimizations
 
-### Tier 1: Parallelize Across Data Instances
+### 1. Multiple Consumer Goroutines Per Version  (HIGHEST impact)
 
-**Impact: HIGH | Risk: LOW | Effort: ~1 day**
+**File:** `datatype/labelmap/vcache.go:179-274, 280-310`
 
-Change the sequential initialization loop to run all `Initializer.Initialize()`
-calls concurrently, bounded by a semaphore.
+The single biggest bottleneck: each version's mutation log is processed by ONE
+goroutine doing protobuf unmarshal + `setMapping()` sequentially. Version 2's
+2.6 GB log file reads from SSD in ~2-5 seconds, but single-threaded processing
+of 68M messages takes ~350 seconds. The I/O is not the bottleneck — the CPU
+work is.
+
+Currently `loadVersionMapping` is the sole consumer of the channel:
+```
+StreamAll → ch (buffer 1000) → 1 goroutine: unmarshal + setMapping
+```
+
+Change to N consumer goroutines:
+```
+StreamAll → ch (buffer 1000) → N goroutines: each does unmarshal + setMapping
+```
+
+**Why this is safe:**
+- `setMapping()` already uses per-shard locks (`fmMu`) on 100 independent shards,
+  so N consumers writing to different shards don't contend
+- For versions with only Mapping ops (v2: 68M Mapping, 0 Cleave, 0 Split), each
+  supervoxel appears at most once, so there is no ordering concern
+- For versions with mixed ops (Mapping + Cleave on the same supervoxel within one
+  version), ordering matters — but these versions are already fast (seconds). We
+  can either: (a) use multiple consumers only for Mapping-only versions, or
+  (b) always use multiple consumers and accept that with `replace=false`, the
+  `decodeMappings()` map-overwrite behavior means whichever consumer writes last
+  "wins" for a given supervoxel. Since mutations within a version are logically
+  unordered (they're all applied at the same version), this is acceptable.
+
+**Implementation:** Refactor `loadVersionMapping` to spawn N workers:
+
+```go
+func (vc *VCache) loadVersionMapping(ancestors []dvid.VersionID, dataname dvid.InstanceName, ch chan storage.LogMessage, wg *sync.WaitGroup) {
+    v := ancestors[0]
+    numConsumers := 8
+
+    // Per-consumer state for splits (merged after)
+    type consumerResult struct {
+        splits  []proto.SupervoxelSplitOp
+        numMsgs map[string]uint64
+    }
+    results := make([]consumerResult, numConsumers)
+
+    var cwg sync.WaitGroup
+    cwg.Add(numConsumers)
+    for i := 0; i < numConsumers; i++ {
+        go func(idx int) {
+            defer cwg.Done()
+            r := &results[idx]
+            r.numMsgs = map[string]uint64{...}
+            var op proto.MappingOp  // reuse per consumer
+            for msg := range ch {
+                switch msg.EntryType {
+                case proto.MappingOpType:
+                    r.numMsgs["Mapping"]++
+                    op.Reset()
+                    pb.Unmarshal(msg.Data, &op)
+                    for _, sv := range op.GetOriginal() {
+                        vc.setMappingInit(v, sv, op.GetMapped())
+                    }
+                // ... other types ...
+                }
+            }
+        }(i)
+    }
+    cwg.Wait()
+
+    // Merge results
+    // ... aggregate splits and numMsgs across consumers ...
+    wg.Done()
+}
+```
+
+Multiple consumers reading from the same channel is safe in Go — each message
+goes to exactly one consumer.
+
+**Expected speedup:** With 8 consumers, version 2 could drop from ~6 min to
+under 1 min, and version 5 (~175M setMapping calls) similarly. This directly
+attacks the dominant bottleneck rather than working around it.
+
+### 2. Parallel Version Loading Within initToVersion  (HIGH impact)
+
+**File:** `datatype/labelmap/vcache.go:280-310`
+
+Currently loads versions one-at-a-time from leaf to root. Since version 2 alone
+takes 6 minutes, parallel loading would reduce total time from ~18 min to ~6 min
+(bounded by the slowest version). Combined with #1 (multiple consumers, which reduces version 2 itself), this
+overlaps the remaining versions with each other and with neuronjson init (~2 min).
+
+**Why this is safe:**
+- `setMapping()` uses per-shard locks (`fmMu`) on 100 independent shards —
+  concurrent writes from different versions serialize at the shard level
+- `splits` writes are per-version keyed and protected by `splitsMu`
+- Different versions read different log files (keyed by `dataID-versionUUID`)
+- `mappedVersions` can be pre-populated before parallel loading begins
+- `vc.mu` (the outer lock) prevents other code paths from calling
+  `initToVersion` concurrently for the same VCache — during startup only one
+  call occurs per VCache, and the lock does NOT block `setMapping()` or
+  `mapLabel()` (read path) which use only shard-level locks
+
+**Implementation:**
+
+Refactor `initToVersion` into two phases:
+
+```go
+// Phase 1: Determine which versions need loading, pre-populate mappedVersions
+var toLoad []int
+for pos, ancestor := range ancestors {
+    if _, found := vc.mappedVersions[ancestor]; found {
+        break
+    }
+    toLoad = append(toLoad, pos)
+}
+// pre-populate mappedVersions for all toLoad entries
+
+// Phase 2: Load mutation logs concurrently (bounded by 8 goroutines)
+var g errgroup.Group
+g.SetLimit(8)
+for _, pos := range toLoad {
+    g.Go(func() error { ... StreamLog + loadVersionMapping ... })
+}
+return g.Wait()
+```
+
+**Expected speedup:** ~3× (18 min → ~6 min, bounded by version 2)
+
+### 3. Use `replace=false` During Initialization  (HIGH impact)
+
+**File:** `datatype/labelmap/vcache.go`, `loadVersionMapping()` line 206
+
+The `modify()` function's own comment (line 488-489) says: *"If it is known that
+the mappings don't include a version, like when ingesting during initialization,
+then replace should be set to false."*
+
+During `initToVersion`, each version is loaded exactly once (verified via
+`mappedVersions` check). So `excludeVersion(v)` is called 68M+ times for
+version 2 but will NEVER find a match for that version — pure waste.
+
+**Correctness with duplicate supervoxels within a version:** If a supervoxel gets
+both a MappingOp and a CleaveOp in the same version, both entries are appended
+to the vmap with `replace=false`. When `decodeMappings()` is called later to
+read the mapping, it returns `map[VersionID]uint64` — the map overwrites earlier
+entries, so the LAST entry for a given version wins. Since the channel streams in
+log-file order (append-only), this preserves the correct "last mutation wins"
+semantic.
+
+**Implementation:** Add `setMappingInit` variant that passes `replace=false`:
+
+```go
+func (vc *VCache) setMappingInit(v dvid.VersionID, from, to uint64) {
+    vc.mapUsed = true
+    shard := from % vc.numShards
+    lmap := vc.mapShards[shard]
+    lmap.fmMu.Lock()
+    vm := lmap.fm[from]
+    lmap.fm[from] = vm.modify(v, to, false)
+    lmap.fmMu.Unlock()
+}
+```
+
+**Expected speedup:** Eliminates O(N) `excludeVersion` scan per `setMapping`
+call where N = existing version entries per supervoxel. Most impactful for
+versions loaded late in the leaf→root traversal (v2 has ~26 prior version
+entries per supervoxel to scan through). Combined with parallel loading (#1),
+this also reduces shard lock hold time, improving throughput for #1 and #2.
+
+### 4. Parallelize Across Data Instances  (MEDIUM impact)
+
+**File:** `datastore/repo_local.go:185-211`
+
+Change the sequential `Initialize()` loop to run concurrently with
+`errgroup.Group`, bounded by `runtime.NumCPU()`.
 
 **Why this is safe:**
 - Each labelmap instance has its own `VCache` keyed by `DataUUID` in the global
-  `iMap` (which already uses its own mutex).
-- Each neuronjson instance has its own `memdbs`.
-- Different instances read different mutation log files and different KV ranges.
-- No shared mutable state between different instances' `Initialize()` calls.
-- The comment "Should be done sequentially in case its necessary to start receiving
-  requests" (line 208) is moot because the HTTP server hasn't started yet at this
-  point — `server.Serve()` is called after `datastore.Initialize()` returns.
+  `iMap` (which already uses its own mutex)
+- Each neuronjson instance has its own `memdbs`
+- Different instances read different mutation log files and different KV ranges
+- No shared mutable state between different instances' `Initialize()` calls
 
-**File: `datastore/repo_local.go:185-211`**
+**Race-safety fixes required:**
 
-Split the loop into two phases:
+1. **labelmap `indexCache`** (`labelidx.go:33-58`): Package-level freecache
+   initialized without synchronization. Add a `sync.Once`.
 
+2. **labelmap `mutcache`** (`labelidx.go:60-79`): Map initialization and writes
+   need a mutex.
+
+3. **labelarray `indexCache`** (`labelidx.go:27-49`): Same pattern as labelmap.
+
+**Expected speedup:** For mCNS with one dominant instance, modest (~1.5×). More
+impactful for deployments with multiple heavy instances.
+
+### 5. Reduce Allocations in the Hot Path  (LOW-MEDIUM impact)
+
+**File:** `datatype/labelmap/vcache.go`
+
+**a. Reuse protobuf struct in `loadVersionMapping`:**
 ```go
-// Phase 1: Validate log stores (fast, keep sequential)
-for _, data := range m.iids {
-    if data.IsDeleted() { continue }
-    // ... existing WriteLog/ReadLog validation (lines 192-205) ...
-}
+var op proto.MappingOp
+for msg := range ch {
+    case proto.MappingOpType:
+        op.Reset()  // reuse instead of allocating new struct each iteration
+        if err := pb.Unmarshal(msg.Data, &op); err != nil { ... }
+```
 
-// Phase 2: Initialize data instances concurrently
-dvid.Infof("Initializing data instances concurrently...\n")
-var g errgroup.Group
-g.SetLimit(runtime.NumCPU())
-for _, data := range m.iids {
-    if data.IsDeleted() { continue }
-    d, ok := data.(Initializer)
-    if !ok { continue }
-    dataName := data.DataName()
-    typeName := data.TypeName()
-    g.Go(func() error {
-        dvid.TimeInfof("Initializing data instance %q, type %q\n", dataName, typeName)
-        d.Initialize()
-        dvid.TimeInfof("Finished initializing data instance %q\n", dataName)
-        return nil
-    })
-}
-if err := g.Wait(); err != nil {
-    return err
+**b. Stack-allocate vmap encoding** via `appendMapping` method:
+```go
+func (vm vmap) appendMapping(v dvid.VersionID, label uint64) vmap {
+    var buf [binary.MaxVarintLen32 + binary.MaxVarintLen64]byte
+    n := binary.PutUvarint(buf[:], uint64(v))
+    n += binary.PutUvarint(buf[n:], label)
+    return append(vm, buf[:n]...)
 }
 ```
 
-**Required race-safety fixes:**
+This replaces `createEncodedMapping()` which heap-allocates via `make()` on
+every call (68M+ times for version 2).
 
-1. **labelmap `indexCache`** (`datatype/labelmap/labelidx.go:33-58`):
-   The package-level `indexCache` is nil-checked and initialized without
-   synchronization. Add a `sync.Once`:
-   ```go
-   var indexCacheOnce sync.Once
-   // In Initialize():
-   indexCacheOnce.Do(func() {
-       numBytes := server.CacheSize("labelmap")
-       if numBytes > 0 {
-           indexCache = freecache.NewCache(numBytes)
-           dvid.Infof("Created freecache of ~ %d MB for labelmap instances.\n", numBytes>>20)
-       }
-   })
-   ```
+### 6. Stream File Reads Instead of `io.ReadAll()`  (DEFERRED — likely unnecessary)
 
-2. **labelmap `mutcache`** (`datatype/labelmap/labelidx.go:60-79`):
-   Add a mutex around the `mutcache` map initialization and writes:
-   ```go
-   var mutcacheMu sync.Mutex
-   // In Initialize():
-   mutcacheMu.Lock()
-   if mutcache == nil {
-       mutcache = make(map[dvid.UUID]storage.OrderedKeyValueDB)
-   }
-   mutcache[d.DataUUID()] = okvDB
-   mutcacheMu.Unlock()
-   ```
+**File:** `storage/filelog/filelog.go:287-349`
 
-3. **labelarray `indexCache`** (`datatype/labelarray/labelidx.go:36-49`):
-   Same pattern as labelmap — add `sync.Once`.
+Replace the `io.ReadAll()` in `StreamAll()` with buffered streaming reads so the
+consumer goroutine can start processing entries before the file is fully read.
 
-**Dependency:** `golang.org/x/sync/errgroup` — already an indirect dependency
-in `go.mod` (v0.20.0), just needs direct import.
+**Why this is low priority:** On Optane, `io.ReadAll` of the entire 6 GB dataset
+takes ~2-3 seconds total. With 8 concurrent version loads, the worst-case peak
+memory from file buffers is the 8 largest files simultaneously:
+2.6G + 1.4G + 671M + 185M + 165M + 152M + 138M + 49M ≈ 5.4 GB. Plus VCache
+map growth. On a server handling teravoxel datasets, this is almost certainly
+fine. The trade-off (per-entry allocation vs zero-copy slicing) may actually be
+net negative for performance.
 
-**Expected speedup:** If N independent instances take roughly equal time,
-startup drops from `sum(times)` to `max(times)` — roughly N× improvement
-(bounded by CPU count and I/O bandwidth). For a typical deployment with
-3-5 heavy instances, ~3-5× speedup.
-
----
-
-### Tier 2: Parallelize Version Loading Within One VCache
-
-**Impact: MEDIUM-HIGH | Risk: MODERATE | Effort: ~1-2 days**
-
-Within `initToVersion()`, load mutation logs for multiple ancestor versions
-concurrently instead of one at a time.
-
-**Why this is safe:**
-- `setMapping(v, from, to)` uses shard-level locks (`lmap.fmMu.Lock()`) on
-  100 independent shards. Two goroutines writing different versions for the
-  same supervoxel are serialized at the shard lock. The `modify(v, to, true)`
-  call replaces the entry for a specific version within the locked section,
-  so byte-slice operations are atomic with respect to each other.
-- `splits` map writes are per-version keyed and protected by `splitsMu`.
-- `mappedVersions` can be pre-populated before parallel loading begins.
-- Different versions have different log files (`dataID-versionUUID`), so
-  file I/O doesn't contend.
-
-**File: `datatype/labelmap/vcache.go:280-310`**
-
-Refactor `initToVersion()`:
-
-```go
-func (vc *VCache) initToVersion(d dvid.Data, v dvid.VersionID, loadMutations bool) error {
-    vc.mu.Lock()
-    defer vc.mu.Unlock()
-
-    ancestors, err := datastore.GetAncestry(v)
-    if err != nil { return err }
-
-    // Phase 1: Determine which versions need loading
-    var toLoad []int
-    for pos, ancestor := range ancestors {
-        vc.mappedVersionsMu.RLock()
-        _, found := vc.mappedVersions[ancestor]
-        vc.mappedVersionsMu.RUnlock()
-        if found {
-            break // this and all deeper ancestors already loaded
-        }
-        toLoad = append(toLoad, pos)
-    }
-    if len(toLoad) == 0 { return nil }
-
-    // Phase 2: Pre-populate mappedVersions (fast, no I/O)
-    for _, pos := range toLoad {
-        vc.mappedVersionsMu.Lock()
-        vc.mappedVersions[ancestors[pos]] = getDistFromRoot(ancestors[pos:])
-        vc.mappedVersionsMu.Unlock()
-    }
-
-    if !loadMutations { return nil }
-
-    // Phase 3: Load mutation logs concurrently
-    var g errgroup.Group
-    g.SetLimit(8) // limit concurrent file reads per instance
-    for _, pos := range toLoad {
-        ancestor := ancestors[pos]
-        ancestorSlice := ancestors[pos:]
-        g.Go(func() error {
-            ch := make(chan storage.LogMessage, 1000)
-            wg := new(sync.WaitGroup)
-            wg.Add(1)
-            go vc.loadVersionMapping(ancestorSlice, d.DataName(), ch, wg)
-            if err := labels.StreamLog(d, ancestor, ch); err != nil {
-                return fmt.Errorf("loading mapping logs for %q, version %d: %v",
-                    d.DataName(), ancestor, err)
-            }
-            wg.Wait()
-            return nil
-        })
-    }
-    return g.Wait()
-}
+To verify after implementing #2, watch RSS during startup:
+```bash
+# In one terminal, start DVID, note its PID
+# In another terminal:
+while kill -0 $PID 2>/dev/null; do
+    grep VmRSS /proc/$PID/status
+    sleep 5
+done
 ```
-
-**Note on `vc.mu.Lock()`**: This outer lock prevents other code paths from
-calling `initToVersion` concurrently for the same VCache. During startup,
-only one call occurs per VCache. The lock does NOT block `setMapping()` or
-`mapLabel()` (read path) because those use only shard-level locks and
-`mappedVersionsMu`, not `vc.mu`. So holding `vc.mu` during parallel loading
-does not create a deadlock or bottleneck.
-
-**Concurrency limit**: 8 concurrent file reads per instance is a reasonable
-starting point. On SSD-backed storage this should be fine; on HDD it may need
-to be reduced. Could be made configurable via TOML.
-
-**Expected speedup:** If an instance has 100 ancestor versions, loading 8 at a
-time instead of 1 gives roughly 4-6× speedup per instance (less than 8× due
-to I/O bandwidth sharing). Combined with Tier 1, total startup could drop
-from ~30 min to ~2-4 min.
+Only implement streaming reads if peak RSS is problematic.
 
 ---
 
-### Tier 3: Stream File Reads Instead of `io.ReadAll()`
+## Expected Combined Outcome
 
-**Impact: LOW-MEDIUM | Risk: LOW | Effort: ~0.5 day**
+With #1 (multi-consumer) giving ~8× on per-version CPU time, #2 (parallel
+versions) overlapping them, and #4 (parallel instances) overlapping labelmap
+with neuronjson (~2 min):
 
-Replace the `io.ReadAll()` in `StreamAll()` with buffered streaming reads
-so the consumer goroutine can start processing entries before the file is
-fully read.
-
-**File: `storage/filelog/filelog.go:287-349`**
-
-Replace lines 312-334 (the `io.ReadAll` + parse loop) with:
-
-```go
-reader := bufio.NewReaderSize(f, 256*1024) // 256KB read buffer
-header := make([]byte, 6)
-for {
-    _, err := io.ReadFull(reader, header)
-    if err == io.EOF { break }
-    if err != nil { return err }
-    entryType := binary.LittleEndian.Uint16(header[:2])
-    sz := binary.LittleEndian.Uint32(header[2:6])
-    databuf := make([]byte, sz)
-    if _, err := io.ReadFull(reader, databuf); err != nil { return err }
-    ch <- storage.LogMessage{EntryType: entryType, Data: databuf}
-}
-```
-
-**Trade-off:** The current code slices one big `[]byte` (zero-copy per entry);
-the streaming approach allocates a new `[]byte` per entry. For very large files
-with many small entries, this could increase GC pressure. Profile before
-committing. The main benefit is reducing time-to-first-entry and peak memory
-per file read, which matters most when multiple versions are loaded concurrently
-(Tier 2).
-
----
-
-## Risk Analysis
-
-### Memory Pressure
-With Tier 1 + Tier 2, multiple instances loading multiple versions
-simultaneously will have more data in flight. The semaphores (NumCPU for
-instances, 8 for versions) bound this. Worst case: `NumCPU × 8` mutation
-log files in memory simultaneously. Monitor RSS during startup and adjust
-limits if needed.
-
-### Disk I/O
-On SSDs (typical for DVID), concurrent reads to different files are efficient.
-On HDDs, random seeks from concurrent reads could actually be slower. The
-concurrency limits provide a dial to tune this.
-
-### Correctness
-The `setMapping` shard-lock design already supports concurrent writes from
-different goroutines. The key invariant — every ancestor version's mutations
-are loaded before the VCache is used for queries — is maintained because
-`initToVersion` holds `vc.mu.Lock()` for its entire duration and queries go
-through `getMapping()` which calls `initToVersion` if the version isn't
-loaded.
-
-### Badger Mutation Cache
-The `mutcache` setup (labelmap `Initialize()` lines 63-79) opens Badger
-databases. Each instance opens a different path, so concurrent opens are fine.
-Only the `mutcache` map write needs a mutex.
+| Stage | Current | After #1-#4 |
+|-------|---------|-------------|
+| Slowest version (v2 or v5) | 6m00s | ~45s-1m |
+| All other versions | +12 min (sequential) | overlapped with above |
+| neuronjson (~2 min) | +2 min (sequential) | overlapped with above |
+| **Total** | **~18 min** | **~2 min** |
 
 ## Implementation Order
 
-1. **Tier 1 first** — highest impact-to-risk ratio. Test with `go test -race`.
-2. **Tier 2 second** — requires more careful testing. Verify mapping correctness
-   by comparing `/api/node/{uuid}/{instance}/mappings` output before and after.
-3. **Tier 3 last** — profile to confirm benefit before committing.
-
-## Verification
-
-1. **Race detector**: `go test -race -tags "badger filestore ngprecomputed" ./...`
-2. **Correctness**: Start server, hit `/api/node/:master/{labelmap}/mappings`
-   endpoint for each labelmap instance. Compare output to a baseline from the
-   sequential implementation (binary diff or hash).
-3. **Timing**: Compare `TimeInfof` log timestamps for "Initializing data instance"
-   / "Finished initializing" before and after. The instances should overlap in
-   time after Tier 1.
-4. **Memory**: Monitor RSS during startup with concurrent loading to ensure it
-   stays within acceptable bounds.
+1. **#3 (replace=false)** — Simplest, zero structural risk, immediately measurable
+2. **#1 (multiple consumers)** — Directly attacks the 6-min version 2 bottleneck
+3. **#2 (parallel versions)** — Overlaps remaining versions with each other
+4. **#4 (parallel instances)** — Overlaps labelmap with neuronjson (~2 min each)
+5. **#5 (reduce allocations)** — Profile-guided, do after #1-4
+6. **#6 (streaming reads)** — Deferred; likely unnecessary given Optane speeds
 
 ## Key Files
 
-| File | What to Change |
-|------|----------------|
-| `datastore/repo_local.go:185-211` | Tier 1: parallelize Initialize() loop |
-| `datatype/labelmap/labelidx.go:33-98` | Tier 1: sync.Once for indexCache, mutex for mutcache |
-| `datatype/labelarray/labelidx.go:27-49` | Tier 1: sync.Once for indexCache |
-| `datatype/labelmap/vcache.go:280-310` | Tier 2: parallel version loading in initToVersion() |
-| `storage/filelog/filelog.go:287-349` | Tier 3: streaming file reads in StreamAll() |
+| File | Changes |
+|------|---------|
+| `datatype/labelmap/vcache.go:96-105, 179-310` | #1 multi-consumer, #2 parallel versions, #3 replace=false, #5 alloc reduction |
+| `datastore/repo_local.go:185-211` | #4 parallelize Initialize() loop |
+| `datatype/labelmap/labelidx.go:33-98` | #4 sync.Once + mutex |
+| `datatype/labelarray/labelidx.go:27-49` | #4 sync.Once for indexCache |
+| `storage/filelog/filelog.go:287-349` | #6 streaming file reads |
+
+## Verification
+
+1. `make test` — all existing tests pass
+2. `go test -race -tags "badger filestore ngprecomputed" ./datatype/labelmap/...`
+   — race detector clean
+3. Start server, compare `/api/node/:master/segmentation/mappings` output against
+   the baseline captured in `test_data/mappings-d79556` (the actual output from
+   the HEAD version d79556 on the mCNS master branch, produced by the current
+   sequential code)
+4. Compare startup timing logs — instances should overlap (#4), versions should
+   overlap (#2), per-version time should drop (#1)
+5. Monitor RSS during startup to check memory pressure from concurrent loading
+
+## Library Note
+
+`golang.org/x/sync/errgroup` is already an indirect dependency in `go.mod`
+(v0.20.0). Changes #1 and #3 need a direct import.

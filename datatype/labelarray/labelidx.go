@@ -26,6 +26,7 @@ const (
 
 var (
 	indexCache   *freecache.Cache
+	indexCacheMu sync.Mutex
 	indexMu      [numIndexShards]sync.RWMutex
 	metaAttempts uint64
 	metaHits     uint64
@@ -35,6 +36,7 @@ var (
 // in the server configuration.
 func (d *Data) Initialize() {
 	numBytes := server.CacheSize("labelarray")
+	indexCacheMu.Lock()
 	if indexCache == nil {
 		if numBytes > 0 {
 			indexCache = freecache.NewCache(numBytes)
@@ -46,6 +48,7 @@ func (d *Data) Initialize() {
 	} else {
 		indexCache.Clear()
 	}
+	indexCacheMu.Unlock()
 }
 
 // indexKey is a three tuple (instance id, version, label)
