@@ -185,7 +185,13 @@ func Initialize(initMetadata bool, iconfig Config) error {
 	}
 
 	// Validate log stores sequentially (fast, can return errors).
-	dvid.Infof("Initializing data instances: %v\n", m.iids)
+	{
+		names := make([]string, 0, len(m.iids))
+		for id, data := range m.iids {
+			names = append(names, fmt.Sprintf("%d:%s(%s)", id, data.DataName(), data.TypeName()))
+		}
+		dvid.Infof("Initializing %d data instances: %s\n", len(m.iids), strings.Join(names, ", "))
+	}
 	for _, data := range m.iids {
 		if data.IsDeleted() {
 			continue
