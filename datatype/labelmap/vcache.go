@@ -572,9 +572,11 @@ func (vm vmap) value(mappedVersions distFromRoot) (label uint64, present bool) {
 	if sz == 0 || len(mappedVersions) == 0 {
 		return 0, false
 	}
-	mapping := vm.decodeMappings()
 	var farthest uint32
-	for v, curLabel := range mapping {
+	n := 0
+	for n < sz {
+		v, curLabel, nbytes := readEncodedMapping(vm[n:])
+		n += nbytes
 		rootDist, found := mappedVersions[v]
 		if found && rootDist > farthest {
 			farthest = rootDist
