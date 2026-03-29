@@ -150,10 +150,10 @@ ifdef TEST
 endif
 
 test: dvid
-	go tool gotestsum --format short -- ${SPECIFIC_TEST} -tags "${DVID_TAGS}" ${DVID_PACKAGES}
+	go tool gotestsum --format short --jsonfile test-failures.json -- ${SPECIFIC_TEST} -tags "${DVID_TAGS}" ${DVID_PACKAGES}
 
 test-verbose: dvid
-	go tool gotestsum --format standard-verbose -- ${SPECIFIC_TEST} -tags "${DVID_TAGS}" ${DVID_PACKAGES}
+	go tool gotestsum --format standard-verbose --jsonfile test-failures.json -- ${SPECIFIC_TEST} -tags "${DVID_TAGS}" ${DVID_PACKAGES}
 
 # Coverage (does this repeat the test step above?)
 coverage: dvid

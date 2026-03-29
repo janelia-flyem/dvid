@@ -1221,7 +1221,10 @@ func TestStressConcurrentRW(t *testing.T) {
 
 	for n := 0; n < 100; n++ {
 		done := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
 		go func(done <-chan struct{}) {
+			defer wg.Done()
 			i := 0
 			for {
 				i++
@@ -1237,6 +1240,7 @@ func TestStressConcurrentRW(t *testing.T) {
 		}(done)
 
 		go func(done <-chan struct{}) {
+			defer wg.Done()
 			i := 0
 			for {
 				i++
@@ -1258,6 +1262,7 @@ func TestStressConcurrentRW(t *testing.T) {
 			server.TestHTTP(t, "GET", allreq, nil)
 		}
 		close(done)
+		wg.Wait()
 	}
 }
 
