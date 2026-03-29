@@ -71,11 +71,12 @@ func NewVersionedCtx(data dvid.Data, versionID dvid.VersionID) *VersionedCtx {
 
 // NewVersionedCtxMasterLeaf creates a new versioned context for the master branch leaf.
 func NewVersionedCtxMasterLeaf(data dvid.Data) (*VersionedCtx, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return nil, ErrManagerNotInitialized
 	}
 	uuidSpec := string(data.RootUUID()) + ":master"
-	_, versionID, err := manager.matchingUUID(uuidSpec)
+	_, versionID, err := m.matchingUUID(uuidSpec)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +167,11 @@ func (vctx *VersionedCtx) VersionUUID() dvid.UUID {
 
 // Head checks whether this the open head of the master branch
 func (vctx *VersionedCtx) Head() bool {
-	node, err := manager.getNodeByVersion(vctx.VersionID())
+	m := getManager()
+	if m == nil {
+		return false
+	}
+	node, err := m.getNodeByVersion(vctx.VersionID())
 	if err != nil {
 		return false
 	}
@@ -182,7 +187,11 @@ func (vctx *VersionedCtx) Head() bool {
 
 // Head checks whether specified version is on the  master branch
 func (vctx *VersionedCtx) MasterVersion(version dvid.VersionID) bool {
-	node, err := manager.getNodeByVersion(vctx.VersionID())
+	m := getManager()
+	if m == nil {
+		return false
+	}
+	node, err := m.getNodeByVersion(vctx.VersionID())
 	if err != nil {
 		return false
 	}
@@ -195,8 +204,12 @@ func (vctx *VersionedCtx) MasterVersion(version dvid.VersionID) bool {
 
 // NumVersions returns the number of versions for a given
 func (vctx *VersionedCtx) NumVersions() int32 {
+	m := getManager()
+	if m == nil {
+		return 0
+	}
 	rootversion, _ := UUIDFromVersion(vctx.VersionID())
-	r := manager.repos[rootversion]
+	r := m.repos[rootversion]
 	return int32(len(r.dag.nodes))
 }
 
@@ -688,11 +701,12 @@ func (d *Data) GetReadLog() storage.ReadLog {
 }
 
 func (d *Data) NewMutationID() uint64 {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		dvid.Criticalf("New mutation ID requested for data %q but manager not initialized!\n", d.DataName())
 		return 0
 	}
-	repo, err := manager.repoFromUUID(d.RootUUID())
+	repo, err := m.repoFromUUID(d.RootUUID())
 	if err != nil {
 		dvid.Criticalf("New mutation ID requested for data %q but no repo associated with root %s\n", d.DataName(), d.RootUUID())
 		return 0
@@ -738,14 +752,15 @@ func (d *Data) SetLogStore(logStore dvid.Store) {
 }
 
 func (d *Data) PersistMetadata() error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return fmt.Errorf("cannot persist metadata change in data %q if manager not initialized", d.DataName())
 	}
-	repo, err := manager.repoFromUUID(d.RootUUID())
+	repo, err := m.repoFromUUID(d.RootUUID())
 	if err != nil {
 		return fmt.Errorf("cannot persist metadata change in data %q with no repo associated with root %s", d.DataName(), d.RootUUID())
 	}
-	return repo.saveToStore(manager.store)
+	return repo.saveToStore(m.store)
 }
 
 // ---------------

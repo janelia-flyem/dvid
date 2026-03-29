@@ -28,19 +28,16 @@ when the next test's `Initialize()` overwrites it.
 
 ### Scope
 
-The `manager` variable has ~190 access sites across 9 files in `datastore/`:
+The `manager` variable has ~66 read sites + 2 write sites across 6 files in `datastore/`:
 
 | File | Reads | Writes |
 |------|-------|--------|
-| `datastore.go` | ~110 | 0 |
-| `repo_local.go` | ~21 | 2 |
-| `copy_local.go` | ~24 | 0 |
-| `push_local.go` | ~8 | 0 |
-| `datainstance.go` | ~12 | 0 |
-| `pubsub.go` | ~8 | 0 |
-| `repo.go` | ~1 | 0 |
-| `repo_local_test.go` | ~2 | 0 |
-| `datastore_test.go` | ~1 | 0 |
+| `datastore.go` | ~51 | 0 |
+| `repo_local.go` | ~5 | 2 |
+| `copy_local.go` | ~6 | 0 |
+| `push_local.go` | ~2 | 0 |
+| `datainstance.go` | ~3 | 0 |
+| `pubsub.go` | ~4 | 0 |
 
 Almost all reads follow the same pattern:
 ```go
@@ -129,9 +126,22 @@ func Shutdown() {
 
 ## Notes
 
-- The change is large (touches ~190 call sites) but entirely mechanical
+- The change touches ~68 call sites across 6 files — entirely mechanical
 - Zero behavior change in production — `atomic.Pointer.Load()` is a single
   atomic read, same cost as reading a plain pointer on x86/arm64
 - The `getManager()` pattern also improves correctness: callers hold a
   stable reference to the manager, preventing TOCTOU issues if `Shutdown`
   nils it out between the nil-check and the method call
+
+## Production Safety (verified 2026-03-28)
+
+1. **Go version**: `go.mod` specifies Go 1.25.0; `atomic.Pointer` requires Go 1.19+
+2. **ReloadMetadata** (repo_local.go:274): Uses `dvid.DenyRequests()` to block HTTP
+   traffic before swapping `manager`. This is still needed with `atomic.Pointer` —
+   the atomic swap ensures pointer visibility but does not prevent in-flight requests
+   from operating on stale repo data structures
+3. **Shutdown nil-out**: New behavior — sets manager to nil after `m.Shutdown()`.
+   Safe in production (server is terminating) and is the key fix for the test race:
+   orphan goroutines hit the nil check and return `ErrManagerNotInitialized`
+4. **No external access**: `manager` is unexported; all ~68 access sites are within
+   the `datastore` package. No `//go:linkname` or other directives reference it

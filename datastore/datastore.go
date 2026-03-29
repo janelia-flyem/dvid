@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -24,10 +25,21 @@ const (
 )
 
 var (
-	// manager provides high-level repository management for DVID and is initialized
+	// managerPtr provides high-level repository management for DVID and is initialized
 	// on start.  Package functions provide a quick alias to this platform-specific repo manager.
-	manager *repoManager
+	// Access via getManager()/setManager() for atomic safety.
+	managerPtr atomic.Pointer[repoManager]
 )
+
+// getManager returns the current repo manager, or nil if not initialized.
+func getManager() *repoManager {
+	return managerPtr.Load()
+}
+
+// setManager atomically sets the repo manager.
+func setManager(m *repoManager) {
+	managerPtr.Store(m)
+}
 
 // BlobService is an interface for storing and retrieving data based on its content.
 type BlobService interface {
@@ -37,50 +49,57 @@ type BlobService interface {
 
 // Shutdown sends signal for all goroutines for data processing to be terminated.
 func Shutdown() {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return
 	}
-	manager.Shutdown()
+	m.Shutdown()
+	setManager(nil)
 }
 
 // Types returns the types currently within the DVID server.
 func Types() (map[dvid.URLString]TypeService, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return nil, ErrManagerNotInitialized
 	}
-	return manager.types()
+	return m.types()
 }
 
 // MarshalJSON returns JSON of object where each repo is a property with root UUID name
 // and value corresponding to repo info.
 func MarshalJSON() ([]byte, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return nil, ErrManagerNotInitialized
 	}
-	return manager.MarshalJSON()
+	return m.MarshalJSON()
 }
 
 // ---- Datastore ID functions ----------
 
 func NewUUID(assign *dvid.UUID) (dvid.UUID, dvid.VersionID, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return dvid.NilUUID, 0, ErrManagerNotInitialized
 	}
-	return manager.newUUID(assign)
+	return m.newUUID(assign)
 }
 
 func UUIDFromVersion(v dvid.VersionID) (dvid.UUID, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return dvid.NilUUID, ErrManagerNotInitialized
 	}
-	return manager.uuidFromVersion(v)
+	return m.uuidFromVersion(v)
 }
 
 func VersionFromUUID(uuid dvid.UUID) (dvid.VersionID, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return 0, ErrManagerNotInitialized
 	}
-	return manager.versionFromUUID(uuid)
+	return m.versionFromUUID(uuid)
 }
 
 // MatchingUUID returns a local version ID and the full UUID from a potentially shortened UUID
@@ -101,10 +120,11 @@ func VersionFromUUID(uuid dvid.UUID) (dvid.VersionID, error) {
 //
 //	repo containing, which is 7cd11.
 func MatchingUUID(uuidStr string) (dvid.UUID, dvid.VersionID, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return dvid.NilUUID, 0, ErrManagerNotInitialized
 	}
-	return manager.matchingUUID(uuidStr)
+	return m.matchingUUID(uuidStr)
 }
 
 // ----- Repo functions -----------
@@ -112,10 +132,11 @@ func MatchingUUID(uuidStr string) (dvid.UUID, dvid.VersionID, error) {
 // NewRepo creates a new Repo and returns its UUID, either an assigned UUID if
 // provided or creating a new UUID.
 func NewRepo(alias, description string, assign *dvid.UUID, passcode string) (dvid.UUID, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return dvid.NilUUID, ErrManagerNotInitialized
 	}
-	r, err := manager.newRepo(alias, description, assign, passcode)
+	r, err := m.newRepo(alias, description, assign, passcode)
 	if err != nil {
 		return dvid.NilUUID, err
 	}
@@ -124,133 +145,151 @@ func NewRepo(alias, description string, assign *dvid.UUID, passcode string) (dvi
 
 // DeleteRepo deletes a Repo holding a node with UUID.
 func DeleteRepo(uuid dvid.UUID, passcode string) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.deleteRepo(uuid, passcode)
+	return m.deleteRepo(uuid, passcode)
 }
 
 func GetRepoRoot(uuid dvid.UUID) (dvid.UUID, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return dvid.NilUUID, ErrManagerNotInitialized
 	}
-	return manager.getRepoRoot(uuid)
+	return m.getRepoRoot(uuid)
 }
 
 func GetRepoRootVersion(v dvid.VersionID) (dvid.VersionID, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return 0, ErrManagerNotInitialized
 	}
-	return manager.getRepoRootVersion(v)
+	return m.getRepoRootVersion(v)
 }
 
 func GetRepoJSON(uuid dvid.UUID) (string, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return "", ErrManagerNotInitialized
 	}
-	return manager.getRepoJSON(uuid)
+	return m.getRepoJSON(uuid)
 }
 
 // GetVersionSequence returns a slice of UUIDs giving the version sequence
 // between the given UUIDs, inclusive.
 func GetVersionSequence(begUUID, endUUID dvid.UUID) ([]dvid.UUID, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return nil, ErrManagerNotInitialized
 	}
-	return manager.getSequenceUUID(begUUID, endUUID)
+	return m.getSequenceUUID(begUUID, endUUID)
 }
 
 func GetBranchVersionsJSON(uuid dvid.UUID, name string) (string, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return "", ErrManagerNotInitialized
 	}
-	return manager.getBranchVersionsJSON(uuid, name)
+	return m.getBranchVersionsJSON(uuid, name)
 }
 
 // GetBranchVersions returns a slice of UUIDs for the given branch from the HEAD (leaf)
 // to the root.
 func GetBranchVersions(uuid dvid.UUID, name string) ([]dvid.UUID, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return nil, ErrManagerNotInitialized
 	}
-	return manager.getBranchVersions(uuid, name)
+	return m.getBranchVersions(uuid, name)
 }
 
 func GetBranchHead(uuid dvid.UUID, name string) (branchUUID dvid.UUID, branchV dvid.VersionID, err error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return dvid.NilUUID, 0, ErrManagerNotInitialized
 	}
-	return manager.getBranchVersion(uuid, name)
+	return m.getBranchVersion(uuid, name)
 }
 
 func GetRepoAlias(uuid dvid.UUID) (string, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return "", ErrManagerNotInitialized
 	}
-	return manager.getRepoAlias(uuid)
+	return m.getRepoAlias(uuid)
 }
 
 func SetRepoAlias(uuid dvid.UUID, alias string) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.setRepoAlias(uuid, alias)
+	return m.setRepoAlias(uuid, alias)
 }
 
 func GetRepoDescription(uuid dvid.UUID) (string, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return "", ErrManagerNotInitialized
 	}
-	return manager.getRepoDescription(uuid)
+	return m.getRepoDescription(uuid)
 }
 
 func SetRepoDescription(uuid dvid.UUID, desc string) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.setRepoDescription(uuid, desc)
+	return m.setRepoDescription(uuid, desc)
 }
 
 func GetRepoLog(uuid dvid.UUID) ([]string, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return nil, ErrManagerNotInitialized
 	}
-	return manager.getRepoLog(uuid)
+	return m.getRepoLog(uuid)
 }
 
 func AddToRepoLog(uuid dvid.UUID, msgs []string) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.addToRepoLog(uuid, msgs)
+	return m.addToRepoLog(uuid, msgs)
 }
 
 func GetNodeNote(uuid dvid.UUID) (string, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return "", ErrManagerNotInitialized
 	}
-	return manager.getNodeNote(uuid)
+	return m.getNodeNote(uuid)
 }
 
 func SetNodeNote(uuid dvid.UUID, note string) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.setNodeNote(uuid, note)
+	return m.setNodeNote(uuid, note)
 }
 
 func GetNodeLog(uuid dvid.UUID) ([]string, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return nil, ErrManagerNotInitialized
 	}
-	return manager.getNodeLog(uuid)
+	return m.getNodeLog(uuid)
 }
 
 func AddToNodeLog(uuid dvid.UUID, msgs []string) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.addToNodeLog(uuid, msgs)
+	return m.addToNodeLog(uuid, msgs)
 }
 
 // ----- Repo-level DAG functions ----------
@@ -258,10 +297,11 @@ func AddToNodeLog(uuid dvid.UUID, msgs []string) error {
 // NewVersion creates a new version as a child of the given parent.  If the
 // assign parameter is not nil, the new node is given the UUID.
 func NewVersion(parent dvid.UUID, note string, branchname string, assign *dvid.UUID) (dvid.UUID, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return dvid.NilUUID, ErrManagerNotInitialized
 	}
-	return manager.newVersion(parent, note, branchname, assign)
+	return m.newVersion(parent, note, branchname, assign)
 }
 
 // MakeMaster makes the branch at given UUID (that node and all its children)
@@ -269,75 +309,84 @@ func NewVersion(parent dvid.UUID, note string, branchname string, assign *dvid.U
 // branch name.  NOTE: This command will fail if the given UUID is not
 // a node that is directly branched off master.
 func MakeMaster(newMasterNode dvid.UUID, oldMasterBranchName string) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.makeMaster(newMasterNode, oldMasterBranchName)
+	return m.makeMaster(newMasterNode, oldMasterBranchName)
 }
 
 // HideBranch makes the branch at given UUID (that node and all its children)
 // not visible from a metadata perspective. The actual data associated with
 // the branch are not deleted from the store.
 func HideBranch(uuid dvid.UUID, branchName string) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.hideBranch(uuid, branchName)
+	return m.hideBranch(uuid, branchName)
 }
 
 // GetParents returns the parent nodes of the given version id.
 func GetParentsByVersion(v dvid.VersionID) ([]dvid.VersionID, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return nil, ErrManagerNotInitialized
 	}
-	return manager.getParentsByVersion(v)
+	return m.getParentsByVersion(v)
 }
 
 // GetChildren returns the child nodes of the given version id.
 func GetChildrenByVersion(v dvid.VersionID) ([]dvid.VersionID, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return nil, ErrManagerNotInitialized
 	}
-	return manager.getChildrenByVersion(v)
+	return m.getChildrenByVersion(v)
 }
 
 // GetAncestry returns a list of ancestor versions from the given version
 // to the root.
 func GetAncestry(v dvid.VersionID) ([]dvid.VersionID, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return nil, ErrManagerNotInitialized
 	}
-	return manager.getAncestry(v)
+	return m.getAncestry(v)
 }
 
 // LockedUUID returns true if a given UUID is locked.
 func LockedUUID(uuid dvid.UUID) (bool, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return false, ErrManagerNotInitialized
 	}
-	return manager.lockedUUID(uuid)
+	return m.lockedUUID(uuid)
 }
 
 // LockedVersion returns true if a given version is locked.
 func LockedVersion(v dvid.VersionID) (bool, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return false, ErrManagerNotInitialized
 	}
-	return manager.lockedVersion(v)
+	return m.lockedVersion(v)
 }
 
 func Commit(uuid dvid.UUID, note string, log []string) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.commit(uuid, note, log)
+	return m.commit(uuid, note, log)
 }
 
 func Merge(parents []dvid.UUID, note string, mt MergeType) (dvid.UUID, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return dvid.NilUUID, ErrManagerNotInitialized
 	}
-	return manager.merge(parents, note, mt)
+	return m.merge(parents, note, mt)
 }
 
 // ----- Data Instance functions -----------
@@ -346,10 +395,11 @@ func Merge(parents []dvid.UUID, note string, mt MergeType) (dvid.UUID, error) {
 // via the 'config' argument.  For example, config["versioned"] with a bool value
 // will specify whether the data is versioned.
 func NewData(uuid dvid.UUID, t TypeService, name dvid.InstanceName, c dvid.Config) (DataService, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return nil, ErrManagerNotInitialized
 	}
-	return manager.newData(uuid, t, name, c)
+	return m.newData(uuid, t, name, c)
 }
 
 // SaveDataByUUID persists metadata for a data instance with given uuid.
@@ -357,10 +407,11 @@ func NewData(uuid dvid.UUID, t TypeService, name dvid.InstanceName, c dvid.Confi
 //
 //	Currently we save entire repo.
 func SaveDataByUUID(uuid dvid.UUID, data DataService) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.saveRepoByUUID(uuid)
+	return m.saveRepoByUUID(uuid)
 }
 
 // SaveDataByVersion persists metadata for a data instance with given version.
@@ -368,75 +419,90 @@ func SaveDataByUUID(uuid dvid.UUID, data DataService) error {
 //
 //	Currently we save entire repo.
 func SaveDataByVersion(v dvid.VersionID, data DataService) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.saveRepoByVersion(v)
+	return m.saveRepoByVersion(v)
 }
 
 // getDataByInstanceID returns a data service given a server-specific instance ID.
 func getDataByInstanceID(id dvid.InstanceID) (DataService, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return nil, ErrManagerNotInitialized
 	}
-	return manager.getDataByInstanceID(id)
+	return m.getDataByInstanceID(id)
 }
 
 // GetDataByDataUUID returns a data service given a data UUID.
 func GetDataByDataUUID(dataUUID dvid.UUID) (DataService, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return nil, ErrManagerNotInitialized
 	}
-	return manager.getDataByDataUUID(dataUUID)
+	return m.getDataByDataUUID(dataUUID)
 }
 
 // GetDataByUUIDName returns a data service given an instance name and UUID.
 func GetDataByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (DataService, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return nil, ErrManagerNotInitialized
 	}
-	return manager.getDataByUUIDName(uuid, name)
+	return m.getDataByUUIDName(uuid, name)
 }
 
 // GetDataByVersionName returns a data service given an instance name and version.
 func GetDataByVersionName(v dvid.VersionID, name dvid.InstanceName) (DataService, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return nil, ErrManagerNotInitialized
 	}
-	return manager.getDataByVersionName(v, name)
+	return m.getDataByVersionName(v, name)
 }
 
 // DeleteDataByName deletes a data service given an instance name and UUID.
 func DeleteDataByName(uuid dvid.UUID, name dvid.InstanceName, passcode string) error {
-	data, err := GetDataByUUIDName(uuid, name)
+	m := getManager()
+	if m == nil {
+		return ErrManagerNotInitialized
+	}
+	data, err := m.getDataByUUIDName(uuid, name)
 	if err != nil {
 		return err
 	}
-	return manager.deleteData(data, passcode)
+	return m.deleteData(data, passcode)
 }
 
 // DeleteDataByDataUUID deletes a data service given a data UUID
 func DeleteDataByDataUUID(dataUUID dvid.UUID, passcode string) error {
-	data, err := GetDataByDataUUID(dataUUID)
+	m := getManager()
+	if m == nil {
+		return ErrManagerNotInitialized
+	}
+	data, err := m.getDataByDataUUID(dataUUID)
 	if err != nil {
 		return err
 	}
-	return manager.deleteData(data, passcode)
+	return m.deleteData(data, passcode)
 }
 
 // RenameData renames a data service given an old instance name and UUID.
 func RenameData(uuid dvid.UUID, oldname, newname dvid.InstanceName, passcode string) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.renameDataByName(uuid, oldname, newname, passcode)
+	return m.renameDataByName(uuid, oldname, newname, passcode)
 }
 
 func ModifyDataConfigByName(uuid dvid.UUID, name dvid.InstanceName, c dvid.Config) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.modifyDataByName(uuid, name, c)
+	return m.modifyDataByName(uuid, name, c)
 }
 
 // ------ Cross-platform k/v pair matching for given version, necessary for versioned get.
@@ -450,19 +516,21 @@ type kvVersions map[dvid.VersionID]kvvNode
 // FindMatch returns the correct key-value pair for a given version and which version
 // that key-value pair came from.
 func (kvv kvVersions) FindMatch(v dvid.VersionID) (*storage.KeyValue, dvid.VersionID, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return nil, 0, ErrManagerNotInitialized
 	}
 
 	// Start from current version and traverse the ancestor graph.  Whenever there's a branch, make
 	// sure we only have one matching key.
-	return manager.findMatch(kvv, v)
+	return m.findMatch(kvv, v)
 }
 
 // FindConflicts returns any keys that would conflict for the given parents ordered by priority,
 // where first parent takes most precedence, second parent is second most important, etc.
 func (kvv kvVersions) FindConflicts(parents []dvid.VersionID) (toDelete map[dvid.VersionID]storage.Key, err error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return nil, ErrManagerNotInitialized
 	}
 	if len(parents) < 2 {
@@ -474,7 +542,7 @@ func (kvv kvVersions) FindConflicts(parents []dvid.VersionID) (toDelete map[dvid
 	toDelete = make(map[dvid.VersionID]storage.Key)
 	var first *storage.KeyValue
 	for _, parentV := range parents {
-		kv, _, err := manager.findMatch(kvv, parentV)
+		kv, _, err := m.findMatch(kvv, parentV)
 		if err != nil {
 			return nil, fmt.Errorf("error retrieving k/v with precedence: %v", err)
 		}
@@ -497,6 +565,10 @@ type extensionNode struct {
 }
 
 func deleteConflict(data DataService, extnode *extensionNode, k storage.Key) error {
+	m := getManager()
+	if m == nil {
+		return ErrManagerNotInitialized
+	}
 	store, err := GetOrderedKeyValueDB(data)
 	if err != nil {
 		return err
@@ -506,12 +578,12 @@ func deleteConflict(data DataService, extnode *extensionNode, k storage.Key) err
 	if extnode.newUUID == dvid.NilUUID {
 		// create a unique branch for the conflict
 		conflictbranch := fmt.Sprintf("conflict-%s", extnode.oldUUID)
-		childUUID, err := manager.newVersion(extnode.oldUUID, "Version for deleting conflicts before merge", conflictbranch, nil)
+		childUUID, err := m.newVersion(extnode.oldUUID, "Version for deleting conflicts before merge", conflictbranch, nil)
 		if err != nil {
 			return err
 		}
 		extnode.newUUID = childUUID
-		childV, err := manager.versionFromUUID(childUUID)
+		childV, err := m.versionFromUUID(childUUID)
 		if err != nil {
 			return err
 		}
@@ -530,7 +602,8 @@ func deleteConflict(data DataService, extnode *extensionNode, k storage.Key) err
 // DeleteConflicts removes all conflicted kv pairs for the given data instance using the priority
 // established by parents.  As a side effect, newParents are modified by new children of parents.
 func DeleteConflicts(uuid dvid.UUID, data DataService, oldParents, newParents []dvid.UUID) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
 
@@ -538,13 +611,13 @@ func DeleteConflicts(uuid dvid.UUID, data DataService, oldParents, newParents []
 	parents := make(map[dvid.VersionID]*extensionNode, len(oldParents))
 	parentsV := make([]dvid.VersionID, len(oldParents))
 	for i, oldUUID := range oldParents {
-		oldV, err := manager.versionFromUUID(oldUUID)
+		oldV, err := m.versionFromUUID(oldUUID)
 		if err != nil {
 			return err
 		}
 		parentsV[i] = oldV
 		if newParents[i] != dvid.NilUUID {
-			newV, err := manager.versionFromUUID(newParents[i])
+			newV, err := m.versionFromUUID(newParents[i])
 			if err != nil {
 				return err
 			}
@@ -667,6 +740,10 @@ func (stats StorageStats) String() string {
 
 // GetStorageDetails scans all key-value stores and returns detailed stats per instances.
 func GetStorageDetails() (map[string]StorageStats, error) {
+	m := getManager()
+	if m == nil {
+		return nil, ErrManagerNotInitialized
+	}
 	timedLog := dvid.NewTimeLog()
 	stores, err := storage.AllStores()
 	if err != nil {
@@ -704,19 +781,19 @@ func GetStorageDetails() (map[string]StorageStats, error) {
 					continue
 				}
 				// get uuid and repo and find out if it's leaf
-				d, err := manager.getDataByInstanceID(instanceID)
+				d, err := m.getDataByInstanceID(instanceID)
 				if err != nil {
 					dvid.Errorf("got key with instance id %d that has no associated data: %v\n", instanceID, err)
 					continue
 				}
 				leaf, wasSeen := isLeaf[versionID]
 				if !wasSeen {
-					uuid, found := manager.versionToUUID[versionID]
+					uuid, found := m.versionToUUID[versionID]
 					if !found {
 						dvid.Errorf("got key with version %d and no uuid mapping: skipping\n", versionID)
 						continue
 					}
-					repo, found := manager.repos[uuid]
+					repo, found := m.repos[uuid]
 					if !found {
 						dvid.Errorf("got key with version %d, uuid %s, but no repo!\n", versionID, uuid)
 						continue
@@ -868,10 +945,11 @@ func GetStorageSummary() {
 
 // LogRepoOpToKafka logs a repo operation to kafka
 func LogRepoOpToKafka(uuid dvid.UUID, b []byte) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
-	rootuuid, err := manager.getRepoRoot(uuid)
+	rootuuid, err := m.getRepoRoot(uuid)
 	if err != nil {
 		return err
 	}

@@ -179,11 +179,11 @@ func TestNewRepoDifferent(t *testing.T) {
 	}
 
 	// Delve down into private methods to make sure internal IDs are different.
-	repo1, err := manager.repoFromUUID(root1)
+	repo1, err := getManager().repoFromUUID(root1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo2, err := manager.repoFromUUID(root2)
+	repo2, err := getManager().repoFromUUID(root2)
 	if err != nil {
 		t.Fatal(err)
 	}

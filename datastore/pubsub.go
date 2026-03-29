@@ -85,10 +85,11 @@ func (d *Data) SyncedData() dvid.UUIDSet {
 
 // SyncPending returns true if there are outstanding sync events in this instance's subscription.
 func (d *Data) SyncPending() bool {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return false
 	}
-	r, err := manager.repoFromUUID(d.rootUUID)
+	r, err := m.repoFromUUID(d.rootUUID)
 	if err != nil {
 		return false
 	}
@@ -113,7 +114,7 @@ type CommitSyncer interface {
 // and sets the data instance's sync.  If replace is false (default), the new sync
 // is appended to the current syncs.
 func SetSyncByJSON(d dvid.Data, uuid dvid.UUID, replace bool, in io.ReadCloser) error {
-	if manager == nil {
+	if getManager() == nil {
 		return ErrManagerNotInitialized
 	}
 	jsonData := make(map[string]string)
@@ -155,24 +156,26 @@ func SetSyncByJSON(d dvid.Data, uuid dvid.UUID, replace bool, in io.ReadCloser) 
 // SetSyncData modifies the manager sync graphs and data instance's sync list.
 // If replace is false (default), the new sync is appended to the current syncs.
 func SetSyncData(data dvid.Data, syncs dvid.UUIDSet, replace bool) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.setSync(data, syncs, replace)
+	return m.setSync(data, syncs, replace)
 }
 
 // NotifySubscribers sends a message to any data instances subscribed to the event.
-func NotifySubscribers(e SyncEvent, m SyncMessage) error {
-	if manager == nil {
+func NotifySubscribers(e SyncEvent, msg SyncMessage) error {
+	mgr := getManager()
+	if mgr == nil {
 		return ErrManagerNotInitialized
 	}
 
 	// Get the repo from the version.
-	repo, err := manager.repoFromVersion(m.Version)
+	repo, err := mgr.repoFromVersion(msg.Version)
 	if err != nil {
 		return err
 	}
 
 	// Use the repo notification system to notify internal subscribers.
-	return repo.notifySubscribers(e, m)
+	return repo.notifySubscribers(e, msg)
 }

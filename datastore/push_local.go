@@ -29,7 +29,8 @@ import (
 
 // PushRepo pushes a Repo to a remote DVID server at the target address.
 func PushRepo(uuid dvid.UUID, target string, config dvid.Config) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
 
@@ -39,7 +40,7 @@ func PushRepo(uuid dvid.UUID, target string, config dvid.Config) error {
 	}
 
 	// Get the full local repo
-	thisRepo, err := manager.repoFromUUID(uuid)
+	thisRepo, err := m.repoFromUUID(uuid)
 	if err != nil {
 		return err
 	}
@@ -52,7 +53,7 @@ func PushRepo(uuid dvid.UUID, target string, config dvid.Config) error {
 
 	// Create a repo that is tailored by the push configuration, e.g.,
 	// keeping just given data instances, etc.
-	v, found := manager.uuidToVersion[uuid]
+	v, found := m.uuidToVersion[uuid]
 	if !found {
 		return ErrInvalidUUID
 	}
@@ -474,7 +475,11 @@ func (p *pusher) Close() error {
 	dvid.Debugf("Closing push of uuid %s: received %.1f GBytes in %s\n", p.repo.uuid, gb, time.Since(p.startTime))
 
 	// Add this repo to current DVID server
-	if err := manager.addRepo(p.repo); err != nil {
+	m := getManager()
+	if m == nil {
+		return ErrManagerNotInitialized
+	}
+	if err := m.addRepo(p.repo); err != nil {
 		return err
 	}
 	return nil
@@ -483,7 +488,8 @@ func (p *pusher) Close() error {
 func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 	dvid.Debugf("Reading repo for push of %s...\n", m.UUID)
 
-	if manager == nil {
+	mgr := getManager()
+	if mgr == nil {
 		return nil, ErrManagerNotInitialized
 	}
 	p.received += uint64(len(m.Repo))
@@ -501,7 +507,7 @@ func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	repoID, err := manager.newRepoID()
+	repoID, err := mgr.newRepoID()
 	if err != nil {
 		return nil, err
 	}
@@ -540,7 +546,7 @@ func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 		// Also have to make sure any data instances are rerooted if the root
 		// no longer exists.
 		for name, d := range p.repo.data {
-			_, found := manager.uuidToVersion[d.RootUUID()]
+			_, found := mgr.uuidToVersion[d.RootUUID()]
 			if !found {
 				p.repo.data[name].SetRootUUID(m.UUID)
 			}
@@ -566,12 +572,16 @@ func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 // compares remote Repo with local one, determining a list of versions that
 // need to be sent from remote to bring the local DVID up-to-date.
 func getDeltaAll(remote *repoT, uuid dvid.UUID) (map[dvid.VersionID]struct{}, error) {
+	m := getManager()
+	if m == nil {
+		return nil, ErrManagerNotInitialized
+	}
 	// Determine all version ids of remote DAG nodes that aren't in the local DAG.
 	// Since VersionID can differ among DVID servers, we need to compare using UUIDs
 	// then convert to VersionID.
 	delta := make(map[dvid.VersionID]struct{})
 	for _, rnode := range remote.dag.nodes {
-		lv, found := manager.uuidToVersion[rnode.uuid]
+		lv, found := m.uuidToVersion[rnode.uuid]
 		if found {
 			dvid.Debugf("Both remote and local have uuid %s... skipping\n", rnode.uuid)
 		} else {

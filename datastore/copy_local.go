@@ -152,7 +152,8 @@ func getFlattenMetaCfg(configFName string) (fc flattenMetaCfg, err error) {
 
 // FlattenMetadata stores the metadata of a reduced set of nodes into the destination store.
 func FlattenMetadata(uuid dvid.UUID, configFName string) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
 
@@ -169,7 +170,7 @@ func FlattenMetadata(uuid dvid.UUID, configFName string) error {
 	}
 
 	// Create duplicate repo with changes
-	origRepo, err := manager.repoFromUUID(uuid)
+	origRepo, err := m.repoFromUUID(uuid)
 	if err != nil {
 		return err
 	}
@@ -246,8 +247,8 @@ func FlattenMetadata(uuid dvid.UUID, configFName string) error {
 	if err := putData(dstKV, versionToUUIDKey, versionToUUID); err != nil {
 		return err
 	}
-	value := append(manager.repoID.Bytes(), manager.versionID.Bytes()...)
-	value = append(value, manager.instanceID.Bytes()...)
+	value := append(m.repoID.Bytes(), m.versionID.Bytes()...)
+	value = append(value, m.instanceID.Bytes()...)
 	if err := dstKV.Put(ctx, storage.NewTKey(newIDsKey, nil), value); err != nil {
 		return err
 	}
@@ -319,8 +320,12 @@ func getDataTypeInstances(repo *repoT, typeName dvid.TypeString) (names dvid.Ins
 //		"Exclusions": ["name1", "name2"]
 //	}
 func MigrateBatch(uuid dvid.UUID, configFName string) (err error) {
+	m := getManager()
+	if m == nil {
+		return ErrManagerNotInitialized
+	}
 	var repo *repoT
-	repo, err = manager.repoFromUUID(uuid)
+	repo, err = m.repoFromUUID(uuid)
 	if err != nil {
 		return
 	}
@@ -394,7 +399,8 @@ func MigrateBatch(uuid dvid.UUID, configFName string) (err error) {
 // MigrateInstance migrates a data instance locally from an old storage
 // engine to the current configured storage.
 func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, srcStore, dstStore dvid.Store, c dvid.Config, done chan bool) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
 
@@ -428,7 +434,7 @@ func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, srcStore, dstStor
 	}
 
 	// Get the source data instance.
-	d, err := manager.getDataByUUIDName(uuid, source)
+	d, err := m.getDataByUUIDName(uuid, source)
 	if err != nil {
 		return err
 	}
@@ -507,7 +513,8 @@ func getTransferConfig(configFName string) (tc transferConfig, okVersions map[dv
 // LimitVersions removes versions from the metadata that are not present in a
 // configuration file.
 func LimitVersions(uui dvid.UUID, configFName string) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return fmt.Errorf("can't limit versions with uninitialized manager")
 	}
 	f, err := os.Open(configFName)
@@ -526,13 +533,13 @@ func LimitVersions(uui dvid.UUID, configFName string) error {
 	okVersions := make(map[dvid.VersionID]bool, len(tc.Versions))
 	for _, uuid := range tc.Versions {
 		okUUIDs[uuid] = true
-		if v, found := manager.uuidToVersion[uuid]; found {
-			ancestry, err := manager.getAncestry(v)
+		if v, found := m.uuidToVersion[uuid]; found {
+			ancestry, err := m.getAncestry(v)
 			if err != nil {
 				return err
 			}
 			for _, ancestorV := range ancestry {
-				ancestorUUID, found := manager.versionToUUID[ancestorV]
+				ancestorUUID, found := m.versionToUUID[ancestorV]
 				if !found {
 					return fmt.Errorf("version %d has no UUID equivalent", ancestorV)
 				}
@@ -541,22 +548,22 @@ func LimitVersions(uui dvid.UUID, configFName string) error {
 			}
 		}
 	}
-	manager.repoMutex.Lock()
-	manager.idMutex.Lock()
+	m.repoMutex.Lock()
+	m.idMutex.Lock()
 	var repo *repoT
-	for uuid, r := range manager.repos {
+	for uuid, r := range m.repos {
 		if _, found := okUUIDs[uuid]; found {
 			if repo == nil {
 				repo = r
 			}
 		} else {
-			delete(manager.repos, uuid)
-			delete(manager.uuidToVersion, uuid)
+			delete(m.repos, uuid)
+			delete(m.uuidToVersion, uuid)
 		}
 	}
-	for v := range manager.versionToUUID {
+	for v := range m.versionToUUID {
 		if !okVersions[v] {
-			delete(manager.versionToUUID, v)
+			delete(m.versionToUUID, v)
 		}
 	}
 	for v, node := range repo.dag.nodes {
@@ -578,8 +585,8 @@ func LimitVersions(uui dvid.UUID, configFName string) error {
 			node.children = children
 		}
 	}
-	manager.idMutex.Unlock()
-	manager.repoMutex.Unlock()
+	m.idMutex.Unlock()
+	m.repoMutex.Unlock()
 	return nil
 }
 
@@ -683,7 +690,8 @@ func TransferData(uuid dvid.UUID, srcStore, dstStore dvid.Store, configFName str
 // engine if the new instance uses a different backend per a data instance-specific configuration.
 // (See sample config.example.toml file in root dvid source directory.)
 func CopyInstance(uuid dvid.UUID, source, target dvid.InstanceName, c dvid.Config) error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return ErrManagerNotInitialized
 	}
 
@@ -712,7 +720,7 @@ func CopyInstance(uuid dvid.UUID, source, target dvid.InstanceName, c dvid.Confi
 	}
 
 	// Get the source data instance.
-	d1, err := manager.getDataByUUIDName(uuid, source)
+	d1, err := m.getDataByUUIDName(uuid, source)
 	if err != nil {
 		return err
 	}
@@ -722,7 +730,7 @@ func CopyInstance(uuid dvid.UUID, source, target dvid.InstanceName, c dvid.Confi
 	if err != nil {
 		return err
 	}
-	d2, err := manager.newData(uuid, t, target, c)
+	d2, err := m.newData(uuid, t, target, c)
 	if err != nil {
 		return err
 	}

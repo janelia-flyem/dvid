@@ -127,7 +127,7 @@ func Initialize(initMetadata bool, iconfig Config) error {
 		dvid.TimeInfof("Finished loading metadata from storage (read-only %t)\n", m.readOnly)
 	}
 	// Set the package variable.  We are good to go...
-	manager = m
+	setManager(m)
 
 	// Add ephemeral data instances if a store wants it.
 	stores, err := storage.AllStores()
@@ -237,7 +237,8 @@ func Initialize(initMetadata bool, iconfig Config) error {
 // ReloadMetadata reloads the repositories manager from an existing metadata store.
 // This shuts off all other dvid requests.
 func ReloadMetadata() error {
-	if manager == nil {
+	cur := getManager()
+	if cur == nil {
 		return ErrManagerNotInitialized
 	}
 	dvid.DenyRequests() // draconian step to make sure no HTTP or RPC requests go through
@@ -249,12 +250,12 @@ func ReloadMetadata() error {
 		uuidToVersion:   make(map[dvid.UUID]dvid.VersionID),
 		branchToUUID:    make(map[string]dvid.UUID),
 		repos:           make(map[dvid.UUID]*repoT),
-		repoID:          manager.repoID,
-		versionID:       manager.versionID,
+		repoID:          cur.repoID,
+		versionID:       cur.versionID,
 		iids:            make(map[dvid.InstanceID]DataService),
 		dataByUUID:      make(map[dvid.UUID]DataService),
-		instanceIDGen:   manager.instanceIDGen,
-		instanceIDStart: manager.instanceIDStart,
+		instanceIDGen:   cur.instanceIDGen,
+		instanceIDStart: cur.instanceIDStart,
 	}
 
 	var err error
@@ -271,7 +272,7 @@ func ReloadMetadata() error {
 
 	// Swap the manager out.  This is dangerous and is why no requests should be ongoing
 	// at time of this function.
-	manager = m
+	setManager(m)
 
 	return nil
 }
@@ -2734,10 +2735,11 @@ func (r *repoT) notifySubscribers(e SyncEvent, m SyncMessage) error {
 }
 
 func (r *repoT) save() error {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return fmt.Errorf("cannot use repo.save() before manager is initialized")
 	}
-	return r.saveToStore(manager.store)
+	return r.saveToStore(m.store)
 }
 
 func (r *repoT) saveToStore(db storage.OrderedKeyValueDB) error {
@@ -2762,11 +2764,15 @@ func (r *repoT) saveToStore(db storage.OrderedKeyValueDB) error {
 
 // deletes a Repo from the datastore
 func (r *repoT) delete() error {
+	m := getManager()
+	if m == nil {
+		return fmt.Errorf("cannot delete repo before manager is initialized")
+	}
 	var ctx storage.MetadataContext
 	r.RLock()
 	tk := storage.NewTKey(repoKey, r.id.Bytes())
 	r.RUnlock()
-	return manager.store.Delete(ctx, tk)
+	return m.store.Delete(ctx, tk)
 }
 
 func (r *repoT) initMutationID(store storage.KeyValueDB, mutationIDStart uint64, readOnly bool) error {
@@ -2803,11 +2809,12 @@ func (r *repoT) getMutationID() (mutID uint64) {
 }
 
 func (r *repoT) newMutationID() (mutID uint64) {
-	if manager == nil || manager.store == nil {
+	m := getManager()
+	if m == nil || m.store == nil {
 		dvid.Criticalf("Bad new mutation ID request.  Manager or store nil.\n")
 		return
 	}
-	if manager.readOnly {
+	if m.readOnly {
 		dvid.Criticalf("Cannot give new mutation ID in read-only mode.\n")
 		return
 	}
@@ -2820,7 +2827,7 @@ func (r *repoT) newMutationID() (mutID uint64) {
 		mutdata := make([]byte, 8)
 		binary.LittleEndian.PutUint64(mutdata, r.mutSavedID)
 		tk := storage.NewTKey(mutidKey, r.id.Bytes())
-		if err := manager.store.Put(ctx, tk, mutdata); err != nil {
+		if err := m.store.Put(ctx, tk, mutdata); err != nil {
 			dvid.Criticalf("Unable to persist new mutation ID for repo %s: %v\n", r.uuid, err)
 		}
 	}
@@ -2846,7 +2853,8 @@ func (r *repoT) versionFromUUID(uuid dvid.UUID) (dvid.VersionID, error) {
 // are incorrect, make new local IDs and keep track of the mapping for later key updates.
 // The current repo manager is NOT modified until addRepo().
 func (r *repoT) remapLocalIDs() (dvid.InstanceMap, dvid.VersionMap, error) {
-	if manager == nil {
+	m := getManager()
+	if m == nil {
 		return nil, nil, ErrManagerNotInitialized
 	}
 	r.Lock()
@@ -2856,7 +2864,7 @@ func (r *repoT) remapLocalIDs() (dvid.InstanceMap, dvid.VersionMap, error) {
 	modifyManager := false
 	instanceMap := make(dvid.InstanceMap, len(r.data))
 	for dataname, dataservice := range r.data {
-		instanceID, err := manager.newInstanceID()
+		instanceID, err := m.newInstanceID()
 		if err != nil {
 			return nil, nil, err
 		}
@@ -2869,7 +2877,7 @@ func (r *repoT) remapLocalIDs() (dvid.InstanceMap, dvid.VersionMap, error) {
 	versionMap := make(dvid.VersionMap, len(r.dag.nodes))
 	for oldVersionID, nodePtr := range r.dag.nodes {
 		// keep the old uuid but get a new version id
-		newVersionID, err := manager.newVersionID(nodePtr.uuid, modifyManager)
+		newVersionID, err := m.newVersionID(nodePtr.uuid, modifyManager)
 		if err != nil {
 			return nil, nil, err
 		}
