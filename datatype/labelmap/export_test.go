@@ -1104,3 +1104,67 @@ func TestExportShardsSkipsZeroBlocks(t *testing.T) {
 		t.Errorf("Shard file %s should not exist (all-zero shard), but it does", zeroShardArrow)
 	}
 }
+
+// TestExportShardsPermissionDenied verifies that the export pipeline shuts down
+// gracefully when it cannot write to the output directory, rather than spewing
+// errors indefinitely and becoming difficult to stop.
+func TestExportShardsPermissionDenied(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, v := initTestRepo()
+	var config dvid.Config
+	config.Set("MaxDownresLevel", "0")
+	server.CreateTestInstance(t, uuid, "labelmap", "labels", config)
+
+	// Ingest a small amount of data so the export has something to process.
+	regions := []struct{ origin, size dvid.ChunkPoint3d }{
+		{dvid.ChunkPoint3d{0, 0, 0}, dvid.ChunkPoint3d{4, 4, 4}},
+	}
+	ingestSyntheticBlocks(t, uuid, "labels", regions)
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on labels updating: %v\n", err)
+	}
+
+	dataservice, err := datastore.GetDataByUUIDName(uuid, "labels")
+	if err != nil {
+		t.Fatalf("couldn't get labels data instance: %v\n", err)
+	}
+	lbls, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("Returned data instance was not labelmap.Data\n")
+	}
+
+	// Create a read-only directory to trigger permission denied.
+	exportDir := t.TempDir()
+	readOnlyDir := path.Join(exportDir, "readonly")
+	if err := os.Mkdir(readOnlyDir, 0555); err != nil {
+		t.Fatalf("Failed to create read-only dir: %v", err)
+	}
+
+	spec := getIntegrationExportSpec(t, readOnlyDir)
+	spec.NumScales = 1
+	spec.Done = make(chan struct{})
+	ctx := datastore.NewVersionedCtx(lbls, v)
+
+	if err := lbls.ExportData(ctx, spec); err != nil {
+		t.Fatalf("ExportData failed to launch: %v", err)
+	}
+
+	// The export should abort and signal Done within a reasonable time,
+	// not hang indefinitely spewing errors.
+	select {
+	case <-spec.Done:
+		t.Log("Export aborted gracefully on permission denied")
+	case <-time.After(30 * time.Second):
+		t.Fatal("Export did not abort within 30 seconds — pipeline likely stuck")
+	}
+
+	// Verify no shard files were created.
+	s0Dir := path.Join(readOnlyDir, "s0")
+	if _, err := os.Stat(s0Dir); err == nil {
+		t.Errorf("Scale directory %s should not exist (permission denied), but it does", s0Dir)
+	}
+}

@@ -2,6 +2,7 @@ package labelmap
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -599,6 +600,8 @@ type shardWriter struct {
 
 	mu sync.Mutex
 
+	cancelCtx context.Context // checked to drain channel quickly on fatal error
+
 	// Metrics tracking (local to this goroutine, no contention)
 	scale          uint8
 	metrics        *exportMetrics
@@ -690,6 +693,9 @@ func (w *shardWriter) start(wg *sync.WaitGroup) error {
 				wg.Done()
 			}()
 			for block := range w.ch {
+				if w.cancelCtx != nil && w.cancelCtx.Err() != nil {
+					continue
+				}
 				w.recordNum++
 				w.analyzeBlock(block)
 			}
@@ -817,6 +823,10 @@ func (w *shardWriter) start(wg *sync.WaitGroup) error {
 		}()
 
 		for block := range w.ch {
+			if w.cancelCtx != nil && w.cancelCtx.Err() != nil {
+				// Drain channel without processing to allow upstream to unblock.
+				continue
+			}
 			w.recordNum++
 
 			// Buffer this block's metadata (written to CSV on batch flush when offset/size are known)
@@ -1031,6 +1041,8 @@ type shardHandler struct {
 	metrics     *exportMetrics
 	analyzeOnly bool
 
+	cancelCtx context.Context // cancelled on fatal error to stop the whole pipeline
+
 	mu sync.RWMutex
 }
 
@@ -1117,6 +1129,11 @@ func (sh *shardHandler) shardOriginFromChunkCoord(scale uint8, chunkCoord dvid.C
 }
 
 func (sh *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.ChunkPoint3d, ep *epoch) (w *shardWriter, err error) {
+	// Bail immediately if the pipeline has been cancelled.
+	if sh.cancelCtx != nil && sh.cancelCtx.Err() != nil {
+		return nil, context.Cause(sh.cancelCtx)
+	}
+
 	// First, check if writer already exists with read lock
 	ep.mu.RLock()
 	if w, ok := ep.writers[shardID]; ok {
@@ -1141,6 +1158,7 @@ func (sh *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.C
 		batchSize:      sh.batchSize,
 		metrics:        sh.metrics,
 		analyzeOnly:    sh.analyzeOnly,
+		cancelCtx:      sh.cancelCtx,
 		minBlockUncomp: math.MaxUint64,
 		minBlockComp:   math.MaxUint64,
 		minBlockSVs:    math.MaxUint64,
@@ -1180,24 +1198,26 @@ func (sh *shardHandler) getWriter(shardID uint64, scale uint8, chunkCoord dvid.C
 }
 
 // startShardEpoch fires off parallel chunkHandler goroutines that will stop when
-// the returned chunk channel is closed.
-func (sh *shardHandler) startShardEpoch(dataname dvid.InstanceName, workers int) (chunkCh chan *storage.Chunk, ep *epoch) {
+// the returned chunk channel is closed or the context is cancelled.
+func (sh *shardHandler) startShardEpoch(dataname dvid.InstanceName, workers int, cancelCtx context.Context, cancelFunc context.CancelCauseFunc) (chunkCh chan *storage.Chunk, ep *epoch) {
 	ep = &epoch{writers: make(map[uint64]*shardWriter, sh.shardsInStrip)}
 	ep.chunkWG.Add(workers)
 	chunkCh = make(chan *storage.Chunk, 1000) // Buffered channel to hold chunks read from storage.
 	for i := 0; i < workers; i++ {
-		go sh.chunkHandler(dataname, chunkCh, ep)
+		go sh.chunkHandler(dataname, chunkCh, ep, cancelCtx, cancelFunc)
 	}
 	return chunkCh, ep
 }
 
 // goroutine to receive stream of block data over channel, decode, and send to correct shard writer.
-// Shards are closed after receiving a signal BlockData
-// from the labelmap data and sends them to
-// appropriate shard writers.
-func (sh *shardHandler) chunkHandler(dataname dvid.InstanceName, ch <-chan *storage.Chunk, ep *epoch) {
+// Exits early if the context is cancelled (e.g., due to a fatal error in another goroutine).
+func (sh *shardHandler) chunkHandler(dataname dvid.InstanceName, ch <-chan *storage.Chunk, ep *epoch, cancelCtx context.Context, cancelFunc context.CancelCauseFunc) {
 	var numBlocks uint64
 	for c := range ch {
+		if cancelCtx.Err() != nil {
+			// Drain channel without processing to allow upstream to unblock.
+			continue
+		}
 		// Block keys are in ZYX order, but we will compute the morton code of block coordinates
 		// and shard id, using the latter to determine which worker to send the block to.
 		scale, indexZYX, err := DecodeBlockTKey(c.K)
@@ -1275,7 +1295,11 @@ func (sh *shardHandler) chunkHandler(dataname dvid.InstanceName, ch <-chan *stor
 		shardID := scaleStruct.computeShardID(chunkX, chunkY, chunkZ)
 		writer, err := sh.getWriter(shardID, scale, chunkCoord, ep)
 		if err != nil {
-			dvid.Errorf("Failed to get writer for shard %d: %v", shardID, err)
+			if cancelCtx.Err() == nil {
+				// First error — log it and cancel the pipeline.
+				dvid.Errorf("Failed to get writer for shard %d: %v", shardID, err)
+				cancelFunc(fmt.Errorf("failed to get writer for shard %d: %w", shardID, err))
+			}
 			continue
 		}
 		writer.ch <- blockInfo
@@ -1323,7 +1347,9 @@ func (d *Data) ExportData(ctx *datastore.VersionedCtx, spec exportSpec) error {
 	}
 
 	// Start the process to read blocks from storage and send them to the appropriate shard writers.
-	go d.readBlocksZYX(ctx, &handler, spec)
+	// A cancellable context allows any fatal error (e.g., permission denied) to stop the entire pipeline.
+	cancelCtx, cancelFunc := context.WithCancelCause(context.Background())
+	go d.readBlocksZYX(ctx, &handler, spec, cancelCtx, cancelFunc)
 
 	action := "export"
 	if spec.AnalyzeOnly {
@@ -1337,7 +1363,7 @@ func (d *Data) ExportData(ctx *datastore.VersionedCtx, spec exportSpec) error {
 // operated at a time thereby relieving memory pressure, while giving up perhaps a little
 // speed due to more complex DB scan paths.  Blocks are retrieved, passed to chunkHandler
 // goroutines that determine their shards, and then passed to the appropriate shardWriter.
-func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec exportSpec) {
+func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec exportSpec, cancelCtx context.Context, cancelFunc context.CancelCauseFunc) {
 	timedLog := dvid.NewTimeLog()
 
 	store, err := datastore.GetOrderedKeyValueDB(d)
@@ -1346,11 +1372,16 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 		return
 	}
 
+	sh.cancelCtx = cancelCtx
+
 	var epochsWG sync.WaitGroup // tracks all epoch cleanup goroutines
 	scaleWGs := make([]sync.WaitGroup, spec.NumScales)
 	var numBlocks uint64
 	var scale uint8
 	for scale = 0; scale < spec.NumScales; scale++ {
+		if cancelCtx.Err() != nil {
+			break
+		}
 		scaleStart := time.Now()
 		blocksBeforeScale := numBlocks
 		dvid.Infof("Starting export of scale %d ...\n", scale)
@@ -1364,14 +1395,20 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 
 		var shardZ, shardY int32 // z and y voxel coordinate of shard origin
 		for shardZ = 0; shardZ < volumeExtents[2]; shardZ += shardDimVoxels {
+			if cancelCtx.Err() != nil {
+				break
+			}
 			shardChunkZ := shardZ / dvidChunkVoxelsPerDim // Convert shard voxel origin to chunk coordinates.
 			for shardY = 0; shardY < volumeExtents[1]; shardY += shardDimVoxels {
+				if cancelCtx.Err() != nil {
+					break
+				}
 				// Convert from shard origin to chunk coordinates.
 				shardChunkY := shardY / dvidChunkVoxelsPerDim
 
 				// Create a pool of workers to uncompress blocks and send them to the
 				// appropriate shard writer for this strip of shards.
-				chunkCh, ep := sh.startShardEpoch(d.DataName(), 50)
+				chunkCh, ep := sh.startShardEpoch(d.DataName(), 50, cancelCtx, cancelFunc)
 
 				// Read a bar of chunks that constitute shards along X.
 				epochStart := time.Now()
@@ -1385,6 +1422,9 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 
 						// Scan the chunks across X and send them to the chunkHandlers.
 						err = store.ProcessRange(ctx, begTKey, endTKey, nil, func(c *storage.Chunk) error {
+							if cancelCtx.Err() != nil {
+								return cancelCtx.Err()
+							}
 							if c == nil {
 								return fmt.Errorf("export: received nil chunk in count for data %q", d.DataName())
 							}
@@ -1406,7 +1446,7 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 							}
 							return nil
 						})
-						if err != nil {
+						if err != nil && cancelCtx.Err() == nil {
 							dvid.Errorf("export: problem during process range: %v\n", err)
 						}
 					}
@@ -1458,11 +1498,15 @@ func (d *Data) readBlocksZYX(ctx *datastore.VersionedCtx, sh *shardHandler, spec
 		}(scale, scaleBlocks, scaleStart)
 	}
 
-	// Go through all labelmap blocks and send them to the workers.
-	timedLog.Infof("Finished reading labelmap %q %s blocks to exporting workers", d.DataName(), commaUint64(numBlocks))
-
 	// Wait for all epoch cleanup goroutines (and their shard writers) to complete.
 	epochsWG.Wait()
+
+	if cause := context.Cause(cancelCtx); cause != nil {
+		dvid.Errorf("EXPORT ABORTED for labelmap %q after %s blocks: %v\n",
+			d.DataName(), commaUint64(numBlocks), cause)
+	} else {
+		timedLog.Infof("Finished exporting labelmap %q %s blocks", d.DataName(), commaUint64(numBlocks))
+	}
 
 	// Write the export metrics log.
 	if sh.metrics != nil {
