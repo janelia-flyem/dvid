@@ -45,6 +45,9 @@ type fvdbExportStats struct {
 	// Labels per block statistics
 	labelsPerBlock []int // number of unique labels in each block's dictionary
 
+	// Label index voxel count (from pre-existing label index, for verification)
+	labelIndexVoxels uint64
+
 	// Unique labels across all processed blocks
 	uniqueLabels       map[uint64]struct{} // supervoxel IDs
 	uniqueMappedLabels map[uint64]struct{} // agglomerated (mapped) labels
@@ -238,7 +241,13 @@ func (s *fvdbExportStats) printSummary(label uint64, outputBytes int) {
 	dvid.Infof("=== fVDB Export Statistics for label %d ===\n", label)
 
 	// Voxel statistics
-	dvid.Infof("Voxels: %d total\n", s.totalVoxels)
+	dvid.Infof("Voxels (from block processing): %d\n", s.totalVoxels)
+	if s.labelIndexVoxels > 0 {
+		dvid.Infof("Voxels (from label index): %d\n", s.labelIndexVoxels)
+		if s.totalVoxels != int64(s.labelIndexVoxels) {
+			dvid.Infof("WARNING: voxel count mismatch between block processing and label index!\n")
+		}
+	}
 	if s.coordsSet {
 		extentX := s.maxCoord[0] - s.minCoord[0] + 1
 		extentY := s.maxCoord[1] - s.minCoord[1] + 1
@@ -868,6 +877,14 @@ func (d *Data) exportLabelToFVDB(ctx *datastore.VersionedCtx, label uint64, outP
 					grayscalePath, gn, len(grayscaleData))
 			}
 		}
+	}
+
+	// Get voxel count from label index for verification
+	idx, err := GetLabelIndex(d, ctx.VersionID(), label, false)
+	if err != nil {
+		dvid.Errorf("fVDB export: could not get label index for verification: %v\n", err)
+	} else if idx != nil {
+		stats.labelIndexVoxels = idx.NumVoxels()
 	}
 
 	// Print comprehensive statistics
