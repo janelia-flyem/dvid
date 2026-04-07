@@ -46,7 +46,8 @@ type fvdbExportStats struct {
 	labelsPerBlock []int // number of unique labels in each block's dictionary
 
 	// Unique labels across all processed blocks
-	uniqueLabels map[uint64]struct{}
+	uniqueLabels       map[uint64]struct{} // supervoxel IDs
+	uniqueMappedLabels map[uint64]struct{} // agglomerated (mapped) labels
 }
 
 func newFvdbExportStats() *fvdbExportStats {
@@ -54,6 +55,7 @@ func newFvdbExportStats() *fvdbExportStats {
 		minCoord:           [3]int32{math.MaxInt32, math.MaxInt32, math.MaxInt32},
 		maxCoord:           [3]int32{math.MinInt32, math.MinInt32, math.MinInt32},
 		uniqueLabels:       make(map[uint64]struct{}),
+		uniqueMappedLabels: make(map[uint64]struct{}),
 		compressionFormats: make(map[string]int),
 	}
 }
@@ -221,6 +223,16 @@ func (s *fvdbExportStats) addLabel(label uint64) {
 	s.uniqueLabels[label] = struct{}{}
 }
 
+func (s *fvdbExportStats) addMappedLabels(blockLabels []uint64, svmap *VCache, v dvid.VersionID) {
+	for _, sv := range blockLabels {
+		if sv == 0 {
+			continue
+		}
+		mapped, _ := svmap.MappedLabel(v, sv)
+		s.uniqueMappedLabels[mapped] = struct{}{}
+	}
+}
+
 // printSummary logs a comprehensive summary of the export statistics.
 func (s *fvdbExportStats) printSummary(label uint64, outputBytes int) {
 	dvid.Infof("=== fVDB Export Statistics for label %d ===\n", label)
@@ -282,7 +294,8 @@ func (s *fvdbExportStats) printSummary(label uint64, outputBytes int) {
 	}
 
 	// Unique labels across all blocks
-	dvid.Infof("Unique labels in processed blocks: %d\n", len(s.uniqueLabels))
+	dvid.Infof("Unique supervoxels in processed blocks: %d\n", len(s.uniqueLabels))
+	dvid.Infof("Unique agglomerated labels in processed blocks: %d\n", len(s.uniqueMappedLabels))
 
 	// Output file statistics
 	dvid.Infof("Output IndexGrid: %s\n", formatBytes(int64(outputBytes)))
@@ -553,6 +566,15 @@ func (d *Data) exportLabelToIndexGrid(ctx *datastore.VersionedCtx, blockMeta *la
 		return nil, nil, fmt.Errorf("labelmap %q does not have 3D block size", d.DataName())
 	}
 
+	// Get supervoxel-to-body mapping for tracking unique agglomerated labels
+	var svmap *VCache
+	if stats != nil {
+		svmap, err = getMapping(d, ctx.VersionID())
+		if err != nil {
+			dvid.Errorf("could not get label mapping for agglomerated label stats: %v\n", err)
+		}
+	}
+
 	// Progress tracking
 	totalBlocks := len(blockMeta.sortedBlocks)
 	progressInterval := totalBlocks / 10 // Log every ~10%
@@ -595,6 +617,9 @@ func (d *Data) exportLabelToIndexGrid(ctx *datastore.VersionedCtx, blockMeta *la
 		if stats != nil {
 			stats.addBlockStats(storageSize, serializedSize, compressionFormat.String())
 			stats.addBlockLabelCount(len(block.Labels))
+			if svmap != nil {
+				stats.addMappedLabels(block.Labels, svmap, ctx.VersionID())
+			}
 		}
 
 		// Fetch grayscale block if needed
