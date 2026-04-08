@@ -48,6 +48,13 @@ Provided benchmarks:
 
 - `BenchmarkVersionedRangeBaseline`
 - `BenchmarkVersionedRangeOptimized`
+- `BenchmarkVersionedRangePipelined`
+
+The pipelined strategy is experimental and is not the default production path.
+It uses one goroutine to stream a key-only range scan and resolve winning keys,
+and a second goroutine to fetch winner values concurrently. This is intended
+primarily for static export workloads against committed versions, where there
+are no concurrent rewrites of the keys under test.
 
 The synthetic benchmark parameters can be adjusted with environment variables:
 
@@ -68,7 +75,7 @@ for export-shards-like testing.
 Example:
 
 ```bash
-go test -tags badger ./storage/badger -run '^$' -bench 'BenchmarkVersionedRange' -benchmem
+go test -tags badger ./storage/badger -run '^$' -bench 'BenchmarkVersionedRange(Baseline|Optimized|Pipelined)$' -benchmem
 ```
 
 Larger target-server run:

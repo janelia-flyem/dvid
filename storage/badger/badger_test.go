@@ -215,9 +215,17 @@ func collectLegacyVersionedRange(db *badgerstore.BadgerDB, vctx storage.Versione
 }
 
 func collectOptimizedProcessRange(db *badgerstore.BadgerDB, ctx storage.Context, begTKey, endTKey storage.TKey) ([]storage.TKeyValue, int64, error) {
+	return collectProcessRangeForStrategy(db, ctx, begTKey, endTKey, badgerstore.VersionedReadOptimized)
+}
+
+func collectPipelinedProcessRange(db *badgerstore.BadgerDB, ctx storage.Context, begTKey, endTKey storage.TKey) ([]storage.TKeyValue, int64, error) {
+	return collectProcessRangeForStrategy(db, ctx, begTKey, endTKey, badgerstore.VersionedReadPipelined)
+}
+
+func collectProcessRangeForStrategy(db *badgerstore.BadgerDB, ctx storage.Context, begTKey, endTKey storage.TKey, strategy badgerstore.VersionedReadStrategy) ([]storage.TKeyValue, int64, error) {
 	var out []storage.TKeyValue
 	var bytesRead int64
-	err := db.ProcessRange(ctx, begTKey, endTKey, nil, func(c *storage.Chunk) error {
+	err := db.ProcessRangeWithStrategy(ctx, begTKey, endTKey, strategy, nil, func(c *storage.Chunk) error {
 		bytesRead += int64(len(c.V))
 		out = append(out, storage.TKeyValue{
 			K: append(storage.TKey(nil), c.K...),
@@ -281,6 +289,10 @@ func TestVersionedRangeMatchesLegacySelection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("optimized range: %v", err)
 	}
+	pipelined, _, err := collectPipelinedProcessRange(db, childCtx, key1, key3)
+	if err != nil {
+		t.Fatalf("pipelined range: %v", err)
+	}
 	if len(legacy) != len(optimized) {
 		t.Fatalf("legacy and optimized range lengths differ: %d vs %d", len(legacy), len(optimized))
 	}
@@ -289,9 +301,17 @@ func TestVersionedRangeMatchesLegacySelection(t *testing.T) {
 			t.Fatalf("legacy and optimized range results differ at %d", i)
 		}
 	}
+	if len(legacy) != len(pipelined) {
+		t.Fatalf("legacy and pipelined range lengths differ: %d vs %d", len(legacy), len(pipelined))
+	}
+	for i := range legacy {
+		if !bytes.Equal(legacy[i].K, pipelined[i].K) || !bytes.Equal(legacy[i].V, pipelined[i].V) {
+			t.Fatalf("legacy and pipelined range results differ at %d", i)
+		}
+	}
 }
 
-func benchmarkVersionedRange(b *testing.B, optimized bool) {
+func benchmarkVersionedRange(b *testing.B, strategy badgerstore.VersionedReadStrategy) {
 	db := openTempBadgerDB(b)
 	versionsPerKey := benchIntEnv("DVID_BADGER_BENCH_VERSIONS", 4)
 	ctxs, _ := makeLinearVersionedCtxs(b, db, versionsPerKey)
@@ -324,10 +344,10 @@ func benchmarkVersionedRange(b *testing.B, optimized bool) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var err error
-		if optimized {
-			_, bytesRead, err = collectOptimizedProcessRange(db, leafCtx, beg, end)
-		} else {
+		if strategy == badgerstore.VersionedReadLegacy {
 			_, _, bytesRead, err = collectLegacyVersionedRange(db, leafCtx, beg, end)
+		} else {
+			_, bytesRead, err = collectProcessRangeForStrategy(db, leafCtx, beg, end, strategy)
 		}
 		if err != nil {
 			b.Fatal(err)
@@ -338,9 +358,13 @@ func benchmarkVersionedRange(b *testing.B, optimized bool) {
 }
 
 func BenchmarkVersionedRangeBaseline(b *testing.B) {
-	benchmarkVersionedRange(b, false)
+	benchmarkVersionedRange(b, badgerstore.VersionedReadLegacy)
 }
 
 func BenchmarkVersionedRangeOptimized(b *testing.B) {
-	benchmarkVersionedRange(b, true)
+	benchmarkVersionedRange(b, badgerstore.VersionedReadOptimized)
+}
+
+func BenchmarkVersionedRangePipelined(b *testing.B) {
+	benchmarkVersionedRange(b, badgerstore.VersionedReadPipelined)
 }

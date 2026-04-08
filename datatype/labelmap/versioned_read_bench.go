@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 
 type versionedReadBenchmarkSpec struct {
 	ExportSpecPath string `json:"export_spec_path"`
-	Mode           string `json:"mode"`       // legacy, optimized, both
+	Mode           string `json:"mode"`       // legacy, optimized, pipelined, both, all
 	Iterations     int    `json:"iterations"` // default 1
 	NumScales      uint8  `json:"num_scales"` // default 1
 
@@ -39,6 +40,8 @@ type versionedReadStrategyResult struct {
 	LogicalKeys         int64   `json:"logical_keys"`
 	AvgVersionsPerKey   float64 `json:"avg_versions_per_key"`
 	ElapsedMilliseconds float64 `json:"elapsed_ms"`
+	RelativeToLegacy    float64 `json:"relative_to_legacy,omitempty"`
+	SpeedupVsLegacy     float64 `json:"speedup_vs_legacy,omitempty"`
 }
 
 type versionedReadBenchmarkReport struct {
@@ -146,9 +149,10 @@ func (d *Data) benchmarkVersionedReads(ctx *datastore.VersionedCtx, bench versio
 		StartedAt: time.Now(),
 	}
 
-	runLegacy := bench.Mode == "legacy" || bench.Mode == "both"
-	runOptimized := bench.Mode == "optimized" || bench.Mode == "both"
-	if !runLegacy && !runOptimized {
+	runLegacy := bench.Mode == "legacy" || bench.Mode == "both" || bench.Mode == "all"
+	runOptimized := bench.Mode == "optimized" || bench.Mode == "both" || bench.Mode == "all"
+	runPipelined := bench.Mode == "pipelined" || bench.Mode == "all"
+	if !runLegacy && !runOptimized && !runPipelined {
 		return nil, fmt.Errorf("unsupported benchmark mode %q", bench.Mode)
 	}
 
@@ -176,6 +180,9 @@ func (d *Data) benchmarkVersionedReads(ctx *datastore.VersionedCtx, bench versio
 			}
 			if runOptimized {
 				accum["optimized"] = &agg{}
+			}
+			if runPipelined {
+				accum["pipelined"] = &agg{}
 			}
 			started := map[string]time.Time{}
 			for name := range accum {
@@ -239,6 +246,22 @@ func (d *Data) benchmarkVersionedReads(ctx *datastore.VersionedCtx, bench versio
 									return nil, err
 								}
 								a := accum["optimized"]
+								a.visibleBlocks += visibleBlocks
+								a.visibleBytes += visibleBytes
+							}
+							if runPipelined {
+								var visibleBlocks, visibleBytes int64
+								if err := badgerDB.ProcessRangeWithStrategy(ctx, begTKey, endTKey, badgerstore.VersionedReadPipelined, nil, func(c *storage.Chunk) error {
+									if c == nil || c.V == nil {
+										return nil
+									}
+									visibleBlocks++
+									visibleBytes += int64(len(c.V))
+									return nil
+								}); err != nil {
+									return nil, err
+								}
+								a := accum["pipelined"]
 								a.visibleBlocks += visibleBlocks
 								a.visibleBytes += visibleBytes
 							}
@@ -310,5 +333,81 @@ func (d *Data) benchmarkVersionedReads(ctx *datastore.VersionedCtx, bench versio
 			}
 		}
 	}
+	report.annotateRelativeSpeedups()
 	return report, nil
+}
+
+func (r *versionedReadBenchmarkReport) annotateRelativeSpeedups() {
+	type key struct {
+		iteration int
+		scale     uint8
+	}
+	legacyElapsed := make(map[key]float64)
+	for _, result := range r.Results {
+		if result.Strategy == "legacy" && result.ElapsedMilliseconds > 0 {
+			legacyElapsed[key{iteration: result.Iteration, scale: result.Scale}] = result.ElapsedMilliseconds
+		}
+	}
+	for i := range r.Results {
+		result := &r.Results[i]
+		if baseline, found := legacyElapsed[key{iteration: result.Iteration, scale: result.Scale}]; found && baseline > 0 && result.ElapsedMilliseconds > 0 {
+			result.RelativeToLegacy = result.ElapsedMilliseconds / baseline
+			result.SpeedupVsLegacy = baseline / result.ElapsedMilliseconds
+		}
+	}
+}
+
+func (r *versionedReadBenchmarkReport) SummaryLines() []string {
+	if len(r.Results) == 0 {
+		return nil
+	}
+	results := append([]versionedReadStrategyResult(nil), r.Results...)
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Iteration != results[j].Iteration {
+			return results[i].Iteration < results[j].Iteration
+		}
+		if results[i].Scale != results[j].Scale {
+			return results[i].Scale < results[j].Scale
+		}
+		order := func(strategy string) int {
+			switch strategy {
+			case "legacy":
+				return 0
+			case "optimized":
+				return 1
+			case "pipelined":
+				return 2
+			default:
+				return 3
+			}
+		}
+		return order(results[i].Strategy) < order(results[j].Strategy)
+	})
+
+	lines := make([]string, 0, len(results))
+	for _, result := range results {
+		ratio := "n/a"
+		if result.SpeedupVsLegacy > 0 {
+			if result.Strategy == "legacy" {
+				ratio = "1.00x baseline"
+			} else {
+				ratio = fmt.Sprintf("%.2fx vs legacy", result.SpeedupVsLegacy)
+			}
+		}
+		line := fmt.Sprintf(
+			"iter=%d scale=%d strategy=%s elapsed=%.3f ms (%s) visible_blocks=%d visible_value_bytes=%d scanned_versioned_kvs=%d logical_keys=%d avg_versions_per_key=%.3f",
+			result.Iteration,
+			result.Scale,
+			result.Strategy,
+			result.ElapsedMilliseconds,
+			ratio,
+			result.VisibleBlocks,
+			result.VisibleValueBytes,
+			result.ScannedVersionedKVs,
+			result.LogicalKeys,
+			result.AvgVersionsPerKey,
+		)
+		lines = append(lines, line)
+	}
+	return lines
 }

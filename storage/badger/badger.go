@@ -10,6 +10,7 @@ import (
 	"hash/fnv"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -523,6 +524,7 @@ type VersionedReadStrategy string
 const (
 	VersionedReadLegacy    VersionedReadStrategy = "legacy"
 	VersionedReadOptimized VersionedReadStrategy = "optimized"
+	VersionedReadPipelined VersionedReadStrategy = "pipelined"
 )
 
 func resolveVersionedKey(vctx storage.VersionedCtx, keys []storage.Key) (*storage.KeyValue, error) {
@@ -712,6 +714,139 @@ func (db *BadgerDB) versionedRangeOptimized(vctx storage.VersionedCtx, minKey, m
 	ch <- errorableKV{nil, err}
 }
 
+func (db *BadgerDB) versionedRangePipelined(vctx storage.VersionedCtx, minKey, maxKey, maxVersionKey storage.Key, ch chan errorableKV, done <-chan struct{}, keysOnly bool) {
+	if keysOnly {
+		db.versionedRangeOptimized(vctx, minKey, maxKey, maxVersionKey, ch, done, true)
+		return
+	}
+
+	winners := make(chan *storage.KeyValue, 256)
+	errCh := make(chan error, 2)
+	stop := make(chan struct{})
+	var stopOnce sync.Once
+	stopPipeline := func() {
+		stopOnce.Do(func() {
+			close(stop)
+		})
+	}
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(winners)
+
+		err := db.bdp.View(func(txn *badger.Txn) error {
+			opts := badger.DefaultIteratorOptions
+			opts.PrefetchValues = false
+			it := txn.NewIterator(opts)
+			defer it.Close()
+
+			keys := []storage.Key{}
+			emitWinner := func() error {
+				if len(keys) == 0 {
+					return nil
+				}
+				kv, err := resolveVersionedKey(vctx, keys)
+				if err != nil {
+					return err
+				}
+				if kv != nil {
+					select {
+					case <-done:
+						return nil
+					case <-stop:
+						return nil
+					case winners <- kv:
+					}
+				}
+				keys = keys[:0]
+				return nil
+			}
+
+			for it.Seek(minKey); it.Valid(); it.Next() {
+				select {
+				case <-done:
+					return nil
+				default:
+				}
+
+				item := it.Item()
+				key := item.KeyCopy(nil)
+				storage.StoreKeyBytesRead <- len(key)
+
+				if bytes.Compare(key, maxVersionKey) > 0 {
+					if storage.Key(key).IsDataKey() {
+						indexBytes, err := storage.TKeyFromKey(key)
+						if err != nil {
+							return err
+						}
+						maxVersionKey, err = vctx.MaxVersionKey(indexBytes)
+						if err != nil {
+							return err
+						}
+					}
+					if err := emitWinner(); err != nil {
+						return err
+					}
+				}
+
+				if bytes.Compare(key, maxKey) > 0 {
+					return emitWinner()
+				}
+				keys = append(keys, key)
+			}
+			return emitWinner()
+		})
+		if err != nil {
+			stopPipeline()
+		}
+		errCh <- err
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err := db.bdp.View(func(txn *badger.Txn) error {
+			for {
+				select {
+				case <-done:
+					return nil
+				case <-stop:
+					return nil
+				case kv, ok := <-winners:
+					if !ok {
+						return nil
+					}
+					if err := db.loadVersionedValue(txn, kv); err != nil {
+						return err
+					}
+					select {
+					case <-done:
+						return nil
+					case ch <- errorableKV{kv, nil}:
+					}
+				}
+			}
+		})
+		if err != nil {
+			stopPipeline()
+		}
+		errCh <- err
+	}()
+
+	go func() {
+		wg.Wait()
+		for i := 0; i < cap(errCh); i++ {
+			if err := <-errCh; err != nil {
+				ch <- errorableKV{nil, err}
+				return
+			}
+		}
+		ch <- errorableKV{nil, nil}
+	}()
+}
+
 // versionedRange sends a range of key-value pairs for a particular version down a channel.
 func (db *BadgerDB) versionedRange(vctx storage.VersionedCtx, begTKey, endTKey storage.TKey, ch chan errorableKV, done <-chan struct{}, keysOnly bool) {
 	minKey, err := vctx.MinVersionKey(begTKey)
@@ -769,6 +904,8 @@ func (db *BadgerDB) ProcessRangeWithStrategy(ctx storage.Context, kStart, kEnd s
 			db.versionedRangeLegacy(vctx, minKey, maxKey, maxVersionKey, ch, done, false)
 		case VersionedReadOptimized:
 			db.versionedRangeOptimized(vctx, minKey, maxKey, maxVersionKey, ch, done, false)
+		case VersionedReadPipelined:
+			db.versionedRangePipelined(vctx, minKey, maxKey, maxVersionKey, ch, done, false)
 		default:
 			ch <- errorableKV{nil, fmt.Errorf("unknown versioned read strategy %q", strategy)}
 		}
