@@ -174,6 +174,20 @@ $ dvid node <UUID> <data name> export-shards <spec path> <dest> [num scales]
 	num scales   (Optional) Number of scales to export starting with scale 0.  Defaults to 1 (scale 0 only).
 	             (e.g., 3 means scales 0, 1, and 2).  Capped at the number of scales in the spec and DVID data.
 
+$ dvid node <UUID> <data name> benchmark-versioned-read <benchmark spec path> [report path]
+
+	Benchmarks the versioned read path used by export-shards against a real labelmap instance.
+	The benchmark spec is a JSON file that references the export-shards volume spec and
+	selects which scales or shard strips to test.  The benchmark can run the legacy path,
+	the optimized path, or both, and reports the observed version fanout for the actual data.
+
+    Arguments:
+
+    UUID                Hexadecimal string with enough characters to uniquely identify a version node.
+	data name            Name of data to benchmark.
+	benchmark spec path  Absolute path to the benchmark JSON file.
+	report path          (Optional) Absolute path to write the JSON report.
+
 $ dvid node <UUID> <data name> set-nextlabel <label>
 
 	Sets the counter for new labels repo-wide for the given labelmap instance.
@@ -2862,6 +2876,40 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		go d.ExportData(ctx, exportSpec{ngVolume: spec, Directory: outPath, NumScales: uint8(numScalesInt), AnalyzeOnly: true})
 
 		reply.Text = fmt.Sprintf("Asynchronously analyzing shard data for data %q, uuid %s (log to: %s)\n", d.DataName(), uuid, outPath)
+		return nil
+
+	case "benchmark-versioned-read":
+		if len(req.Command) < 5 {
+			return fmt.Errorf("poorly formatted benchmark-versioned-read command.  See command-line help")
+		}
+		var uuidStr, dataName, cmdStr, benchSpecPath, reportPath string
+		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &benchSpecPath, &reportPath)
+
+		uuid, v, err := datastore.MatchingUUID(uuidStr)
+		if err != nil {
+			return err
+		}
+		ctx := datastore.NewVersionedCtx(d, v)
+		benchSpec, volSpec, err := loadVersionedReadBenchmarkSpec(benchSpecPath)
+		if err != nil {
+			return err
+		}
+		report, err := d.benchmarkVersionedReads(ctx, benchSpec, volSpec)
+		if err != nil {
+			return err
+		}
+		reportBytes, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			return err
+		}
+		if reportPath != "" {
+			if err := os.WriteFile(reportPath, reportBytes, 0644); err != nil {
+				return fmt.Errorf("error writing benchmark report %q: %v", reportPath, err)
+			}
+			reply.Text = fmt.Sprintf("Completed versioned read benchmark for data %q, uuid %s. Wrote report to %s\n", d.DataName(), uuid, reportPath)
+		} else {
+			reply.Text = string(reportBytes) + "\n"
+		}
 		return nil
 
 	case "fvdb":

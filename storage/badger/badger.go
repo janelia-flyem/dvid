@@ -369,15 +369,14 @@ func (db *BadgerDB) GetVersion(ctx storage.Context, tk storage.TKey) (dvid.Versi
 	if !ok {
 		return 0, fmt.Errorf("Bad GetVersions(): context is versioned but doesn't fulfill interface: %v", ctx)
 	}
-	keys, err := db.getKeyVersions(vctx, tk)
+	key, err := db.getResolvedVersionedKey(vctx, tk)
 	if err != nil {
 		return 0, err
 	}
-	versionID, err := vctx.GetBestVersion(keys)
-	if err != nil {
-		return 0, err
+	if key == nil {
+		return 0, nil
 	}
-	return versionID, err
+	return vctx.VersionFromKey(key)
 }
 
 // ---- KeyValueGetter interface ------
@@ -398,11 +397,7 @@ func (db *BadgerDB) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 		if !ok {
 			return nil, fmt.Errorf("Bad Get(): context is versioned but doesn't fulfill interface: %v", ctx)
 		}
-		keys, err := db.getKeyVersions(vctx, tk)
-		if err != nil {
-			return nil, err
-		}
-		key, err := vctx.GetBestKeyForVersion(keys)
+		key, err := db.getResolvedVersionedKey(vctx, tk)
 		if err != nil {
 			return nil, err
 		}
@@ -458,11 +453,7 @@ func (db *BadgerDB) Exists(ctx storage.Context, tk storage.TKey) (exists bool, e
 		if !ok {
 			return false, fmt.Errorf("Bad Exists(): context is versioned but doesn't fulfill interface: %v", ctx)
 		}
-		keys, err := db.getKeyVersions(vctx, tk)
-		if err != nil {
-			return false, err
-		}
-		key, err := vctx.GetBestKeyForVersion(keys)
+		key, err = db.getResolvedVersionedKey(vctx, tk)
 		if err != nil {
 			return false, err
 		}
@@ -510,9 +501,61 @@ func (db *BadgerDB) getKeyVersions(vctx storage.VersionedCtx, tk storage.TKey) (
 	return keys, nil
 }
 
+func (db *BadgerDB) getResolvedVersionedKey(vctx storage.VersionedCtx, tk storage.TKey) (storage.Key, error) {
+	keys, err := db.getKeyVersions(vctx, tk)
+	if err != nil {
+		return nil, err
+	}
+	kv, err := resolveVersionedKey(vctx, keys)
+	if err != nil || kv == nil {
+		return nil, err
+	}
+	return kv.K, nil
+}
+
 type errorableKV struct {
 	*storage.KeyValue
 	error
+}
+
+type VersionedReadStrategy string
+
+const (
+	VersionedReadLegacy    VersionedReadStrategy = "legacy"
+	VersionedReadOptimized VersionedReadStrategy = "optimized"
+)
+
+func resolveVersionedKey(vctx storage.VersionedCtx, keys []storage.Key) (*storage.KeyValue, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	key, err := vctx.GetBestKeyForVersion(keys)
+	if err != nil {
+		return nil, err
+	}
+	if key == nil {
+		return nil, nil
+	}
+	return &storage.KeyValue{K: key}, nil
+}
+
+func (db *BadgerDB) loadVersionedValue(txn *badger.Txn, kv *storage.KeyValue) error {
+	if kv == nil || kv.K == nil {
+		return nil
+	}
+	item, err := txn.Get(kv.K)
+	if err == badger.ErrKeyNotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	kv.V, err = item.ValueCopy(nil)
+	if err != nil {
+		return err
+	}
+	storage.StoreValueBytesRead <- len(kv.V)
+	return nil
 }
 
 func sendKV(vctx storage.VersionedCtx, values []*storage.KeyValue, ch chan errorableKV) {
@@ -528,26 +571,9 @@ func sendKV(vctx storage.VersionedCtx, values []*storage.KeyValue, ch chan error
 	}
 }
 
-// versionedRange sends a range of key-value pairs for a particular version down a channel.
-func (db *BadgerDB) versionedRange(vctx storage.VersionedCtx, begTKey, endTKey storage.TKey, ch chan errorableKV, done <-chan struct{}, keysOnly bool) {
-	minKey, err := vctx.MinVersionKey(begTKey)
-	if err != nil {
-		ch <- errorableKV{nil, err}
-		return
-	}
-	maxKey, err := vctx.MaxVersionKey(endTKey)
-	if err != nil {
-		ch <- errorableKV{nil, err}
-		return
-	}
-	maxVersionKey, err := vctx.MaxVersionKey(begTKey)
-	if err != nil {
-		ch <- errorableKV{nil, err}
-		return
-	}
-
+func (db *BadgerDB) versionedRangeLegacy(vctx storage.VersionedCtx, minKey, maxKey, maxVersionKey storage.Key, ch chan errorableKV, done <-chan struct{}, keysOnly bool) {
 	values := []*storage.KeyValue{}
-	err = db.bdp.View(func(txn *badger.Txn) error {
+	err := db.bdp.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		if keysOnly {
 			opts.PrefetchValues = false
@@ -556,7 +582,7 @@ func (db *BadgerDB) versionedRange(vctx storage.VersionedCtx, begTKey, endTKey s
 		defer it.Close()
 		for it.Seek(minKey); it.Valid(); it.Next() {
 			select {
-			case <-done: // don't care about rest of data
+			case <-done:
 				return nil
 			default:
 			}
@@ -566,7 +592,6 @@ func (db *BadgerDB) versionedRange(vctx storage.VersionedCtx, begTKey, endTKey s
 			kv.K = item.KeyCopy(nil)
 			storage.StoreKeyBytesRead <- len(kv.K)
 
-			// Did we pass all versions for last key read?
 			if bytes.Compare(kv.K, maxVersionKey) > 0 {
 				if storage.Key(kv.K).IsDataKey() {
 					indexBytes, err := storage.TKeyFromKey(kv.K)
@@ -582,7 +607,6 @@ func (db *BadgerDB) versionedRange(vctx storage.VersionedCtx, begTKey, endTKey s
 				values = []*storage.KeyValue{}
 			}
 
-			// Did we pass the final key?
 			if bytes.Compare(kv.K, maxKey) > 0 {
 				if len(values) > 0 {
 					sendKV(vctx, values, ch)
@@ -604,6 +628,173 @@ func (db *BadgerDB) versionedRange(vctx storage.VersionedCtx, begTKey, endTKey s
 		return nil
 	})
 	ch <- errorableKV{nil, err}
+}
+
+func (db *BadgerDB) versionedRangeOptimized(vctx storage.VersionedCtx, minKey, maxKey, maxVersionKey storage.Key, ch chan errorableKV, done <-chan struct{}, keysOnly bool) {
+	keys := []storage.Key{}
+	err := db.bdp.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		for it.Seek(minKey); it.Valid(); it.Next() {
+			select {
+			case <-done:
+				return nil
+			default:
+			}
+
+			item := it.Item()
+			key := item.KeyCopy(nil)
+			storage.StoreKeyBytesRead <- len(key)
+
+			if bytes.Compare(key, maxVersionKey) > 0 {
+				if storage.Key(key).IsDataKey() {
+					indexBytes, err := storage.TKeyFromKey(key)
+					if err != nil {
+						return err
+					}
+					maxVersionKey, err = vctx.MaxVersionKey(indexBytes)
+					if err != nil {
+						return err
+					}
+				}
+				kv, err := resolveVersionedKey(vctx, keys)
+				if err != nil {
+					return err
+				}
+				if kv != nil {
+					if !keysOnly {
+						if err := db.loadVersionedValue(txn, kv); err != nil {
+							return err
+						}
+					}
+					ch <- errorableKV{kv, nil}
+				}
+				keys = keys[:0]
+			}
+
+			if bytes.Compare(key, maxKey) > 0 {
+				if len(keys) > 0 {
+					kv, err := resolveVersionedKey(vctx, keys)
+					if err != nil {
+						return err
+					}
+					if kv != nil {
+						if !keysOnly {
+							if err := db.loadVersionedValue(txn, kv); err != nil {
+								return err
+							}
+						}
+						ch <- errorableKV{kv, nil}
+					}
+				}
+				return nil
+			}
+			keys = append(keys, key)
+		}
+		if len(keys) > 0 {
+			kv, err := resolveVersionedKey(vctx, keys)
+			if err != nil {
+				return err
+			}
+			if kv != nil {
+				if !keysOnly {
+					if err := db.loadVersionedValue(txn, kv); err != nil {
+						return err
+					}
+				}
+				ch <- errorableKV{kv, nil}
+			}
+		}
+		return nil
+	})
+	ch <- errorableKV{nil, err}
+}
+
+// versionedRange sends a range of key-value pairs for a particular version down a channel.
+func (db *BadgerDB) versionedRange(vctx storage.VersionedCtx, begTKey, endTKey storage.TKey, ch chan errorableKV, done <-chan struct{}, keysOnly bool) {
+	minKey, err := vctx.MinVersionKey(begTKey)
+	if err != nil {
+		ch <- errorableKV{nil, err}
+		return
+	}
+	maxKey, err := vctx.MaxVersionKey(endTKey)
+	if err != nil {
+		ch <- errorableKV{nil, err}
+		return
+	}
+	maxVersionKey, err := vctx.MaxVersionKey(begTKey)
+	if err != nil {
+		ch <- errorableKV{nil, err}
+		return
+	}
+	db.versionedRangeOptimized(vctx, minKey, maxKey, maxVersionKey, ch, done, keysOnly)
+}
+
+func (db *BadgerDB) ProcessRangeWithStrategy(ctx storage.Context, kStart, kEnd storage.TKey, strategy VersionedReadStrategy, op *storage.ChunkOp, f storage.ChunkFunc) error {
+	if db == nil {
+		return fmt.Errorf("Can't call ProcessRange on nil BadgerDB")
+	}
+	if ctx == nil {
+		return fmt.Errorf("Received nil context in ProcessRange()")
+	}
+	ch := make(chan errorableKV)
+	done := make(chan struct{})
+	defer close(done)
+
+	go func() {
+		if ctx == nil || !ctx.Versioned() {
+			db.unversionedRange(ctx, kStart, kEnd, ch, done, false)
+			return
+		}
+		vctx := ctx.(storage.VersionedCtx)
+		minKey, err := vctx.MinVersionKey(kStart)
+		if err != nil {
+			ch <- errorableKV{nil, err}
+			return
+		}
+		maxKey, err := vctx.MaxVersionKey(kEnd)
+		if err != nil {
+			ch <- errorableKV{nil, err}
+			return
+		}
+		maxVersionKey, err := vctx.MaxVersionKey(kStart)
+		if err != nil {
+			ch <- errorableKV{nil, err}
+			return
+		}
+		switch strategy {
+		case VersionedReadLegacy:
+			db.versionedRangeLegacy(vctx, minKey, maxKey, maxVersionKey, ch, done, false)
+		case VersionedReadOptimized:
+			db.versionedRangeOptimized(vctx, minKey, maxKey, maxVersionKey, ch, done, false)
+		default:
+			ch <- errorableKV{nil, fmt.Errorf("unknown versioned read strategy %q", strategy)}
+		}
+	}()
+
+	for {
+		result := <-ch
+		if result.error != nil {
+			return result.error
+		}
+		if result.KeyValue == nil {
+			return nil
+		}
+		if op != nil && op.Wg != nil {
+			op.Wg.Add(1)
+		}
+		tk, err := storage.TKeyFromKey(result.KeyValue.K)
+		if err != nil {
+			return err
+		}
+		tkv := storage.TKeyValue{K: tk, V: result.KeyValue.V}
+		chunk := &storage.Chunk{ChunkOp: op, TKeyValue: &tkv}
+		if err := f(chunk); err != nil {
+			return err
+		}
+	}
 }
 
 // unversionedRange sends a range of key-value pairs down a channel.
