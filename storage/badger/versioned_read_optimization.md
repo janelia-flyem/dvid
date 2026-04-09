@@ -50,11 +50,11 @@ Provided benchmarks:
 - `BenchmarkVersionedRangeOptimized`
 - `BenchmarkVersionedRangePipelined`
 
-The pipelined strategy is experimental and is not the default production path.
-It uses one goroutine to stream a key-only range scan and resolve winning keys,
-and a second goroutine to fetch winner values concurrently. This is intended
-primarily for static export workloads against committed versions, where there
-are no concurrent rewrites of the keys under test.
+The pipelined strategy uses one goroutine to stream a key-only range scan and
+resolve winning keys, and a second goroutine to fetch winner values
+concurrently. This is now the default Badger versioned range-read path.
+The `legacy` and single-stage `optimized` strategies remain available for
+comparison and benchmarking.
 
 The synthetic benchmark parameters can be adjusted with environment variables:
 

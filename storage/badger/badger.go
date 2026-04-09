@@ -370,14 +370,11 @@ func (db *BadgerDB) GetVersion(ctx storage.Context, tk storage.TKey) (dvid.Versi
 	if !ok {
 		return 0, fmt.Errorf("Bad GetVersions(): context is versioned but doesn't fulfill interface: %v", ctx)
 	}
-	key, err := db.getResolvedVersionedKey(vctx, tk)
+	keys, err := db.getKeyVersions(vctx, tk)
 	if err != nil {
 		return 0, err
 	}
-	if key == nil {
-		return 0, nil
-	}
-	return vctx.VersionFromKey(key)
+	return vctx.GetBestVersion(keys)
 }
 
 // ---- KeyValueGetter interface ------
@@ -864,7 +861,7 @@ func (db *BadgerDB) versionedRange(vctx storage.VersionedCtx, begTKey, endTKey s
 		ch <- errorableKV{nil, err}
 		return
 	}
-	db.versionedRangeOptimized(vctx, minKey, maxKey, maxVersionKey, ch, done, keysOnly)
+	db.versionedRangePipelined(vctx, minKey, maxKey, maxVersionKey, ch, done, keysOnly)
 }
 
 func (db *BadgerDB) ProcessRangeWithStrategy(ctx storage.Context, kStart, kEnd storage.TKey, strategy VersionedReadStrategy, op *storage.ChunkOp, f storage.ChunkFunc) error {
