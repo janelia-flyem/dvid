@@ -128,7 +128,7 @@ func computeExportShardDims(spec ngVolume, numScales uint8) ([]ngScale, []int32,
 	return scales, shardDims, nil
 }
 
-func (d *Data) benchmarkVersionedReads(ctx *datastore.VersionedCtx, bench versionedReadBenchmarkSpec, volSpec ngVolume) (*versionedReadBenchmarkReport, error) {
+func (d *Data) benchmarkVersionedReads(ctx *datastore.VersionedCtx, bench versionedReadBenchmarkSpec, volSpec ngVolume, progress func(string)) (*versionedReadBenchmarkReport, error) {
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return nil, err
@@ -156,10 +156,17 @@ func (d *Data) benchmarkVersionedReads(ctx *datastore.VersionedCtx, bench versio
 		return nil, fmt.Errorf("unsupported benchmark mode %q", bench.Mode)
 	}
 
+	if progress != nil {
+		progress(fmt.Sprintf("starting benchmark-versioned-read for data %q, uuid %s, mode=%s, iterations=%d, num_scales=%d", d.DataName(), ctx.VersionUUID(), bench.Mode, bench.Iterations, bench.NumScales))
+	}
+
 	for iter := 1; iter <= bench.Iterations; iter++ {
 		for scale := uint8(0); scale < bench.NumScales; scale++ {
 			if bench.Scale != nil && *bench.Scale != scale {
 				continue
+			}
+			if progress != nil {
+				progress(fmt.Sprintf("benchmark-versioned-read iteration %d/%d scale %d starting", iter, bench.Iterations, scale))
 			}
 			shardDimVoxels := shardDims[scale]
 			shardDimChunks := shardDimVoxels / dvidChunkVoxelsPerDim
@@ -191,6 +198,7 @@ func (d *Data) benchmarkVersionedReads(ctx *datastore.VersionedCtx, bench versio
 
 			stripsSeen := 0
 			chunkRowsSeen := 0
+			lastProgressChunkRows := 0
 			for shardZ := int32(0); shardZ < volumeExtents[2]; shardZ += shardDimVoxels {
 				for shardY := int32(0); shardY < volumeExtents[1]; shardY += shardDimVoxels {
 					if bench.ShardZ != nil && *bench.ShardZ != shardZ {
@@ -203,6 +211,9 @@ func (d *Data) benchmarkVersionedReads(ctx *datastore.VersionedCtx, bench versio
 						break
 					}
 					stripsSeen++
+					if progress != nil {
+						progress(fmt.Sprintf("benchmark-versioned-read iteration %d/%d scale %d strip %d starting at shard_y=%d shard_z=%d", iter, bench.Iterations, scale, stripsSeen, shardY, shardZ))
+					}
 					shardChunkZ := shardZ / dvidChunkVoxelsPerDim
 					shardChunkY := shardY / dvidChunkVoxelsPerDim
 
@@ -212,6 +223,10 @@ func (d *Data) benchmarkVersionedReads(ctx *datastore.VersionedCtx, bench versio
 								break
 							}
 							chunkRowsSeen++
+							if progress != nil && (chunkRowsSeen-lastProgressChunkRows >= 100 || chunkRowsSeen == 1) {
+								progress(fmt.Sprintf("benchmark-versioned-read iteration %d/%d scale %d progress: strips=%d chunk_rows=%d", iter, bench.Iterations, scale, stripsSeen, chunkRowsSeen))
+								lastProgressChunkRows = chunkRowsSeen
+							}
 							chunkBeg := dvid.ChunkPoint3d{0, chunkY, chunkZ}
 							chunkEnd := dvid.ChunkPoint3d{volChunksX, chunkY, chunkZ}
 							begTKey := NewBlockTKeyByCoord(scale, chunkBeg.ToIZYXString())
@@ -331,9 +346,15 @@ func (d *Data) benchmarkVersionedReads(ctx *datastore.VersionedCtx, bench versio
 				}
 				report.Results = append(report.Results, result)
 			}
+			if progress != nil {
+				progress(fmt.Sprintf("benchmark-versioned-read iteration %d/%d scale %d completed: strips=%d chunk_rows=%d", iter, bench.Iterations, scale, stripsSeen, chunkRowsSeen))
+			}
 		}
 	}
 	report.annotateRelativeSpeedups()
+	if progress != nil {
+		progress(fmt.Sprintf("benchmark-versioned-read completed for data %q, uuid %s", d.DataName(), ctx.VersionUUID()))
+	}
 	return report, nil
 }
 

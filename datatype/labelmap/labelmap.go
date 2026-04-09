@@ -180,7 +180,8 @@ $ dvid node <UUID> <data name> benchmark-versioned-read <benchmark spec path> [r
 	The benchmark spec is a JSON file that references the export-shards volume spec and
 	selects which scales or shard strips to test.  The benchmark can run the legacy path,
 	the optimized path, the experimental pipelined path, or all of them, and reports the
-	observed version fanout for the actual data.
+	observed version fanout for the actual data.  This command runs asynchronously:
+	progress is written to the server log and the optional report path is written on completion.
 
     Arguments:
 
@@ -2895,30 +2896,43 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		if err != nil {
 			return err
 		}
-		report, err := d.benchmarkVersionedReads(ctx, benchSpec, volSpec)
-		if err != nil {
-			return err
-		}
-		summary := strings.Join(report.SummaryLines(), "\n")
-		reportBytes, err := json.MarshalIndent(report, "", "  ")
-		if err != nil {
-			return err
-		}
+		go func() {
+			progress := func(msg string) {
+				dvid.Infof("%s\n", msg)
+			}
+			report, err := d.benchmarkVersionedReads(ctx, benchSpec, volSpec, progress)
+			if err != nil {
+				dvid.Errorf("benchmark-versioned-read failed for data %q, uuid %s: %v\n", d.DataName(), uuid, err)
+				return
+			}
+			summary := strings.Join(report.SummaryLines(), "\n")
+			reportBytes, err := json.MarshalIndent(report, "", "  ")
+			if err != nil {
+				dvid.Errorf("benchmark-versioned-read failed marshalling report for data %q, uuid %s: %v\n", d.DataName(), uuid, err)
+				return
+			}
+			if reportPath != "" {
+				if err := os.WriteFile(reportPath, reportBytes, 0644); err != nil {
+					dvid.Errorf("benchmark-versioned-read failed writing report %q for data %q, uuid %s: %v\n", reportPath, d.DataName(), uuid, err)
+					return
+				}
+				if summary != "" {
+					dvid.Infof("benchmark-versioned-read wrote report for data %q, uuid %s to %s\n%s\n", d.DataName(), uuid, reportPath, summary)
+				} else {
+					dvid.Infof("benchmark-versioned-read wrote report for data %q, uuid %s to %s\n", d.DataName(), uuid, reportPath)
+				}
+			} else {
+				if summary != "" {
+					dvid.Infof("benchmark-versioned-read report for data %q, uuid %s\n%s\n", d.DataName(), uuid, summary)
+				} else {
+					dvid.Infof("benchmark-versioned-read report for data %q, uuid %s\n%s\n", d.DataName(), uuid, string(reportBytes))
+				}
+			}
+		}()
 		if reportPath != "" {
-			if err := os.WriteFile(reportPath, reportBytes, 0644); err != nil {
-				return fmt.Errorf("error writing benchmark report %q: %v", reportPath, err)
-			}
-			if summary != "" {
-				reply.Text = fmt.Sprintf("Completed versioned read benchmark for data %q, uuid %s. Wrote report to %s\n%s\n", d.DataName(), uuid, reportPath, summary)
-			} else {
-				reply.Text = fmt.Sprintf("Completed versioned read benchmark for data %q, uuid %s. Wrote report to %s\n", d.DataName(), uuid, reportPath)
-			}
+			reply.Text = fmt.Sprintf("Asynchronously benchmarking versioned reads for data %q, uuid %s (report path: %s; progress in server log)\n", d.DataName(), uuid, reportPath)
 		} else {
-			if summary != "" {
-				reply.Text = summary + "\n\n" + string(reportBytes) + "\n"
-			} else {
-				reply.Text = string(reportBytes) + "\n"
-			}
+			reply.Text = fmt.Sprintf("Asynchronously benchmarking versioned reads for data %q, uuid %s (progress and final report in server log)\n", d.DataName(), uuid)
 		}
 		return nil
 

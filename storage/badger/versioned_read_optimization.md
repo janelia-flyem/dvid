@@ -91,6 +91,8 @@ go test -tags badger ./storage/badger -run '^$' -bench 'BenchmarkVersionedRange'
 
 The repository also includes an RPC command that benchmarks the Badger versioned
 read path against an existing `labelmap` instance, such as `segmentation`.
+This command runs asynchronously and returns immediately. Progress and final
+status are written to the DVID server log.
 
 Command form:
 
@@ -103,6 +105,10 @@ Example:
 ```bash
 dvid node 28841 segmentation benchmark-versioned-read /tmp/versioned-read-bench.json /tmp/versioned-read-report.json
 ```
+
+If `report.json` is provided, the final JSON report is written there when the
+benchmark completes. If it is omitted, the final summary and report are written
+to the server log instead.
 
 Example benchmark spec:
 
@@ -184,6 +190,79 @@ benchmark cannot answer, such as:
   instance
 - whether the optimized or pipelined strategy helps on the real export ranges
 - whether the benefit changes by scale, shard strip, or rewrite density
+
+## Consistency Model of the Pipelined Default
+
+The current pipelined default uses two separate Badger read-only transactions
+for one logical versioned range read:
+
+1. stage 1 scans keys only and resolves the winning versioned key
+2. stage 2 fetches values for those winning keys
+
+This is faster for some workloads because key scanning and value fetching can
+overlap, but it does not preserve the same single-snapshot semantics as the
+legacy and single-stage optimized implementations, which used one Badger read
+transaction for both winner selection and value retrieval.
+
+In DVID, this is treated as acceptable eventually consistent read behavior for
+the Badger versioned range-read path. The important point is to understand the
+tradeoff, not to treat it as an outright correctness bug.
+
+### What This Means
+
+If the database changes between stage 1 and stage 2, a logical range read can
+mix information from two snapshots:
+
+- stage 1 may choose a winner using snapshot A
+- stage 2 may fetch values using snapshot B
+
+That means the read is not guaranteed to reflect one coherent instant in time.
+Instead, it should be understood as eventually consistent.
+
+### DVID-Specific Write Pattern
+
+In DVID mutable stores, versioned writes usually do not delete old historical
+key-values from Badger:
+
+- `Put()` for versioned data writes the key for the current version
+- ancestor-version keys usually remain in the store
+- `Delete()` usually writes a tombstone for the current version instead of
+  physically removing all prior versions
+
+So the common pattern is "add or overwrite the current version's key while older
+versions remain available for DAG resolution."
+
+### Important Consequence
+
+Even if new data arrives between stage 1 and stage 2, it is not automatically
+"the correct winner" for the pipelined read:
+
+- if a write happens in the same mutable version after stage 1 has already
+  resolved the winner from ancestor keys, stage 2 will still fetch the old
+  winner and miss the newer same-version winner
+- if a tombstone is written after stage 1, stage 2 can still return a value
+  that should now be hidden
+- if a write occurs on a different branch or descendant version that is not
+  visible from the requested version context, it should not become the winner at
+  all
+
+There is one narrower case where stage 2 can still see the latest data:
+
+- if stage 1 already chose the same physical key and stage 2 reads that same key
+  after its value was overwritten in place for the same version
+
+But even then, the read no longer reflects a single coherent snapshot of the
+database. It reflects a later value fetch than the key-resolution step.
+
+### Practical Interpretation
+
+- For committed, quiescent export workloads such as `export-shards`, this is
+  typically indistinguishable from a snapshot-consistent read because the
+  relevant keys are not changing during the read.
+- For general mutable versioned reads, DVID accepts this as eventually
+  consistent behavior for the pipelined Badger range-read path.
+- The tradeoff is deliberate: higher read overlap and throughput in exchange for
+  no longer requiring single-snapshot semantics for a versioned range read.
 
 ## Interpreting Results
 
