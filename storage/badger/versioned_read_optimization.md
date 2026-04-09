@@ -87,6 +87,104 @@ DVID_BADGER_BENCH_VALUE_SIZE=8192 \
 go test -tags badger ./storage/badger -run '^$' -bench 'BenchmarkVersionedRange' -benchmem
 ```
 
+## Benchmarking a Real Labelmap Instance
+
+The repository also includes an RPC command that benchmarks the Badger versioned
+read path against an existing `labelmap` instance, such as `segmentation`.
+
+Command form:
+
+```bash
+dvid node <UUID> <labelmap-name> benchmark-versioned-read <benchmark-spec.json> [report.json]
+```
+
+Example:
+
+```bash
+dvid node 28841 segmentation benchmark-versioned-read /tmp/versioned-read-bench.json /tmp/versioned-read-report.json
+```
+
+Example benchmark spec:
+
+```json
+{
+  "export_spec_path": "/data/export/info.json",
+  "mode": "all",
+  "iterations": 3,
+  "num_scales": 1,
+  "scale": 0,
+  "max_strips": 2,
+  "max_chunk_rows": 64
+}
+```
+
+Supported `mode` values:
+
+- `legacy`
+- `optimized`
+- `pipelined`
+- `both`
+- `all`
+
+Useful optional filters:
+
+- `scale`: benchmark only one scale from the export spec
+- `shard_y`, `shard_z`: benchmark one specific export strip origin in voxels
+- `max_strips`: limit how many export strips are scanned
+- `max_chunk_rows`: limit how many `(chunkY, chunkZ)` X-row scans are run
+
+Default behavior when omitted:
+
+- if `scale` is omitted, the benchmark runs every scale from `0` through
+  `num_scales - 1`
+- if `shard_y` and `shard_z` are omitted, the benchmark scans all matching
+  strips for the selected scales
+- if `max_strips` is omitted or `0`, there is no strip limit
+- if `max_chunk_rows` is omitted or `0`, there is no chunk-row limit
+
+### What It Measures on a Real `labelmap`
+
+When the data instance is something like `segmentation`, the benchmark does not
+scan arbitrary keys. It reproduces the same kind of versioned block-range reads
+used by `export-shards`:
+
+1. It loads the Neuroglancer export volume spec referenced by `export_spec_path`.
+2. It computes the shard dimensions for the requested scales exactly the way
+   `export-shards` does.
+3. For each selected strip and `(chunkY, chunkZ)` row, it constructs the same
+   block-key range that `export-shards` would read across X for that scale.
+4. It runs the selected Badger versioned read strategy on that range.
+
+One `chunk row` in this benchmark means a single full-X range read for a fixed
+`(chunkY, chunkZ)` row of blocks.
+
+For a `labelmap` instance named `segmentation`, this means the benchmark is
+measuring reads of `segmentation` block key-values, not metadata and not other
+instances in the repo. The returned values are the compressed label blocks that
+`export-shards` would later write into shard files.
+
+The report records:
+
+- `elapsed_ms`: wall-clock time for the selected strategy over the chosen scan
+  set
+- `visible_blocks`: how many visible `labelmap` blocks were returned
+- `visible_value_bytes`: total bytes of visible block values returned by the
+  strategy
+- `scanned_versioned_kvs`: how many raw versioned key-values existed in the same
+  range before version filtering
+- `logical_keys`: how many distinct logical block keys were scanned
+- `avg_versions_per_key`: average stored version fanout in the tested range
+- `speedup_vs_legacy`: relative speedup versus the legacy read path for the same
+  iteration and scale
+
+This makes the RPC benchmark useful for answering questions that the synthetic
+benchmark cannot answer, such as:
+
+- how many rewritten versions exist per block in the actual `segmentation`
+  instance
+- whether the optimized or pipelined strategy helps on the real export ranges
+- whether the benefit changes by scale, shard strip, or rewrite density
+
 ## Interpreting Results
 
 Local workstation results are useful for:
