@@ -19,9 +19,12 @@ from avoiding losing-version value reads.
 ## What We Measured
 
 We benchmarked a real `labelmap` instance (`segmentation`) on the target
-deployment server using the `benchmark-versioned-read` RPC command.
+deployment server using the `benchmark-versioned-read` RPC command with
+`workload=all`.
 
-Representative result for scale 0 block reads:
+### Block Reads
+
+Dataset and sample:
 
 - sampled non-empty strips: `6`
 - sampled non-empty chunk rows: `4375`
@@ -35,18 +38,48 @@ The key point is that version fanout in the sampled block ranges was extremely
 low. Almost every logical block key had exactly one stored version in the tested
 regions.
 
-Measured warm-run behavior:
+Measured behavior across the three iterations on male CNS `segmentation`:
 
-- `legacy`: about `54-57s`
-- `optimized`: about `63-66s`
-- `pipelined`: about `32-33s`
+| Approach | Speedup vs legacy | Iteration 1 | Iteration 2 | Iteration 3 | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `legacy` | `1.00x` | `61.13s` | `55.53s` | `58.06s` | Reads all stored values for all versions. |
+| `optimized` | `0.85x-0.89x` | `68.76s` | `65.20s` | `67.37s` | Slower than legacy for scale 0 block reads. |
+| `pipelined` | `1.65x-1.72x` | `35.56s` | `33.57s` | `34.17s` | Best performer for block reads. |
 
 Interpretation:
 
-- single-stage keys-first optimization was not a win for this workload
-- pipelining was a large win
+- single-stage keys-first optimization is not a win for this block workload
+- pipelining is a large win
 - the workload is not dominated by historical-version fanout
 - the workload appears dominated by read-path overlap / streaming behavior
+
+### Label Index Reads
+
+Representative index result from the same run:
+
+- sampled visible labels: `1024`
+- visible indices returned: `1024`
+- visible value bytes: `2,343,615,136`
+- scanned versioned KVs: `12,325`
+- logical keys: `1,024`
+- average versions per key: `12.036`
+
+The key point is that label indices are a high-rewrite workload. The sampled
+label index keys averaged about twelve stored versions per logical key.
+
+Measured behavior across the three iterations on male CNS `segmentation`:
+
+| Approach | Speedup vs legacy | Iteration 1 | Iteration 2 | Iteration 3 | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `legacy` | `1.00x` | `30.14s` | `17.43s` | `17.00s` | Reads all stored values for all historical index versions. |
+| `optimized` | `16.69x-31.54x` | `0.956s` | `0.961s` | `1.018s` | Keys-first pruning is a huge win here. |
+| `pipelined` | `24.08x-40.73x` | `0.740s` | `0.662s` | `0.706s` | Best performer for label index reads. |
+
+Interpretation:
+
+- keys-first pruning matters enormously for label index retrieval
+- pipelining still helps on top of keys-first pruning
+- this is the workload where historical-version fanout is genuinely dominant
 
 ## Current State
 
@@ -78,28 +111,31 @@ versions to prune.
 
 The pipelined path helps because it keeps reading and processing overlapped.
 
-### 2. Keys-first optimization is workload-dependent
+### 2. For label indices, keys-first pruning matters a lot
 
-The keys-first approach should still help when:
+For label index reads on the tested dataset:
 
-- many logical keys have multiple stored versions
-- values are large enough that loading losing versions is expensive
-- winner selection eliminates a meaningful fraction of value reads
+- average versions per key is about `12`
+- legacy pays for many losing historical versions
+- optimized is dramatically better than legacy
+- pipelined is better still
 
-That likely describes some workloads better than `export-shards` block scans.
+So label indices are exactly the kind of workload where keys-first winner
+selection is valuable.
 
 ### 3. One optimization may not fit all versioned read types
 
-The real-server block benchmark strongly suggests that block reads and label
-index reads should be considered separately.
-
-Potentially different read classes:
+The benchmark confirms that different versioned read classes have different
+dominant costs:
 
 - block-range reads used by `export-shards`
-- label index lookups and related range scans
-- other metadata-like versioned reads
+  - very low fanout
+  - benefit mainly from pipeline overlap
+- label index reads
+  - high fanout
+  - benefit heavily from keys-first pruning and also from pipelining
 
-These may want different internal strategies.
+So one optimization should not be justified from only one workload class.
 
 ## Consistency Model of the Current Pipeline
 
@@ -258,34 +294,29 @@ are rewritten during body merges, cleaves, and other mutating operations.
 
 ### Goal
 
-Keep the current pipelined default for block-range reads while exploring whether
-different versioned read classes should use different internal strategies.
+Keep the current pipelined default for general Badger versioned range reads,
+because it is the best performer so far on both measured workload classes.
 
 ### Planned Next Work
 
-1. Keep the current block-read benchmark and use it as the authority for
-   `export-shards`-like workloads.
+1. Keep the block benchmark as the authority for `export-shards`-like
+   workloads.
 
-2. Add a separate benchmark path for label index retrieval.
+2. Keep the index benchmark as the authority for label index retrieval
+   workloads.
 
-   Motivation:
-
-   - label index access is not part of `export-shards`
-   - it may have much higher versions-per-key than block reads
-   - the keys-first optimization may help there even if it does not help block
-     reads
-
-   Candidate operations to benchmark:
-
-   - `getLabelIndex`
-   - `GetVersion`
-   - any range-style index retrieval paths used by `labelmap`
-
-3. Explore a fourth internal strategy for block reads:
+3. If another strategy is explored, the next candidate is still:
 
    - single-transaction streaming pipeline
    - keep the legacy-style one-pass range scan over full versioned KVs
    - send grouped key families downstream immediately
+   - compare it against the current pipelined implementation on both workloads
+
+4. Consider whether a separate benchmark for pure `GetVersion()` / `index-version`
+   lookups is still worthwhile.
+
+   The current `indices` benchmark measures index fetch behavior via exact-key
+   `ProcessRangeWithStrategy(...)`, not the standalone `GetVersion()` path.
 
 ## Implemented So Far
 
@@ -352,40 +383,24 @@ The current implementation does the following:
    keys so that all three Badger strategies can be compared on the same index
    retrieval workload.
 
-This is the current implementation baseline to measure before adding a fourth
-single-transaction streaming strategy or adding a separate benchmark for pure
-`index-version` lookups.
-   - pipeline winner selection / downstream processing without splitting the read
-     into two Badger transactions
+## Current Recommendation
 
-   Motivation:
+The current recommendation is:
 
-   - the current real-server evidence suggests pipeline overlap is the main win
-   - the keys-first optimization does not help much when `avg_versions_per_key`
-     is near `1`
-   - a single-transaction pipeline could preserve one-snapshot semantics while
-     still trying to keep the range scan unblocked
+- keep `pipelined` as the default Badger versioned range-read strategy
+- use the block benchmark to evaluate `export-shards`-like performance
+- use the index benchmark to evaluate high-rewrite label index performance
+- treat `optimized` as a comparison strategy, not the preferred production path
 
-4. Compare strategy choice by workload class instead of assuming one universal
-   winner.
-
-   Working hypothesis:
-
-   - block-range reads may prefer pipelined streaming behavior
-   - label index reads may prefer keys-first pruning if version fanout is higher
-
-### Non-Goals for the Next Pass
-
-- no on-disk key format change
-- no migration requirement
-- no side index yet
+This recommendation is based on measured real-server results, not synthetic
+benchmarks alone.
 
 ## Decision Rule Going Forward
 
 For any future Badger read-path change, prefer the result from:
 
 - the real-server `labelmap` block benchmark for `export-shards`-like reads
-- the planned label-index benchmark for index-heavy reads
+- the real-server label index benchmark for index-heavy reads
 
 Do not assume that a win on synthetic fanout-heavy data automatically transfers
 to scale-0 block reads on production datasets.
