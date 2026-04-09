@@ -176,12 +176,21 @@ $ dvid node <UUID> <data name> export-shards <spec path> <dest> [num scales]
 
 $ dvid node <UUID> <data name> benchmark-versioned-read <benchmark spec path> [report path]
 
-	Benchmarks the versioned read path used by export-shards against a real labelmap instance.
-	The benchmark spec is a JSON file that references the export-shards volume spec and
-	selects which scales or shard strips to test.  The benchmark can run the legacy path,
-	the optimized path, the experimental pipelined path, or all of them, and reports the
-	observed version fanout for the actual data.  This command runs asynchronously:
-	progress is written to the server log and the optional report path is written on completion.
+	Benchmarks Badger-backed versioned reads against a real labelmap instance.
+	The benchmark spec can run one or both workload classes:
+
+	1. "blocks": export-shards style full-X block range reads
+	2. "indices": label index retrieval on sampled visible label index keys
+
+	The benchmark can run the legacy path, the optimized path, the experimental
+	pipelined path, or all of them, and reports the observed version fanout for
+	the actual data.  This command runs asynchronously: progress is written to the
+	server log and the optional report path is written on completion.
+
+	For "blocks", the benchmark spec references the export-shards volume spec and
+	selects which scales or shard strips to test.  For "indices", the benchmark
+	deterministically samples visible label index keys from the instance and runs
+	the same strategy comparison on exact-key range reads for those indices.
 
     Arguments:
 

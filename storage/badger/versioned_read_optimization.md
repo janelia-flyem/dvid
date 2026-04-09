@@ -2,99 +2,135 @@
 
 ## Summary
 
-Badger versioned reads in DVID store branch/version information in the user key, not in Badger's internal MVCC timestamp. That means a versioned read still has to scan the full key family for a logical key to determine which stored version is visible from the requested UUID.
+This document records what we have learned so far about Badger-backed
+versioned reads in DVID and the current plan for the next implementation pass.
 
-The optimization implemented here changes the hot range-read path so it no longer reads values for losing versions.
+The original optimization idea was:
 
-## Current vs New `ProcessRange` Behavior
+1. scan versioned keys only
+2. resolve the visible winner from the DAG
+3. fetch only the winning value
 
-Previous behavior for versioned range reads:
+That idea is still valid in principle, but the real-server benchmark on a large
+`labelmap` instance showed that it is not the main win for `export-shards`
+style block reads. The dominant win came from pipelining the read path, not
+from avoiding losing-version value reads.
 
-1. Iterate all stored versions for a logical key.
-2. Read every value with `ValueCopy`.
-3. Use the DVID version DAG to choose the visible version.
-4. Discard all non-winning values.
+## What We Measured
 
-New behavior:
+We benchmarked a real `labelmap` instance (`segmentation`) on the target
+deployment server using the `benchmark-versioned-read` RPC command.
 
-1. Iterate all stored versions for a logical key with `PrefetchValues=false`.
-2. Resolve the visible winner from the grouped keys only.
-3. Fetch exactly one value for the winning key.
-4. Emit only that one result.
+Representative result for scale 0 block reads:
 
-This preserves key layout compatibility with all existing DVID Badger datasets.
+- sampled non-empty strips: `6`
+- sampled non-empty chunk rows: `4375`
+- visible blocks returned: `2,325,181`
+- visible value bytes: `10,815,326,209`
+- scanned versioned KVs: `2,327,789`
+- logical keys: `2,325,181`
+- average versions per key: `1.00112`
 
-## Why This Might Help
+The key point is that version fanout in the sampled block ranges was extremely
+low. Almost every logical block key had exactly one stored version in the tested
+regions.
 
-This change is aimed at workloads like `labelmap` export where `ProcessRange` scans many large values, often compressed label blocks, and historical versions are frequently discarded after DAG filtering.
+Measured warm-run behavior:
 
-Expected benefit:
+- `legacy`: about `54-57s`
+- `optimized`: about `63-66s`
+- `pipelined`: about `32-33s`
 
-- lower value-log traffic
-- less copying of large discarded values
-- lower allocation pressure in versioned range scans
+Interpretation:
 
-Expected non-benefit:
+- single-stage keys-first optimization was not a win for this workload
+- pipelining was a large win
+- the workload is not dominated by historical-version fanout
+- the workload appears dominated by read-path overlap / streaming behavior
 
-- it does not reduce version-key scans
-- it does not change the primary on-disk format
-- it may show smaller gains on fast NVMe systems when most logical keys only have one stored version
+## Current State
 
-## Benchmarking
+Three Badger versioned range-read strategies now exist:
 
-Synthetic benchmarks live in `storage/badger/badger_test.go` and create a temporary Badger database populated with versioned keys using the real DVID key layout.
+- `legacy`
+  - read all values for all stored versions
+  - resolve winner after values are loaded
+- `optimized`
+  - scan keys first
+  - resolve winner
+  - fetch only the winning value
+- `pipelined`
+  - stage 1 scans keys and resolves winner keys
+  - stage 2 fetches winner values concurrently
 
-Provided benchmarks:
+The current default Badger versioned range-read path is `pipelined`.
 
-- `BenchmarkVersionedRangeBaseline`
-- `BenchmarkVersionedRangeOptimized`
-- `BenchmarkVersionedRangePipelined`
+The `GetVersion()` regression discovered by `labelmap` tests has already been
+fixed by restoring its original `GetBestVersion(keys)` behavior.
 
-The pipelined strategy uses one goroutine to stream a key-only range scan and
-resolve winning keys, and a second goroutine to fetch winner values
-concurrently. This is now the default Badger versioned range-read path.
-The `legacy` and single-stage `optimized` strategies remain available for
-comparison and benchmarking.
+## What We Learned
 
-The synthetic benchmark parameters can be adjusted with environment variables:
+### 1. For block reads, pipeline overlap matters more than keys-first pruning
 
-- `DVID_BADGER_BENCH_KEYS`
-- `DVID_BADGER_BENCH_VERSIONS`
-- `DVID_BADGER_BENCH_VALUE_SIZE`
+For `export-shards` style block reads on the tested dataset, the keys-first
+optimization does not help much because there are almost no losing historical
+versions to prune.
 
-Recommended synthetic value sizes based on `test_data/export.log` from the male CNS export:
+The pipelined path helps because it keeps reading and processing overlapped.
 
-- scale 0 representative: `4096`, `8192`, `16384`
-- scale 1 representative: `16384`
-- scale 2 representative: `32768`
+### 2. Keys-first optimization is workload-dependent
 
-The export log shows scale 0 compressed block sizes concentrated in the `2-16 KB`
-range with a mean of `5.22 KB`, so `8 KB` is a reasonable default synthetic size
-for export-shards-like testing.
+The keys-first approach should still help when:
 
-Example:
+- many logical keys have multiple stored versions
+- values are large enough that loading losing versions is expensive
+- winner selection eliminates a meaningful fraction of value reads
 
-```bash
-go test -tags badger ./storage/badger -run '^$' -bench 'BenchmarkVersionedRange(Baseline|Optimized|Pipelined)$' -benchmem
-```
+That likely describes some workloads better than `export-shards` block scans.
 
-Larger target-server run:
+### 3. One optimization may not fit all versioned read types
 
-```bash
-DVID_BADGER_BENCH_KEYS=200000 \
-DVID_BADGER_BENCH_VERSIONS=8 \
-DVID_BADGER_BENCH_VALUE_SIZE=8192 \
-go test -tags badger ./storage/badger -run '^$' -bench 'BenchmarkVersionedRange' -benchmem
-```
+The real-server block benchmark strongly suggests that block reads and label
+index reads should be considered separately.
+
+Potentially different read classes:
+
+- block-range reads used by `export-shards`
+- label index lookups and related range scans
+- other metadata-like versioned reads
+
+These may want different internal strategies.
+
+## Consistency Model of the Current Pipeline
+
+The current pipelined default uses two Badger read-only transactions for one
+logical versioned range read:
+
+1. stage 1 scans keys and resolves winner keys
+2. stage 2 fetches values for those winners
+
+This does not preserve strict single-snapshot semantics. DVID currently accepts
+that as eventually consistent read behavior for this path.
+
+Practical interpretation:
+
+- for committed, quiescent export workloads, this is acceptable
+- for mutable reads, the path may observe winner selection and value fetch from
+  slightly different snapshots
+
+DVID’s write pattern matters here:
+
+- versioned `Put()` usually adds a new current-version key and leaves older
+  version keys in place
+- versioned `Delete()` usually writes a tombstone instead of physically removing
+  all old versions
+
+So the pipeline should be understood as an eventual-consistency throughput
+tradeoff, not as a strict snapshot-preserving implementation.
 
 ## Benchmarking a Real Labelmap Instance
 
-The repository also includes an RPC command that benchmarks the Badger versioned
-read path against an existing `labelmap` instance, such as `segmentation`.
-This command runs asynchronously and returns immediately. Progress and final
-status are written to the DVID server log.
-
-Command form:
+The RPC command is:
 
 ```bash
 dvid node <UUID> <labelmap-name> benchmark-versioned-read <benchmark-spec.json> [report.json]
@@ -106,23 +142,33 @@ Example:
 dvid node 28841 segmentation benchmark-versioned-read /tmp/versioned-read-bench.json /tmp/versioned-read-report.json
 ```
 
-If `report.json` is provided, the final JSON report is written there when the
-benchmark completes. If it is omitted, the final summary and report are written
-to the server log instead.
+The command runs asynchronously:
+
+- it returns immediately
+- progress is written to the DVID server log
+- the final JSON report is written to `report.json` if provided
+- otherwise the final report is written to the server log
 
 Example benchmark spec:
 
 ```json
 {
+  "workload": "all",
   "export_spec_path": "/data/export/info.json",
   "mode": "all",
   "iterations": 3,
   "num_scales": 1,
   "scale": 0,
-  "max_strips": 2,
-  "max_chunk_rows": 64
+  "max_strips": 10,
+  "max_labels": 1024
 }
 ```
+
+Supported `workload` values:
+
+- `blocks`
+- `indices`
+- `all`
 
 Supported `mode` values:
 
@@ -134,163 +180,211 @@ Supported `mode` values:
 
 Useful optional filters:
 
-- `scale`: benchmark only one scale from the export spec
-- `shard_y`, `shard_z`: benchmark one specific export strip origin in voxels
-- `max_strips`: limit how many non-empty export strips are benchmarked
-- `max_chunk_rows`: limit how many `(chunkY, chunkZ)` X-row scans are run
+- `scale`
+  - benchmark only one scale from the export spec
+- `shard_y`, `shard_z`
+  - benchmark one specific strip origin in voxels
+- `max_strips`
+  - limit how many non-empty strips are benchmarked
+- `max_chunk_rows`
+  - limit how many non-empty `(chunkY, chunkZ)` X-row scans are benchmarked
+- `max_labels`
+  - limit how many visible label indices are sampled for the `indices`
+    workload
 
 Default behavior when omitted:
 
-- if `scale` is omitted, the benchmark runs every scale from `0` through
-  `num_scales - 1`
-- if `shard_y` and `shard_z` are omitted, the benchmark scans all matching
-  strips for the selected scales
-- if `max_strips` is omitted or `0`, there is no strip limit
-- if `max_chunk_rows` is omitted or `0`, there is no chunk-row limit
+- omitted `workload` means benchmark both `blocks` and `indices`
+- omitted `scale` means benchmark scales `0` through `num_scales - 1`
+- omitted `shard_y`/`shard_z` means all candidate strips for the selected scales
+- omitted or `0` `max_strips` means no strip limit
+- omitted or `0` `max_chunk_rows` means no row limit
+- omitted or `0` `max_labels` means benchmark `1024` sampled visible label
+  indices
 
-When `max_strips` is used, the benchmark samples strip candidates across the
-full volume extent instead of only taking the first strips near the volume
-origin. Empty strip candidates are skipped and do not count toward the strip
-limit.
+Sampling behavior:
 
-### What It Measures on a Real `labelmap`
+- when `max_strips` is set, strip candidates are sampled across the full volume
+  extent instead of taking only the first strips near the volume origin
+- empty strip candidates are skipped and do not count toward the strip limit
+- empty X-rows are skipped before timing the strategies
 
-When the data instance is something like `segmentation`, the benchmark does not
-scan arbitrary keys. It reproduces the same kind of versioned block-range reads
-used by `export-shards`:
+## What the Labelmap Benchmark Measures
 
-1. It loads the Neuroglancer export volume spec referenced by `export_spec_path`.
-2. It computes the shard dimensions for the requested scales exactly the way
-   `export-shards` does.
-3. For each selected strip and `(chunkY, chunkZ)` row, it constructs the same
-   block-key range that `export-shards` would read across X for that scale.
-4. It first skips rows with no stored versioned keys, so empty rows are not
-   timed as part of the strategy benchmark.
-5. It runs the selected Badger versioned read strategy on the remaining ranges.
+For a `labelmap` instance such as `segmentation`, the benchmark measures the
+same kind of block-range reads used by `export-shards` when `workload=blocks`:
 
-One `chunk row` in this benchmark means a single full-X range read for a fixed
-`(chunkY, chunkZ)` row of blocks.
+1. load the Neuroglancer export volume spec
+2. compute the shard geometry used by `export-shards`
+3. build full-X block-key ranges for selected `(chunkY, chunkZ)` rows
+4. skip rows with no stored versioned keys
+5. run each selected Badger strategy on the same non-empty sampled rows
 
-For a `labelmap` instance named `segmentation`, this means the benchmark is
-measuring reads of `segmentation` block key-values, not metadata and not other
-instances in the repo. The returned values are the compressed label blocks that
-`export-shards` would later write into shard files.
+One `chunk row` means one full-X range read for a fixed `(chunkY, chunkZ)` row
+of blocks.
 
-The report records:
+The benchmark report includes:
 
-- `elapsed_ms`: wall-clock time for the selected strategy over the chosen scan
-  set
-- `visible_blocks`: how many visible `labelmap` blocks were returned
-- `visible_value_bytes`: total bytes of visible block values returned by the
-  strategy
-- `scanned_versioned_kvs`: how many raw versioned key-values existed in the same
-  range before version filtering
-- `logical_keys`: how many distinct logical block keys were scanned
-- `avg_versions_per_key`: average stored version fanout in the tested range
-- `speedup_vs_legacy`: relative speedup versus the legacy read path for the same
-  iteration and scale
+- `elapsed_ms`
+- `visible_blocks`
+- `visible_value_bytes`
+- `scanned_versioned_kvs`
+- `logical_keys`
+- `avg_versions_per_key`
+- `speedup_vs_legacy`
 
-This makes the RPC benchmark useful for answering questions that the synthetic
-benchmark cannot answer, such as:
+These numbers are enough to answer:
 
-- how many rewritten versions exist per block in the actual `segmentation`
-  instance
-- whether the optimized or pipelined strategy helps on the real export ranges
-- whether the benefit changes by scale, shard strip, or rewrite density
+- how much real data was scanned
+- how much version fanout existed in the sampled region
+- whether block-read performance is driven by version pruning or by pipeline
+  overlap
 
-## Consistency Model of the Pipelined Default
+For `workload=indices`, the benchmark measures visible label index retrieval on
+real label index keys from the chosen version:
 
-The current pipelined default uses two separate Badger read-only transactions
-for one logical versioned range read:
+1. scan visible label index keys in the instance once
+2. keep a deterministic sample of up to `max_labels` labels using a stable
+   hash-based sampler
+3. run the selected Badger strategies on the same exact-key index reads for
+   those sampled labels
 
-1. stage 1 scans keys only and resolves the winning versioned key
-2. stage 2 fetches values for those winning keys
+The `indices` benchmark intentionally bypasses higher-level label index caching
+and measures the underlying Badger versioned read path directly.  This is the
+workload that is expected to show higher versions-per-key because label indices
+are rewritten during body merges, cleaves, and other mutating operations.
 
-This is faster for some workloads because key scanning and value fetching can
-overlap, but it does not preserve the same single-snapshot semantics as the
-legacy and single-stage optimized implementations, which used one Badger read
-transaction for both winner selection and value retrieval.
+## Revised Plan
 
-In DVID, this is treated as acceptable eventually consistent read behavior for
-the Badger versioned range-read path. The important point is to understand the
-tradeoff, not to treat it as an outright correctness bug.
+### Goal
 
-### What This Means
+Keep the current pipelined default for block-range reads while exploring whether
+different versioned read classes should use different internal strategies.
 
-If the database changes between stage 1 and stage 2, a logical range read can
-mix information from two snapshots:
+### Planned Next Work
 
-- stage 1 may choose a winner using snapshot A
-- stage 2 may fetch values using snapshot B
+1. Keep the current block-read benchmark and use it as the authority for
+   `export-shards`-like workloads.
 
-That means the read is not guaranteed to reflect one coherent instant in time.
-Instead, it should be understood as eventually consistent.
+2. Add a separate benchmark path for label index retrieval.
 
-### DVID-Specific Write Pattern
+   Motivation:
 
-In DVID mutable stores, versioned writes usually do not delete old historical
-key-values from Badger:
+   - label index access is not part of `export-shards`
+   - it may have much higher versions-per-key than block reads
+   - the keys-first optimization may help there even if it does not help block
+     reads
 
-- `Put()` for versioned data writes the key for the current version
-- ancestor-version keys usually remain in the store
-- `Delete()` usually writes a tombstone for the current version instead of
-  physically removing all prior versions
+   Candidate operations to benchmark:
 
-So the common pattern is "add or overwrite the current version's key while older
-versions remain available for DAG resolution."
+   - `getLabelIndex`
+   - `GetVersion`
+   - any range-style index retrieval paths used by `labelmap`
 
-### Important Consequence
+3. Explore a fourth internal strategy for block reads:
 
-Even if new data arrives between stage 1 and stage 2, it is not automatically
-"the correct winner" for the pipelined read:
+   - single-transaction streaming pipeline
+   - keep the legacy-style one-pass range scan over full versioned KVs
+   - send grouped key families downstream immediately
 
-- if a write happens in the same mutable version after stage 1 has already
-  resolved the winner from ancestor keys, stage 2 will still fetch the old
-  winner and miss the newer same-version winner
-- if a tombstone is written after stage 1, stage 2 can still return a value
-  that should now be hidden
-- if a write occurs on a different branch or descendant version that is not
-  visible from the requested version context, it should not become the winner at
-  all
+## Implemented So Far
 
-There is one narrower case where stage 2 can still see the latest data:
+The current implementation does the following:
 
-- if stage 1 already chose the same physical key and stage 2 reads that same key
-  after its value was overwritten in place for the same version
+1. `benchmark-versioned-read` now supports two workload classes in one report:
 
-But even then, the read no longer reflects a single coherent snapshot of the
-database. It reflects a later value fetch than the key-resolution step.
+   - `blocks`
+   - `indices`
 
-### Practical Interpretation
+2. Block benchmarking remains export-spec-driven.
 
-- For committed, quiescent export workloads such as `export-shards`, this is
-  typically indistinguishable from a snapshot-consistent read because the
-  relevant keys are not changing during the read.
-- For general mutable versioned reads, DVID accepts this as eventually
-  consistent behavior for the pipelined Badger range-read path.
-- The tradeoff is deliberate: higher read overlap and throughput in exchange for
-  no longer requiring single-snapshot semantics for a versioned range read.
+   It still:
 
-## Interpreting Results
+   - computes `export-shards` strip geometry from the Neuroglancer spec
+   - samples strip candidates across the full volume
+   - skips empty strips and empty X-rows before timing
+   - runs `legacy`, `optimized`, and `pipelined` on the same non-empty rows
 
-Local workstation results are useful for:
+3. Index benchmarking is implemented as exact-key reads on sampled visible
+   label index keys.
 
-- checking correctness
-- detecting regressions
-- seeing broad trend direction
+   The sampler:
 
-They are not authoritative for deployment decisions.
+   - scans visible label index keys using `SendKeysInRange`
+   - does not require the caller to provide label IDs
+   - keeps at most `max_labels` labels using a deterministic hash-based sample
+   - sorts the selected labels so repeated runs use the same order
 
-The target Linux server with the intended NVMe layout is the authoritative benchmark platform because Badger's iterator and value-log costs can shift materially with:
+4. The report now records workload-specific rows.
 
-- SSD topology
-- filesystem and RAID behavior
-- CPU/cache characteristics
-- memory bandwidth
+   Each result row includes:
 
-Success criteria should focus on target-server measurements, especially:
+   - `workload`
+   - `strategy`
+   - `elapsed_ms`
+   - `scanned_versioned_kvs`
+   - `logical_keys`
+   - `avg_versions_per_key`
 
-- elapsed time
-- `value_bytes/op`
-- `version_keys/op`
-- `allocs/op`
+   Block rows additionally populate:
+
+   - `strips`
+   - `chunk_rows`
+   - `visible_blocks`
+
+   Index rows additionally populate:
+
+   - `sampled_labels`
+   - `visible_indices`
+
+5. Relative speedups are normalized within each workload, iteration, and scale.
+
+   That means:
+
+   - block results compare only against block `legacy`
+   - index results compare only against index `legacy`
+
+6. The current implementation for `indices` benchmarks index fetch behavior,
+   not the standalone `GetVersion()` lookup path.
+
+   It uses exact-key `ProcessRangeWithStrategy(...)` calls on real label index
+   keys so that all three Badger strategies can be compared on the same index
+   retrieval workload.
+
+This is the current implementation baseline to measure before adding a fourth
+single-transaction streaming strategy or adding a separate benchmark for pure
+`index-version` lookups.
+   - pipeline winner selection / downstream processing without splitting the read
+     into two Badger transactions
+
+   Motivation:
+
+   - the current real-server evidence suggests pipeline overlap is the main win
+   - the keys-first optimization does not help much when `avg_versions_per_key`
+     is near `1`
+   - a single-transaction pipeline could preserve one-snapshot semantics while
+     still trying to keep the range scan unblocked
+
+4. Compare strategy choice by workload class instead of assuming one universal
+   winner.
+
+   Working hypothesis:
+
+   - block-range reads may prefer pipelined streaming behavior
+   - label index reads may prefer keys-first pruning if version fanout is higher
+
+### Non-Goals for the Next Pass
+
+- no on-disk key format change
+- no migration requirement
+- no side index yet
+
+## Decision Rule Going Forward
+
+For any future Badger read-path change, prefer the result from:
+
+- the real-server `labelmap` block benchmark for `export-shards`-like reads
+- the planned label-index benchmark for index-heavy reads
+
+Do not assume that a win on synthetic fanout-heavy data automatically transfers
+to scale-0 block reads on production datasets.
