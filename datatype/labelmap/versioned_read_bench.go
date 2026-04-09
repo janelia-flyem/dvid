@@ -53,6 +53,11 @@ type versionedReadBenchmarkReport struct {
 	StartedAt time.Time                     `json:"started_at"`
 }
 
+type benchmarkStrip struct {
+	shardY int32
+	shardZ int32
+}
+
 func loadVersionedReadBenchmarkSpec(path string) (versionedReadBenchmarkSpec, ngVolume, error) {
 	specBytes, err := os.ReadFile(path)
 	if err != nil {
@@ -128,6 +133,78 @@ func computeExportShardDims(spec ngVolume, numScales uint8) ([]ngScale, []int32,
 	return scales, shardDims, nil
 }
 
+func selectBenchmarkStrips(volumeExtents dvid.Point3d, shardDimVoxels int32, bench versionedReadBenchmarkSpec) []benchmarkStrip {
+	candidates := make([]benchmarkStrip, 0)
+	for shardZ := int32(0); shardZ < volumeExtents[2]; shardZ += shardDimVoxels {
+		for shardY := int32(0); shardY < volumeExtents[1]; shardY += shardDimVoxels {
+			if bench.ShardZ != nil && *bench.ShardZ != shardZ {
+				continue
+			}
+			if bench.ShardY != nil && *bench.ShardY != shardY {
+				continue
+			}
+			candidates = append(candidates, benchmarkStrip{shardY: shardY, shardZ: shardZ})
+		}
+	}
+	if bench.MaxStrips <= 0 || len(candidates) <= bench.MaxStrips {
+		return candidates
+	}
+
+	selected := make([]benchmarkStrip, 0, bench.MaxStrips)
+	seen := make(map[int]struct{}, bench.MaxStrips)
+	for i := 0; i < bench.MaxStrips; i++ {
+		idx := ((2*i + 1) * len(candidates)) / (2 * bench.MaxStrips)
+		if idx >= len(candidates) {
+			idx = len(candidates) - 1
+		}
+		for idx < len(candidates) {
+			if _, found := seen[idx]; !found {
+				seen[idx] = struct{}{}
+				selected = append(selected, candidates[idx])
+				break
+			}
+			idx++
+		}
+	}
+	return selected
+}
+
+func scanVersionedRangeStats(store storage.OrderedKeyValueDB, ctx *datastore.VersionedCtx, begTKey, endTKey storage.TKey) (scannedKVs, logicalKeys int64, err error) {
+	minKey, err := ctx.MinVersionKey(begTKey)
+	if err != nil {
+		return 0, 0, err
+	}
+	maxKey, err := ctx.MaxVersionKey(endTKey)
+	if err != nil {
+		return 0, 0, err
+	}
+	ch := make(chan *storage.KeyValue, 256)
+	cancel := make(chan struct{})
+	defer close(cancel)
+	go func() {
+		_ = store.RawRangeQuery(minKey, maxKey, true, ch, cancel)
+	}()
+
+	var lastTKey string
+	for {
+		kv := <-ch
+		if kv == nil {
+			break
+		}
+		scannedKVs++
+		tk, err := storage.TKeyFromKey(kv.K)
+		if err != nil {
+			return 0, 0, err
+		}
+		tkStr := string(tk)
+		if tkStr != lastTKey {
+			logicalKeys++
+			lastTKey = tkStr
+		}
+	}
+	return scannedKVs, logicalKeys, nil
+}
+
 func (d *Data) benchmarkVersionedReads(ctx *datastore.VersionedCtx, bench versionedReadBenchmarkSpec, volSpec ngVolume, progress func(string)) (*versionedReadBenchmarkReport, error) {
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
@@ -172,6 +249,7 @@ func (d *Data) benchmarkVersionedReads(ctx *datastore.VersionedCtx, bench versio
 			shardDimChunks := shardDimVoxels / dvidChunkVoxelsPerDim
 			volumeExtents := scales[scale].Size
 			volChunksX := volumeExtents[0] / dvidChunkVoxelsPerDim
+			selectedStrips := selectBenchmarkStrips(volumeExtents, shardDimVoxels, bench)
 
 			type agg struct {
 				strips              int
@@ -180,6 +258,7 @@ func (d *Data) benchmarkVersionedReads(ctx *datastore.VersionedCtx, bench versio
 				visibleBytes        int64
 				scannedVersionedKVs int64
 				logicalKeys         int64
+				elapsed             time.Duration
 			}
 			accum := map[string]*agg{}
 			if runLegacy {
@@ -199,132 +278,117 @@ func (d *Data) benchmarkVersionedReads(ctx *datastore.VersionedCtx, bench versio
 			stripsSeen := 0
 			chunkRowsSeen := 0
 			lastProgressChunkRows := 0
-			for shardZ := int32(0); shardZ < volumeExtents[2]; shardZ += shardDimVoxels {
-				for shardY := int32(0); shardY < volumeExtents[1]; shardY += shardDimVoxels {
-					if bench.ShardZ != nil && *bench.ShardZ != shardZ {
-						continue
-					}
-					if bench.ShardY != nil && *bench.ShardY != shardY {
-						continue
-					}
-					if bench.MaxStrips > 0 && stripsSeen >= bench.MaxStrips {
-						break
-					}
-					stripsSeen++
-					if progress != nil {
-						progress(fmt.Sprintf("benchmark-versioned-read iteration %d/%d scale %d strip %d starting at shard_y=%d shard_z=%d", iter, bench.Iterations, scale, stripsSeen, shardY, shardZ))
-					}
-					shardChunkZ := shardZ / dvidChunkVoxelsPerDim
-					shardChunkY := shardY / dvidChunkVoxelsPerDim
-
-					for chunkZ := shardChunkZ; chunkZ < shardChunkZ+shardDimChunks; chunkZ++ {
-						for chunkY := shardChunkY; chunkY < shardChunkY+shardDimChunks; chunkY++ {
-							if bench.MaxChunkRows > 0 && chunkRowsSeen >= bench.MaxChunkRows {
-								break
-							}
-							chunkRowsSeen++
-							if progress != nil && (chunkRowsSeen-lastProgressChunkRows >= 100 || chunkRowsSeen == 1) {
-								progress(fmt.Sprintf("benchmark-versioned-read iteration %d/%d scale %d progress: strips=%d chunk_rows=%d", iter, bench.Iterations, scale, stripsSeen, chunkRowsSeen))
-								lastProgressChunkRows = chunkRowsSeen
-							}
-							chunkBeg := dvid.ChunkPoint3d{0, chunkY, chunkZ}
-							chunkEnd := dvid.ChunkPoint3d{volChunksX, chunkY, chunkZ}
-							begTKey := NewBlockTKeyByCoord(scale, chunkBeg.ToIZYXString())
-							endTKey := NewBlockTKeyByCoord(scale, chunkEnd.ToIZYXString())
-
-							if runLegacy {
-								var visibleBlocks, visibleBytes int64
-								if err := badgerDB.ProcessRangeWithStrategy(ctx, begTKey, endTKey, badgerstore.VersionedReadLegacy, nil, func(c *storage.Chunk) error {
-									if c == nil || c.V == nil {
-										return nil
-									}
-									visibleBlocks++
-									visibleBytes += int64(len(c.V))
-									return nil
-								}); err != nil {
-									return nil, err
-								}
-								a := accum["legacy"]
-								a.visibleBlocks += visibleBlocks
-								a.visibleBytes += visibleBytes
-							}
-							if runOptimized {
-								var visibleBlocks, visibleBytes int64
-								if err := badgerDB.ProcessRangeWithStrategy(ctx, begTKey, endTKey, badgerstore.VersionedReadOptimized, nil, func(c *storage.Chunk) error {
-									if c == nil || c.V == nil {
-										return nil
-									}
-									visibleBlocks++
-									visibleBytes += int64(len(c.V))
-									return nil
-								}); err != nil {
-									return nil, err
-								}
-								a := accum["optimized"]
-								a.visibleBlocks += visibleBlocks
-								a.visibleBytes += visibleBytes
-							}
-							if runPipelined {
-								var visibleBlocks, visibleBytes int64
-								if err := badgerDB.ProcessRangeWithStrategy(ctx, begTKey, endTKey, badgerstore.VersionedReadPipelined, nil, func(c *storage.Chunk) error {
-									if c == nil || c.V == nil {
-										return nil
-									}
-									visibleBlocks++
-									visibleBytes += int64(len(c.V))
-									return nil
-								}); err != nil {
-									return nil, err
-								}
-								a := accum["pipelined"]
-								a.visibleBlocks += visibleBlocks
-								a.visibleBytes += visibleBytes
-							}
-							minKey, err := ctx.MinVersionKey(begTKey)
-							if err != nil {
-								return nil, err
-							}
-							maxKey, err := ctx.MaxVersionKey(endTKey)
-							if err != nil {
-								return nil, err
-							}
-							ch := make(chan *storage.KeyValue, 256)
-							cancel := make(chan struct{})
-							go func() {
-								_ = store.RawRangeQuery(minKey, maxKey, true, ch, cancel)
-							}()
-							var scannedKVs, logicalKeys int64
-							var lastTKey string
-							for {
-								kv := <-ch
-								if kv == nil {
-									close(cancel)
-									break
-								}
-								scannedKVs++
-								tk, err := storage.TKeyFromKey(kv.K)
-								if err != nil {
-									close(cancel)
-									return nil, err
-								}
-								tkStr := string(tk)
-								if tkStr != lastTKey {
-									logicalKeys++
-									lastTKey = tkStr
-								}
-							}
-							for _, a := range accum {
-								a.scannedVersionedKVs += scannedKVs
-								a.logicalKeys += logicalKeys
-							}
-						}
-						if bench.MaxChunkRows > 0 && chunkRowsSeen >= bench.MaxChunkRows {
-							break
-						}
-					}
-				}
+			for _, strip := range selectedStrips {
 				if bench.MaxStrips > 0 && stripsSeen >= bench.MaxStrips {
 					break
+				}
+				if progress != nil {
+					progress(fmt.Sprintf("benchmark-versioned-read iteration %d/%d scale %d sampling strip candidate at shard_y=%d shard_z=%d", iter, bench.Iterations, scale, strip.shardY, strip.shardZ))
+				}
+				shardChunkZ := strip.shardZ / dvidChunkVoxelsPerDim
+				shardChunkY := strip.shardY / dvidChunkVoxelsPerDim
+				stripChunkRows := 0
+				stripScannedKVs := int64(0)
+				stripLogicalKeys := int64(0)
+
+				for chunkZ := shardChunkZ; chunkZ < shardChunkZ+shardDimChunks; chunkZ++ {
+					for chunkY := shardChunkY; chunkY < shardChunkY+shardDimChunks; chunkY++ {
+						if bench.MaxChunkRows > 0 && chunkRowsSeen+stripChunkRows >= bench.MaxChunkRows {
+							break
+						}
+						chunkBeg := dvid.ChunkPoint3d{0, chunkY, chunkZ}
+						chunkEnd := dvid.ChunkPoint3d{volChunksX, chunkY, chunkZ}
+						begTKey := NewBlockTKeyByCoord(scale, chunkBeg.ToIZYXString())
+						endTKey := NewBlockTKeyByCoord(scale, chunkEnd.ToIZYXString())
+
+						scannedKVs, logicalKeys, err := scanVersionedRangeStats(store, ctx, begTKey, endTKey)
+						if err != nil {
+							return nil, err
+						}
+						if scannedKVs == 0 || logicalKeys == 0 {
+							continue
+						}
+						stripChunkRows++
+						stripScannedKVs += scannedKVs
+						stripLogicalKeys += logicalKeys
+						if progress != nil && (chunkRowsSeen+stripChunkRows-lastProgressChunkRows >= 100 || chunkRowsSeen+stripChunkRows == 1) {
+							progress(fmt.Sprintf("benchmark-versioned-read iteration %d/%d scale %d progress: strips=%d chunk_rows=%d", iter, bench.Iterations, scale, stripsSeen+1, chunkRowsSeen+stripChunkRows))
+							lastProgressChunkRows = chunkRowsSeen + stripChunkRows
+						}
+
+						if runLegacy {
+							start := time.Now()
+							var visibleBlocks, visibleBytes int64
+							if err := badgerDB.ProcessRangeWithStrategy(ctx, begTKey, endTKey, badgerstore.VersionedReadLegacy, nil, func(c *storage.Chunk) error {
+								if c == nil || c.V == nil {
+									return nil
+								}
+								visibleBlocks++
+								visibleBytes += int64(len(c.V))
+								return nil
+							}); err != nil {
+								return nil, err
+							}
+							a := accum["legacy"]
+							a.elapsed += time.Since(start)
+							a.visibleBlocks += visibleBlocks
+							a.visibleBytes += visibleBytes
+						}
+						if runOptimized {
+							start := time.Now()
+							var visibleBlocks, visibleBytes int64
+							if err := badgerDB.ProcessRangeWithStrategy(ctx, begTKey, endTKey, badgerstore.VersionedReadOptimized, nil, func(c *storage.Chunk) error {
+								if c == nil || c.V == nil {
+									return nil
+								}
+								visibleBlocks++
+								visibleBytes += int64(len(c.V))
+								return nil
+							}); err != nil {
+								return nil, err
+							}
+							a := accum["optimized"]
+							a.elapsed += time.Since(start)
+							a.visibleBlocks += visibleBlocks
+							a.visibleBytes += visibleBytes
+						}
+						if runPipelined {
+							start := time.Now()
+							var visibleBlocks, visibleBytes int64
+							if err := badgerDB.ProcessRangeWithStrategy(ctx, begTKey, endTKey, badgerstore.VersionedReadPipelined, nil, func(c *storage.Chunk) error {
+								if c == nil || c.V == nil {
+									return nil
+								}
+								visibleBlocks++
+								visibleBytes += int64(len(c.V))
+								return nil
+							}); err != nil {
+								return nil, err
+							}
+							a := accum["pipelined"]
+							a.elapsed += time.Since(start)
+							a.visibleBlocks += visibleBlocks
+							a.visibleBytes += visibleBytes
+						}
+					}
+					if bench.MaxChunkRows > 0 && chunkRowsSeen+stripChunkRows >= bench.MaxChunkRows {
+						break
+					}
+				}
+				if stripScannedKVs == 0 || stripLogicalKeys == 0 || stripChunkRows == 0 {
+					if progress != nil {
+						progress(fmt.Sprintf("benchmark-versioned-read iteration %d/%d scale %d skipping empty strip candidate at shard_y=%d shard_z=%d", iter, bench.Iterations, scale, strip.shardY, strip.shardZ))
+					}
+					continue
+				}
+
+				stripsSeen++
+				chunkRowsSeen += stripChunkRows
+				for _, a := range accum {
+					a.strips = stripsSeen
+					a.chunkRows = chunkRowsSeen
+					a.scannedVersionedKVs += stripScannedKVs
+					a.logicalKeys += stripLogicalKeys
 				}
 			}
 
@@ -333,13 +397,13 @@ func (d *Data) benchmarkVersionedReads(ctx *datastore.VersionedCtx, bench versio
 					Strategy:            strategy,
 					Iteration:           iter,
 					Scale:               scale,
-					Strips:              stripsSeen,
-					ChunkRows:           chunkRowsSeen,
+					Strips:              a.strips,
+					ChunkRows:           a.chunkRows,
 					VisibleBlocks:       a.visibleBlocks,
 					VisibleValueBytes:   a.visibleBytes,
 					ScannedVersionedKVs: a.scannedVersionedKVs,
 					LogicalKeys:         a.logicalKeys,
-					ElapsedMilliseconds: float64(time.Since(started[strategy])) / float64(time.Millisecond),
+					ElapsedMilliseconds: float64(a.elapsed) / float64(time.Millisecond),
 				}
 				if a.logicalKeys > 0 {
 					result.AvgVersionsPerKey = float64(a.scannedVersionedKVs) / float64(a.logicalKeys)

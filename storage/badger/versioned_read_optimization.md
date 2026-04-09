@@ -136,7 +136,7 @@ Useful optional filters:
 
 - `scale`: benchmark only one scale from the export spec
 - `shard_y`, `shard_z`: benchmark one specific export strip origin in voxels
-- `max_strips`: limit how many export strips are scanned
+- `max_strips`: limit how many non-empty export strips are benchmarked
 - `max_chunk_rows`: limit how many `(chunkY, chunkZ)` X-row scans are run
 
 Default behavior when omitted:
@@ -147,6 +147,11 @@ Default behavior when omitted:
   strips for the selected scales
 - if `max_strips` is omitted or `0`, there is no strip limit
 - if `max_chunk_rows` is omitted or `0`, there is no chunk-row limit
+
+When `max_strips` is used, the benchmark samples strip candidates across the
+full volume extent instead of only taking the first strips near the volume
+origin. Empty strip candidates are skipped and do not count toward the strip
+limit.
 
 ### What It Measures on a Real `labelmap`
 
@@ -159,7 +164,9 @@ used by `export-shards`:
    `export-shards` does.
 3. For each selected strip and `(chunkY, chunkZ)` row, it constructs the same
    block-key range that `export-shards` would read across X for that scale.
-4. It runs the selected Badger versioned read strategy on that range.
+4. It first skips rows with no stored versioned keys, so empty rows are not
+   timed as part of the strategy benchmark.
+5. It runs the selected Badger versioned read strategy on the remaining ranges.
 
 One `chunk row` in this benchmark means a single full-X range read for a fixed
 `(chunkY, chunkZ)` row of blocks.
