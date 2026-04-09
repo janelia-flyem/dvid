@@ -244,9 +244,9 @@ For `workload=indices`, the benchmark measures visible label index retrieval on
 real label index keys from the chosen version:
 
 1. scan visible label index keys in the instance once
-2. keep a deterministic sample of up to `max_labels` labels using a stable
-   hash-based sampler
-3. run the selected Badger strategies on the same exact-key index reads for
+2. stop after collecting the first `max_labels` visible labels
+3. skip labels whose visible index is nil or has `0` voxels
+4. run the selected Badger strategies on the same exact-key index reads for
    those sampled labels
 
 The `indices` benchmark intentionally bypasses higher-level label index caching
@@ -312,8 +312,9 @@ The current implementation does the following:
 
    - scans visible label index keys using `SendKeysInRange`
    - does not require the caller to provide label IDs
-   - keeps at most `max_labels` labels using a deterministic hash-based sample
-   - sorts the selected labels so repeated runs use the same order
+   - stops after collecting the first `max_labels` visible labels
+   - filters out labels whose visible index is empty
+   - sorts the selected labels before benchmarking
 
 4. The report now records workload-specific rows.
 

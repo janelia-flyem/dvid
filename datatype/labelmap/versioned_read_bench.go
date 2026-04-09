@@ -1,7 +1,6 @@
 package labelmap
 
 import (
-	"container/heap"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -64,25 +63,6 @@ type versionedReadBenchmarkReport struct {
 type benchmarkStrip struct {
 	shardY int32
 	shardZ int32
-}
-
-type labelSample struct {
-	hash  uint64
-	label uint64
-}
-
-type labelSampleHeap []labelSample
-
-func (h labelSampleHeap) Len() int            { return len(h) }
-func (h labelSampleHeap) Less(i, j int) bool  { return h[i].hash > h[j].hash }
-func (h labelSampleHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
-func (h *labelSampleHeap) Push(x interface{}) { *h = append(*h, x.(labelSample)) }
-func (h *labelSampleHeap) Pop() interface{} {
-	old := *h
-	n := len(old)
-	item := old[n-1]
-	*h = old[:n-1]
-	return item
 }
 
 func loadVersionedReadBenchmarkSpec(path string) (versionedReadBenchmarkSpec, ngVolume, error) {
@@ -242,13 +222,6 @@ func scanVersionedRangeStats(store storage.OrderedKeyValueDB, ctx *datastore.Ver
 	return scannedKVs, logicalKeys, nil
 }
 
-func deterministicLabelHash(label uint64) uint64 {
-	x := label + 0x9e3779b97f4a7c15
-	x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9
-	x = (x ^ (x >> 27)) * 0x94d049bb133111eb
-	return x ^ (x >> 31)
-}
-
 func sampleVisibleLabelIndices(store storage.OrderedKeyValueDB, ctx *datastore.VersionedCtx, maxLabels int, progress func(string)) ([]uint64, error) {
 	if maxLabels <= 0 {
 		return nil, nil
@@ -259,10 +232,11 @@ func sampleVisibleLabelIndices(store storage.OrderedKeyValueDB, ctx *datastore.V
 		close(keyChan)
 	}()
 
-	samples := make(labelSampleHeap, 0, maxLabels)
-	heap.Init(&samples)
-	numSeen := 0
+	labels := make([]uint64, 0, maxLabels)
 	for key := range keyChan {
+		if len(labels) >= maxLabels {
+			break
+		}
 		if key == nil {
 			continue
 		}
@@ -274,25 +248,10 @@ func sampleVisibleLabelIndices(store storage.OrderedKeyValueDB, ctx *datastore.V
 		if err != nil {
 			return nil, err
 		}
-		numSeen++
-		if progress != nil && numSeen%100000 == 0 {
-			progress(fmt.Sprintf("benchmark-versioned-read index sampling progress: seen=%d selected=%d", numSeen, len(samples)))
+		labels = append(labels, label)
+		if progress != nil && (len(labels) == 1 || len(labels)%100 == 0) {
+			progress(fmt.Sprintf("benchmark-versioned-read index sampling progress: selected=%d", len(labels)))
 		}
-		sample := labelSample{hash: deterministicLabelHash(label), label: label}
-		if len(samples) < maxLabels {
-			heap.Push(&samples, sample)
-			continue
-		}
-		if sample.hash >= samples[0].hash {
-			continue
-		}
-		heap.Pop(&samples)
-		heap.Push(&samples, sample)
-	}
-
-	labels := make([]uint64, len(samples))
-	for i := range labels {
-		labels[i] = heap.Pop(&samples).(labelSample).label
 	}
 	sort.Slice(labels, func(i, j int) bool { return labels[i] < labels[j] })
 	return labels, nil
@@ -503,6 +462,16 @@ func (d *Data) benchmarkIndexReads(store storage.OrderedKeyValueDB, badgerDB *ba
 			return nil, err
 		}
 		if scannedKVs == 0 || logicalKeys == 0 {
+			continue
+		}
+		idx, err := getLabelIndex(ctx, label)
+		if err != nil {
+			return nil, err
+		}
+		if idx == nil || idx.NumVoxels() == 0 {
+			if progress != nil && (i == 0 || (i+1)%100 == 0) {
+				progress(fmt.Sprintf("benchmark-versioned-read indices iteration %d/%d skipping empty index label=%d", iter, bench.Iterations, label))
+			}
 			continue
 		}
 		if progress != nil && (i == 0 || (i+1)%100 == 0) {
