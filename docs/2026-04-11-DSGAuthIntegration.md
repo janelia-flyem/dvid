@@ -4,7 +4,7 @@
 
 DVID servers running inside Janelia's network (DMZ or k8s nodes reachable externally) need to enforce authentication and authorization for external clients while optionally allowing unauthenticated access for internal clients. DatasetGateway already provides the auth stack (Google OAuth, dataset-scoped grants, TOS, permission cache). The goal is to connect DVID's existing auth middleware to DatasetGateway as the identity and authorization backend.
 
-DVID already has the plumbing for this — its `[auth]` config section, the `isAuthorized` JWT middleware on repo/node/instance routes, and a `/api/server/token` endpoint that exchanges Google credentials for a JWT. The current design just needs to be pointed at DatasetGateway instead of the legacy `flyem-services` proxy or standalone Google token validation.
+DVID already has part of the plumbing for this — its `[auth]` config section, the `isAuthorized` JWT middleware, and a `/api/server/token` endpoint that exchanges external credentials for a DVID JWT. However, the current route activation logic only turns on auth middleware when `proxy_address` is set, so DSG support is not just a backend swap. Route activation and JWT handling need to be updated as part of the work.
 
 ## How it works today
 
@@ -25,7 +25,7 @@ Client ──Bearer JWT──► DVID
 - `serverTokenHandler` (`GET /api/server/token`) issues JWTs by either:
   - **Legacy proxy**: calling `getEmailFromProxy()` → forwards cookies to `https://{proxy_address}/profile` → gets email → signs JWT
   - **Google OAuth**: validating a Google ID token via `oauth2.Tokeninfo()` → gets email → signs JWT
-- `isAuthorized` middleware validates `Authorization: Bearer {jwt}` on repo/node/instance routes
+- `isAuthorized` middleware validates `Authorization: Bearer {jwt}` on repo/node/instance routes, but those routes are currently wrapped only when `proxy_address` is configured
 - `enforce` modes: `none` (open), `token` (any valid JWT), `authfile` (JWT user must be in a local JSON file)
 - Public versions bypass auth for read-only requests
 
@@ -68,7 +68,7 @@ Add a new `enforce` mode — `"dsg"` — to DVID's `authConfig` that integrates 
 
 1. **Token issuance** (`/api/server/token`): Instead of calling a legacy proxy or Google directly, DVID calls DatasetGateway's `GET /api/v1/user/cache` with the client's `dsg_token` (passed as a Bearer token). DSG returns the user's identity + permissions. DVID embeds the email and permissions into a JWT and returns it.
 
-2. **Authorization** (`isAuthorized` middleware): When `enforce = "dsg"`, after validating the JWT, DVID checks the embedded dataset permissions against the dataset being accessed (derived from the UUID's root repo alias/name). This replaces the flat `authfile` with dataset-scoped authorization.
+2. **Authorization** (`isAuthorized` middleware): When `enforce = "dsg"`, after validating the JWT, DVID resolves the root UUID being accessed, maps that local DVID dataset identifier to a canonical DSG dataset ID, and checks the embedded permissions against the mapped DSG ID. This should be an explicit config mapping, not repo alias/name inference, because dataset naming is inconsistent across services and repo aliases are mutable.
 
 3. **Internal/external split**: DVID's config gains an `internal_cidrs` list. Requests from internal IPs can optionally skip auth (`enforce_internal = "none"`) while external requests require DSG auth (`enforce = "dsg"`). This gives per-deployment control over internal access.
 
@@ -82,7 +82,10 @@ enforce = "dsg"                    # new mode: use DatasetGateway
 enforce_internal = "none"          # optional: separate policy for internal IPs
 dsg_address = "https://auth.example.org"  # DatasetGateway base URL
 internal_cidrs = ["10.0.0.0/8", "172.16.0.0/12"]  # Janelia internal ranges
-dataset_name = "vnc1"              # which DSG dataset this DVID instance serves
+dataset_map = {                    # DVID root UUID -> DSG canonical dataset ID
+  "a1b2c3d4e5f6..." = "vnc",
+  "deadbeef1234..." = "manc"
+}
 public_versions = []               # unchanged: committed UUIDs with public access
 ```
 
@@ -98,10 +101,12 @@ type authConfig struct {
     // New DSG fields
     EnforceInternal string   `toml:"enforce_internal"` // policy for internal IPs; defaults to Enforce
     DSGAddress      string   `toml:"dsg_address"`      // DatasetGateway base URL
-    InternalCIDRs   []string `toml:"internal_cidrs"`   // CIDRs considered internal
-    DatasetName     string   `toml:"dataset_name"`     // DSG dataset name for this DVID server
+    InternalCIDRs   []string          `toml:"internal_cidrs"` // CIDRs considered internal
+    DatasetMap      map[string]string `toml:"dataset_map"`    // DVID root UUID -> DSG dataset ID
 }
 ```
+
+Note: `authConfig` currently lives in `server/auth.go`. `server/server_local.go` does not define the struct; it only carries it inside `tomlConfig`.
 
 #### 2. `server/auth.go` — New `getDSGUserCache()` function
 
@@ -121,7 +126,21 @@ func getDSGUserCache(dsgToken string) (*dsgUserCache, error) {
 }
 ```
 
-#### 3. `server/auth.go` — Extend `generateJWT()` to embed permissions
+#### 3. `server/auth.go` — Add dataset mapping helpers
+
+Add a helper that resolves the root UUID for the request and then maps it to the DSG dataset ID:
+
+```go
+func dsgDatasetForRequest(envUUID interface{}) (string, error) {
+    // resolve request UUID -> root UUID
+    // look up root UUID string in tc.Auth.DatasetMap
+    // return mapped DSG dataset ID
+}
+```
+
+This is the DVID equivalent of the explicit `DatasetMap` used in `neuPrintHTTP`. The important point is that the auth check targets DSG's canonical dataset ID, not whatever local label a particular service happens to use.
+
+#### 4. `server/auth.go` — Extend JWT generation/parsing to embed permissions
 
 Currently JWTs only contain `user` (email). Add a `permissions` claim:
 
@@ -134,7 +153,9 @@ claims["exp"] = time.Now().Add(24 * time.Hour).Unix()
 
 Also add expiration (`exp`) claim — currently JWTs never expire, which is a security gap.
 
-#### 4. `server/auth.go` — Extend `serverTokenHandler()`
+Important: DVID's current JWT code uses `jwt.SigningMethodRS512` while passing `[]byte(jwtSecretKey)` to signing and verification. This proposal should not preserve that ambiguity. As part of DSG support, JWT signing and verification should be normalized so the configured key type and signing method actually match.
+
+#### 5. `server/auth.go` — Extend `serverTokenHandler()`
 
 Add a `"dsg"` branch alongside the existing proxy and Google branches:
 
@@ -165,13 +186,13 @@ func serverTokenHandler(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-#### 5. `server/auth.go` — Extend `isAuthorized()` middleware
+#### 6. `server/auth.go` — Extend `isAuthorized()` middleware
 
 For `enforce = "dsg"`:
 - Parse JWT and extract `user`, `permissions`, `admin` claims
 - If `admin` is true, allow all requests
-- Look up the repo name from `c.Env["uuid"]` (already resolved by `repoRawSelector`)
-- Check if `tc.Auth.DatasetName` has at least `"view"` in the JWT permissions for GET/HEAD/OPTIONS, or `"edit"` for POST/PUT/DELETE
+- Resolve request UUID to root UUID, then map root UUID to DSG dataset ID via `tc.Auth.DatasetMap`
+- Check if the mapped DSG dataset ID has at least `"view"` in the JWT permissions for GET/HEAD/OPTIONS, or `"edit"` for POST/PUT/DELETE
 - For internal IPs (matched against `internal_cidrs`), apply `enforce_internal` policy instead
 
 ```go
@@ -207,23 +228,23 @@ func effectiveEnforce(r *http.Request) string {
 }
 ```
 
-#### 6. `server/auth.go` — New `isInternalIP()` helper
+#### 7. `server/auth.go` — New `isInternalIP()` helper
 
-Parses client IP from `X-Forwarded-For` or `RemoteAddr`, checks against parsed `internal_cidrs` (parsed once at startup into `[]*net.IPNet`).
+Parses client IP from `RemoteAddr`, or from `X-Forwarded-For` only when DVID is known to sit behind a trusted proxy that rewrites it. Checks against parsed `internal_cidrs` (parsed once at startup into `[]*net.IPNet`). Trusting arbitrary `X-Forwarded-For` headers from the open internet would make the bypass spoofable.
 
-### Changes to DatasetGateway (this repo)
+### Changes to DatasetGateway (not this repo)
 
-No code changes required for the core integration — DVID calls existing DSG endpoints (`/api/v1/user/cache`). However, one small addition would be useful:
+No code changes are required for the core DVID-side integration if DSG already exposes the expected identity/permission endpoint. However, one small addition would be useful:
 
 #### Optional: `POST /api/v1/check-dvid-access` convenience endpoint
 
 A lightweight endpoint optimized for DVID's use case that answers "can this user read/write dataset X?" in a single call, without the client needing to parse the full permission cache. This is optional — DVID can parse the existing `/api/v1/user/cache` response instead.
 
-This could also just be the existing `POST /api/v1/check-access` endpoint, which already does exactly this.
+This could also just be the existing `POST /api/v1/check-access` endpoint, if its request/response shape is a good fit for DVID. That contract should be verified before DVID implementation starts.
 
 ### Deployment configuration
 
-For a DVID server at Janelia serving the `vnc1` dataset:
+For a DVID server at Janelia serving multiple repos whose local identifiers do not necessarily match DSG naming:
 
 ```toml
 # dvid.toml
@@ -231,8 +252,11 @@ For a DVID server at Janelia serving the `vnc1` dataset:
 enforce = "dsg"
 enforce_internal = "none"           # internal clients: no auth required
 dsg_address = "https://auth.janelia.org"
-dataset_name = "vnc1"
 internal_cidrs = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+dataset_map = {
+  "2f4a..." = "vnc",
+  "7b91..." = "manc"
+}
 public_versions = ["abc123"]        # specific committed UUIDs always public
 ```
 
@@ -248,7 +272,7 @@ DVID_JWT_SECRET_KEY=<RSA private key for JWT signing>
 3. DVID calls DSG's `/api/v1/user/cache` to validate the token and get permissions
 4. DVID returns a JWT with the user's email and dataset permissions embedded
 5. Client uses the JWT for all subsequent DVID API calls
-6. DVID's `isAuthorized` middleware validates the JWT and checks dataset permissions on each request
+6. DVID's `isAuthorized` middleware validates the JWT, resolves the request's root UUID, maps it to a DSG dataset ID, and checks permissions on each request
 
 ### What doesn't change
 
@@ -257,36 +281,45 @@ DVID_JWT_SECRET_KEY=<RSA private key for JWT signing>
 - Public version bypass logic
 - Blocklist functionality
 - CORS handling
-- The `authorizationOn` flag (now true when `enforce != "none"`)
+
+### Scope notes and follow-ups
+
+- The right local identifier for DVID is the root UUID, not repo alias. Root UUIDs are stable; aliases are not.
+- The DSG-facing identifier should be an explicit mapped value because different services can use incongruent dataset names for the same canonical dataset.
+- A default normalization rule could be added later, but the config map should be authoritative.
+- Embedding DSG permissions in a DVID JWT avoids a DSG round-trip on every request, but it also means permissions are cached until JWT expiry. Short-lived JWTs are therefore important.
+- Returning `401` or `403` for auth failures would be preferable to the current `400`-style behavior, but that can be treated as a cleanup unless callers depend on the exact status codes.
 
 ## Implementation order
 
-All changes are to the DVID repo (`server/auth.go` primarily, with a config addition to `server/server_local.go`):
+All changes are to the DVID repo (`server/auth.go` primarily):
 
-1. **Add new `authConfig` fields** in `server/server_local.go` and `server/auth.go`
-2. **Add `isInternalIP()` and `effectiveEnforce()`** — IP classification logic  
-3. **Add `getDSGUserCache()`** — HTTP client to call DSG
-4. **Extend `generateJWT()`** — embed permissions + expiry in JWT claims
-5. **Extend `serverTokenHandler()`** — add `"dsg"` branch
-6. **Extend `isAuthorized()`** — add `"dsg"` enforcement with dataset permission checking
-7. **Update `initRoutes()`** — set `authorizationOn = true` when `enforce == "dsg"`
-8. **Update config example** — `scripts/distro-files/config-full.toml`
+1. **Add new `authConfig` fields** in `server/auth.go`
+2. **Add root-UUID → DSG dataset mapping helper** — resolve request root and map to canonical DSG ID
+3. **Add `isInternalIP()` and `effectiveEnforce()`** — IP classification logic
+4. **Add `getDSGUserCache()`** — HTTP client to call DSG
+5. **Extend `generateJWT()`** — embed permissions + expiry in JWT claims
+6. **Extend `serverTokenHandler()`** — add `"dsg"` branch
+7. **Extend `isAuthorized()`** — add `"dsg"` enforcement with mapped dataset permission checking
+8. **Update `initRoutes()`** — make route auth depend on the effective auth mode, not only `proxy_address`
+9. **Update config example** — `scripts/distro-files/config-full.toml`
 
 ## Verification
 
 1. **Unit test**: `isInternalIP()` with various CIDRs and IPs
 2. **Unit test**: JWT generation with permissions claims, verify parsing
-3. **Unit test**: `effectiveEnforce()` returns correct policy for internal vs external IPs
-4. **Integration test**: Mock DSG server, verify token exchange flow end-to-end
-5. **Manual test**: Deploy DVID with `enforce = "dsg"`, authenticate via DSG, verify access control
-6. **Manual test**: Verify internal IP clients bypass auth when `enforce_internal = "none"`
-7. **Manual test**: Verify external client without JWT gets 400/401 on repo/node/instance routes
+3. **Unit test**: root UUID → DSG dataset mapping, including missing mapping failures
+4. **Unit test**: `effectiveEnforce()` returns correct policy for internal vs external IPs
+5. **Integration test**: Mock DSG server, verify token exchange flow end-to-end
+6. **Manual test**: Deploy DVID with `enforce = "dsg"`, authenticate via DSG, verify mapped dataset access control
+7. **Manual test**: Verify internal IP clients bypass auth when `enforce_internal = "none"`
+8. **Manual test**: Verify external client without JWT gets 400/401 on repo/node/instance routes
 
 ## Files to modify
 
 | File | Change |
 |------|--------|
-| `server/auth.go` | `authConfig` struct, `getDSGUserCache()`, `effectiveEnforce()`, `isInternalIP()`, extend `generateJWT()`, extend `serverTokenHandler()`, extend `isAuthorized()` |
-| `server/server_local.go` | Parse `internal_cidrs` into `[]*net.IPNet` at startup in `Serve()` |
-| `server/web.go` | Update `authorizationOn` condition: `len(tc.Auth.ProxyAddress) != 0 || tc.Auth.Enforce == "dsg"` |
+| `server/auth.go` | `authConfig` struct, root UUID → DSG dataset mapping helper, `getDSGUserCache()`, `effectiveEnforce()`, `isInternalIP()`, extend `generateJWT()`, extend `serverTokenHandler()`, extend `isAuthorized()` |
+| `server/server_local.go` | Optional: parse `internal_cidrs` into `[]*net.IPNet` at startup in `Serve()` if we do not want lazy parsing in `server/auth.go` |
+| `server/web.go` | Update `authorizationOn` condition so `enforce=token`, `enforce=authfile`, and `enforce=dsg` all activate auth middleware appropriately |
 | `scripts/distro-files/config-full.toml` | Add `dsg` mode documentation and example fields |
