@@ -12,3 +12,4 @@ bin/
 .settings
 llm-research
 test-failures.json
+.gocache/

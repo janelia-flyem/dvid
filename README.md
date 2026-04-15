@@ -27,15 +27,9 @@ How it's different from other forms of versioned data systems:
 * Data can be flexibly assigned to different types of storage, so tera- to peta-scale immutable imaging data can be kept in cloud storage while smaller, frequently mutated label data can be kept on fast local NVMe SSDs. DVID allows data instances to be assigned to different datastores, so large datasets can be spread across multiple local embedded databases as well as cloud stores. Our recent datasets primarily hold local data in [Badger embedded databases](https://github.com/dgraph-io/badger), also written in the Go language.
 
 While much of the effort has been focused on the needs of the 
-[Janelia FlyEM Team](https://www.janelia.org/project-team/flyem), DVID can be used as a general-purpose
-branched versioning file system that handles billions of files and terabytes of data by creating instances of 
-the **keyvalue** datatype. Our team uses the **keyvalue** datatype for branched versioning of JSON, configuration, 
-and other files using the simple key-value HTTP API.
+[Janelia FlyEM Team](https://www.janelia.org/project-team/flyem), DVID can be used as a general-purpose branched versioning file system that handles billions of files and terabytes of data by creating instances of the **keyvalue** datatype. Our team uses the **keyvalue** datatype for branched versioning of JSON, configuration, and other files using the simple key-value HTTP API.
 
-DVID aspires to be a "github for large-scale scientific data" because a variety of interrelated data
-(like image volume, labels, annotations, skeletons, meshes, and JSON data) can be versioned together.
-DVID currently handles branched versioning of large-scale data and does not provide domain-specific diff 
-tools to compare data from versions, which would be a necessary step for user-friendly pull requests and 
+DVID aspires to be a "github for large-scale scientific data" because a variety of interrelated data (like image volume, labels, annotations, skeletons, meshes, and JSON data) can be versioned together. DVID currently handles branched versioning of large-scale data and does not provide domain-specific diff tools to compare data from versions, which would be a necessary step for user-friendly pull requests and 
 truly collaborative data editing.
 
 ## Table of Contents
@@ -50,17 +44,12 @@ truly collaborative data editing.
 
 ## Installation
 
-Users should install DVID from the [releases](https://github.com/janelia-flyem/dvid/releases). 
-The main branch of DVID may include breaking changes required by
-our research work. 
+Users should install DVID from the [releases](https://github.com/janelia-flyem/dvid/releases). The main branch of DVID may include breaking changes required by our research work. 
 
-Developers should consult the [install README](https://github.com/janelia-flyem/dvid/blob/master/GUIDE.md)
-where our conda-based process is described.
+Developers should consult the [install README](https://github.com/janelia-flyem/dvid/blob/master/GUIDE.md) where our conda-based process is described.
 
 DVID has been tested on MacOS X, Linux (Fedora 16, CentOS 6, Ubuntu), and 
-[Windows Subsystem for Linux (WSL2)](https://msdn.microsoft.com/en-us/commandline/wsl/about). 
-It comes out-of-the-box with several embedded key-value databases (Badger, Basho's leveldb)
-for storage although you can configure other storage backends.
+[Windows Subsystem for Linux (WSL2)](https://msdn.microsoft.com/en-us/commandline/wsl/about). It comes out-of-the-box with several embedded key-value databases (Badger, Basho's leveldb) for storage although you can configure other storage backends.
 
 Before launching DVID, you'll have to [create a configuration file](https://github.com/janelia-flyem/dvid/wiki/Configuring-DVID)
 describing ports, the types of storage engines, and where the data should be stored. 
