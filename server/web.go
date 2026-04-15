@@ -698,7 +698,7 @@ func initRoutes() {
 	}
 	var wildcardOrigin bool
 	var c *cors.Cors
-	authorizationOn := (len(tc.Auth.ProxyAddress) != 0)
+	authorizationOn := authMiddlewareEnabled()
 	if len(corsDomains) > 0 {
 		copts := cors.Options{
 			AllowedMethods: []string{"GET", "POST", "DELETE", "HEAD"},
@@ -1636,6 +1636,7 @@ func serverReloadAuthHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, "unable to reload auth file: %v", err)
 		return
 	}
+	clearDSGUserCache()
 	w.Header().Set("Content-Type", "text/plain")
 	fmt.Fprintf(w, "Reloaded authorizations from file %q.\n", tc.Auth.AuthFile)
 }

@@ -56,20 +56,26 @@ instance_id_start = 100  # new ids start at least from this.
 
 min_mutation_id_start = 1000100000  # mutation id will start from this or higher
 
-# if the "auth" section is included, requests must be signed with a JWT obtained via
-# the /api/server/token endpoint.  There are two methods of authentication:
-# The current approach is that a Google ID token is passed to /api/server/token and
-# a JWT is returned that should be sharable among other FlyEM services.  The environment
-# variable DVID_JWT_SECRET_KEY must be provided for authentication to be enabled.
-# The legacy approach is to supply a deprecated proxy_address to a flyem-services server.
+# Auth supports legacy DVID JWT-based modes as well as direct DatasetGateway-backed
+# authentication.  In DSG mode, clients send their DSG token directly to DVID via
+# Authorization: Bearer or a dsg_token cookie; DVID validates it against DSG's
+# /api/v1/user/cache endpoint and caches the returned user info locally for a short TTL.
 [auth]
-enforce = "none" # "none" = no JWT required, "token" requires valid JWT, and
-                 # "authfile" requires user to be in auth_file below.
+enforce = "none" # "none" = no auth, "token" requires valid legacy DVID JWT,
+                 # "authfile" requires legacy DVID JWT user to be in auth_file,
+                 # "dsg" validates incoming DSG tokens directly.
 # File containing authorized emails in JSON format of style {"email":"priv", ...} 
 # where email could be "*" for wildcard and priv can be "read", "write", or "readwrite".
 #auth_file = "/demo/auth.txt" 
 
 public_versions = []  # Add lists of committed UUIDs that should have public access.
+
+# DSG-specific settings
+# enforce_internal = "none"   # optional separate auth policy for internal clients
+# dsg_address = "https://auth.janelia.org"
+# dsg_cache_ttl = 300         # seconds to cache DSG user info in DVID
+# internal_cidrs = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+# dataset_map = { "2f4a..." = "vnc", "7b91..." = "manc" } # root UUID -> DSG dataset
 
 # This is legacy method that is deprecated and won't be used.
 # proxy_address = "http://some-flyem-services"  # URL to running github.com/janelia-flyem/flyem-services
