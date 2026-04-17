@@ -71,6 +71,53 @@ func (d *Data) deleteDenormalizations(ctx *datastore.VersionedCtx) error {
 	return nil
 }
 
+func (d *Data) deleteAll(ctx *datastore.VersionedCtx) error {
+	d.Lock()
+	d.denormOngoing = true
+	d.Unlock()
+	defer func() {
+		d.Lock()
+		d.denormOngoing = false
+		d.Unlock()
+	}()
+
+	store, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return fmt.Errorf("annotation %q had error initializing store: %v", d.DataName(), err)
+	}
+
+	totalTimeLog := dvid.NewTimeLog()
+	timedLog := dvid.NewTimeLog()
+	dvid.Infof("Deleting all elements for annotation %q...\n", d.DataName())
+	dvid.Infof("Stage 1: deleting label denormalization for annotation %q...\n", d.DataName())
+	minLabelTKey := storage.MinTKey(keyLabel)
+	maxLabelTKey := storage.MaxTKey(keyLabel)
+	if err := store.DeleteRange(ctx, minLabelTKey, maxLabelTKey); err != nil {
+		return fmt.Errorf("unable to delete label denormalization for annotations %q: %v", d.DataName(), err)
+	}
+	timedLog.Infof("Stage 1: finished deletion of label kv denormalizations for annotation %q", d.DataName())
+
+	timedLog = dvid.NewTimeLog()
+	dvid.Infof("Stage 2: deleting tag kv denormalizations for annotation %q...\n", d.DataName())
+	minTagTKey := storage.MinTKey(keyTag)
+	maxTagTKey := storage.MaxTKey(keyTag)
+	if err := store.DeleteRange(ctx, minTagTKey, maxTagTKey); err != nil {
+		return fmt.Errorf("unable to delete tag denormalization for annotations %q: %v", d.DataName(), err)
+	}
+	timedLog.Infof("Stage 2: finished deletion of tag kv denormalizations for annotation %q", d.DataName())
+
+	timedLog = dvid.NewTimeLog()
+	dvid.Infof("Stage 3: deleting elements in blocks for annotation %q...\n", d.DataName())
+	minBlockTKey := storage.MinTKey(keyBlock)
+	maxBlockTKey := storage.MaxTKey(keyBlock)
+	if err := store.DeleteRange(ctx, minBlockTKey, maxBlockTKey); err != nil {
+		return fmt.Errorf("unable to delete block elements for annotations %q: %v", d.DataName(), err)
+	}
+	timedLog.Infof("Stage 3: finished deletion of elements in blocks for annotation %q", d.DataName())
+	totalTimeLog.Infof("Finished deleting all elements for annotation %q", d.DataName())
+	return nil
+}
+
 type denormElems struct {
 	tk    storage.TKey
 	elems ElementsNR

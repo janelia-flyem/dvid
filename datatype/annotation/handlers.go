@@ -17,6 +17,27 @@ import (
 // DoRPC acts as a switchboard for RPC commands.
 func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 	switch req.TypeCommand() {
+	case "delete-all":
+		var uuidStr, dataName string
+		if _, err := req.FilenameArgs(1, &uuidStr, &dataName); err != nil {
+			return err
+		}
+		uuid, v, err := datastore.MatchingUUID(uuidStr)
+		if err != nil {
+			return err
+		}
+		if err = datastore.AddToNodeLog(uuid, []string{req.Command.String()}); err != nil {
+			return err
+		}
+		ctx := datastore.NewVersionedCtx(d, v)
+		go func() {
+			if err := d.deleteAll(ctx); err != nil {
+				dvid.Errorf("error deleting all elements for annotation %q: %v\n", d.DataName(), err)
+			}
+		}()
+		reply.Text = fmt.Sprintf("Asynchronously deleting all elements at version %s for annotation %q\n", uuid, d.DataName())
+		return nil
+
 	case "reload":
 		var uuidStr, dataName string
 		if _, err := req.FilenameArgs(1, &uuidStr, &dataName); err != nil {
@@ -59,7 +80,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	d.RLock()
 	if d.denormOngoing && action == "post" {
 		d.RUnlock()
-		server.BadRequest(w, r, "cannot run POST commands while %q instance is being reloaded", d.DataName())
+		server.BadRequest(w, r, "cannot run POST commands while %q instance is undergoing bulk update", d.DataName())
 		return
 	}
 	d.RUnlock()

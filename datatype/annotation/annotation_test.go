@@ -11,10 +11,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 var (
@@ -733,6 +735,44 @@ func testResponseLabel(t *testing.T, expected interface{}, template string, args
 	}
 }
 
+func countAnnotationStoredKeys(ctx *datastore.VersionedCtx, data *Data, minTKey, maxTKey storage.TKey) (int, error) {
+	store, err := datastore.GetOrderedKeyValueDB(data)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	err = store.ProcessRange(ctx, minTKey, maxTKey, nil, func(chunk *storage.Chunk) error {
+		if chunk != nil && len(chunk.V) != 0 {
+			count++
+		}
+		return nil
+	})
+	return count, err
+}
+
+func waitForAnnotationDeleteAll(ctx *datastore.VersionedCtx, data *Data, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		numLabels, err := countAnnotationStoredKeys(ctx, data, storage.MinTKey(keyLabel), storage.MaxTKey(keyLabel))
+		if err != nil {
+			return err
+		}
+		numTags, err := countAnnotationStoredKeys(ctx, data, storage.MinTKey(keyTag), storage.MaxTKey(keyTag))
+		if err != nil {
+			return err
+		}
+		numBlocks, err := countAnnotationStoredKeys(ctx, data, storage.MinTKey(keyBlock), storage.MaxTKey(keyBlock))
+		if err != nil {
+			return err
+		}
+		if numLabels == 0 && numTags == 0 && numBlocks == 0 {
+			return nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return fmt.Errorf("timed out waiting for annotation delete-all to finish")
+}
+
 type tuple [4]int32
 
 var labelsROI = []tuple{
@@ -1047,6 +1087,165 @@ func TestPostBlocksAndAll(t *testing.T) {
 	}
 	if retJSON["num kv pairs"] != 2 {
 		t.Errorf("Expected 2 blocks in synapse data, got %d\n", retJSON["num kv pairs"])
+	}
+}
+
+func TestRPCDeleteAll(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, versionID := initTestRepo()
+
+	config := dvid.NewConfig()
+	dataservice, err := datastore.NewData(uuid, syntype, "mysynapses", config)
+	if err != nil {
+		t.Fatalf("Error creating new data instance: %v\n", err)
+	}
+	data, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("Returned new data instance is not synapse.Data\n")
+	}
+	ctx := datastore.NewVersionedCtx(data, versionID)
+
+	testJSON, err := json.Marshal(testTagData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	elementsURL := fmt.Sprintf("%snode/%s/%s/elements", server.WebAPIPath, uuid, data.DataName())
+	server.TestHTTP(t, "POST", elementsURL, strings.NewReader(string(testJSON)))
+
+	numTags, err := countAnnotationStoredKeys(ctx, data, storage.MinTKey(keyTag), storage.MaxTKey(keyTag))
+	if err != nil {
+		t.Fatalf("Error counting tag keys before delete-all: %v\n", err)
+	}
+	if numTags == 0 {
+		t.Fatalf("Expected tag keys before delete-all, got %d\n", numTags)
+	}
+	numBlocks, err := countAnnotationStoredKeys(ctx, data, storage.MinTKey(keyBlock), storage.MaxTKey(keyBlock))
+	if err != nil {
+		t.Fatalf("Error counting block keys before delete-all: %v\n", err)
+	}
+	if numBlocks == 0 {
+		t.Fatalf("Expected block keys before delete-all, got %d\n", numBlocks)
+	}
+
+	var reply datastore.Response
+	cmd := dvid.Command{"node", string(uuid), string(data.DataName()), "delete-all"}
+	if err := data.DoRPC(datastore.Request{Command: cmd}, &reply); err != nil {
+		t.Fatalf("Error running delete-all command: %v\n", err)
+	}
+	if !strings.Contains(reply.Text, "Asynchronously deleting all elements") {
+		t.Fatalf("Unexpected delete-all reply: %q\n", reply.Text)
+	}
+
+	if err := waitForAnnotationDeleteAll(ctx, data, 2*time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	numTags, err = countAnnotationStoredKeys(ctx, data, storage.MinTKey(keyTag), storage.MaxTKey(keyTag))
+	if err != nil {
+		t.Fatalf("Error counting tag keys after delete-all: %v\n", err)
+	}
+	if numTags != 0 {
+		t.Fatalf("Expected 0 tag keys after delete-all, got %d\n", numTags)
+	}
+	numBlocks, err = countAnnotationStoredKeys(ctx, data, storage.MinTKey(keyBlock), storage.MaxTKey(keyBlock))
+	if err != nil {
+		t.Fatalf("Error counting block keys after delete-all: %v\n", err)
+	}
+	if numBlocks != 0 {
+		t.Fatalf("Expected 0 block keys after delete-all, got %d\n", numBlocks)
+	}
+
+	allElementsURL := fmt.Sprintf("%snode/%s/%s/all-elements", server.WebAPIPath, uuid, data.DataName())
+	ret := server.TestHTTP(t, "GET", allElementsURL, nil)
+	if string(ret) != "{}" {
+		t.Fatalf("Expected empty /all-elements response after delete-all, got: %s\n", string(ret))
+	}
+
+	tagURL := fmt.Sprintf("%snode/%s/%s/tag/Synapse1", server.WebAPIPath, uuid, data.DataName())
+	ret = server.TestHTTP(t, "GET", tagURL, nil)
+	if string(ret) != "[]" {
+		t.Fatalf("Expected empty tag response after delete-all, got: %s\n", string(ret))
+	}
+}
+
+func TestRPCDeleteAllWithLabelDenorm(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, versionID := initTestRepo()
+	var config dvid.Config
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+
+	server.CreateTestSync(t, uuid, "labels", "bodies")
+	server.CreateTestSync(t, uuid, "bodies", "labels")
+
+	_ = createLabelTestVolume(t, uuid, "labels")
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	server.CreateTestInstance(t, uuid, "annotation", "mysynapses", config)
+	server.CreateTestSync(t, uuid, "mysynapses", "labels,bodies")
+
+	dataservice, err := datastore.GetDataByUUIDName(uuid, "mysynapses")
+	if err != nil {
+		t.Fatalf("Error getting annotation instance: %v\n", err)
+	}
+	data, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("Returned data instance is not annotation.Data\n")
+	}
+	ctx := datastore.NewVersionedCtx(data, versionID)
+
+	testJSON, err := json.Marshal(testData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	elementsURL := fmt.Sprintf("%snode/%s/%s/elements", server.WebAPIPath, uuid, data.DataName())
+	server.TestHTTP(t, "POST", elementsURL, strings.NewReader(string(testJSON)))
+
+	testResponseLabel(t, expectedLabel1, "%snode/%s/%s/label/1?relationships=true", server.WebAPIPath, uuid, data.DataName())
+
+	numLabels, err := countAnnotationStoredKeys(ctx, data, storage.MinTKey(keyLabel), storage.MaxTKey(keyLabel))
+	if err != nil {
+		t.Fatalf("Error counting label keys before delete-all: %v\n", err)
+	}
+	if numLabels == 0 {
+		t.Fatalf("Expected label keys before delete-all, got %d\n", numLabels)
+	}
+
+	var reply datastore.Response
+	cmd := dvid.Command{"node", string(uuid), string(data.DataName()), "delete-all"}
+	if err := data.DoRPC(datastore.Request{Command: cmd}, &reply); err != nil {
+		t.Fatalf("Error running delete-all command: %v\n", err)
+	}
+	if !strings.Contains(reply.Text, "Asynchronously deleting all elements") {
+		t.Fatalf("Unexpected delete-all reply: %q\n", reply.Text)
+	}
+
+	if err := waitForAnnotationDeleteAll(ctx, data, 2*time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	numLabels, err = countAnnotationStoredKeys(ctx, data, storage.MinTKey(keyLabel), storage.MaxTKey(keyLabel))
+	if err != nil {
+		t.Fatalf("Error counting label keys after delete-all: %v\n", err)
+	}
+	if numLabels != 0 {
+		t.Fatalf("Expected 0 label keys after delete-all, got %d\n", numLabels)
+	}
+
+	labelURL := fmt.Sprintf("%snode/%s/%s/label/1?relationships=true", server.WebAPIPath, uuid, data.DataName())
+	ret := server.TestHTTP(t, "GET", labelURL, nil)
+	if string(ret) != "[]" {
+		t.Fatalf("Expected empty label response after delete-all, got: %s\n", string(ret))
 	}
 }
 
@@ -2313,7 +2512,7 @@ func TestVerboseRelationships(t *testing.T) {
 
 	uuid, _ := initTestRepo()
 
-	// Create a labelblk instance first 
+	// Create a labelblk instance first
 	server.CreateTestInstance(t, uuid, "labelblk", "labels", dvid.NewConfig())
 	// Populate with labels
 	_ = createLabelTestVolume(t, uuid, "labels")
@@ -2326,7 +2525,7 @@ func TestVerboseRelationships(t *testing.T) {
 	config := dvid.NewConfig()
 	server.CreateTestInstance(t, uuid, "annotation", "synapses", config)
 	server.CreateTestSync(t, uuid, "synapses", "labels")
-	
+
 	dataservice, err := datastore.GetDataByUUIDName(uuid, "synapses")
 	if err != nil {
 		t.Errorf("Unable to get annotation instance: %v\n", err)
@@ -2374,7 +2573,7 @@ func TestVerboseRelationships(t *testing.T) {
 	// Test regular relationships=true (should only return coordinates)
 	url1 := fmt.Sprintf("%snode/%s/%s/label/1?relationships=true", server.WebAPIPath, uuid, data.DataName())
 	returnValue1 := server.TestHTTP(t, "GET", url1, nil)
-	
+
 	var normalElements Elements
 	if err := json.Unmarshal(returnValue1, &normalElements); err != nil {
 		t.Errorf("Unable to unmarshal normal relationships response: %v\n", err)
@@ -2397,7 +2596,7 @@ func TestVerboseRelationships(t *testing.T) {
 	// Test verbose relationships (should return full partner data)
 	url2 := fmt.Sprintf("%snode/%s/%s/label/1?relationships=verbose", server.WebAPIPath, uuid, data.DataName())
 	returnValue2 := server.TestHTTP(t, "GET", url2, nil)
-	
+
 	var verboseElements VerboseElements
 	if err := json.Unmarshal(returnValue2, &verboseElements); err != nil {
 		t.Errorf("Unable to unmarshal verbose relationships response: %v\n", err)
@@ -2408,7 +2607,7 @@ func TestVerboseRelationships(t *testing.T) {
 		t.Errorf("Expected 2 elements for label 1, got %d", len(verboseElements))
 		return
 	}
-	
+
 	// Each element should have 1 relationship
 	for i, elem := range verboseElements {
 		if len(elem.Rels) != 1 {
@@ -2424,7 +2623,7 @@ func TestVerboseRelationships(t *testing.T) {
 			break
 		}
 	}
-	
+
 	if preSynElem == nil {
 		t.Errorf("Could not find PreSyn element in verbose response")
 		return
@@ -2453,7 +2652,7 @@ func TestVerboseRelationships(t *testing.T) {
 	// Test verbose relationships for tags as well
 	url3 := fmt.Sprintf("%snode/%s/%s/tag/TestSynapse?relationships=verbose", server.WebAPIPath, uuid, data.DataName())
 	returnValue3 := server.TestHTTP(t, "GET", url3, nil)
-	
+
 	var tagVerboseElements VerboseElements
 	if err := json.Unmarshal(returnValue3, &tagVerboseElements); err != nil {
 		t.Errorf("Unable to unmarshal tag verbose relationships response: %v\n", err)

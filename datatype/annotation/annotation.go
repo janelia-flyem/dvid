@@ -75,6 +75,10 @@ $ dvid node <UUID> <data name> reload <settings...>
 	inmemory 	"false": (default "true") use in-memory reload, which assumes the server
 					has enough memory to hold all annotations in memory.
 
+$ dvid node <UUID> <data name> delete-all <settings...>
+
+	Deletes all elements in the given annotation data instance.
+
     ------------------
 
 HTTP API (Level 2 REST):
@@ -577,12 +581,12 @@ type Relationships []Relationship
 // VerboseRelationship is a link between two synaptic elements that includes
 // the partner's properties flattened into the relationship object.
 type VerboseRelationship struct {
-	Rel  RelationType
-	To   dvid.Point3d
+	Rel RelationType
+	To  dvid.Point3d
 	// Partner properties flattened into this struct (Pos omitted as it's redundant with To)
-	Kind ElementType        `json:"Kind,omitempty"`
-	Tags Tags               `json:"Tags,omitempty"`
-	Prop map[string]string  `json:"Prop,omitempty"`
+	Kind ElementType       `json:"Kind,omitempty"`
+	Tags Tags              `json:"Tags,omitempty"`
+	Prop map[string]string `json:"Prop,omitempty"`
 }
 
 type VerboseRelationships []VerboseRelationship
@@ -1337,10 +1341,10 @@ func (d *Data) getVerboseExpandedElements(ctx *datastore.VersionedCtx, tk storag
 	}
 
 	blockSize := d.blockSize()
-	
+
 	// Collect all unique blocks we need to fetch (both for the elements themselves and their partners)
 	allBlocks := make(map[dvid.IZYXString]bool)
-	
+
 	// Batch each element into blocks to get their relationships
 	for _, elem := range elems {
 		// Add the block containing this element
@@ -1348,10 +1352,10 @@ func (d *Data) getVerboseExpandedElements(ctx *datastore.VersionedCtx, tk storag
 		izyxStr := elemBlockCoord.ToIZYXString()
 		allBlocks[izyxStr] = true
 	}
-	
+
 	// Fetch all blocks once and create element lookup maps
 	elementMap := make(map[string]*Element) // Map from position to full Element with relationships
-	
+
 	for izyxStr := range allBlocks {
 		chunkPt, err := izyxStr.ToChunkPoint3d()
 		if err != nil {
@@ -1362,13 +1366,13 @@ func (d *Data) getVerboseExpandedElements(ctx *datastore.VersionedCtx, tk storag
 		if err != nil {
 			continue
 		}
-		
+
 		// Add all elements from this block to the lookup map
 		for _, blockElem := range blockElems {
 			elementMap[blockElem.Pos.MapKey()] = &blockElem
 		}
 	}
-	
+
 	// Now collect all partner blocks needed
 	partnerBlocks := make(map[dvid.IZYXString]bool)
 	for _, elem := range elems {
@@ -1385,7 +1389,7 @@ func (d *Data) getVerboseExpandedElements(ctx *datastore.VersionedCtx, tk storag
 			}
 		}
 	}
-	
+
 	// Fetch additional partner blocks if needed
 	for izyxStr := range partnerBlocks {
 		chunkPt, err := izyxStr.ToChunkPoint3d()
@@ -1397,13 +1401,13 @@ func (d *Data) getVerboseExpandedElements(ctx *datastore.VersionedCtx, tk storag
 		if err != nil {
 			continue
 		}
-		
+
 		// Add partner elements to the lookup map
 		for _, blockElem := range blockElems {
 			elementMap[blockElem.Pos.MapKey()] = &blockElem
 		}
 	}
-	
+
 	// Build the verbose elements with full partner data
 	verboseElems := make(VerboseElements, len(elems))
 	for i, elem := range elems {
@@ -1417,32 +1421,32 @@ func (d *Data) getVerboseExpandedElements(ctx *datastore.VersionedCtx, tk storag
 			}
 			continue
 		}
-		
+
 		verboseElems[i] = VerboseElement{
 			ElementNR: elem,
 			Rels:      make(VerboseRelationships, len(fullElem.Rels)),
 		}
-		
+
 		// Convert each relationship to verbose relationship with flattened partner data
 		for j, rel := range fullElem.Rels {
 			partnerElem := elementMap[rel.To.MapKey()]
-			
+
 			verboseRel := VerboseRelationship{
 				Rel: rel.Rel,
 				To:  rel.To,
 			}
-			
+
 			// If partner found, flatten its properties into the relationship (omit Pos as it's redundant with To)
 			if partnerElem != nil {
 				verboseRel.Kind = partnerElem.Kind
 				verboseRel.Tags = partnerElem.Tags
 				verboseRel.Prop = partnerElem.Prop
 			}
-			
+
 			verboseElems[i].Rels[j] = verboseRel
 		}
 	}
-	
+
 	return verboseElems, nil
 }
 
