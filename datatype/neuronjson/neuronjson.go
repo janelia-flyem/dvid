@@ -389,12 +389,13 @@ POST <api URL>/node/<UUID>/<data name>/key/<key>
 	POST Query-string Options:
 
 	conditional	List of fields separated by commas that should not be overwritten if set.
+			(Legacy alias: "conditionals".)
 
 	replace		If "true" will remove any fields not present
 
 
-DELETE <api URL>/node/<UUID>/<data name>/key/<key> 
-HEAD   <api URL>/node/<UUID>/<data name>/key/<key> 
+DELETE <api URL>/node/<UUID>/<data name>/key/<key>
+HEAD   <api URL>/node/<UUID>/<data name>/key/<key>
 
 	Performs operations on a key-value pair depending on the HTTP verb.  
 
@@ -526,6 +527,9 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues[?query-options]
 	data name     Name of neuronjson data instance.
 
 	Query-string Options:
+
+	conditional	List of fields separated by commas that should not be overwritten if set.
+			(Legacy alias: "conditionals".)
 
 	replace		If "true" will remove any fields not present
 
@@ -2106,9 +2110,24 @@ func (d *Data) handleKeyValues(ctx storage.VersionedCtx, w http.ResponseWriter, 
 	return
 }
 
+// parseConditionals returns the list of fields listed in the request's
+// "conditional" query parameter. The canonical name is the singular form, as
+// documented in the help text and as sent by clio-store. The plural
+// "conditionals" is accepted as a legacy alias because earlier versions of
+// this handler only recognized the plural.
+func parseConditionals(r *http.Request) []string {
+	raw := r.URL.Query().Get("conditional")
+	if raw == "" {
+		raw = r.URL.Query().Get("conditionals")
+	}
+	if raw == "" {
+		return nil
+	}
+	return strings.Split(raw, ",")
+}
+
 func (d *Data) handleIngest(ctx *datastore.VersionedCtx, r *http.Request, uuid dvid.UUID) error {
-	cond_fields := r.URL.Query().Get("conditionals")
-	conditionals := strings.Split(cond_fields, ",")
+	conditionals := parseConditionals(r)
 	replace := r.URL.Query().Get("replace") == "true"
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -2551,8 +2570,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				}
 			}()
 
-			cond_fields := r.URL.Query().Get("conditionals")
-			conditionals := strings.Split(cond_fields, ",")
+			conditionals := parseConditionals(r)
 			replace := r.URL.Query().Get("replace") == "true"
 
 			err = d.PutData(ctx, keyStr, data, conditionals, replace)

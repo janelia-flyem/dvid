@@ -348,11 +348,12 @@ POST <api URL>/node/<UUID>/<data name>/key/<key>
 	POST Query-string Options:
 
 	conditional	List of fields separated by commas that should not be overwritten if set.
+			(Legacy alias: "conditionals".)
 
 	replace		If "true" will remove any fields not present
 
 
-DELETE <api URL>/node/<UUID>/<data name>/key/<key> 
+DELETE <api URL>/node/<UUID>/<data name>/key/<key>
 HEAD   <api URL>/node/<UUID>/<data name>/key/<key> 
 
 	Performs operations on a key-value pair depending on the HTTP verb.  
@@ -485,6 +486,9 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues[?query-options]
 	data name     Name of neuronjson data instance.
 
 	Query-string Options:
+
+	conditional	List of fields separated by commas that should not be overwritten if set.
+			(Legacy alias: "conditionals".)
 
 	replace		If "true" will remove any fields not present
 

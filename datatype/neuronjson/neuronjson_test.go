@@ -1923,3 +1923,308 @@ func TestFieldExistenceAndVersioning(t *testing.T) {
 		t.Fatalf("Error on second version, key %q: expected %s, got %s\n", testData[1].key, expected2val, string(returnValue))
 	}
 }
+
+// TestConditionals exercises the ?conditional=... query option on POST /key.
+// Fields listed there are not overwritten when present in the stored object.
+// The plural "conditionals" is accepted as a legacy alias and is used here to
+// keep the legacy path under test. TestConditionalSingularAlias covers the
+// canonical singular name that matches the help text and clio-store's client.
+//
+// Caveats captured by this test (current DVID behavior, divergent from
+// clio-store's documented client contract):
+//   - DVID protects a listed field whenever it is present in the stored
+//     object. clio-store documents "non-existent OR empty" — empty values
+//     should be overwritten, but DVID preserves them.
+//   - When replace=true, the conditional list is ignored entirely (the
+//     protection lives inside the !replace branch of updateJSON).
+func TestConditionals(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+	name := dvid.InstanceName("annotations")
+
+	config := dvid.NewConfig()
+	if _, err := datastore.NewData(uuid, jsontype, name, config); err != nil {
+		t.Fatalf("Error creating new neuronjson instance: %v\n", err)
+	}
+
+	keyReq := func(key, query string) string {
+		return fmt.Sprintf("%snode/%s/%s/key/%s?%s", server.WebAPIPath, uuid, name, key, query)
+	}
+	getAll := func(t *testing.T, key string) NeuronJSON {
+		t.Helper()
+		raw := server.TestHTTP(t, "GET", keyReq(key, "show=all"), nil)
+		var got NeuronJSON
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("unmarshal GET /key/%s: %v\nbody: %s", key, err, string(raw))
+		}
+		return got
+	}
+
+	// Seed an object that has a non-empty "status", a non-empty "group",
+	// and a deliberately empty "note" so we can probe the empty-value path.
+	initial := `{"bodyid": 1000, "status": "Traced", "group": 7, "note": "", "comment": "orig"}`
+	server.TestHTTP(t, "POST", keyReq("1000", "u=alice"), strings.NewReader(initial))
+
+	seeded := getAll(t, "1000")
+	seededStatusUser := seeded["status_user"]
+	seededStatusTime := seeded["status_time"]
+	seededGroupUser := seeded["group_user"]
+	seededGroupTime := seeded["group_time"]
+	seededNoteUser := seeded["note_user"]
+	seededNoteTime := seeded["note_time"]
+
+	// Make _time for any unprotected write differ from the seeded _time.
+	time.Sleep(2 * time.Second)
+
+	// Case 1: conditionals=status with a single existing non-empty field.
+	// status should be protected; co-posted "comment" should update.
+	update := `{"bodyid": 1000, "status": "Anchor", "comment": "changed"}`
+	server.TestHTTP(t, "POST", keyReq("1000", "u=bob&conditionals=status"),
+		strings.NewReader(update))
+
+	got := getAll(t, "1000")
+	if got["status"] != "Traced" {
+		t.Fatalf("case 1: status should be protected: want %q, got %v", "Traced", got["status"])
+	}
+	if got["status_user"] != seededStatusUser {
+		t.Fatalf("case 1: status_user should be unchanged: want %v, got %v",
+			seededStatusUser, got["status_user"])
+	}
+	if got["status_time"] != seededStatusTime {
+		t.Fatalf("case 1: status_time should be unchanged: want %v, got %v",
+			seededStatusTime, got["status_time"])
+	}
+	if got["comment"] != "changed" {
+		t.Fatalf("case 1: comment should be updated: want %q, got %v", "changed", got["comment"])
+	}
+	if got["comment_user"] != "bob" {
+		t.Fatalf("case 1: comment_user: want %q, got %v", "bob", got["comment_user"])
+	}
+
+	// Case 2: conditionals on a field that does NOT yet exist in the store.
+	// The field should be written, because the protection only applies when
+	// the field is already present.
+	update = `{"bodyid": 1000, "new_field": "hello"}`
+	server.TestHTTP(t, "POST", keyReq("1000", "u=carol&conditionals=new_field"),
+		strings.NewReader(update))
+
+	got = getAll(t, "1000")
+	if got["new_field"] != "hello" {
+		t.Fatalf("case 2: new_field should be created: got %v", got["new_field"])
+	}
+	if got["new_field_user"] != "carol" {
+		t.Fatalf("case 2: new_field_user: want %q, got %v", "carol", got["new_field_user"])
+	}
+
+	// Case 3: multiple comma-separated fields — all listed fields are protected.
+	update = `{"bodyid": 1000, "status": "Anchor", "group": 99, "comment": "again"}`
+	server.TestHTTP(t, "POST", keyReq("1000", "u=dave&conditionals=status,group"),
+		strings.NewReader(update))
+
+	got = getAll(t, "1000")
+	if got["status"] != "Traced" {
+		t.Fatalf("case 3: status should still be protected: got %v", got["status"])
+	}
+	if !reflect.DeepEqual(got["group"], uint64(7)) {
+		t.Fatalf("case 3: group should be protected: got %v (type %T)", got["group"], got["group"])
+	}
+	if got["status_user"] != seededStatusUser || got["status_time"] != seededStatusTime {
+		t.Fatalf("case 3: status metadata should be unchanged; got user=%v time=%v",
+			got["status_user"], got["status_time"])
+	}
+	if got["group_user"] != seededGroupUser || got["group_time"] != seededGroupTime {
+		t.Fatalf("case 3: group metadata should be unchanged; got user=%v time=%v",
+			got["group_user"], got["group_time"])
+	}
+	if got["comment"] != "again" {
+		t.Fatalf("case 3: comment should update: got %v", got["comment"])
+	}
+
+	// Case 4: empty-valued field is still protected by DVID today.
+	//
+	// clio-store's contract says conditional fields should be written when the
+	// stored value is "non-existent OR empty". DVID currently only honors the
+	// "non-existent" half; the "empty" half is not implemented. If the contract
+	// is ever reconciled, flip the assertion below to expect "filled in".
+	update = `{"bodyid": 1000, "note": "filled in"}`
+	server.TestHTTP(t, "POST", keyReq("1000", "u=eve&conditionals=note"),
+		strings.NewReader(update))
+
+	got = getAll(t, "1000")
+	if got["note"] != "" {
+		t.Fatalf("case 4: note is currently protected even when empty; got %v "+
+			"(if the non-existent-or-empty contract is adopted, update this test)",
+			got["note"])
+	}
+	if got["note_user"] != seededNoteUser || got["note_time"] != seededNoteTime {
+		t.Fatalf("case 4: note metadata should be unchanged; got user=%v time=%v",
+			got["note_user"], got["note_time"])
+	}
+
+	// Case 5: replace=true overrides conditionals — the listed field IS
+	// overwritten because conditional protection only runs in the !replace
+	// branch. Use a fresh key so the replace semantics don't interact with
+	// prior cases.
+	seed2 := `{"bodyid": 2000, "status": "Traced", "comment": "orig"}`
+	server.TestHTTP(t, "POST", keyReq("2000", "u=alice"), strings.NewReader(seed2))
+
+	update = `{"bodyid": 2000, "status": "Leaves"}`
+	server.TestHTTP(t, "POST", keyReq("2000", "u=frank&conditionals=status&replace=true"),
+		strings.NewReader(update))
+
+	got = getAll(t, "2000")
+	if got["status"] != "Leaves" {
+		t.Fatalf("case 5: replace=true should ignore conditionals and overwrite status; got %v",
+			got["status"])
+	}
+	if got["status_user"] != "frank" {
+		t.Fatalf("case 5: status_user should update to frank; got %v", got["status_user"])
+	}
+}
+
+// TestConditionalsKeyvalues verifies that the conditionals query option
+// applies to the batch POST /keyvalues endpoint the same way it does to
+// single-key POSTs.
+func TestConditionalsKeyvalues(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+	name := dvid.InstanceName("annotations")
+
+	config := dvid.NewConfig()
+	if _, err := datastore.NewData(uuid, jsontype, name, config); err != nil {
+		t.Fatalf("Error creating new neuronjson instance: %v\n", err)
+	}
+
+	seeds := []struct{ key, val string }{
+		{"1000", `{"bodyid": 1000, "status": "Traced", "comment": "a"}`},
+		{"2000", `{"bodyid": 2000, "status": "Anchor", "comment": "b"}`},
+	}
+	for _, s := range seeds {
+		req := fmt.Sprintf("%snode/%s/%s/key/%s?u=alice", server.WebAPIPath, uuid, name, s.key)
+		server.TestHTTP(t, "POST", req, strings.NewReader(s.val))
+	}
+
+	// Ensure wall-clock distinguishes unprotected writes.
+	time.Sleep(2 * time.Second)
+
+	updates := []struct{ key, val string }{
+		{"1000", `{"bodyid": 1000, "status": "Leaves", "comment": "a2"}`},
+		{"2000", `{"bodyid": 2000, "status": "Orphan", "comment": "b2"}`},
+	}
+	var kvs proto.KeyValues
+	kvs.Kvs = make([]*proto.KeyValue, len(updates))
+	for i, u := range updates {
+		kvs.Kvs[i] = &proto.KeyValue{Key: u.key, Value: []byte(u.val)}
+	}
+	serialization, err := pb.Marshal(&kvs)
+	if err != nil {
+		t.Fatalf("couldn't serialize keyvalues: %v", err)
+	}
+	bulkReq := fmt.Sprintf("%snode/%s/%s/keyvalues?u=bob&conditionals=status",
+		server.WebAPIPath, uuid, name)
+	server.TestHTTP(t, "POST", bulkReq, bytes.NewReader(serialization))
+
+	expectedStatus := map[string]string{"1000": "Traced", "2000": "Anchor"}
+	expectedComment := map[string]string{"1000": "a2", "2000": "b2"}
+	for key, wantStatus := range expectedStatus {
+		req := fmt.Sprintf("%snode/%s/%s/key/%s?show=all", server.WebAPIPath, uuid, name, key)
+		var got NeuronJSON
+		if err := json.Unmarshal(server.TestHTTP(t, "GET", req, nil), &got); err != nil {
+			t.Fatalf("unmarshal key %s: %v", key, err)
+		}
+		if got["status"] != wantStatus {
+			t.Fatalf("key %s: status should be protected: want %q, got %v",
+				key, wantStatus, got["status"])
+		}
+		if got["status_user"] != "alice" {
+			t.Fatalf("key %s: status_user should stay as seeded %q; got %v",
+				key, "alice", got["status_user"])
+		}
+		if got["comment"] != expectedComment[key] {
+			t.Fatalf("key %s: comment should update: want %q, got %v",
+				key, expectedComment[key], got["comment"])
+		}
+		if got["comment_user"] != "bob" {
+			t.Fatalf("key %s: comment_user should update to bob; got %v",
+				key, got["comment_user"])
+		}
+	}
+}
+
+// TestConditionalSingularAlias verifies the canonical singular form of the
+// query parameter. This is the name documented in the neuronjson help text
+// and the name that clio-store sends when proxying its /neurons endpoint.
+// Both POST /key and POST /keyvalues must accept it.
+func TestConditionalSingularAlias(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+	name := dvid.InstanceName("annotations")
+
+	config := dvid.NewConfig()
+	if _, err := datastore.NewData(uuid, jsontype, name, config); err != nil {
+		t.Fatalf("Error creating new neuronjson instance: %v\n", err)
+	}
+
+	// POST /key: singular "conditional" protects the listed field.
+	keyReq := func(key, query string) string {
+		return fmt.Sprintf("%snode/%s/%s/key/%s?%s", server.WebAPIPath, uuid, name, key, query)
+	}
+	initial := `{"bodyid": 1000, "status": "Traced", "comment": "orig"}`
+	server.TestHTTP(t, "POST", keyReq("1000", "u=alice"), strings.NewReader(initial))
+
+	update := `{"bodyid": 1000, "status": "Anchor", "comment": "changed"}`
+	server.TestHTTP(t, "POST", keyReq("1000", "u=bob&conditional=status"),
+		strings.NewReader(update))
+
+	var got NeuronJSON
+	if err := json.Unmarshal(server.TestHTTP(t, "GET", keyReq("1000", "show=all"), nil), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got["status"] != "Traced" {
+		t.Fatalf("singular conditional should protect status; got %v", got["status"])
+	}
+	if got["status_user"] != "alice" {
+		t.Fatalf("status_user should stay %q; got %v", "alice", got["status_user"])
+	}
+	if got["comment"] != "changed" || got["comment_user"] != "bob" {
+		t.Fatalf("comment should update under co-POSTed write; got %v/%v",
+			got["comment"], got["comment_user"])
+	}
+
+	// POST /keyvalues: singular "conditional" protects across the batch.
+	kvs := proto.KeyValues{
+		Kvs: []*proto.KeyValue{
+			{Key: "1000", Value: []byte(`{"bodyid": 1000, "status": "Leaves", "comment": "batch"}`)},
+		},
+	}
+	serialization, err := pb.Marshal(&kvs)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	bulkReq := fmt.Sprintf("%snode/%s/%s/keyvalues?u=carol&conditional=status",
+		server.WebAPIPath, uuid, name)
+	server.TestHTTP(t, "POST", bulkReq, bytes.NewReader(serialization))
+
+	if err := json.Unmarshal(server.TestHTTP(t, "GET", keyReq("1000", "show=all"), nil), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got["status"] != "Traced" {
+		t.Fatalf("singular conditional on /keyvalues should protect status; got %v", got["status"])
+	}
+	if got["comment"] != "batch" || got["comment_user"] != "carol" {
+		t.Fatalf("comment should update via /keyvalues; got %v/%v",
+			got["comment"], got["comment_user"])
+	}
+}
