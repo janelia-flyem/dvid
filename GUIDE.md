@@ -112,8 +112,9 @@ $ make install
 ```
 
 If a conda environment is active, `make install` installs into
-`${CONDA_PREFIX}`. Otherwise it installs into `/usr/local`. Override the
-destination with `INSTALL_PREFIX`:
+`${CONDA_PREFIX}`. Otherwise it installs into `$HOME/.local`, so make sure
+`$HOME/.local/bin` is on your `PATH` if you want to run `dvid` without a path
+prefix. Override the destination with `INSTALL_PREFIX`:
 
 ```
 $ make install INSTALL_PREFIX=/path/to/install-prefix

@@ -45,7 +45,7 @@ endif
 ifdef CONDA_PREFIX
     INSTALL_PREFIX ?= ${CONDA_PREFIX}
 else
-    INSTALL_PREFIX ?= /usr/local
+    INSTALL_PREFIX ?= ${HOME}/.local
 endif
 
 # In a Makefile, the first listed target is
