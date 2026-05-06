@@ -6,32 +6,11 @@
 #
 
 
-# Pinnings here are chosen for compatibility with conda-forge.
-# See https://github.com/conda-forge/conda-forge-pinning-feedstock/blob/master/recipe/conda_build_config.yaml
-lz4_c:
-  - 1.9.3
-
-pin_run_as_build:
-  lz4-c:
-    max_pin: x.x.x
-
 # CONDA_BUILD_SYSROOT:
-#   # Most conda-forge packages are compatible with MacOSX 10.9,
-#   # but golang-1.16 requires at least MacOSX 10.13.
-#   # (See the download page: https://go.dev/dl/)
-#   #
-#   # You will have to install this SDK manually, via this project:
-#   #
-#   #   https://github.com/devernay/xcodelegacy
-#   #
-#   # Quick Instructions:
-#   #
-#   #   curl https://raw.githubusercontent.com/devernay/xcodelegacy/master/XcodeLegacy.sh > XcodeLegacy.sh
-#   #   chmod +x XcodeLegacy.sh
-#   #   sudo ./XcodeLegacy.sh -osx1013 buildpackages
-#   #   sudo ./XcodeLegacy.sh -osx1013 install
-#   #
-#   - /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.13.sdk
+#   # Set this when pinning release builds to a specific macOS SDK supported
+#   # by the Go version in go.mod and the conda-forge compiler stack.
+#   - /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
 
 # MACOSX_DEPLOYMENT_TARGET:
-#   - 10.13
+#   # Set this when release builds need to target an older macOS version.
+#   - 11.0

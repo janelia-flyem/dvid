@@ -9,8 +9,7 @@ elif [ "$(expr substr $(uname -s) 1 5)" == "Linux" ]; then
     free -m
 fi
 
-# GOPATH is just the build 'work' dir 
-export GOPATH=$(pwd)
+BUILD_WORK_DIR=$(pwd)
 
 echo "******************"
 echo "GOROOT: ${GOROOT}"
@@ -22,8 +21,8 @@ if [ "$(uname)" == "Darwin" ]; then
     echo "MACOSX_DEPLOYMENT_TARGET: ${MACOSX_DEPLOYMENT_TARGET}"
 fi
 
-# The dvid repo was cloned to the appropriate internal directory
-DVID_REPO=${GOPATH}/src/github.com/janelia-flyem/dvid
+# The dvid repo is staged under this path by meta.yaml.
+DVID_REPO=${BUILD_WORK_DIR}/src/github.com/janelia-flyem/dvid
 cd ${DVID_REPO}
 
 # Build

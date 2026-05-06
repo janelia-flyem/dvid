@@ -80,7 +80,7 @@ See the embedded documentation string `webHelp` in `server/web.go`.
 2. **Modular**: Data types are separate packages in `datatype/` directory
 3. **HTTP-centric**: Most functionality exposed via REST API
 4. **Storage-agnostic**: Can use different backends for different data types
-5. **Testing**: Run `make test` (requires `GOPATH` set) to validate changes. This runs `go test` with the required build tags (`badger filestore ngprecomputed`).
+5. **Testing**: Run `make test` to validate changes. This runs `go test` with the default modern build tags (`badger filestore ngprecomputed`). DVID is built as a Go module; `GOPATH` is not required.
 
 ## Key Documentation Sources
 
@@ -101,14 +101,24 @@ See the embedded documentation string `webHelp` in `server/web.go`.
 
 DVID is actively used for connectomics datasets like the Janelia FlyEM hemibrain and other large-scale neural reconstruction projects.
 
-## Conda Environment Safety
+## Build and Conda Environment Safety
 
-The `dvid` conda environment includes `go-cgo`, which depends on conda's clang
-compiler packages. These packages inject `-Wl,-rpath,${CONDA_PREFIX}/lib` into
-`LDFLAGS` via activation scripts. DVID's Makefile accounts for this and avoids
-adding a duplicate rpath.
+DVID's default build uses Badger, filestore, and ngprecomputed backends. It
+does not include the legacy Basho LevelDB backend unless `DVID_BACKENDS`
+explicitly includes `basholeveldb` or the `dvid-basholeveldb` make target is
+used.
+
+The default build requires CGO because DVID uses an embedded C LZ4
+implementation for performance and stored-data compatibility. Conda is optional
+for normal development: a system Go 1.25+ toolchain, CGO enabled, and a working
+C compiler are sufficient for the default build.
+
+If a `dvid` conda environment is used, it includes `go-cgo`, which may depend
+on conda compiler packages. These packages can inject
+`-Wl,-rpath,${CONDA_PREFIX}/lib` into `LDFLAGS` via activation scripts. DVID's
+Makefile accounts for this and avoids adding a duplicate rpath.
 
 NEVER install additional C/C++ compiler packages into the `dvid` conda env beyond
-what go-cgo already pulls in. For C++ compilation needs (e.g.,
+what the documented setup scripts install. For C++ compilation needs (e.g.,
 `testing/fvdb/nvdb_verify.cpp`), use the system compiler (Xcode Command Line
 Tools on macOS, system g++ on Linux) or a separate conda environment.

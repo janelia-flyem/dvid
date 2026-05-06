@@ -28,15 +28,6 @@ about:
 build:
   number: 0
 
-  # The lz4-c package declares 'run_exports' requirements,
-  # effectively adding lz4-c to dvid's 'run' requirements
-  # (even though it isn't listed in the 'run' section below).
-  # But dvid *statically* links lz4-c, so we don't need the
-  # lz4-c dylib at runtime.
-  # This 'ignore' setting overrides lz4-c's 'run_exports' setting.
-  ignore_run_exports:
-    - lz4-c
-
   # Permit these variables in the user's environment to be inherited by build.sh
   script_env:
     - DVID_BACKENDS
@@ -52,30 +43,16 @@ requirements:
   # or incorporated into the executable in any way.
   build:
     - make
+    - python
 
-    # Note: Make sure this matches GO_VERSION in scripts/install-developer-dependencies.sh
-    - go-cgo=1.21
+    # Note: Make sure this matches go.mod and GO_VERSION in scripts/install-conda-dev-toolchain.sh
+    - go-cgo=1.25
 
     - {{ compiler('c') }}
-    - {{ compiler('cxx') }}
-
-    - pkg-config
-
-  # The 'host' environment is for libraries that
-  # will be included/linked into dvid.
-  #
-  # Note:
-  #  If you add/change anything in this 'host' list (or the 'build' list above),
-  #  please also edit scripts/install-developer-dependencies.sh
-  host:
-    - snappy
-    - basholeveldb
-    - lz4-c {{ lz4_c }}*
 
   # The 'run' requirements specify which libraries
   # are required by dvid at run-time.
   run:
-    - basholeveldb
     - dvid-web-console
 
 source:

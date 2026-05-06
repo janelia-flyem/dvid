@@ -1,7 +1,3 @@
-ifndef GOPATH
-    $(error GOPATH must be defined)
-endif
-
 # When building in the context of the conda-recipe,
 # use the "host" PREFIX, (not the "build" env prefix),
 # which is set by conda-build.
@@ -9,28 +5,13 @@ ifdef CONDA_BUILD
     CONDA_PREFIX = ${PREFIX}
 endif
 
-ifndef CONDA_PREFIX
-    define ERRMSG
-    
-    
-    ERROR: Dvid requires an active conda environment, with dependencies already installed.
-           See GUIDE.md for details. Here's the gist of it:
-    
-        $$ conda create -n dvid-devel && conda activate dvid-devel
-        $$ ./scripts/install-developer-dependencies.sh
-    
-    
-    endef
+PYTHON ?= python3
 
-    $(error ${ERRMSG} )
-endif
-
-CONDA_BASE = $(shell conda info --base)
+DVID_DEFAULT_BACKENDS = badger filestore ngprecomputed
+DVID_BASHOLEVELDB_BACKENDS = badger basholeveldb filestore ngprecomputed
 
 ifndef DVID_BACKENDS
-    DVID_BACKENDS = badger filestore ngprecomputed
-#    DVID_BACKENDS = badger basholeveldb filestore gbucket swift ngprecomputed
-    $(info Backend not specified. Using default value: DVID_BACKENDS="${DVID_BACKENDS}")
+    DVID_BACKENDS = ${DVID_DEFAULT_BACKENDS}
 endif
 
 DVID_TAGS = ${DVID_BACKENDS}
@@ -38,14 +19,19 @@ ifdef DVID_LOW_MEMORY
     DVID_TAGS += lowmem
 endif
 
-export CGO_CFLAGS = -I${CONDA_PREFIX}/include
-export CGO_LDFLAGS = -L${CONDA_PREFIX}/lib
-# Only add -rpath if conda's activation scripts haven't already set it in LDFLAGS.
-# The go-cgo conda package pulls in clang, whose activation scripts inject
-# -Wl,-rpath,${CONDA_PREFIX}/lib into LDFLAGS. Adding it again here causes
-# "duplicate LC_RPATH" errors/warnings from the macOS linker.
-ifeq (,$(findstring -rpath,${LDFLAGS}))
-    export CGO_LDFLAGS += -Wl,-rpath,${CONDA_PREFIX}/lib
+export CGO_ENABLED = 1
+export GO111MODULE = on
+
+ifdef CONDA_PREFIX
+    export CGO_CFLAGS += -I${CONDA_PREFIX}/include
+    export CGO_LDFLAGS += -L${CONDA_PREFIX}/lib
+    # Only add -rpath if conda's activation scripts haven't already set it in LDFLAGS.
+    # The go-cgo conda package pulls in clang, whose activation scripts inject
+    # -Wl,-rpath,${CONDA_PREFIX}/lib into LDFLAGS. Adding it again here causes
+    # "duplicate LC_RPATH" errors/warnings from the macOS linker.
+    ifeq (,$(findstring -rpath,${LDFLAGS}))
+        export CGO_LDFLAGS += -Wl,-rpath,${CONDA_PREFIX}/lib
+    endif
 endif
 
 ifeq ($(shell uname -s),Darwin)
@@ -54,6 +40,12 @@ ifeq ($(shell uname -s),Darwin)
         export CGO_CFLAGS += -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}
         export CGO_LDFLAGS += -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}
 	endif
+endif
+
+ifdef CONDA_PREFIX
+    INSTALL_PREFIX ?= ${CONDA_PREFIX}
+else
+    INSTALL_PREFIX ?= /usr/local
 endif
 
 # In a Makefile, the first listed target is
@@ -69,19 +61,25 @@ analyze-index: bin/analyze-index
 body-blocks: bin/body-blocks
 filter-mutations: bin/filter-mutations
 compare-mappings: bin/compare-mappings
+dvid-basholeveldb: DVID_BACKENDS = ${DVID_BASHOLEVELDB_BACKENDS}
+dvid-basholeveldb: bin/dvid-basholeveldb
 
-# Install: Copy all executables to the CONDA_PREFIX
+bin:
+	install -d bin
+
+# Install: Copy all executables to the install prefix.
 install: dvid dvid-backup dvid-transfer analyze-block analyze-index body-blocks filter-mutations
-	cp bin/dvid ${CONDA_PREFIX}/bin/dvid
-	cp bin/dvid-backup ${CONDA_PREFIX}/bin/dvid-backup
-	cp bin/dvid-transfer ${CONDA_PREFIX}/bin/dvid-transfer
-	cp bin/analyze-block ${CONDA_PREFIX}/bin/analyze-block
-	cp bin/analyze-index ${CONDA_PREFIX}/bin/analyze-index
-	cp bin/body-blocks ${CONDA_PREFIX}/bin/body-blocks
-	cp bin/filter-mutations ${CONDA_PREFIX}/bin/filter-mutations
+	install -d ${INSTALL_PREFIX}/bin
+	install bin/dvid ${INSTALL_PREFIX}/bin/dvid
+	install bin/dvid-backup ${INSTALL_PREFIX}/bin/dvid-backup
+	install bin/dvid-transfer ${INSTALL_PREFIX}/bin/dvid-transfer
+	install bin/analyze-block ${INSTALL_PREFIX}/bin/analyze-block
+	install bin/analyze-index ${INSTALL_PREFIX}/bin/analyze-index
+	install bin/body-blocks ${INSTALL_PREFIX}/bin/body-blocks
+	install bin/filter-mutations ${INSTALL_PREFIX}/bin/filter-mutations
 
 # Compile a helper program that generates version.go
-bin/dvid-gen-version: cmd/gen-version/main.go
+bin/dvid-gen-version: cmd/gen-version/main.go | bin
 	go build -o bin/dvid-gen-version -v -tags "${DVID_TAGS}" cmd/gen-version/main.go
 
 # This actually runs the above program; generates version.go
@@ -89,7 +87,7 @@ bin/dvid-gen-version: cmd/gen-version/main.go
 # .last-build-git-description to force a re-build of server/version.go
 # if the git SHA has changed since the last build
 server/version.go: bin/dvid-gen-version \
-				   $(shell "${CONDA_BASE}/bin/python" scripts/record-git-description.py . .last-build-git-description)
+				   $(shell "${PYTHON}" scripts/record-git-description.py . .last-build-git-description)
 	bin/dvid-gen-version -o server/version.go
 
 # FIXME: This finds ALL go source files, not just the selection of sources that are needed for dvid.
@@ -106,33 +104,37 @@ ifneq ($(OS),Windows_NT)
     endif
 endif
 
-$(info HEADERPATH is $(HEADERATH))
+ifneq ($(HEADERPATH),)
+    $(info HEADERPATH is $(HEADERPATH))
+endif
 
 bin/dvid: export SDKROOT=$(HEADERPATH)
-bin/dvid: cmd/dvid/main.go server/version.go .last-build-git-description ${DVID_SOURCES}
-	go env -w CGO_ENABLED=1
-	go env -w GO111MODULE=auto
+bin/dvid: cmd/dvid/main.go server/version.go .last-build-git-description ${DVID_SOURCES} | bin
 	go build -o bin/dvid -v -tags "${DVID_TAGS}" cmd/dvid/main.go
 
-bin/dvid-backup: cmd/backup/main.go
+bin/dvid-basholeveldb: export SDKROOT=$(HEADERPATH)
+bin/dvid-basholeveldb: cmd/dvid/main.go server/version.go .last-build-git-description ${DVID_SOURCES} | bin
+	go build -o bin/dvid-basholeveldb -v -tags "${DVID_TAGS}" cmd/dvid/main.go
+
+bin/dvid-backup: cmd/backup/main.go | bin
 	go build -o bin/dvid-backup -v -tags "${DVID_TAGS}" cmd/backup/main.go
 
-bin/dvid-transfer: $(shell find cmd/transfer -name "*.go")
+bin/dvid-transfer: $(shell find cmd/transfer -name "*.go") | bin
 	go build -o bin/dvid-transfer -v -tags "${DVID_TAGS}" cmd/transfer/*.go
 
-bin/analyze-block: $(shell find cmd/labelmap-utils/analyze-block -name "*.go")
+bin/analyze-block: $(shell find cmd/labelmap-utils/analyze-block -name "*.go") | bin
 	go build -o bin/analyze-block -v -tags "${DVID_TAGS}" cmd/labelmap-utils/analyze-block/*.go
 
-bin/analyze-index: $(shell find cmd/labelmap-utils/analyze-index -name "*.go")
+bin/analyze-index: $(shell find cmd/labelmap-utils/analyze-index -name "*.go") | bin
 	go build -o bin/analyze-index -v -tags "${DVID_TAGS}" cmd/labelmap-utils/analyze-index/*.go
 
-bin/body-blocks: $(shell find cmd/labelmap-utils/body-blocks -name "*.go")
+bin/body-blocks: $(shell find cmd/labelmap-utils/body-blocks -name "*.go") | bin
 	go build -o bin/body-blocks -v -tags "${DVID_TAGS}" cmd/labelmap-utils/body-blocks/*.go
 
-bin/filter-mutations: $(shell find cmd/labelmap-utils/filter-mutations -name "*.go")
+bin/filter-mutations: $(shell find cmd/labelmap-utils/filter-mutations -name "*.go") | bin
 	go build -o bin/filter-mutations -v -tags "${DVID_TAGS}" cmd/labelmap-utils/filter-mutations/*.go
 
-bin/compare-mappings: cmd/compare-mappings/main.go
+bin/compare-mappings: cmd/compare-mappings/main.go | bin
 	go build -o bin/compare-mappings -v cmd/compare-mappings/main.go
 
 ##
@@ -164,7 +166,7 @@ bench:
 	go test -v -tags "${DVID_TAGS}" -bench . ${DVID_PACKAGES}
 	# go test -p ${GOMAXPROCS} -bench -i -tags "${DVID_BACKEND}" test dvid datastore
 
-.PHONY: clean
+.PHONY: dvid-basholeveldb clean
 clean:
 	rm -f bin/*
 	rm -f server/version.go

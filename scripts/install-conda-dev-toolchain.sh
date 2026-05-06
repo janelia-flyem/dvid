@@ -16,8 +16,8 @@ set -e
 THIS_SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd ${THIS_SCRIPT_DIR}
 
-# Note: Make sure this matches meta.yaml
-GO_VERSION=1.21
+# Note: Make sure this matches go.mod and scripts/conda-recipe/meta.yaml
+GO_VERSION=1.25
 
 if [[ $(uname) == "Darwin" ]]; then
     COMPILER_PACKAGE=clangxx_osx-64
@@ -25,8 +25,7 @@ else
     COMPILER_PACKAGE=gxx_linux-64
 fi
 
-CMD="conda install -y -c flyem-forge -c conda-forge snappy lz4-c go-cgo=${GO_VERSION} pkg-config ${COMPILER_PACKAGE}"
-# CMD="conda install -y -c flyem-forge -c conda-forge snappy basholeveldb lz4-c go-cgo=${GO_VERSION} pkg-config ${COMPILER_PACKAGE}"
+CMD="conda install -y -c flyem-forge -c conda-forge go-cgo=${GO_VERSION} python ${COMPILER_PACKAGE}"
 echo ${CMD}
 ${CMD}
 

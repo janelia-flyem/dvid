@@ -36,88 +36,123 @@ Developer Guide
 Setup
 -----
 
-1. If you are using a bare OS, you will need some essentials (gcc, bzip2, etc) before installing anything else.  In Ubuntu, you can easily install this with `sudo apt-get install build-essential gcc bzip2`.
-Then Install `conda` (specifically the [miniconda distribution][miniconda]) and enable the `activate` command for your shell.
+DVID is now built as a normal Go module. You do not need to put the checkout
+under `GOPATH`.
 
-    [miniconda]: https://docs.conda.io/en/latest/miniconda.html
+The default developer build includes the storage backends used for modern DVID
+deployments:
 
-    **Note:** At the time of this writing, the Miniconda installer will give you conda-4.5, but these instructions require conda-4.6.
-    Immediately after installing Miniconda, upgrade `conda`:
-   
-    ```
-    $ conda update -n base -c defaults conda
-    ```
-   
-    ...and then activate it for your shell:
-   
-    ```
-    $ conda init bash
-    ```
-   
-    ...and then open a new terminal window.
+```
+badger filestore ngprecomputed
+```
 
+The default build does not include the legacy `basholeveldb` backend.
 
-2. Install (or upgrade) `conda-build` and `anaconda-client`:
+Required for the default build:
 
-    ```
-    $ conda activate base
-    $ conda install -n base -c defaults conda-build anaconda-client
-    ```
-    
-3. Add `flyem-forge` and `conda-forge` to your `.condarc` file:
+```
+Go 1.25 or newer
+CGO enabled
+a working C compiler
+python3, or set PYTHON=/path/to/python when running make
+```
 
-    ```
-     $ cat ~/.condarc
-     channels:
-     - flyem-forge
-     - conda-forge
-     - defaults
-    ```
+On Ubuntu, the system prerequisites are typically:
 
-4. Create a conda environment for dvid development.  Activate it.
+```
+$ sudo apt-get install build-essential bzip2 python3
+```
 
-    ```
-    $ conda create -y -n dvid-devel
-    $ conda activate dvid-devel
-    ```
+On macOS, install Xcode Command Line Tools or an equivalent C compiler.
 
-5. Define `GOPATH` and clone the dvid source code into the appropriate subdirectory:
+Clone the repository anywhere:
 
-    ```
-    $ export GOPATH=/path/to/gopath-dir
-    $ DVID_SRC=${GOPATH}/src/github.com/janelia-flyem/dvid
-    $ git clone http://github.com/janelia-flyem/dvid ${DVID_SRC}
-    ```
+```
+$ git clone https://github.com/janelia-flyem/dvid
+$ cd dvid
+```
 
-6. Install the developer dependencies
+No setup script is required if those tools are already available on your
+system.
 
-    ```
-    $ cd ${DVID_SRC}
-    $ ./scripts/install-developer-dependencies.sh
-    ```
+If you prefer conda to provide Go and the compiler toolchain, create and
+activate a non-base environment, then run the optional conda toolchain script:
 
-7. Reactivate the environment
+```
+$ conda create -y -n dvid-devel
+$ conda activate dvid-devel
+$ ./scripts/install-conda-dev-toolchain.sh
+$ conda activate dvid-devel
+```
 
-   **Important:** Yes, you must do this after `install-developer-dependencies.sh`, even though your `dvid-devel` environment is already active.
-   Activating the environment again ensures that environment variables like `CC` and `CXX` are set correctly.
-
-    ```
-    $ conda activate dvid-devel
-    ```
+The final `conda activate` refreshes compiler-related environment variables
+installed by conda packages.
 
 
 Build and Test
 --------------
 
-Note: as of May 2024, the [basho leveldb backend](https://github.com/basho/leveldb) is no longer included as a 
-default option because the project has not been actively developed for 5 years. You may add it back by exporting 
-an environment variable `DVID_BACKENDS` that includes the "basholeveldb" keyword.
-g cam
-    $ make dvid
+Build the default DVID server:
 
-    $ make test
-    
-    $ make install # Optional: Install bin/dvid into dvid-devel environment
+```
+$ make dvid
+$ bin/dvid about
+```
+
+Run the standard test target:
+
+```
+$ make test
+```
+
+Install the default command-line tools:
+
+```
+$ make install
+```
+
+If a conda environment is active, `make install` installs into
+`${CONDA_PREFIX}`. Otherwise it installs into `/usr/local`. Override the
+destination with `INSTALL_PREFIX`:
+
+```
+$ make install INSTALL_PREFIX=/path/to/install-prefix
+```
+
+
+Legacy Basho LevelDB Build
+--------------------------
+
+As of May 2024, the [Basho LevelDB backend](https://github.com/basho/leveldb)
+is no longer part of the default build because the project is not actively
+maintained and it adds native library requirements. New DVID repositories should
+use Badger for local embedded key-value storage.
+
+Build Basho LevelDB support only when you need to open or migrate older DVID
+repositories whose TOML configuration uses `basholeveldb`.
+
+With conda:
+
+```
+$ conda activate dvid-devel
+$ ./scripts/install-basholeveldb-dependencies.sh
+$ make dvid-basholeveldb
+$ bin/dvid-basholeveldb about
+```
+
+The `dvid-basholeveldb` target builds a separate binary at
+`bin/dvid-basholeveldb` using:
+
+```
+badger basholeveldb filestore ngprecomputed
+```
+
+If you manage native dependencies outside conda, make sure the LevelDB C header
+and library are visible to CGO, then build with:
+
+```
+$ DVID_BACKENDS="badger basholeveldb filestore ngprecomputed" make dvid
+```
 
 
 Releases
@@ -182,33 +217,10 @@ For each platform (Mac and Linux):
    ```
    </details>
 
-   **Note:** For maximum macOS compatibility, make sure you have the SDK for MacOSX 10.13,
-   which can be installed via the [xcodelegacy project](https://github.com/devernay/xcodelegacy).
-   (We use go 1.18, which [requires at least [MacOSX 10.13](https://go.dev/dl).)
-
-   <details>
-
-   <summary>Click here for MacOSX 10.13 SDK installation commands</summary>
-
-   ```
-   curl https://raw.githubusercontent.com/devernay/xcodelegacy/master/XcodeLegacy.sh > XcodeLegacy.sh
-   chmod +x XcodeLegacy.sh
-   
-   ./XcodeLegacy.sh -osx1013 buildpackages
-   sudo ./XcodeLegacy.sh -osx1013 install
-   ```
-
-   **Note:** The XcodeLegacy script will probably tell you that the
-   10.13 SDK can only be built/installed by an old version of Xcode,
-   and ask you to download the old version (but not install it).
-   
-   Follow the download instructions it gives you, and then re-run
-   `XcodeLegacy.sh` from the directory where you downloaded the Xcode
-   `.dmg` file.
-   
-   (Also note that downloading Xcode requires an Apple Developer login.)
-
-   </details>
+   **Note:** For maximum macOS compatibility, use a macOS SDK and deployment
+   target supported by the Go version in `go.mod` and the conda-forge compiler
+   stack. If `CONDA_BUILD_SYSROOT` or `MACOSX_DEPLOYMENT_TARGET` are set, the
+   Makefile forwards them to CGO.
 
 3. Generate a release distribution.
    (This doesn't build dvid again; it uses the conda package you uploaded in the previous step.)
@@ -227,11 +239,15 @@ For each platform (Mac and Linux):
 Build Maintenance Notes
 -----------------------
 
-- New compiled (C/C++) dependencies should be packaged for conda and uploaded
-  to the `flyem-forge` channel, if they aren't already available on the 
-  `conda-forge` channel. Then list them in the `requirements` sections of
-  `scripts/conda-recipe/meta.yaml`.  Also add them to the appropriate line of
-  `scripts/install-developer-dependencies.sh`.
+- New compiled (C/C++) dependencies for the default build should be packaged
+  for conda and uploaded to the `flyem-forge` channel, if they aren't already
+  available on the `conda-forge` channel. Then list them in
+  `scripts/conda-recipe/meta.yaml` and update
+  `scripts/install-conda-dev-toolchain.sh`.
+
+- Dependencies needed only for legacy Basho LevelDB builds belong in
+  `scripts/install-basholeveldb-dependencies.sh`, not in the default conda
+  recipe.
 
 - Of course, new DVID sources should be listed in the `Makefile` as needed.
 

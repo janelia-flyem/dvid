@@ -46,10 +46,30 @@ truly collaborative data editing.
 
 Users should install DVID from the [releases](https://github.com/janelia-flyem/dvid/releases). The main branch of DVID may include breaking changes required by our research work. 
 
-Developers should consult the [install README](https://github.com/janelia-flyem/dvid/blob/master/GUIDE.md) where our conda-based process is described.
+Developers can build DVID directly from a normal Go module checkout. The default build uses the modern storage backends used for new Janelia deployments: `badger`, `filestore`, and `ngprecomputed`. It does not include the legacy Basho LevelDB backend.
+
+Developer prerequisites:
+
+```
+Go 1.25 or newer
+CGO enabled
+a working C compiler
+python3, or set PYTHON=/path/to/python when running make
+```
+
+Build:
+
+```
+git clone https://github.com/janelia-flyem/dvid
+cd dvid
+make dvid
+bin/dvid about
+```
+
+Conda is optional for normal development. If you want conda to provide Go and the compiler toolchain, see [GUIDE.md](GUIDE.md). If you need to open or migrate older DVID repositories that use Basho LevelDB, see the [legacy Basho LevelDB build path](GUIDE.md#legacy-basho-leveldb-build).
 
 DVID has been tested on MacOS X, Linux (Fedora 16, CentOS 6, Ubuntu), and 
-[Windows Subsystem for Linux (WSL2)](https://msdn.microsoft.com/en-us/commandline/wsl/about). It comes out-of-the-box with several embedded key-value databases (Badger, Basho's leveldb) for storage although you can configure other storage backends.
+[Windows Subsystem for Linux (WSL2)](https://msdn.microsoft.com/en-us/commandline/wsl/about). The default embedded key-value store is [Badger](https://github.com/dgraph-io/badger), although you can configure other storage backends at build time.
 
 Before launching DVID, you'll have to [create a configuration file](https://github.com/janelia-flyem/dvid/wiki/Configuring-DVID)
 describing ports, the types of storage engines, and where the data should be stored. 
@@ -104,8 +124,9 @@ immutable grayscale image data can be stored in petabyte-scale read-optimized sy
 Google Cloud Storage.
 
 DVID is written in Go and supports pluggable storage backends, a REST HTTP API,
-and command-line access (likely minimized in near future).  Some components written in 
-C, e.g., storage engines like Leveldb and fast codecs like lz4, are embedded or linked as a library.
+and command-line access (likely minimized in near future).  DVID still requires
+CGO for its embedded LZ4 compression path. Legacy storage engines such as Basho
+LevelDB add separate native library requirements when explicitly enabled.
 
 Command-line and HTTP API documentation can be 
 found in [help constants within packages](https://github.com/janelia-flyem/dvid/blob/master/datatype/labelmap/labelmap.go#L34) or by visiting the **/api/help**
@@ -151,4 +172,3 @@ GUI clients:
 Screenshot of an early web app prototype pulling neuron data and 2d slices from 3d grayscale data:
 
 ![Web app for 3d inspection being served from and sending requests to DVID](https://raw.githubusercontent.com/janelia-flyem/dvid/master/images/webapp.png)
-
