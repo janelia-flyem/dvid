@@ -64,6 +64,37 @@ compare-mappings: bin/compare-mappings
 dvid-basholeveldb: DVID_BACKENDS = ${DVID_BASHOLEVELDB_BACKENDS}
 dvid-basholeveldb: bin/dvid-basholeveldb
 
+# Builds that include the legacy basholeveldb backend require an active
+# non-base conda environment so that CGO links against Basho's libleveldb
+# fork (from the flyem-forge channel), not a stock libleveldb. Linking
+# against upstream Google LevelDB risks corruption on legacy DVID repos.
+.PHONY: require-conda-for-basholeveldb
+require-conda-for-basholeveldb:
+	@if [ -z "$$CONDA_PREFIX" ] || [ "$$CONDA_DEFAULT_ENV" = "base" ]; then \
+		echo ""; \
+		echo "ERROR: Builds with the basholeveldb backend require an active"; \
+		echo "       non-base conda environment that has the flyem-forge"; \
+		echo "       basholeveldb package installed."; \
+		echo ""; \
+		echo "Legacy DVID repositories were written by Basho's fork of"; \
+		echo "LevelDB, not upstream Google LevelDB. The flyem-forge"; \
+		echo "basholeveldb conda package is built from Basho's fork and is"; \
+		echo "the only supported way to safely open those stores. Linking"; \
+		echo "against a stock libleveldb risks corruption on legacy repos."; \
+		echo ""; \
+		echo "See the 'Legacy Basho LevelDB Build' section of GUIDE.md."; \
+		echo ""; \
+		exit 1; \
+	fi
+
+# Guard the default bin/dvid build when the user has manually added
+# basholeveldb to DVID_BACKENDS. (The dvid-basholeveldb target depends
+# on the guard directly, since its target-specific DVID_BACKENDS override
+# does not feed back into this global findstring evaluation.)
+ifneq (,$(findstring basholeveldb,${DVID_TAGS}))
+    DVID_BUILD_GUARDS = require-conda-for-basholeveldb
+endif
+
 bin:
 	install -d bin
 
@@ -77,6 +108,7 @@ install: dvid dvid-backup dvid-transfer analyze-block analyze-index body-blocks 
 	install bin/analyze-index ${INSTALL_PREFIX}/bin/analyze-index
 	install bin/body-blocks ${INSTALL_PREFIX}/bin/body-blocks
 	install bin/filter-mutations ${INSTALL_PREFIX}/bin/filter-mutations
+	@echo "DVID executable at ${INSTALL_PREFIX}/bin/dvid."
 
 # Compile a helper program that generates version.go
 bin/dvid-gen-version: cmd/gen-version/main.go | bin
@@ -109,12 +141,14 @@ ifneq ($(HEADERPATH),)
 endif
 
 bin/dvid: export SDKROOT=$(HEADERPATH)
-bin/dvid: cmd/dvid/main.go server/version.go .last-build-git-description ${DVID_SOURCES} | bin
+bin/dvid: cmd/dvid/main.go server/version.go .last-build-git-description ${DVID_SOURCES} | bin ${DVID_BUILD_GUARDS}
 	go build -o bin/dvid -v -tags "${DVID_TAGS}" cmd/dvid/main.go
+	@echo "DVID executable at $(abspath bin/dvid)."
 
 bin/dvid-basholeveldb: export SDKROOT=$(HEADERPATH)
-bin/dvid-basholeveldb: cmd/dvid/main.go server/version.go .last-build-git-description ${DVID_SOURCES} | bin
+bin/dvid-basholeveldb: cmd/dvid/main.go server/version.go .last-build-git-description ${DVID_SOURCES} | bin require-conda-for-basholeveldb
 	go build -o bin/dvid-basholeveldb -v -tags "${DVID_TAGS}" cmd/dvid/main.go
+	@echo "DVID with legacy basholeveldb support at $(abspath bin/dvid-basholeveldb)."
 
 bin/dvid-backup: cmd/backup/main.go | bin
 	go build -o bin/dvid-backup -v -tags "${DVID_TAGS}" cmd/backup/main.go

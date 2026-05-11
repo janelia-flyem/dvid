@@ -132,7 +132,18 @@ use Badger for local embedded key-value storage.
 Build Basho LevelDB support only when you need to open or migrate older DVID
 repositories whose TOML configuration uses `basholeveldb`.
 
-With conda:
+**Conda is required for this build.** Legacy DVID repositories were written by
+Basho's fork of LevelDB, not upstream Google LevelDB. The two forks share the
+LevelDB C API but differ on disk and at runtime, so linking against a stock
+`libleveldb` (from `apt`, Homebrew, or upstream Google LevelDB built from
+source) risks corruption on legacy repositories. The conda `flyem-forge`
+channel ships a `basholeveldb` package built from Basho's fork, and that is
+the only supported way to safely open those stores.
+
+The Makefile refuses to build any target that includes the `basholeveldb`
+tag unless an active non-base conda environment is detected. This applies
+both to `make dvid-basholeveldb` and to invocations like
+`DVID_BACKENDS="... basholeveldb ..." make dvid`.
 
 ```
 $ conda activate dvid-devel
@@ -146,13 +157,6 @@ The `dvid-basholeveldb` target builds a separate binary at
 
 ```
 badger basholeveldb filestore ngprecomputed
-```
-
-If you manage native dependencies outside conda, make sure the LevelDB C header
-and library are visible to CGO, then build with:
-
-```
-$ DVID_BACKENDS="badger basholeveldb filestore ngprecomputed" make dvid
 ```
 
 

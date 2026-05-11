@@ -70,7 +70,7 @@ To put the developer build on your `PATH`, run `make install`. With an active
 conda environment it installs into `${CONDA_PREFIX}`; otherwise it installs into
 `$HOME/.local`.
 
-Conda is optional for normal development. If you want conda to provide Go and the compiler toolchain, see [GUIDE.md](GUIDE.md). If you need to open or migrate older DVID repositories that use Basho LevelDB, see the [legacy Basho LevelDB build path](GUIDE.md#legacy-basho-leveldb-build).
+Conda is optional for normal development. If you want conda to provide Go and the compiler toolchain, see [GUIDE.md](GUIDE.md). Conda is **required** for the [legacy Basho LevelDB build](GUIDE.md#legacy-basho-leveldb-build), which is needed only to open or migrate older DVID repositories that use the `basholeveldb` storage backend; the Makefile enforces this.
 
 DVID has been tested on MacOS X, Linux (Fedora 16, CentOS 6, Ubuntu), and 
 [Windows Subsystem for Linux (WSL2)](https://msdn.microsoft.com/en-us/commandline/wsl/about). The default embedded key-value store is [Badger](https://github.com/dgraph-io/badger), although you can configure other storage backends at build time.

@@ -103,10 +103,16 @@ DVID is actively used for connectomics datasets like the Janelia FlyEM hemibrain
 
 ## Build and Conda Environment Safety
 
-DVID's default build uses Badger, filestore, and ngprecomputed backends. It
-does not include the legacy Basho LevelDB backend unless `DVID_BACKENDS`
-explicitly includes `basholeveldb` or the `dvid-basholeveldb` make target is
-used.
+DVID's default build uses Badger, filestore, and ngprecomputed backends. The
+legacy `basholeveldb` backend is only included when `DVID_BACKENDS` explicitly
+contains `basholeveldb` or the `dvid-basholeveldb` make target is used.
+
+Any build that includes `basholeveldb` requires an active non-base conda
+environment with the `flyem-forge` `basholeveldb` package installed — the
+Makefile enforces this via a `require-conda-for-basholeveldb` guard target.
+The reason is that legacy DVID repositories were written by Basho's fork of
+LevelDB; linking against a stock `libleveldb` risks corruption on those
+stores. See the "Legacy Basho LevelDB Build" section of GUIDE.md.
 
 The default build requires CGO because DVID uses an embedded C LZ4
 implementation for performance and stored-data compatibility. Conda is optional
