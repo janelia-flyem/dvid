@@ -50,7 +50,19 @@ endif
 
 # In a Makefile, the first listed target is
 # the default target for a bare 'make' command:
-all: dvid dvid-backup dvid-transfer
+all: dvid tools
+
+# Group: command-line utilities that ship alongside the main dvid server.
+# Build with `make tools`; built binaries land in bin/ and are picked up
+# by `make install`.
+tools: dvid-backup dvid-transfer analyze-block analyze-index body-blocks filter-mutations
+
+# Canonical list of binaries that `make install` will copy from bin/ to
+# ${INSTALL_PREFIX}/bin if they exist. Add new top-level executables here.
+# Build helpers like dvid-gen-version are intentionally omitted.
+INSTALLABLE_BINS = dvid dvid-basholeveldb dvid-backup dvid-transfer \
+                   analyze-block analyze-index body-blocks filter-mutations \
+                   compare-mappings
 
 # Executable targets
 dvid: bin/dvid
@@ -98,17 +110,28 @@ endif
 bin:
 	install -d bin
 
-# Install: Copy all executables to the install prefix.
-install: dvid dvid-backup dvid-transfer analyze-block analyze-index body-blocks filter-mutations
-	install -d ${INSTALL_PREFIX}/bin
-	install bin/dvid ${INSTALL_PREFIX}/bin/dvid
-	install bin/dvid-backup ${INSTALL_PREFIX}/bin/dvid-backup
-	install bin/dvid-transfer ${INSTALL_PREFIX}/bin/dvid-transfer
-	install bin/analyze-block ${INSTALL_PREFIX}/bin/analyze-block
-	install bin/analyze-index ${INSTALL_PREFIX}/bin/analyze-index
-	install bin/body-blocks ${INSTALL_PREFIX}/bin/body-blocks
-	install bin/filter-mutations ${INSTALL_PREFIX}/bin/filter-mutations
-	@echo "DVID executable at ${INSTALL_PREFIX}/bin/dvid."
+# Install: copy already-built executables from bin/ to the install prefix.
+# Does NOT trigger a build. Run `make` (and optionally `make dvid-basholeveldb`)
+# first to populate bin/ with whatever you want installed; install will then
+# copy any of INSTALLABLE_BINS that exist in bin/.
+install:
+	@install -d ${INSTALL_PREFIX}/bin; \
+	installed=0; \
+	for b in ${INSTALLABLE_BINS}; do \
+	    if [ -f bin/$$b ]; then \
+	        install bin/$$b ${INSTALL_PREFIX}/bin/$$b && \
+	        echo "installed bin/$$b -> ${INSTALL_PREFIX}/bin/$$b" && \
+	        installed=$$((installed+1)); \
+	    fi; \
+	done; \
+	if [ $$installed -eq 0 ]; then \
+	    echo ""; \
+	    echo "ERROR: No installable binaries found in bin/."; \
+	    echo "       Run 'make' (or 'make dvid', 'make tools', 'make dvid-basholeveldb')"; \
+	    echo "       before 'make install'."; \
+	    exit 1; \
+	fi; \
+	echo "Installed $$installed executable(s) to ${INSTALL_PREFIX}/bin."
 
 # Compile a helper program that generates version.go
 bin/dvid-gen-version: cmd/gen-version/main.go | bin
@@ -200,7 +223,7 @@ bench:
 	go test -v -tags "${DVID_TAGS}" -bench . ${DVID_PACKAGES}
 	# go test -p ${GOMAXPROCS} -bench -i -tags "${DVID_BACKEND}" test dvid datastore
 
-.PHONY: dvid-basholeveldb clean
+.PHONY: all tools install dvid-basholeveldb clean
 clean:
 	rm -f bin/*
 	rm -f server/version.go

@@ -105,11 +105,25 @@ Run the standard test target:
 $ make test
 ```
 
-Install the default command-line tools:
+Build targets land in `bin/`. The Makefile groups them as:
+
+- `make dvid` — the main DVID server
+- `make tools` — the command-line utilities (`dvid-backup`, `dvid-transfer`,
+  `analyze-block`, `analyze-index`, `body-blocks`, `filter-mutations`)
+- `make dvid-basholeveldb` — the legacy Basho LevelDB variant (see below)
+- `make` (or `make all`) — equivalent to `make dvid tools`
+
+Install the executables you have built:
 
 ```
 $ make install
 ```
+
+`make install` is a copy-only step: it does **not** trigger a build. It looks
+in `bin/` and copies any of the known executables that are present there into
+`${INSTALL_PREFIX}/bin`. So if you ran `make dvid-basholeveldb` before
+`make install`, the basholeveldb binary will be installed alongside the rest;
+if you only ran `make dvid`, only `dvid` is installed.
 
 If a conda environment is active, `make install` installs into
 `${CONDA_PREFIX}`. Otherwise it installs into `$HOME/.local`, so make sure
@@ -158,6 +172,9 @@ The `dvid-basholeveldb` target builds a separate binary at
 ```
 badger basholeveldb filestore ngprecomputed
 ```
+
+A subsequent `make install` will copy `bin/dvid-basholeveldb` into
+`${INSTALL_PREFIX}/bin` along with anything else present in `bin/`.
 
 
 Releases

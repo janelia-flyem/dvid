@@ -62,13 +62,18 @@ Build:
 ```
 git clone https://github.com/janelia-flyem/dvid
 cd dvid
-make dvid
+make
 bin/dvid about
 ```
 
-To put the developer build on your `PATH`, run `make install`. With an active
-conda environment it installs into `${CONDA_PREFIX}`; otherwise it installs into
-`$HOME/.local`.
+`make` (equivalent to `make all`) builds the `dvid` server plus the
+command-line utilities (`dvid-backup`, `dvid-transfer`, and the `labelmap`
+helpers). Use `make dvid` or `make tools` to build a subset.
+
+To put the developer build on your `PATH`, run `make install`. This is a
+copy-only step that installs whichever executables are already present in
+`bin/` — so build first, then install. With an active conda environment it
+installs into `${CONDA_PREFIX}`; otherwise it installs into `$HOME/.local`.
 
 Conda is optional for normal development. If you want conda to provide Go and the compiler toolchain, see [GUIDE.md](GUIDE.md). Conda is **required** for the [legacy Basho LevelDB build](GUIDE.md#legacy-basho-leveldb-build), which is needed only to open or migrate older DVID repositories that use the `basholeveldb` storage backend; the Makefile enforces this.
 
