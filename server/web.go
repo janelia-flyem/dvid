@@ -1702,8 +1702,8 @@ func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
 // allow this potentially dangerous function via command-line.
 func reposPostHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	adminPriv := c.Env["adminPriv"].(bool)
-	if !adminPriv && readonly {
-		BadRequest(w, r, "Cannot POST on repos endpoints in read-only mode")
+	if !adminPriv || readonly {
+		BadRequest(w, r, "Creating a repo requires admin privileges (admintoken) on a server that is not read-only")
 		return
 	}
 	config := dvid.NewConfig()
