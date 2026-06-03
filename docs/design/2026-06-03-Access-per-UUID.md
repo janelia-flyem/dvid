@@ -1,7 +1,7 @@
 # DVID Per-UUID Public Access + Origin-Based Auth
 
 Status: design / for review (Bill + Codex)
-Builds on: `docs/2026-04-11-DSGAuthIntegration.md` (DSG token validation already implemented in `server/auth.go`).
+Builds on: `docs/design/2026-04-11-DSGAuthIntegration.md` (DSG token validation already implemented in `server/auth.go`).
 
 ## Context and goal
 
