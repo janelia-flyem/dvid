@@ -29,23 +29,23 @@ enforce = "dsg"
 enforce_internal = "none"
 dsg_address = "https://auth.janelia.org"
 dsg_cache_ttl = 300
-internal_cidrs = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+trusted_proxies = ["127.0.0.1/32", "10.10.1.0/24"]
 dataset_map = {
-  "2f4a..." = "vnc",
-  "7b91..." = "manc"
+  "2f4ac91325c9452a9c1a499e1c5c1c4f" = "vnc",
+  "7b91c8e3a64f4e6bb2d5f0a9e8d7c6b5" = "manc"
 }
-public_versions = ["abc123"]
+public_versions = ["2f4ac91325c9452a9c1a499e1c5c1c4f"]
 ```
 
 Fields:
 
 - `enforce = "dsg"` enables DSG-backed authentication and authorization.
-- `enforce_internal` optionally overrides the auth policy for trusted internal clients.
+- `enforce_internal` optionally overrides the auth policy for trusted internal clients identified by `X-DVID-Internal: true`.
 - `dsg_address` is the base URL of the DatasetGateway instance.
 - `dsg_cache_ttl` is the in-memory cache TTL in seconds for DSG user info.
-- `internal_cidrs` defines which client IP ranges count as internal.
+- `trusted_proxies` optionally defines which nginx peer CIDRs are allowed to set `X-DVID-Internal`.
 - `dataset_map` maps DVID root UUIDs to canonical DSG dataset IDs.
-- `public_versions` still allows public read-only access for listed committed UUIDs.
+- `public_versions` allows public read-only access for listed committed full UUIDs and all of their ancestors. Prefixes and `:branch` selectors are rejected at startup.
 
 ## Token Sources
 
@@ -77,20 +77,33 @@ Response bodies include a readable error message plus the request path, consiste
 
 ## Internal Bypass
 
-If `enforce_internal = "none"` is set, requests from `internal_cidrs` bypass auth.
+If `enforce_internal = "none"` is set, requests with a trusted
+`X-DVID-Internal: true` header bypass auth.
+
+Use nginx to stamp and clear the header:
+
+```nginx
+# internal vhost
+proxy_set_header X-DVID-Internal "true";
+
+# public vhost
+proxy_set_header X-DVID-Internal "";
+```
 
 Use this carefully:
 
-- prefer trusted network segments only
-- only trust forwarded client IPs behind a known proxy
-- avoid broad CIDR definitions unless they are operationally justified
+- keep DVID's direct port unreachable from untrusted networks
+- configure the public vhost to always clear client-supplied `X-DVID-Internal`
+- set `trusted_proxies` to the nginx peer CIDRs if DVID's direct port exposure needs extra hardening
+- block public access to `/api/server/` POSTs, `GET /api/server/config`, and `/api/server/blobstore/*` at nginx
 
 ## Legacy Notes
 
-`/api/server/token` is not used in DSG mode. It remains relevant only for legacy JWT-based auth configurations.
+`token` and `authfile` modes are deprecated legacy JWT-based configurations.
+`/api/server/token` is not used in DSG mode.
 
 ## Operational Notes
 
 - Use short cache TTLs if permission changes need to take effect quickly.
 - Keep `dataset_map` authoritative and explicit rather than inferring from repo aliases.
-- If you change auth-file configuration and use `POST /api/server/reload-auth`, DVID also clears the DSG user cache.
+- If you change auth-file configuration and use `POST /api/server/reload-auth`, DVID also clears the DSG user cache. `public_versions` is startup-only; changing it requires a restart.

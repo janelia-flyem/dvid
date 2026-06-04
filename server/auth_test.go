@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/zenazn/goji/web"
 )
 
 func TestExtractDSGToken(t *testing.T) {
@@ -143,15 +145,21 @@ func (fn roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func TestEffectiveEnforceInternal(t *testing.T) {
 	origAuth := tc.Auth
+	origTrustedProxyNets := trustedProxyNets
 	defer func() {
 		tc.Auth = origAuth
+		trustedProxyNets = origTrustedProxyNets
 	}()
 
 	tc.Auth.Enforce = "dsg"
 	tc.Auth.EnforceInternal = "none"
-	tc.Auth.InternalCIDRs = []string{"10.0.0.0/8"}
+	tc.Auth.TrustedProxies = []string{"10.0.0.0/8"}
+	if err := configureTrustedProxies(); err != nil {
+		t.Fatalf("could not configure trusted proxies: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/repo/uuid/info", nil)
+	req.Header.Set(internalHeader, "true")
 	req.RemoteAddr = "10.2.3.4:5555"
 	if got := effectiveEnforce(req); got != "none" {
 		t.Fatalf("expected internal request to bypass auth, got %q", got)
@@ -159,8 +167,104 @@ func TestEffectiveEnforceInternal(t *testing.T) {
 
 	req = httptest.NewRequest(http.MethodGet, "/api/repo/uuid/info", nil)
 	req.RemoteAddr = "35.1.2.3:5555"
+	req.Header.Set(internalHeader, "true")
 	if got := effectiveEnforce(req); got != "dsg" {
 		t.Fatalf("expected external request to use dsg auth, got %q", got)
+	}
+
+	tc.Auth.TrustedProxies = nil
+	if err := configureTrustedProxies(); err != nil {
+		t.Fatalf("could not clear trusted proxies: %v", err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/repo/uuid/info", nil)
+	req.Header.Set(internalHeader, "true")
+	req.RemoteAddr = "35.1.2.3:5555"
+	if got := effectiveEnforce(req); got != "none" {
+		t.Fatalf("expected header to be trusted without trusted_proxies, got %q", got)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/repo/uuid/info", nil)
+	req.RemoteAddr = "10.2.3.4:5555"
+	if got := effectiveEnforce(req); got != "dsg" {
+		t.Fatalf("expected request without internal header to use dsg auth, got %q", got)
+	}
+}
+
+func TestRequestAccessScope(t *testing.T) {
+	origAuth := tc.Auth
+	origClient := dsgHTTPClient
+	origTrustedProxyNets := trustedProxyNets
+	defer func() {
+		tc.Auth = origAuth
+		dsgHTTPClient = origClient
+		trustedProxyNets = origTrustedProxyNets
+		clearDSGUserCache()
+	}()
+
+	rootUUID := dvid.UUID("0123456789abcdef0123456789abcdef")
+	tc.Auth.Enforce = "dsg"
+	tc.Auth.EnforceInternal = "dsg"
+	tc.Auth.DSGAddress = "https://auth.example.org"
+	tc.Auth.DSGCacheTTL = 300
+	tc.Auth.DatasetMap = map[string]string{string(rootUUID): "vnc"}
+	tc.Auth.TrustedProxies = nil
+	if err := configureTrustedProxies(); err != nil {
+		t.Fatalf("could not configure trusted proxies: %v", err)
+	}
+	clearDSGUserCache()
+
+	c := web.C{Env: map[interface{}]interface{}{"adminPriv": false}}
+	req := httptest.NewRequest(http.MethodGet, "/api/repo/uuid/info", nil)
+	req.Header.Set(internalHeader, "true")
+	scope := requestAccessScope(c, req)
+	if scope.full || scope.user != nil {
+		t.Fatalf("internal request with enforce_internal=dsg and no token should be public-only: %+v", scope)
+	}
+	if got := scope.repoVisibility(rootUUID, http.MethodGet); got != datastore.RepoPublicOnly {
+		t.Fatalf("expected public-only visibility without token, got %v", got)
+	}
+
+	tc.Auth.EnforceInternal = "none"
+	scope = requestAccessScope(c, req)
+	if !scope.full {
+		t.Fatalf("internal request with enforce_internal=none should get full scope")
+	}
+
+	tc.Auth.EnforceInternal = "dsg"
+	c = web.C{Env: map[interface{}]interface{}{"adminPriv": true}}
+	scope = requestAccessScope(c, req)
+	if !scope.full {
+		t.Fatalf("admintoken should grant full scope")
+	}
+
+	c = web.C{Env: map[interface{}]interface{}{"adminPriv": false}}
+	dsgHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			body, err := json.Marshal(&dsgUserCache{
+				Email:         "viewer@example.org",
+				PermissionsV2: map[string][]string{"vnc": {"view"}},
+			})
+			if err != nil {
+				t.Fatalf("could not encode DSG response: %v", err)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(bytes.NewReader(body)),
+			}, nil
+		}),
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/repo/uuid/info", nil)
+	req.Header.Set("Authorization", "Bearer viewer-token")
+	scope = requestAccessScope(c, req)
+	if scope.full || scope.user == nil {
+		t.Fatalf("non-admin DSG viewer should be scoped, not full: %+v", scope)
+	}
+	if got := scope.repoVisibility(rootUUID, http.MethodGet); got != datastore.RepoFullView {
+		t.Fatalf("viewer should get full repo metadata for GET, got %v", got)
+	}
+	if got := scope.repoVisibility(rootUUID, http.MethodPost); got != datastore.RepoPublicOnly {
+		t.Fatalf("viewer should not get full repo metadata for write intent, got %v", got)
 	}
 }
 

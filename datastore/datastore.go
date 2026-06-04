@@ -55,6 +55,7 @@ func Shutdown() {
 	}
 	m.Shutdown()
 	setManager(nil)
+	publicVersions.Store(nil)
 }
 
 // Types returns the types currently within the DVID server.
@@ -74,6 +75,23 @@ func MarshalJSON() ([]byte, error) {
 		return nil, ErrManagerNotInitialized
 	}
 	return m.MarshalJSON()
+}
+
+// RepoVisibility describes how much repository metadata should be serialized.
+type RepoVisibility int
+
+const (
+	RepoHidden RepoVisibility = iota
+	RepoPublicOnly
+	RepoFullView
+)
+
+func MarshalJSONFiltered(visFor func(rootUUID dvid.UUID) RepoVisibility) ([]byte, error) {
+	m := getManager()
+	if m == nil {
+		return nil, ErrManagerNotInitialized
+	}
+	return m.MarshalJSONFiltered(visFor)
 }
 
 // ---- Datastore ID functions ----------
@@ -176,6 +194,14 @@ func GetRepoJSON(uuid dvid.UUID) (string, error) {
 	return m.getRepoJSON(uuid)
 }
 
+func GetRepoJSONFiltered(uuid dvid.UUID, vis RepoVisibility) (string, error) {
+	m := getManager()
+	if m == nil {
+		return "", ErrManagerNotInitialized
+	}
+	return m.getRepoJSONFiltered(uuid, vis)
+}
+
 // GetVersionSequence returns a slice of UUIDs giving the version sequence
 // between the given UUIDs, inclusive.
 func GetVersionSequence(begUUID, endUUID dvid.UUID) ([]dvid.UUID, error) {
@@ -192,6 +218,14 @@ func GetBranchVersionsJSON(uuid dvid.UUID, name string) (string, error) {
 		return "", ErrManagerNotInitialized
 	}
 	return m.getBranchVersionsJSON(uuid, name)
+}
+
+func GetBranchVersionsJSONFiltered(uuid dvid.UUID, name string, vis RepoVisibility) (string, error) {
+	m := getManager()
+	if m == nil {
+		return "", ErrManagerNotInitialized
+	}
+	return m.getBranchVersionsJSONFiltered(uuid, name, vis)
 }
 
 // GetBranchVersions returns a slice of UUIDs for the given branch from the HEAD (leaf)

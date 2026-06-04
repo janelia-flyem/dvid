@@ -317,6 +317,9 @@ func DoServe(cmd dvid.Command) error {
 	if err := datastore.Initialize(initMetadata, server.DatastoreConfig()); err != nil {
 		return fmt.Errorf("unable to initialize datastore: %v", err)
 	}
+	if err := server.PublishPublicVersions(); err != nil {
+		return err
+	}
 
 	// add handlers to help us track memory usage - they don't track memory until they're told to
 	profiler.AddMemoryProfilingHandlers()

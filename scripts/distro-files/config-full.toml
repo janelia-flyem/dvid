@@ -61,23 +61,28 @@ min_mutation_id_start = 1000100000  # mutation id will start from this or higher
 # Authorization: Bearer or a dsg_token cookie; DVID validates it against DSG's
 # /api/v1/user/cache endpoint and caches the returned user info locally for a short TTL.
 [auth]
-enforce = "none" # "none" = no auth, "token" requires valid legacy DVID JWT,
-                 # "authfile" requires legacy DVID JWT user to be in auth_file,
+enforce = "none" # "none" = no auth, "token" requires valid legacy DVID JWT (deprecated),
+                 # "authfile" requires deprecated legacy DVID JWT user to be in auth_file,
                  # "dsg" validates incoming DSG tokens directly.
 # File containing authorized emails in JSON format of style {"email":"priv", ...} 
 # where email could be "*" for wildcard and priv can be "read", "write", or "readwrite".
 #auth_file = "/demo/auth.txt" 
 
-public_versions = []  # Add lists of committed UUIDs that should have public access.
+public_versions = []  # Full committed release UUIDs; each UUID and all ancestors are public for reads.
 
 # DSG-specific settings
-# enforce_internal = "none"   # optional separate auth policy for internal clients
+# Internal clients are identified by trusted nginx, not by client IP:
+#   internal vhost: proxy_set_header X-DVID-Internal "true";
+#   public vhost:   proxy_set_header X-DVID-Internal "";
+# Keep DVID's direct port unreachable from untrusted networks. Public nginx should also
+# block /api/server/ POSTs, GET /api/server/config, and /api/server/blobstore/*.
+# enforce_internal = "none"   # optional policy for requests with X-DVID-Internal: true
 # dsg_address = "https://auth.janelia.org"
 # dsg_cache_ttl = 300         # seconds to cache DSG user info in DVID
-# internal_cidrs = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
-# dataset_map = { "2f4a..." = "vnc", "7b91..." = "manc" } # root UUID -> DSG dataset
+# trusted_proxies = ["127.0.0.1/32", "10.10.1.0/24"]  # optional CIDRs of nginx peers allowed to set X-DVID-Internal
+# dataset_map = { "2f4ac91325c9452a9c1a499e1c5c1c4f" = "vnc", "7b91c8e3a64f4e6bb2d5f0a9e8d7c6b5" = "manc" } # root UUID -> DSG dataset
 
-# This is legacy method that is deprecated and won't be used.
+# This legacy proxy/JWT method is deprecated and won't be used by DSG deployments.
 # proxy_address = "http://some-flyem-services"  # URL to running github.com/janelia-flyem/flyem-services
 
 # Email server to use for notifications and server issuing email-based authorization tokens.

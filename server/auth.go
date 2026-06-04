@@ -21,24 +21,26 @@ import (
 )
 
 var (
-	authorizations authData
-	jwtSecretKey   string
-	httpClient     = &http.Client{}
-	dsgHTTPClient  = &http.Client{Timeout: 10 * time.Second}
+	authorizations   authData
+	jwtSecretKey     string
+	httpClient       = &http.Client{}
+	dsgHTTPClient    = &http.Client{Timeout: 10 * time.Second}
+	trustedProxyNets []*net.IPNet
 )
 
 // SecretKeyVarName is the environment variable holding the secret key for JWT support.
 const SecretKeyVarName = "DVID_JWT_SECRET_KEY"
 
+const internalHeader = "X-DVID-Internal"
+
 func init() {
 	jwtSecretKey = os.Getenv(SecretKeyVarName)
 }
 
-// authorization data handling both public versions and user-specific permissions.
+// authData holds legacy auth-file users and the DSG user cache.
 type authData struct {
 	sync.RWMutex
 	users    map[string]string
-	public   dvid.UUIDSet
 	dsgUsers map[string]cachedDSGUser
 }
 
@@ -69,19 +71,29 @@ func (auth *authData) initialize() error {
 	if err := auth.loadAuthFile(); err != nil {
 		return err
 	}
-	auth.Lock()
-	auth.public = make(dvid.UUIDSet)
-	for _, uuidStr := range tc.Auth.PublicVersions {
-		uuid, _, err := datastore.MatchingUUID(uuidStr)
-		if err != nil {
-			dvid.Errorf("unable to set public UUIDs due to error: %v\n", err)
-			auth.Unlock()
-			return err
-		}
-		auth.public[uuid] = struct{}{}
+	if err := validateAuthModes(); err != nil {
+		return err
 	}
+	if err := configureTrustedProxies(); err != nil {
+		return err
+	}
+	warnDeprecatedAuthMode(authMode())
+	if tc.Auth.EnforceInternal != "" {
+		warnDeprecatedAuthMode(strings.ToLower(tc.Auth.EnforceInternal))
+	}
+	auth.Lock()
 	auth.dsgUsers = make(map[string]cachedDSGUser)
 	auth.Unlock()
+	return nil
+}
+
+// PublishPublicVersions validates and publishes the configured public release set.
+// It must be called after datastore.Initialize(), when the repo manager is loaded.
+func PublishPublicVersions() error {
+	if err := datastore.SetPublicVersions(tc.Auth.PublicVersions); err != nil {
+		dvid.Errorf("unable to set public UUIDs due to error: %v\n", err)
+		return err
+	}
 	return nil
 }
 
@@ -114,7 +126,7 @@ type authConfig struct {
 	EnforceInternal string            `toml:"enforce_internal"`
 	DSGAddress      string            `toml:"dsg_address"`
 	DSGCacheTTL     int               `toml:"dsg_cache_ttl"`
-	InternalCIDRs   []string          `toml:"internal_cidrs"`
+	TrustedProxies  []string          `toml:"trusted_proxies"`
 	DatasetMap      map[string]string `toml:"dataset_map"`
 
 	NoEnforce bool `toml:"no_enforce"` // legacy: if true, accept all requests
@@ -152,6 +164,50 @@ func authMode() string {
 	return "none"
 }
 
+func validateAuthModes() error {
+	if err := validateAuthModeValue("enforce", authMode(), true); err != nil {
+		return err
+	}
+	if tc.Auth.EnforceInternal != "" {
+		if err := validateAuthModeValue("enforce_internal", strings.ToLower(tc.Auth.EnforceInternal), false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateAuthModeValue(name, mode string, allowEmpty bool) error {
+	if allowEmpty && mode == "" {
+		return nil
+	}
+	switch mode {
+	case "none", "token", "authfile", "dsg":
+		return nil
+	default:
+		return fmt.Errorf("auth.%s has unsupported mode %q", name, mode)
+	}
+}
+
+func warnDeprecatedAuthMode(mode string) {
+	switch mode {
+	case "token", "authfile":
+		dvid.Warningf("auth mode %q is deprecated; DSG auth is the supported path and legacy JWT modes will be removed in a future release\n", mode)
+	}
+}
+
+func configureTrustedProxies() error {
+	nets := make([]*net.IPNet, 0, len(tc.Auth.TrustedProxies))
+	for _, cidr := range tc.Auth.TrustedProxies {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			return fmt.Errorf("bad trusted proxy CIDR %q: %v", cidr, err)
+		}
+		nets = append(nets, network)
+	}
+	trustedProxyNets = nets
+	return nil
+}
+
 func authMiddlewareEnabled() bool {
 	return authMode() != "none"
 }
@@ -163,23 +219,17 @@ func dsgCacheTTL() time.Duration {
 	return time.Duration(tc.Auth.DSGCacheTTL) * time.Second
 }
 
-// isPublic returns true if the request is a read and the version is
-// listed as a public version.
-func isPublic(r *http.Request, envUUID interface{}) bool {
+// isPublicRead returns true if the request is a read against a public version.
+func isPublicRead(r *http.Request, envUUID interface{}) bool {
 	uuid, ok := envUUID.(dvid.UUID)
 	if !ok {
 		return false
 	}
-	authorizations.RLock()
-	var canRead bool
-	if _, isPublic := authorizations.public[uuid]; isPublic {
-		switch r.Method {
-		case http.MethodGet, http.MethodHead, http.MethodOptions:
-			canRead = true
-		}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return datastore.IsPublic(uuid)
 	}
-	authorizations.RUnlock()
-	return canRead
+	return false
 }
 
 // isAuthorized authenticates a request and sets c.Env["user"] to the authenticated user.
@@ -187,7 +237,7 @@ func isPublic(r *http.Request, envUUID interface{}) bool {
 // c.Env["uuid"] is properly set for proper handling of public versions.
 func isAuthorized(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
-		if isPublic(r, c.Env["uuid"]) {
+		if isPublicRead(r, c.Env["uuid"]) {
 			h.ServeHTTP(w, r)
 			return
 		}
@@ -440,38 +490,116 @@ func userHasDatasetAccess(user *dsgUserCache, datasetID, method string) bool {
 
 func effectiveEnforce(r *http.Request) string {
 	enforce := authMode()
-	if len(tc.Auth.InternalCIDRs) == 0 {
+	if tc.Auth.EnforceInternal == "" {
 		return enforce
 	}
-	internal, err := isInternalRequest(r)
-	if err != nil || !internal {
-		return enforce
-	}
-	if tc.Auth.EnforceInternal != "" {
+	if isInternalRequest(r) {
 		return strings.ToLower(tc.Auth.EnforceInternal)
 	}
 	return enforce
 }
 
-func isInternalRequest(r *http.Request) (bool, error) {
+func isInternalRequest(r *http.Request) bool {
+	if !strings.EqualFold(r.Header.Get(internalHeader), "true") {
+		return false
+	}
+	if len(trustedProxyNets) == 0 {
+		return true
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
 	ip := net.ParseIP(host)
 	if ip == nil {
-		return false, fmt.Errorf("unable to parse request IP from %q", r.RemoteAddr)
+		return false
 	}
-	for _, cidr := range tc.Auth.InternalCIDRs {
-		_, network, err := net.ParseCIDR(cidr)
-		if err != nil {
-			return false, fmt.Errorf("bad internal CIDR %q: %v", cidr, err)
-		}
+	for _, network := range trustedProxyNets {
 		if network.Contains(ip) {
-			return true, nil
+			return true
 		}
 	}
-	return false, nil
+	return false
+}
+
+type accessScope struct {
+	internal  bool
+	adminPriv bool
+	user      *dsgUserCache
+	full      bool
+}
+
+func requestAccessScope(c web.C, r *http.Request) accessScope {
+	scope := accessScope{internal: isInternalRequest(r)}
+	if adminPriv, ok := c.Env["adminPriv"].(bool); ok {
+		scope.adminPriv = adminPriv
+	}
+
+	enforce := effectiveEnforce(r)
+	if enforce == "none" || scope.adminPriv {
+		scope.full = true
+		return scope
+	}
+
+	switch enforce {
+	case "dsg":
+		user, err := getDSGUser(extractDSGToken(r))
+		if err != nil {
+			return scope
+		}
+		scope.user = user
+		scope.full = user.Admin
+	case "token", "authfile":
+		scope.full = legacyJWTAuthorized(r, enforce)
+	}
+	return scope
+}
+
+func (scope accessScope) repoVisibility(rootUUID dvid.UUID, method string) datastore.RepoVisibility {
+	if scope.full {
+		return datastore.RepoFullView
+	}
+	if scope.user != nil {
+		datasetID, err := dsgDatasetForRootUUID(rootUUID)
+		if err == nil && userHasDatasetAccess(scope.user, datasetID, method) {
+			return datastore.RepoFullView
+		}
+	}
+	return datastore.RepoPublicOnly
+}
+
+func (scope accessScope) repoVisibilityForUUID(uuid dvid.UUID, method string) (datastore.RepoVisibility, error) {
+	rootUUID, err := datastore.GetRepoRoot(uuid)
+	if err != nil {
+		return datastore.RepoHidden, err
+	}
+	return scope.repoVisibility(rootUUID, method), nil
+}
+
+func legacyJWTAuthorized(r *http.Request, enforce string) bool {
+	reqToken := extractBearerToken(r.Header.Get("Authorization"))
+	if reqToken == "" {
+		return false
+	}
+	token, err := jwt.Parse(reqToken, func(token *jwt.Token) (interface{}, error) {
+		return []byte(jwtSecretKey), nil
+	})
+	if err != nil {
+		return false
+	}
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok || !token.Valid {
+		return false
+	}
+	userClaim, found := claims["user"]
+	if !found {
+		return false
+	}
+	user, ok := userClaim.(string)
+	if !ok {
+		return false
+	}
+	return enforce != "authfile" || userIsAuthorized(user, r.Method)
 }
 
 // userIsAuthorized returns true if the user is in our authorization file

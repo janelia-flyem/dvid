@@ -368,6 +368,34 @@ func (m *repoManager) MarshalJSON() ([]byte, error) {
 	return json.Marshal(repos)
 }
 
+// MarshalJSONFiltered returns repo metadata filtered according to a caller-
+// supplied visibility verdict for each repo root UUID.
+func (m *repoManager) MarshalJSONFiltered(visFor func(rootUUID dvid.UUID) RepoVisibility) ([]byte, error) {
+	if visFor == nil {
+		return m.MarshalJSON()
+	}
+	repos := make(map[dvid.UUID]*repoT, len(m.repoToUUID))
+	m.idMutex.RLock()
+	for _, uuid := range m.repoToUUID {
+		m.repoMutex.RLock()
+		repos[uuid] = m.repos[uuid]
+		m.repoMutex.RUnlock()
+	}
+	m.idMutex.RUnlock()
+
+	visible := make(map[dvid.UUID]json.RawMessage, len(repos))
+	for rootUUID, repo := range repos {
+		jsonBytes, ok, err := repo.marshalJSONForVisibility(visFor(rootUUID))
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			visible[rootUUID] = json.RawMessage(jsonBytes)
+		}
+	}
+	return json.Marshal(visible)
+}
+
 // We don't store repoManager via Gob as a single unit.  Rather, we persist
 // parts of it to different key/value pairs in the metadata store, so there's
 // more granualarity in I/O, e.g., at the single repo level rather than all
@@ -1258,6 +1286,21 @@ func (m *repoManager) getRepoJSON(uuid dvid.UUID) (string, error) {
 	return string(jsonBytes), err
 }
 
+func (m *repoManager) getRepoJSONFiltered(uuid dvid.UUID, vis RepoVisibility) (string, error) {
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return "", err
+	}
+	jsonBytes, ok, err := r.marshalJSONForVisibility(vis)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", ErrInvalidUUID
+	}
+	return string(jsonBytes), nil
+}
+
 func (m *repoManager) getBranchVersionsJSON(uuid dvid.UUID, name string) (string, error) {
 	r, err := m.repoFromUUID(uuid)
 	if err != nil {
@@ -1276,6 +1319,34 @@ func (m *repoManager) getBranchVersionsJSON(uuid dvid.UUID, name string) (string
 	}
 	jsonStr += "]"
 	return jsonStr, nil
+}
+
+func (m *repoManager) getBranchVersionsJSONFiltered(uuid dvid.UUID, name string, vis RepoVisibility) (string, error) {
+	if vis == RepoFullView {
+		return m.getBranchVersionsJSON(uuid, name)
+	}
+	if vis == RepoHidden {
+		return "[]", nil
+	}
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return "", err
+	}
+	ancestry, err := r.dag.getAncestryByBranch(name)
+	if err != nil {
+		return "", err
+	}
+	publicAncestry := make([]dvid.UUID, 0, len(ancestry))
+	for _, uuid := range ancestry {
+		if IsPublic(uuid) {
+			publicAncestry = append(publicAncestry, uuid)
+		}
+	}
+	jsonBytes, err := json.Marshal(publicAncestry)
+	if err != nil {
+		return "", err
+	}
+	return string(jsonBytes), nil
 }
 
 func (m *repoManager) getBranchVersions(uuid dvid.UUID, name string) ([]dvid.UUID, error) {
@@ -2707,6 +2778,53 @@ func (r *repoT) MarshalJSON() (b []byte, err error) {
 	return
 }
 
+func (r *repoT) marshalJSONForVisibility(vis RepoVisibility) (b []byte, visible bool, err error) {
+	switch vis {
+	case RepoHidden:
+		return nil, false, nil
+	case RepoFullView:
+		b, err = r.MarshalJSON()
+		return b, true, err
+	case RepoPublicOnly:
+	default:
+		return nil, false, fmt.Errorf("unknown repo visibility %d", vis)
+	}
+
+	filteredDAG, hasPublic := r.dag.filteredPublicCopy()
+	if !hasPublic {
+		return nil, false, nil
+	}
+
+	r.RLock()
+	b, err = json.Marshal(struct {
+		Root            dvid.UUID
+		Alias           string
+		Description     string
+		Log             []string
+		Properties      map[string]interface{}
+		Data            map[dvid.InstanceName]DataService `json:"DataInstances"`
+		DAG             *dagT
+		MutationID      uint64
+		SavedMutationID uint64
+		Created         time.Time
+		Updated         time.Time
+	}{
+		r.uuid,
+		r.alias,
+		r.description,
+		[]string{},
+		r.properties,
+		r.data,
+		filteredDAG,
+		r.mutCurID,
+		r.mutSavedID,
+		r.created,
+		r.updated,
+	})
+	r.RUnlock()
+	return b, true, err
+}
+
 func (r *repoT) String() string {
 	json, err := r.MarshalJSON()
 	if err != nil {
@@ -3233,6 +3351,54 @@ func (d *dagT) duplicate(versions map[dvid.VersionID]struct{}) *dagT {
 
 	d.RUnlock()
 	return dup
+}
+
+func (d *dagT) filteredPublicCopy() (*dagT, bool) {
+	d.RLock()
+	defer d.RUnlock()
+
+	keep := make(map[dvid.VersionID]struct{}, len(d.nodes))
+	for v := range d.nodes {
+		if IsPublicVersion(v) {
+			keep[v] = struct{}{}
+		}
+	}
+	if len(keep) == 0 {
+		return nil, false
+	}
+	if _, rootPublic := keep[d.rootV]; !rootPublic {
+		return nil, false
+	}
+
+	dup := &dagT{
+		root:  d.root,
+		rootV: d.rootV,
+		nodes: make(map[dvid.VersionID]*nodeT, len(keep)),
+	}
+	for v := range keep {
+		node, found := d.nodes[v]
+		if !found {
+			continue
+		}
+		dupNode := node.duplicate(nil)
+		dupNode.parents = filterVersions(dupNode.parents, keep)
+		dupNode.children = filterVersions(dupNode.children, keep)
+		dup.nodes[v] = dupNode
+	}
+	return dup, true
+}
+
+func filterVersions(orig []dvid.VersionID, keep map[dvid.VersionID]struct{}) []dvid.VersionID {
+	if len(orig) == 0 {
+		return []dvid.VersionID{}
+	}
+	filtered := make([]dvid.VersionID, 0, len(orig))
+	for _, v := range orig {
+		if _, found := keep[v]; found {
+			filtered = append(filtered, v)
+		}
+	}
+	return filtered
 }
 
 // ------  Serializations ----------

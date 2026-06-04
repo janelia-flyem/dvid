@@ -801,6 +801,9 @@ func initRoutes() {
 	mainMux.Handle("/api/repo/:uuid", repoRawMux)
 	repoRawMux.Use(activityLogHandler)
 	repoRawMux.Use(repoRawSelector)
+	if authorizationOn {
+		repoRawMux.Use(isAuthorized)
+	}
 	repoRawMux.Head("/api/repo/:uuid", repoHeadHandler)
 
 	repoMux := web.New()
@@ -1542,7 +1545,19 @@ func serverNoteHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, tc.Server.Note)
 }
 
-func serverConfigHandler(w http.ResponseWriter, r *http.Request) {
+func requireAdminPriv(c web.C, w http.ResponseWriter, r *http.Request, action string) bool {
+	adminPriv, ok := c.Env["adminPriv"].(bool)
+	if !ok || !adminPriv {
+		BadRequest(w, r, "%s requires admin privileges (admintoken)", action)
+		return false
+	}
+	return true
+}
+
+func serverConfigHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	if !requireAdminPriv(c, w, r, "GET /api/server/config") {
+		return
+	}
 	w.Header().Set("Content-Type", "text/plain")
 	fmt.Fprint(w, tcContent)
 }
@@ -1600,6 +1615,9 @@ func serverGroupcacheHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func serverSettingsHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	if !requireAdminPriv(c, w, r, "POST /api/server/settings") {
+		return
+	}
 	config := dvid.NewConfig()
 	if err := config.SetByJSON(r.Body); err != nil {
 		BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for 'new': %v", err))
@@ -1632,6 +1650,9 @@ func serverSettingsHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func serverReloadAuthHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	if !requireAdminPriv(c, w, r, "POST /api/server/reload-auth") {
+		return
+	}
 	if err := authorizations.loadAuthFile(); err != nil {
 		BadRequest(w, r, "unable to reload auth file: %v", err)
 		return
@@ -1642,6 +1663,9 @@ func serverReloadAuthHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func serverReloadBlocklistHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	if !requireAdminPriv(c, w, r, "POST /api/server/reload-blocklist") {
+		return
+	}
 	if err := loadBlockListFile(); err != nil {
 		BadRequest(w, r, "unable to reload blocklist file: %v", err)
 		return
@@ -1654,6 +1678,11 @@ func blobstoreHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	method := strings.ToLower(r.Method)
 	if method != "get" {
 		BadRequest(w, r, "blobstore only supports HTTP GET requests, not %q", method)
+		return
+	}
+	scope := requestAccessScope(c, r)
+	if !scope.full && scope.user == nil {
+		BadRequest(w, r, "GET /api/server/blobstore requires authenticated access")
 		return
 	}
 	ref, ok := c.Env["ref"].(string)
@@ -1688,8 +1717,11 @@ func blobstoreHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
-	jsonBytes, err := datastore.MarshalJSON()
+func reposInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	scope := requestAccessScope(c, r)
+	jsonBytes, err := datastore.MarshalJSONFiltered(func(rootUUID dvid.UUID) datastore.RepoVisibility {
+		return scope.repoVisibility(rootUUID, r.Method)
+	})
 	if err != nil {
 		BadRequest(w, r, err)
 		return
@@ -1766,7 +1798,13 @@ func repoHeadHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 
 func repoInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	uuid := (c.Env["uuid"]).(dvid.UUID)
-	jsonStr, err := datastore.GetRepoJSON(uuid)
+	scope := requestAccessScope(c, r)
+	vis, err := scope.repoVisibilityForUUID(uuid, r.Method)
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	jsonStr, err := datastore.GetRepoJSONFiltered(uuid, vis)
 	if err != nil {
 		BadRequest(w, r, err)
 		return
@@ -1822,7 +1860,13 @@ func repoPostInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 func repoBranchVersionsHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	uuid := (c.Env["uuid"]).(dvid.UUID)
 	name := (c.Env["name"]).(string)
-	jsonStr, err := datastore.GetBranchVersionsJSON(uuid, name)
+	scope := requestAccessScope(c, r)
+	vis, err := scope.repoVisibilityForUUID(uuid, r.Method)
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	jsonStr, err := datastore.GetBranchVersionsJSONFiltered(uuid, name, vis)
 	if err != nil {
 		BadRequest(w, r, err)
 		return
@@ -1891,7 +1935,18 @@ func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 
 func getRepoLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	uuid := c.Env["uuid"].(dvid.UUID)
-	logdata, err := datastore.GetRepoLog(uuid)
+	scope := requestAccessScope(c, r)
+	vis, err := scope.repoVisibilityForUUID(uuid, r.Method)
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	var logdata []string
+	if vis == datastore.RepoFullView {
+		logdata, err = datastore.GetRepoLog(uuid)
+	} else {
+		logdata = []string{}
+	}
 	if err != nil {
 		BadRequest(w, r, err)
 		return
