@@ -156,7 +156,9 @@ func TestCommitAndBranch(t *testing.T) {
 	}
 	defer server.CloseTest()
 
-	apiStr := fmt.Sprintf("%srepos", server.WebAPIPath)
+	// Repo creation requires admin privileges.
+	server.SetAdminToken("my-secret-token")
+	apiStr := fmt.Sprintf("%srepos?admintoken=my-secret-token", server.WebAPIPath)
 	r := server.TestHTTP(t, "POST", apiStr, nil)
 	var jsonResp map[string]interface{}
 
@@ -196,7 +198,6 @@ func TestCommitAndBranch(t *testing.T) {
 	server.TestBadHTTP(t, "POST", keyReq, bytes.NewBufferString("some data"))
 
 	// unless we have an admin token
-	server.SetAdminToken("my-secret-token")
 	keyReq += "?admintoken=my-secret-token"
 	server.TestHTTP(t, "POST", keyReq, bytes.NewBufferString("some data"))
 
