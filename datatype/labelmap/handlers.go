@@ -1648,10 +1648,14 @@ func (d *Data) handleNextlabel(ctx *datastore.VersionedCtx, w http.ResponseWrite
 	w.Header().Set("Content-Type", "application/json")
 	switch strings.ToLower(r.Method) {
 	case "get":
-		if d.NextLabel == 0 {
-			fmt.Fprintf(w, `{"nextlabel": %d}`, d.MaxRepoLabel+1)
+		d.mlMu.RLock()
+		next := d.NextLabel
+		repoMax := d.MaxRepoLabel
+		d.mlMu.RUnlock()
+		if next == 0 {
+			fmt.Fprintf(w, `{"nextlabel": %d}`, repoMax+1)
 		} else {
-			fmt.Fprintf(w, `{"nextlabel": %d}`, d.NextLabel+1)
+			fmt.Fprintf(w, `{"nextlabel": %d}`, next+1)
 		}
 	case "post":
 		if len(parts) < 5 {
@@ -1690,7 +1694,7 @@ func (d *Data) handleNextlabel(ctx *datastore.VersionedCtx, w http.ResponseWrite
 }
 
 func (d *Data) handleSetNextlabel(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
-	// POST <api URL>/node/<UUID>/<data name>/set-nextlabel/<label>
+	// POST <api URL>/node/<UUID>/<data name>/set-nextlabel/<label>[?ceiling=<n>]
 	timedLog := dvid.NewTimeLog()
 	switch strings.ToLower(r.Method) {
 	case "post":
@@ -1707,25 +1711,31 @@ func (d *Data) handleSetNextlabel(ctx *datastore.VersionedCtx, w http.ResponseWr
 			server.BadRequest(w, r, err)
 			return
 		}
-		if label == 0 {
-			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as next label.\n")
-			return
+		var ceiling *uint64
+		if ceilingStr := r.URL.Query().Get("ceiling"); ceilingStr != "" {
+			c, err := strconv.ParseUint(ceilingStr, 10, 64)
+			if err != nil {
+				server.BadRequest(w, r, "bad ceiling %q for POST /set-nextlabel: %v", ceilingStr, err)
+				return
+			}
+			ceiling = &c
 		}
-		d.mlMu.Lock()
-		defer d.mlMu.Unlock()
-
-		d.NextLabel = label
-		if err := d.persistNextLabel(); err != nil {
+		if err := d.SetNextLabelStart(label, ceiling); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
 
 		versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
+		dvid.Infof("admin POST /set-nextlabel set next label of data %q to %d (ceiling query %q, client %s, user %q)\n",
+			d.DataName(), label, r.URL.Query().Get("ceiling"), r.RemoteAddr, ctx.User)
 		msginfo := map[string]interface{}{
 			"Action":     "setnextlabel",
 			"Next Label": label,
 			"UUID":       string(versionuuid),
 			"Timestamp":  time.Now().String(),
+		}
+		if ceiling != nil {
+			msginfo["Ceiling"] = *ceiling
 		}
 		jsonmsg, _ := json.Marshal(msginfo)
 		if err = d.PublishKafkaMsg(jsonmsg); err != nil {
@@ -1734,7 +1744,7 @@ func (d *Data) handleSetNextlabel(ctx *datastore.VersionedCtx, w http.ResponseWr
 	default:
 		server.BadRequest(w, r, "Unknown action %q requested for %s\n", r.Method, r.URL)
 	}
-	timedLog.Infof("HTTP set-nextabel request (%s)", r.URL)
+	timedLog.Infof("HTTP set-nextlabel request (%s)", r.URL)
 }
 
 func (d *Data) handleSplitSupervoxel(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {

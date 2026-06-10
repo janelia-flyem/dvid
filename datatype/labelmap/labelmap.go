@@ -199,29 +199,31 @@ $ dvid node <UUID> <data name> benchmark-versioned-read <benchmark spec path> [r
 	benchmark spec path  Absolute path to the benchmark JSON file.
 	report path          (Optional) Absolute path to write the JSON report.
 
-$ dvid node <UUID> <data name> set-nextlabel <label>
+$ dvid node <UUID> <data name> set-nextlabel <label> [ceiling]
 
 	Sets the counter for new labels repo-wide for the given labelmap instance.
 	Note that the next label will be one more than the given label, and the given
-	label must be 1 or more.  If label is 0, then this next label setting will
-	be ignored and future labels will be determined by the repo-wide max label
-	as is the default.
-	
+	label must be 1 or more.
+
 	This is a dangerous command if you set the next label to a low value because
-	it will not check if it starts to encroach higher label values, so use with
-	caution.
+	new labels can encroach on higher existing label values.  The optional
+	ceiling argument guards against this: allocations that would exceed the
+	ceiling fail with an error.  A ceiling of 0 clears any configured ceiling;
+	if the argument is omitted, the current ceiling is left unchanged.
 
-    Example: 
+    Example:
 
-	$ dvid node 3f8c segmentation set-nextlabel 999
-	
-	The next new label, for example in a cleave, will be 1000.
+	$ dvid node 3f8c segmentation set-nextlabel 999 2000
+
+	The next new label, for example in a cleave, will be 1000, and allocations
+	past 2000 will fail.
 
     Arguments:
 
     UUID          Hexadecimal string with enough characters to uniquely identify a version node.
 	data name     Name of data to add.
 	label     	  A uint64 label ID
+	ceiling   	  (Optional) A uint64 allocation ceiling; 0 clears it.
 
 $ dvid node <UUID> <data name> fvdb <label> <file path> [grayscale=<instance>]
 
@@ -913,13 +915,22 @@ GET <api URL>/node/<UUID>/<data name>/maxlabel
 
 		{ "maxlabel": <label #> }
 
+	The returned value takes the version DAG into account: a version without
+	its own max label entry (or with one below an ancestor's) reports the
+	maximum across its ancestors, so child versions never report less than
+	their parents.
+
 POST <api URL>/node/<UUID>/<data name>/maxlabel/<max label>
 
-	Sets the maximum label for the version of data specified by the UUID.  This maximum label will be 
+	Sets the maximum label for the version of data specified by the UUID.  This maximum label will be
 	ignored if it is not greater than the current maximum label.  This value is purely informative
 	(i.e., not used for establishing new labels on split) and can be used to distinguish new labels
 	in remote stores that may collide with local ones.
-	
+
+	This endpoint requires admin privileges (valid admintoken query string or
+	authenticated DSG admin user).  Values above 2^48 are rejected as garbage
+	even with admin privileges, as is label 0.
+
 	If Kafka is enabled, a log message will be posted:
 	{
 		"Action":     "post-maxlabel",
@@ -956,10 +967,22 @@ POST <api URL>/node/<UUID>/<data name>/nextlabel/<desired # of labels>
 		"Timestamp":   time.Now().String(),
 	}
 
-POST <api URL>/node/<UUID>/<data name>/set-nextlabel/<label>
+POST <api URL>/node/<UUID>/<data name>/set-nextlabel/<label>[?ceiling=<n>]
 
-	POST allows the client to request some # of labels that will be reserved.
-	This is used if the client wants to introduce new labels.
+	POST sets the counter for new labels repo-wide.  The next allocated label
+	will be one more than the given label, which must be 1 or more.
+
+	This endpoint requires admin privileges (valid admintoken query string or
+	authenticated DSG admin user).
+
+	Query-string options:
+
+	ceiling       Optional allocation ceiling for NextLabel-based allocations.
+	              If set, allocations that would exceed it fail with an error,
+	              guarding against new labels creeping into existing label ID
+	              ranges.  0 clears the ceiling; if the parameter is absent the
+	              current ceiling is left unchanged.  The ceiling cannot be set
+	              below the next label start.
 
 	Returns status code 200 (OK) if the next label was successfully set.
 
@@ -1979,6 +2002,11 @@ type Data struct {
 	// labels to be assigned that have lower IDs than existing labels.
 	NextLabel uint64
 
+	// The ceiling for NextLabel allocations.  If non-zero, allocations that
+	// would exceed it fail, guarding against NextLabel creep into existing
+	// label ID ranges.  Zero means no ceiling.
+	NextLabelCeiling uint64
+
 	// True if sparse volumes (split, merge, sparse volume optimized GET) are supported
 	// for this data instance.  (Default true)
 	IndexedLabels bool
@@ -2082,6 +2110,7 @@ func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSp
 	}
 	d.MaxRepoLabel = d2.MaxRepoLabel
 	d.NextLabel = d2.NextLabel
+	d.NextLabelCeiling = d2.NextLabelCeiling
 
 	d.IndexedLabels = d2.IndexedLabels
 	d.MaxDownresLevel = d2.MaxDownresLevel
@@ -2154,11 +2183,12 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 
 type propsJSON struct {
 	imageblk.Properties
-	MaxLabel        map[dvid.VersionID]uint64
-	MaxRepoLabel    uint64
-	NextLabel       uint64
-	IndexedLabels   bool
-	MaxDownresLevel uint8
+	MaxLabel         map[dvid.VersionID]uint64
+	MaxRepoLabel     uint64
+	NextLabel        uint64
+	NextLabelCeiling uint64 `json:",omitempty"`
+	IndexedLabels    bool
+	MaxDownresLevel  uint8
 }
 
 func (d *Data) MarshalJSON() ([]byte, error) {
@@ -2422,6 +2452,17 @@ func (d *Data) persistNextLabel() error {
 	return store.Put(ctx, nextLabelTKey, buf)
 }
 
+func (d *Data) persistNextLabelCeiling() error {
+	store, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		return err
+	}
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, d.NextLabelCeiling)
+	ctx := storage.NewDataContext(d, 0)
+	return store.Put(ctx, nextLabelCeilingTKey, buf)
+}
+
 // trackNewLabelLocked records an allocated label in the per-version max,
 // seeding from the inherited effective max so the persisted entry never falls
 // below an ancestor's.  MaxRepoLabel is deliberately untouched: NextLabel
@@ -2444,6 +2485,9 @@ func (d *Data) newLabel(v dvid.VersionID) (uint64, error) {
 
 	// Increment and store if we don't have an ephemeral new label start ID.
 	if d.NextLabel != 0 {
+		if d.NextLabelCeiling != 0 && d.NextLabel+1 > d.NextLabelCeiling {
+			return 0, fmt.Errorf("new label for data %q would exceed configured next label ceiling %d", d.DataName(), d.NextLabelCeiling)
+		}
 		d.NextLabel++
 		if err := d.persistNextLabel(); err != nil {
 			return d.NextLabel, err
@@ -2476,6 +2520,9 @@ func (d *Data) newLabels(v dvid.VersionID, numLabels uint64) (begin, end uint64,
 	if d.NextLabel != 0 {
 		begin = d.NextLabel + 1
 		end = d.NextLabel + numLabels
+		if d.NextLabelCeiling != 0 && end > d.NextLabelCeiling {
+			return 0, 0, fmt.Errorf("allocating %d new labels for data %q would exceed configured next label ceiling %d", numLabels, d.DataName(), d.NextLabelCeiling)
+		}
 		d.NextLabel = end
 		if err = d.persistNextLabel(); err != nil {
 			return
@@ -2497,11 +2544,34 @@ func (d *Data) newLabels(v dvid.VersionID, numLabels uint64) (begin, end uint64,
 }
 
 // SetNextLabelStart sets the next label ID for this labelmap instance across
-// the entire repo.
-func (d *Data) SetNextLabelStart(nextLabelID uint64) error {
+// the entire repo and optionally adjusts the allocation ceiling.  Ceiling
+// semantics: nil leaves the ceiling unchanged, 0 clears it, any other value
+// sets it (and must not be below the next label start).  Both the HTTP and
+// RPC set-nextlabel paths route through here for shared locking and
+// validation.
+func (d *Data) SetNextLabelStart(nextLabelID uint64, ceiling *uint64) error {
+	if nextLabelID == 0 {
+		return fmt.Errorf("label 0 is protected background value and cannot be used as next label")
+	}
+	d.mlMu.Lock()
+	defer d.mlMu.Unlock()
+
+	effCeiling := d.NextLabelCeiling
+	if ceiling != nil {
+		effCeiling = *ceiling
+	}
+	if effCeiling != 0 && nextLabelID > effCeiling {
+		return fmt.Errorf("next label start %d would exceed next label ceiling %d", nextLabelID, effCeiling)
+	}
 	d.NextLabel = nextLabelID
 	if err := d.persistNextLabel(); err != nil {
 		return err
+	}
+	if ceiling != nil && *ceiling != d.NextLabelCeiling {
+		d.NextLabelCeiling = *ceiling
+		if err := d.persistNextLabelCeiling(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -2623,6 +2693,19 @@ func (d *Data) loadLabelIDs(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 		dvid.Errorf("Could not load repo-wide next label for instance %q.  No next label override of max label.\n", d.DataName())
 	} else {
 		d.NextLabel = binary.LittleEndian.Uint64(data)
+	}
+
+	// Load in next label ceiling if set.
+	data, err = store.Get(ctx, nextLabelCeilingTKey)
+	if err != nil {
+		dvid.Errorf("Error getting next label ceiling: %v\n", err)
+		return
+	}
+	if data != nil && len(data) == 8 {
+		d.NextLabelCeiling = binary.LittleEndian.Uint64(data)
+		if d.NextLabelCeiling != 0 {
+			dvid.Infof("Loaded next label ceiling for labelmap %q: %d\n", d.DataName(), d.NextLabelCeiling)
+		}
 	}
 
 	wg.Done()
@@ -2773,8 +2856,8 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		}
 
 		// Parse the request
-		var uuidStr, dataName, cmdStr, labelStr string
-		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &labelStr)
+		var uuidStr, dataName, cmdStr, labelStr, ceilingStr string
+		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &labelStr, &ceilingStr)
 
 		uuid, _, err := datastore.MatchingUUID(uuidStr)
 		if err != nil {
@@ -2794,12 +2877,28 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		if err != nil {
 			return err
 		}
+		var ceiling *uint64
+		if ceilingStr != "" {
+			c, err := strconv.ParseUint(ceilingStr, 10, 64)
+			if err != nil {
+				return fmt.Errorf("bad ceiling %q for set-nextlabel: %v", ceilingStr, err)
+			}
+			ceiling = &c
+		}
 
-		if err := lmData.SetNextLabelStart(nextLabelID); err != nil {
+		if err := lmData.SetNextLabelStart(nextLabelID, ceiling); err != nil {
 			return err
 		}
 
-		reply.Text = fmt.Sprintf("Set next label ID to %d.\n", nextLabelID)
+		if ceiling != nil {
+			if *ceiling == 0 {
+				reply.Text = fmt.Sprintf("Set next label ID to %d and cleared next label ceiling.\n", nextLabelID)
+			} else {
+				reply.Text = fmt.Sprintf("Set next label ID to %d with next label ceiling %d.\n", nextLabelID, *ceiling)
+			}
+		} else {
+			reply.Text = fmt.Sprintf("Set next label ID to %d.\n", nextLabelID)
+		}
 		return nil
 
 	case "load":

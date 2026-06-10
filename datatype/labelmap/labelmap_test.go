@@ -3036,7 +3036,7 @@ func TestNextLabels(t *testing.T) {
 	uuid, versionID := initTestRepo()
 	lbls := newDataInstance(uuid, t, "mylabels")
 
-	if err := lbls.SetNextLabelStart(10); err != nil {
+	if err := lbls.SetNextLabelStart(10, nil); err != nil {
 		t.Errorf("Error on setting next label start: %v\n", err)
 	}
 	expectedLabel := uint64(11)
@@ -3057,6 +3057,110 @@ func TestNextLabels(t *testing.T) {
 	if lbls.NextLabel != 42 {
 		t.Fatalf("Expected next label to be 42, got %d\n", lbls.NextLabel)
 	}
+}
+
+// TestNextLabelCeiling checks the optional NextLabel allocation ceiling:
+// setting/clearing it via POST /set-nextlabel?ceiling=<n>, allocation failing
+// with a clear error at the boundary, validation of inconsistent
+// start/ceiling combinations, and SetNextLabelStart locking under concurrent
+// allocation (run with -race).
+func TestNextLabelCeiling(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+	server.SetAdminToken("testadmin")
+	defer server.SetAdminToken("")
+
+	uuid, versionID := initTestRepo()
+	lbls := newDataInstance(uuid, t, "ceiled")
+
+	setNext := func(label uint64, ceilingParam string) {
+		apiStr := fmt.Sprintf("%snode/%s/ceiled/set-nextlabel/%d?admintoken=testadmin%s", server.WebAPIPath, uuid, label, ceilingParam)
+		server.TestHTTP(t, "POST", apiStr, nil)
+	}
+	allocate := func(count uint64) (start, end uint64, reterr error) {
+		apiStr := fmt.Sprintf("%snode/%s/ceiled/nextlabel/%d", server.WebAPIPath, uuid, count)
+		respData, err := server.TestHTTPError(t, "POST", apiStr, nil)
+		if err != nil {
+			return 0, 0, err
+		}
+		resp := struct {
+			Start uint64 `json:"start"`
+			End   uint64 `json:"end"`
+		}{}
+		if err := json.Unmarshal(respData, &resp); err != nil {
+			t.Fatalf("expected 'start'/'end' JSON response, got %s\n", string(respData))
+		}
+		return resp.Start, resp.End, nil
+	}
+
+	// Ceiling below the start is rejected.
+	server.TestBadHTTP(t, "POST", fmt.Sprintf("%snode/%s/ceiled/set-nextlabel/100?ceiling=50&admintoken=testadmin", server.WebAPIPath, uuid), nil)
+
+	// Set start 100 with ceiling 110: 10 labels allocatable, not 11.
+	setNext(100, "&ceiling=110")
+	if start, end, err := allocate(10); err != nil || start != 101 || end != 110 {
+		t.Errorf("allocation up to ceiling should succeed, got [%d, %d] (err %v)\n", start, end, err)
+	}
+	if _, _, err := allocate(1); err == nil {
+		t.Errorf("allocation crossing the ceiling should fail\n")
+	}
+	if _, err := lbls.newLabel(versionID); err == nil {
+		t.Errorf("newLabel crossing the ceiling should fail\n")
+	}
+
+	// Raising the start above the ceiling without changing it is rejected.
+	server.TestBadHTTP(t, "POST", fmt.Sprintf("%snode/%s/ceiled/set-nextlabel/200?admintoken=testadmin", server.WebAPIPath, uuid), nil)
+
+	// ceiling=0 clears the ceiling; allocation proceeds again.
+	setNext(110, "&ceiling=0")
+	if lbls.NextLabelCeiling != 0 {
+		t.Errorf("expected cleared ceiling, got %d\n", lbls.NextLabelCeiling)
+	}
+	if start, end, err := allocate(5); err != nil || start != 111 || end != 115 {
+		t.Errorf("allocation after clearing ceiling failed, got [%d, %d] (err %v)\n", start, end, err)
+	}
+
+	// The ceiling is persisted and reloaded with the other counters.
+	setNext(120, "&ceiling=200")
+	rootV, err := datastore.VersionFromUUID(uuid)
+	if err != nil {
+		t.Fatalf("can't get version id for %s: %v\n", uuid, err)
+	}
+	if _, err := lbls.LoadMutable(rootV, 0, 0); err != nil {
+		t.Fatalf("LoadMutable: %v\n", err)
+	}
+	if lbls.NextLabel != 120 || lbls.NextLabelCeiling != 200 {
+		t.Errorf("expected reloaded next label 120 / ceiling 200, got %d / %d\n", lbls.NextLabel, lbls.NextLabelCeiling)
+	}
+
+	// SetNextLabelStart holds the counter lock: hammer it against concurrent
+	// allocations (meaningful under -race).
+	setNext(1000, "&ceiling=0")
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < 100; i++ {
+			if err := lbls.SetNextLabelStart(1000, nil); err != nil {
+				t.Errorf("SetNextLabelStart: %v\n", err)
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < 100; i++ {
+			if _, err := lbls.newLabel(versionID); err != nil {
+				t.Errorf("newLabel during concurrent SetNextLabelStart: %v\n", err)
+			}
+		}
+	}()
+	close(start)
+	wg.Wait()
 }
 
 type dsgAuthMock struct {

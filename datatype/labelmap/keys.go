@@ -41,6 +41,11 @@ const (
 
 	// mutation cache keys = label + mutid. value = label index just before mutation applied.
 	keyMutcache = 240
+
+	// Stores the optional repo-wide ceiling for NextLabel allocations.
+	// Absent or zero means no ceiling.  Older DVID binaries never read this
+	// key and simply don't enforce a ceiling.
+	keyRepoNextLabelCeiling = 241
 )
 
 // DescribeTKeyClass returns a string explanation of what a particular TKeyClass
@@ -63,15 +68,18 @@ func (d *Data) DescribeTKeyClass(tkc storage.TKeyClass) string {
 		return "labelmap next label key"
 	case keyMutcache:
 		return "labelmap mutation cache key"
+	case keyRepoNextLabelCeiling:
+		return "labelmap next label ceiling key"
 	default:
 	}
 	return "unknown labelmap key"
 }
 
 var (
-	maxLabelTKey     = storage.NewTKey(keyLabelMax, nil)
-	maxRepoLabelTKey = storage.NewTKey(keyRepoLabelMax, nil)
-	nextLabelTKey    = storage.NewTKey(keyRepoNextLabel, nil)
+	maxLabelTKey         = storage.NewTKey(keyLabelMax, nil)
+	maxRepoLabelTKey     = storage.NewTKey(keyRepoLabelMax, nil)
+	nextLabelTKey        = storage.NewTKey(keyRepoNextLabel, nil)
+	nextLabelCeilingTKey = storage.NewTKey(keyRepoNextLabelCeiling, nil)
 )
 
 // NewBlockTKey returns a TKey for a label block, which is a slice suitable for
