@@ -225,6 +225,31 @@ $ dvid node <UUID> <data name> set-nextlabel <label> [ceiling]
 	label     	  A uint64 label ID
 	ceiling   	  (Optional) A uint64 allocation ceiling; 0 clears it.
 
+$ dvid node <UUID> <data name> repair-maxlabel [--commit]
+
+	Recomputes per-version max labels and the repo-wide max label from ground
+	truth (label indices plus supervoxel->body mappings, so split-created
+	supervoxels are counted) and reports stored versus recomputed values.
+
+	By default this is a dry run: nothing is written.  Rerun with --commit to
+	persist the recomputed values.  This command is the only sanctioned way to
+	lower the repo-wide max label, and only to the verified recomputed value.
+
+	Labels reserved via POST /nextlabel but not yet written to blocks or
+	mappings cannot be detected, so run --commit only during proofreading
+	quiescence.
+
+    Example:
+
+	$ dvid node 3f8c segmentation repair-maxlabel
+	$ dvid node 3f8c segmentation repair-maxlabel --commit
+
+    Arguments:
+
+    UUID          Hexadecimal string with enough characters to uniquely identify a version node.
+	data name     Name of labelmap instance.
+	--commit  	  (Optional) Persist recomputed values; default is dry run.
+
 $ dvid node <UUID> <data name> fvdb <label> <file path> [grayscale=<instance>]
 
 	Exports a label's sparse volume topology to a NanoVDB IndexGrid file (.nvdb format).
@@ -2899,6 +2924,44 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		} else {
 			reply.Text = fmt.Sprintf("Set next label ID to %d.\n", nextLabelID)
 		}
+		return nil
+
+	case "repair-maxlabel":
+		if len(req.Command) < 4 {
+			return fmt.Errorf("poorly formatted repair-maxlabel command, see command-line help")
+		}
+
+		// Parse the request
+		var uuidStr, dataName, cmdStr, commitStr string
+		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &commitStr)
+		var commit bool
+		switch commitStr {
+		case "":
+		case "--commit":
+			commit = true
+		default:
+			return fmt.Errorf("unknown repair-maxlabel argument %q, only --commit is recognized", commitStr)
+		}
+
+		uuid, _, err := datastore.MatchingUUID(uuidStr)
+		if err != nil {
+			return err
+		}
+
+		dataservice, err := datastore.GetDataByUUIDName(uuid, dvid.InstanceName(dataName))
+		if err != nil {
+			return err
+		}
+		lmData, ok := dataservice.(*Data)
+		if !ok {
+			return fmt.Errorf("instance %q of uuid %s was not a labelmap instance", dataName, uuid)
+		}
+
+		report, err := lmData.repairMaxLabels(uuid, commit)
+		if err != nil {
+			return err
+		}
+		reply.Text = report
 		return nil
 
 	case "load":

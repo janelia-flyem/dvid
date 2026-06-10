@@ -3059,6 +3059,118 @@ func TestNextLabels(t *testing.T) {
 	}
 }
 
+// TestRepairMaxLabel checks the repair-maxlabel RPC: dry run reports stored
+// versus recomputed values without writing anything, and --commit persists
+// exactly the reported values, including lowering an inflated repo-wide max.
+func TestRepairMaxLabel(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, versionID := initTestRepo()
+	var config dvid.Config
+	config.Set("BlockSize", "32,32,32")
+	server.CreateTestInstance(t, uuid, "labelmap", "labels", config)
+	createLabelTestVolume(t, uuid, "labels") // bodies 1..4, so ground truth max is 4
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+	dataservice, err := datastore.GetDataByUUIDName(uuid, "labels")
+	if err != nil {
+		t.Fatalf("can't get labels instance: %v\n", err)
+	}
+	lbls, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("can't cast labels data service into labelmap.Data\n")
+	}
+
+	// Simulate corrupted counters as observed in production: an arbitrary
+	// per-version max and a wildly inflated repo-wide max, both persisted.
+	const inflatedVersionMax = uint64(99999)
+	const inflatedRepoMax = uint64(53373772488)
+	lbls.mlMu.Lock()
+	lbls.MaxLabel[versionID] = inflatedVersionMax
+	lbls.MaxRepoLabel = inflatedRepoMax
+	if err := lbls.persistMaxLabel(versionID); err != nil {
+		t.Fatalf("persistMaxLabel: %v\n", err)
+	}
+	if err := lbls.persistMaxRepoLabel(); err != nil {
+		t.Fatalf("persistMaxRepoLabel: %v\n", err)
+	}
+	lbls.mlMu.Unlock()
+
+	// Dry run: reports current vs recomputed values, writes nothing.
+	var reply datastore.Response
+	cmd := dvid.Command{"node", string(uuid), "labels", "repair-maxlabel"}
+	if err := lbls.DoRPC(datastore.Request{Command: cmd}, &reply); err != nil {
+		t.Fatalf("repair-maxlabel dry run: %v\n", err)
+	}
+	if !strings.Contains(reply.Text, "dry run") {
+		t.Errorf("expected dry run notice in reply, got:\n%s\n", reply.Text)
+	}
+	if !strings.Contains(reply.Text, fmt.Sprintf("stored max %d, would set to recomputed 4", inflatedVersionMax)) {
+		t.Errorf("expected per-version dry-run line, got:\n%s\n", reply.Text)
+	}
+	if !strings.Contains(reply.Text, fmt.Sprintf("repo-wide max: stored %d, would set to recomputed 4", inflatedRepoMax)) {
+		t.Errorf("expected repo-wide dry-run line, got:\n%s\n", reply.Text)
+	}
+	lbls.mlMu.RLock()
+	versionMax := lbls.MaxLabel[versionID]
+	repoMax := lbls.MaxRepoLabel
+	lbls.mlMu.RUnlock()
+	if versionMax != inflatedVersionMax || repoMax != inflatedRepoMax {
+		t.Errorf("dry run changed counters: version max %d, repo max %d\n", versionMax, repoMax)
+	}
+	store, err := datastore.GetOrderedKeyValueDB(lbls)
+	if err != nil {
+		t.Fatalf("can't get store: %v\n", err)
+	}
+	dataCtx := storage.NewDataContext(lbls, 0)
+	if v, err := store.Get(dataCtx, maxRepoLabelTKey); err != nil || binary.LittleEndian.Uint64(v) != inflatedRepoMax {
+		t.Errorf("dry run changed persisted repo max: %v (err %v)\n", v, err)
+	}
+
+	// Commit: persists exactly the reported values, lowering the repo max.
+	cmd = dvid.Command{"node", string(uuid), "labels", "repair-maxlabel", "--commit"}
+	if err := lbls.DoRPC(datastore.Request{Command: cmd}, &reply); err != nil {
+		t.Fatalf("repair-maxlabel --commit: %v\n", err)
+	}
+	if !strings.Contains(reply.Text, fmt.Sprintf("repo-wide max: stored %d, set to recomputed 4", inflatedRepoMax)) {
+		t.Errorf("expected repo-wide commit line, got:\n%s\n", reply.Text)
+	}
+	lbls.mlMu.RLock()
+	versionMax = lbls.MaxLabel[versionID]
+	repoMax = lbls.MaxRepoLabel
+	lbls.mlMu.RUnlock()
+	if versionMax != 4 || repoMax != 4 {
+		t.Errorf("commit should set version and repo max to 4, got %d and %d\n", versionMax, repoMax)
+	}
+	if v, err := store.Get(dataCtx, maxRepoLabelTKey); err != nil || binary.LittleEndian.Uint64(v) != 4 {
+		t.Errorf("commit should persist repo max 4: %v (err %v)\n", v, err)
+	}
+	versionCtx := datastore.NewVersionedCtx(lbls, versionID)
+	if v, err := store.Get(versionCtx, maxLabelTKey); err != nil || binary.LittleEndian.Uint64(v) != 4 {
+		t.Errorf("commit should persist version max 4: %v (err %v)\n", v, err)
+	}
+
+	// HTTP counters agree post-repair.
+	respData := server.TestHTTP(t, "GET", fmt.Sprintf("%snode/%s/labels/maxlabel", server.WebAPIPath, uuid), nil)
+	if string(respData) != `{"maxlabel": 4}` {
+		t.Errorf("bad maxlabel after repair: %s\n", string(respData))
+	}
+	respData = server.TestHTTP(t, "GET", fmt.Sprintf("%snode/%s/labels/nextlabel", server.WebAPIPath, uuid), nil)
+	if string(respData) != `{"nextlabel": 5}` {
+		t.Errorf("bad nextlabel after repair: %s\n", string(respData))
+	}
+
+	// An unrecognized argument is rejected.
+	cmd = dvid.Command{"node", string(uuid), "labels", "repair-maxlabel", "--bogus"}
+	if err := lbls.DoRPC(datastore.Request{Command: cmd}, &reply); err == nil {
+		t.Errorf("expected error for unknown repair-maxlabel argument\n")
+	}
+}
+
 // TestNextLabelCeiling checks the optional NextLabel allocation ceiling:
 // setting/clearing it via POST /set-nextlabel?ceiling=<n>, allocation failing
 // with a clear error at the boundary, validation of inconsistent
