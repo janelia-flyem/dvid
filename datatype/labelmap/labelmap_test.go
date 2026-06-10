@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -3056,6 +3057,89 @@ func TestNextLabels(t *testing.T) {
 	}
 	if lbls.NextLabel != 42 {
 		t.Fatalf("Expected next label to be 42, got %d\n", lbls.NextLabel)
+	}
+}
+
+// TestLabelAllocationOverflow checks that label allocation can never wrap
+// uint64 label space: near-max counters and huge batch requests fail cleanly
+// without corrupting NextLabel or MaxRepoLabel.  math.MaxUint64 is reserved
+// (it is used as a range sentinel) and never allocated.
+func TestLabelAllocationOverflow(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, versionID := initTestRepo()
+	lbls := newDataInstance(uuid, t, "overflow")
+
+	// The maximum uint64 is reserved and rejected as a next label start.
+	if err := lbls.SetNextLabelStart(math.MaxUint64, nil); err == nil {
+		t.Errorf("expected SetNextLabelStart(MaxUint64) to be rejected\n")
+	}
+
+	// With the counter one below the reserved value, allocation fails
+	// cleanly and leaves the counter untouched.
+	if err := lbls.SetNextLabelStart(math.MaxUint64-1, nil); err != nil {
+		t.Fatalf("SetNextLabelStart: %v\n", err)
+	}
+	if _, err := lbls.newLabel(versionID); err == nil {
+		t.Errorf("expected newLabel at next label MaxUint64-1 to fail\n")
+	}
+	if _, _, err := lbls.newLabels(versionID, 1); err == nil {
+		t.Errorf("expected newLabels at next label MaxUint64-1 to fail\n")
+	}
+	if lbls.NextLabel != math.MaxUint64-1 {
+		t.Errorf("failed allocation changed NextLabel to %d\n", lbls.NextLabel)
+	}
+
+	// A huge batch count cannot wrap the NextLabel counter; the largest
+	// permissible batch ends exactly at MaxUint64-1.
+	if err := lbls.SetNextLabelStart(1000, nil); err != nil {
+		t.Fatalf("SetNextLabelStart: %v\n", err)
+	}
+	if _, _, err := lbls.newLabels(versionID, math.MaxUint64-500); err == nil {
+		t.Errorf("expected huge batch allocation to fail\n")
+	}
+	if lbls.NextLabel != 1000 {
+		t.Errorf("failed batch allocation changed NextLabel to %d\n", lbls.NextLabel)
+	}
+	if begin, end, err := lbls.newLabels(versionID, math.MaxUint64-1-1000); err != nil || begin != 1001 || end != math.MaxUint64-1 {
+		t.Errorf("largest batch should succeed, got [%d, %d] (err %v)\n", begin, end, err)
+	}
+	if _, _, err := lbls.newLabels(versionID, 1); err == nil {
+		t.Errorf("expected allocation past reserved MaxUint64 to fail\n")
+	}
+
+	// The repo-wide max path has the same guards.
+	lbls.mlMu.Lock()
+	lbls.NextLabel = 0
+	lbls.MaxRepoLabel = math.MaxUint64 - 1
+	lbls.mlMu.Unlock()
+	if _, err := lbls.newLabel(versionID); err == nil {
+		t.Errorf("expected newLabel at repo max MaxUint64-1 to fail\n")
+	}
+	if _, _, err := lbls.newLabels(versionID, 1); err == nil {
+		t.Errorf("expected newLabels at repo max MaxUint64-1 to fail\n")
+	}
+	if lbls.MaxRepoLabel != math.MaxUint64-1 {
+		t.Errorf("failed allocation changed MaxRepoLabel to %d\n", lbls.MaxRepoLabel)
+	}
+	lbls.mlMu.Lock()
+	lbls.MaxRepoLabel = 4
+	lbls.mlMu.Unlock()
+	if _, _, err := lbls.newLabels(versionID, math.MaxUint64-4); err == nil {
+		t.Errorf("expected huge batch on repo max path to fail\n")
+	}
+	if lbls.MaxRepoLabel != 4 {
+		t.Errorf("failed batch allocation changed MaxRepoLabel to %d\n", lbls.MaxRepoLabel)
+	}
+
+	// POST /nextlabel stays open to regular writers, so a huge count must be
+	// rejected at the HTTP layer too.
+	server.TestBadHTTP(t, "POST", fmt.Sprintf("%snode/%s/overflow/nextlabel/18446744073709551615", server.WebAPIPath, uuid), nil)
+	if lbls.MaxRepoLabel != 4 || lbls.NextLabel != 0 {
+		t.Errorf("rejected HTTP batch changed counters: next %d, repo max %d\n", lbls.NextLabel, lbls.MaxRepoLabel)
 	}
 }
 

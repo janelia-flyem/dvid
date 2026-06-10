@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -2510,6 +2511,11 @@ func (d *Data) newLabel(v dvid.VersionID) (uint64, error) {
 
 	// Increment and store if we don't have an ephemeral new label start ID.
 	if d.NextLabel != 0 {
+		// Labels stay strictly below math.MaxUint64, which is reserved as a
+		// range sentinel, so the increment below can never wrap.
+		if d.NextLabel >= math.MaxUint64-1 {
+			return 0, fmt.Errorf("new label for data %q would overflow uint64 label space (next label %d)", d.DataName(), d.NextLabel)
+		}
 		if d.NextLabelCeiling != 0 && d.NextLabel+1 > d.NextLabelCeiling {
 			return 0, fmt.Errorf("new label for data %q would exceed configured next label ceiling %d", d.DataName(), d.NextLabelCeiling)
 		}
@@ -2521,6 +2527,9 @@ func (d *Data) newLabel(v dvid.VersionID) (uint64, error) {
 			return d.NextLabel, err
 		}
 		return d.NextLabel, nil
+	}
+	if d.MaxRepoLabel >= math.MaxUint64-1 {
+		return 0, fmt.Errorf("new label for data %q would overflow uint64 label space (repo max %d)", d.DataName(), d.MaxRepoLabel)
 	}
 	d.MaxRepoLabel++
 	d.MaxLabel[v] = d.MaxRepoLabel
@@ -2543,6 +2552,12 @@ func (d *Data) newLabels(v dvid.VersionID, numLabels uint64) (begin, end uint64,
 
 	// Increment and store.
 	if d.NextLabel != 0 {
+		// Labels stay strictly below math.MaxUint64, which is reserved as a
+		// range sentinel, so the additions below can never wrap (and a
+		// wrapped end can't sneak under the ceiling check).
+		if numLabels >= math.MaxUint64-d.NextLabel {
+			return 0, 0, fmt.Errorf("allocating %d new labels for data %q would overflow uint64 label space (next label %d)", numLabels, d.DataName(), d.NextLabel)
+		}
 		begin = d.NextLabel + 1
 		end = d.NextLabel + numLabels
 		if d.NextLabelCeiling != 0 && end > d.NextLabelCeiling {
@@ -2554,6 +2569,9 @@ func (d *Data) newLabels(v dvid.VersionID, numLabels uint64) (begin, end uint64,
 		}
 		err = d.trackNewLabelLocked(v, end)
 		return
+	}
+	if numLabels >= math.MaxUint64-d.MaxRepoLabel {
+		return 0, 0, fmt.Errorf("allocating %d new labels for data %q would overflow uint64 label space (repo max %d)", numLabels, d.DataName(), d.MaxRepoLabel)
 	}
 	begin = d.MaxRepoLabel + 1
 	end = d.MaxRepoLabel + numLabels
@@ -2577,6 +2595,9 @@ func (d *Data) newLabels(v dvid.VersionID, numLabels uint64) (begin, end uint64,
 func (d *Data) SetNextLabelStart(nextLabelID uint64, ceiling *uint64) error {
 	if nextLabelID == 0 {
 		return fmt.Errorf("label 0 is protected background value and cannot be used as next label")
+	}
+	if nextLabelID == math.MaxUint64 {
+		return fmt.Errorf("next label start %d is reserved and would overflow uint64 label space", nextLabelID)
 	}
 	d.mlMu.Lock()
 	defer d.mlMu.Unlock()
