@@ -194,8 +194,32 @@ func TestAdminGatesAcceptDSGAdmin(t *testing.T) {
 	if w := dsgRequest("POST", reposURL, "Bearer user-token", nil); w.Code == http.StatusOK {
 		t.Errorf("repo creation by non-admin DSG user should be rejected")
 	}
-	if w := dsgRequest("POST", reposURL, "Bearer admin-token", nil); w.Code != http.StatusOK {
+	w := dsgRequest("POST", reposURL, "Bearer admin-token", nil)
+	if w.Code != http.StatusOK {
 		t.Errorf("repo creation by DSG admin failed (%d): %s\n", w.Code, w.Body.String())
+	}
+	rootResp := struct {
+		Root string `json:"root"`
+	}{}
+	if err := json.Unmarshal(w.Body.Bytes(), &rootResp); err != nil {
+		t.Fatalf("expected 'root' JSON response, got %s\n", w.Body.String())
+	}
+	uuid := dvid.UUID(rootResp.Root)
+
+	// Locked-node bypass: commit the repo, then mutations are rejected
+	// without admin but accepted from a DSG admin (mirrors the admintoken
+	// bypass in TestCommitAndBranch).
+	commitURL := fmt.Sprintf("%snode/%s/commit", WebAPIPath, uuid)
+	if w := dsgRequest("POST", commitURL, "Bearer admin-token", bytes.NewBufferString(`{"note": "lock for bypass test"}`)); w.Code != http.StatusOK {
+		t.Fatalf("commit failed (%d): %s\n", w.Code, w.Body.String())
+	}
+	logURL := fmt.Sprintf("%snode/%s/log", WebAPIPath, uuid)
+	logPayload := `{"log": ["bypass test"]}`
+	if w := dsgRequest("POST", logURL, "", bytes.NewBufferString(logPayload)); w.Code == http.StatusOK {
+		t.Errorf("locked-node mutation without credentials should be rejected")
+	}
+	if w := dsgRequest("POST", logURL, "Bearer admin-token", bytes.NewBufferString(logPayload)); w.Code != http.StatusOK {
+		t.Errorf("locked-node mutation by DSG admin failed (%d): %s\n", w.Code, w.Body.String())
 	}
 
 	// requireAdminPriv-based gates: /api/server/config and /api/server/settings.
