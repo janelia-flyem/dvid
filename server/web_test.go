@@ -96,10 +96,17 @@ func TestHTTPCreate(t *testing.T) {
 	}
 	defer CloseTest()
 
+	prevAdminToken := adminToken
+	SetAdminToken("testadmintoken")
+	defer SetAdminToken(prevAdminToken)
+
 	jsonStr := `{"alias": "myrepo", "description": "test repo", "root": "28841c8277e044a7b187dda03e18da13"}`
-	payload := bytes.NewBufferString(jsonStr)
 	apiStr := fmt.Sprintf("%srepos", WebAPIPath)
-	TestHTTP(t, "POST", apiStr, payload)
+
+	// Repo creation requires admin privileges via admintoken.
+	TestBadHTTP(t, "POST", apiStr, bytes.NewBufferString(jsonStr))
+	TestBadHTTP(t, "POST", apiStr+"?admintoken=wrongtoken", bytes.NewBufferString(jsonStr))
+	TestHTTP(t, "POST", apiStr+"?admintoken=testadmintoken", bytes.NewBufferString(jsonStr))
 
 	// Verify it was saved.
 	apiStr += "/info"
