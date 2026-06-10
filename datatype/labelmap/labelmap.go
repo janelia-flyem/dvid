@@ -2258,21 +2258,72 @@ func (d *Data) setResolution(uuid dvid.UUID, jsonBytes []byte) error {
 	return datastore.SaveDataByUUID(uuid, d)
 }
 
+// EffectiveMaxLabel returns the maximum label for the given version taking
+// the version DAG into account, and false if neither the version nor any
+// ancestor has a recorded max.  It acquires a read lock on the label counters.
+func (d *Data) EffectiveMaxLabel(v dvid.VersionID) (uint64, bool) {
+	d.mlMu.RLock()
+	defer d.mlMu.RUnlock()
+	return d.effectiveMaxLabelLocked(v)
+}
+
+// effectiveMaxLabelLocked returns the max of the local MaxLabel entry (if
+// present) and the effective max of every parent.  A local entry alone is not
+// authoritative: writers can persist a value below an ancestor's max, e.g. a
+// child version whose first write only contains pre-existing low label IDs.
+// All parents are consulted because merge nodes have more than one.
+// The caller must hold d.mlMu (read or write).
+func (d *Data) effectiveMaxLabelLocked(v dvid.VersionID) (uint64, bool) {
+	visited := make(map[dvid.VersionID]struct{})
+	var walk func(dvid.VersionID) (uint64, bool)
+	walk = func(v dvid.VersionID) (uint64, bool) {
+		if _, ok := visited[v]; ok {
+			return 0, false // already contributed via another path through the DAG
+		}
+		visited[v] = struct{}{}
+		max, found := d.MaxLabel[v]
+		parents, err := datastore.GetParentsByVersion(v)
+		if err != nil {
+			dvid.Errorf("unable to get parents of version %d for data %q max label: %v\n", v, d.DataName(), err)
+			return max, found
+		}
+		for _, parent := range parents {
+			if pmax, pfound := walk(parent); pfound && (!found || pmax > max) {
+				max = pmax
+				found = true
+			}
+		}
+		return max, found
+	}
+	return walk(v)
+}
+
 // makes database call for any update
 func (d *Data) updateMaxLabel(v dvid.VersionID, label uint64) (changed bool, err error) {
 	d.mlMu.RLock()
 	curMax, found := d.MaxLabel[v]
-	if !found || curMax < label {
-		changed = true
-	}
 	d.mlMu.RUnlock()
-	if !changed {
+	if found && curMax >= label {
 		return
 	}
 
 	d.mlMu.Lock()
 	defer d.mlMu.Unlock()
 
+	// Re-check under the write lock: a concurrent writer may have raised the
+	// max after the read lock above was released.
+	curMax, found = d.MaxLabel[v]
+	if found && curMax >= label {
+		return
+	}
+	// Never persist a local entry below the version's effective (inherited) max.
+	if inherited, ok := d.effectiveMaxLabelLocked(v); ok && inherited > label {
+		label = inherited
+		if found && curMax >= label {
+			return
+		}
+	}
+	changed = true
 	d.MaxLabel[v] = label
 	if err = d.persistMaxLabel(v); err != nil {
 		err = fmt.Errorf("updateMaxLabel of data %q: %v", d.DataName(), err)
@@ -2290,32 +2341,44 @@ func (d *Data) updateMaxLabel(v dvid.VersionID, label uint64) (changed bool, err
 
 // makes database call for any update
 func (d *Data) updateBlockMaxLabel(v dvid.VersionID, block *labels.Block) {
-	var changed bool
+	var blockMax uint64
+	for _, label := range block.Labels {
+		if label > blockMax {
+			blockMax = label
+		}
+	}
 	d.mlMu.RLock()
 	curMax, found := d.MaxLabel[v]
 	d.mlMu.RUnlock()
-	if !found {
-		curMax = 0
+	if blockMax == 0 || (found && curMax >= blockMax) {
+		return
 	}
-	for _, label := range block.Labels {
-		if label > curMax {
-			curMax = label
-			changed = true
+
+	d.mlMu.Lock()
+	defer d.mlMu.Unlock()
+
+	// Re-check under the write lock: a concurrent writer may have raised the
+	// max after the read lock above was released.
+	curMax, found = d.MaxLabel[v]
+	if found && curMax >= blockMax {
+		return
+	}
+	// Never persist a local entry below the version's effective (inherited) max.
+	if inherited, ok := d.effectiveMaxLabelLocked(v); ok && inherited > blockMax {
+		blockMax = inherited
+		if found && curMax >= blockMax {
+			return
 		}
 	}
-	if changed {
-		d.mlMu.Lock()
-		d.MaxLabel[v] = curMax
-		if err := d.persistMaxLabel(v); err != nil {
+	d.MaxLabel[v] = blockMax
+	if err := d.persistMaxLabel(v); err != nil {
+		dvid.Errorf("updateBlockMaxLabel of data %q: %v\n", d.DataName(), err)
+	}
+	if blockMax > d.MaxRepoLabel {
+		d.MaxRepoLabel = blockMax
+		if err := d.persistMaxRepoLabel(); err != nil {
 			dvid.Errorf("updateBlockMaxLabel of data %q: %v\n", d.DataName(), err)
 		}
-		if curMax > d.MaxRepoLabel {
-			d.MaxRepoLabel = curMax
-			if err := d.persistMaxRepoLabel(); err != nil {
-				dvid.Errorf("updateBlockMaxLabel of data %q: %v\n", d.DataName(), err)
-			}
-		}
-		d.mlMu.Unlock()
 	}
 }
 
@@ -2359,6 +2422,21 @@ func (d *Data) persistNextLabel() error {
 	return store.Put(ctx, nextLabelTKey, buf)
 }
 
+// trackNewLabelLocked records an allocated label in the per-version max,
+// seeding from the inherited effective max so the persisted entry never falls
+// below an ancestor's.  MaxRepoLabel is deliberately untouched: NextLabel
+// allocations are below it by design.  Caller must hold the d.mlMu write lock.
+func (d *Data) trackNewLabelLocked(v dvid.VersionID, label uint64) error {
+	if inherited, ok := d.effectiveMaxLabelLocked(v); ok && inherited > label {
+		label = inherited
+	}
+	if curMax, found := d.MaxLabel[v]; found && curMax >= label {
+		return nil
+	}
+	d.MaxLabel[v] = label
+	return d.persistMaxLabel(v)
+}
+
 // newLabel returns a new label for the given version.
 func (d *Data) newLabel(v dvid.VersionID) (uint64, error) {
 	d.mlMu.Lock()
@@ -2368,6 +2446,9 @@ func (d *Data) newLabel(v dvid.VersionID) (uint64, error) {
 	if d.NextLabel != 0 {
 		d.NextLabel++
 		if err := d.persistNextLabel(); err != nil {
+			return d.NextLabel, err
+		}
+		if err := d.trackNewLabelLocked(v, d.NextLabel); err != nil {
 			return d.NextLabel, err
 		}
 		return d.NextLabel, nil
@@ -2385,8 +2466,8 @@ func (d *Data) newLabel(v dvid.VersionID) (uint64, error) {
 
 // newLabels returns a span of new labels for the given version
 func (d *Data) newLabels(v dvid.VersionID, numLabels uint64) (begin, end uint64, err error) {
-	if numLabels <= 0 {
-		err = fmt.Errorf("cannot request %d new labels, must be 1 or more", numLabels)
+	if numLabels == 0 {
+		return 0, 0, fmt.Errorf("cannot request %d new labels, must be 1 or more", numLabels)
 	}
 	d.mlMu.Lock()
 	defer d.mlMu.Unlock()
@@ -2399,6 +2480,7 @@ func (d *Data) newLabels(v dvid.VersionID, numLabels uint64) (begin, end uint64,
 		if err = d.persistNextLabel(); err != nil {
 			return
 		}
+		err = d.trackNewLabelLocked(v, end)
 		return
 	}
 	begin = d.MaxRepoLabel + 1
@@ -2484,12 +2566,11 @@ func (d *Data) loadLabelIDs(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 			dvid.Errorf("Can't decode key when loading mutable data for %s", d.DataName())
 			continue
 		}
-		var label uint64 = veryLargeLabel
 		if len(kv.V) != 8 {
-			dvid.Errorf("Got bad value.  Expected 64-bit label, got %v", kv.V)
-		} else {
-			label = binary.LittleEndian.Uint64(kv.V)
+			dvid.Criticalf("Corrupt max label for data %q version %d: expected 64-bit label, got %v -- skipping entry, run repair-maxlabel\n", d.DataName(), v, kv.V)
+			continue
 		}
+		label := binary.LittleEndian.Uint64(kv.V)
 		d.MaxLabel[v] = label
 		if label > repoMax {
 			repoMax = label
@@ -2508,15 +2589,20 @@ func (d *Data) loadLabelIDs(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 		return
 	}
 	if data == nil || len(data) != 8 {
-		dvid.Errorf("Could not load repo-wide max label for instance %q.  Only got %d bytes, not 64-bit label.\n", d.DataName(), len(data))
-		if repoMax == 0 {
+		// Allocation safety: with the repo-wide max missing or corrupt, a
+		// recomputed value could be too low and cause label ID collisions, so
+		// keep a conservative floor.  Too-high is wasteful but safe.
+		dvid.Criticalf("Could not load repo-wide max label for instance %q (got %d bytes, not 64-bit label) -- using conservative floor, run repair-maxlabel\n", d.DataName(), len(data))
+		if repoMax < veryLargeLabel {
 			repoMax = veryLargeLabel
 		}
-		dvid.Errorf("Using max label across versions: %d\n", repoMax)
+		dvid.Criticalf("Using conservative max label for instance %q: %d\n", d.DataName(), repoMax)
 		d.MaxRepoLabel = repoMax
 	} else {
 		d.MaxRepoLabel = binary.LittleEndian.Uint64(data)
 		if d.MaxRepoLabel < repoMax {
+			// Never lower the repo-wide max at load; raising it to the largest
+			// version max keeps allocation safe.
 			dvid.Errorf("Saved repo-wide max for instance %q was %d, changed to largest version max %d\n", d.DataName(), d.MaxRepoLabel, repoMax)
 			d.MaxRepoLabel = repoMax
 		}

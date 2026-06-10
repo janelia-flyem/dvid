@@ -25,6 +25,7 @@ import (
 	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
+	"github.com/janelia-flyem/dvid/storage"
 	lz4 "github.com/janelia-flyem/go/golz4-updated"
 )
 
@@ -3052,5 +3053,320 @@ func TestNextLabels(t *testing.T) {
 	}
 	if lbls.NextLabel != 42 {
 		t.Fatalf("Expected next label to be 42, got %d\n", lbls.NextLabel)
+	}
+}
+
+// TestMaxLabelConcurrentUpdates checks that concurrent max-label updates can
+// never leave the per-version max below the largest concurrently written
+// label (TOCTOU between the read-locked check and the write-locked update).
+// Run with -race.
+func TestMaxLabelConcurrentUpdates(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, versionID := initTestRepo()
+	lbls := newDataInstance(uuid, t, "concurrentmax")
+
+	const rounds = 200
+	const smallLabel = 10
+	const largeLabel = 1000000
+	smallBlock := labels.MakeSolidBlock(smallLabel, dvid.Point3d{64, 64, 64})
+	largeBlock := labels.MakeSolidBlock(largeLabel, dvid.Point3d{64, 64, 64})
+
+	resetMax := func() {
+		lbls.mlMu.Lock()
+		delete(lbls.MaxLabel, versionID)
+		lbls.mlMu.Unlock()
+	}
+	checkMax := func(round int, updater string) {
+		lbls.mlMu.RLock()
+		got := lbls.MaxLabel[versionID]
+		lbls.mlMu.RUnlock()
+		if got != largeLabel {
+			t.Fatalf("round %d: %s regressed per-version max to %d, expected %d\n", round, updater, got, largeLabel)
+		}
+	}
+	race := func(small, large func()) {
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			small()
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			large()
+		}()
+		close(start)
+		wg.Wait()
+	}
+
+	for i := 0; i < rounds; i++ {
+		resetMax()
+		race(func() {
+			if _, err := lbls.updateMaxLabel(versionID, smallLabel); err != nil {
+				t.Errorf("updateMaxLabel: %v\n", err)
+			}
+		}, func() {
+			if _, err := lbls.updateMaxLabel(versionID, largeLabel); err != nil {
+				t.Errorf("updateMaxLabel: %v\n", err)
+			}
+		})
+		checkMax(i, "updateMaxLabel")
+
+		resetMax()
+		race(func() {
+			lbls.updateBlockMaxLabel(versionID, smallBlock)
+		}, func() {
+			lbls.updateBlockMaxLabel(versionID, largeBlock)
+		})
+		checkMax(i, "updateBlockMaxLabel")
+	}
+}
+
+// TestMaxLabelInheritance checks GET /maxlabel DAG semantics: child and merge
+// versions never report below their ancestors' effective max, even when a
+// version carries an explicit local entry below an ancestor's max (as legacy
+// stores can), and NextLabel-path allocations seed the per-version max from
+// the inherited effective max.
+func TestMaxLabelInheritance(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+	server.SetAdminToken("testadmin")
+	defer server.SetAdminToken("")
+
+	uuid, _ := initTestRepo()
+	lbls := newDataInstance(uuid, t, "inherit")
+
+	postMax := func(u dvid.UUID, label uint64) {
+		apiStr := fmt.Sprintf("%snode/%s/inherit/maxlabel/%d?admintoken=testadmin", server.WebAPIPath, u, label)
+		server.TestHTTP(t, "POST", apiStr, nil)
+	}
+	getMax := func(u dvid.UUID) uint64 {
+		apiStr := fmt.Sprintf("%snode/%s/inherit/maxlabel", server.WebAPIPath, u)
+		respData := server.TestHTTP(t, "GET", apiStr, nil)
+		resp := struct {
+			MaxLabel uint64 `json:"maxlabel"`
+		}{}
+		if err := json.Unmarshal(respData, &resp); err != nil {
+			t.Fatalf("expected 'maxlabel' JSON response, got %s\n", string(respData))
+		}
+		return resp.MaxLabel
+	}
+	commit := func(u dvid.UUID) {
+		apiStr := fmt.Sprintf("%snode/%s/commit", server.WebAPIPath, u)
+		server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(`{"note": "commit"}`))
+	}
+	childUUID := func(respData []byte) dvid.UUID {
+		resp := struct {
+			Child dvid.UUID `json:"child"`
+		}{}
+		if err := json.Unmarshal(respData, &resp); err != nil {
+			t.Fatalf("expected 'child' JSON response, got %s\n", string(respData))
+		}
+		return resp.Child
+	}
+	setLowLocalEntry := func(u dvid.UUID, label uint64) {
+		v, err := datastore.VersionFromUUID(u)
+		if err != nil {
+			t.Fatalf("can't get version id for %s: %v\n", u, err)
+		}
+		lbls.mlMu.Lock()
+		lbls.MaxLabel[v] = label
+		lbls.mlMu.Unlock()
+	}
+
+	postMax(uuid, 1000)
+	if got := getMax(uuid); got != 1000 {
+		t.Errorf("root maxlabel: got %d, want 1000\n", got)
+	}
+	commit(uuid)
+
+	// Child with no local entry inherits the parent max.
+	versionReq := fmt.Sprintf("%snode/%s/newversion", server.WebAPIPath, uuid)
+	child1 := childUUID(server.TestHTTP(t, "POST", versionReq, nil))
+	if got := getMax(child1); got != 1000 {
+		t.Errorf("child with no local entry: got %d, want inherited 1000\n", got)
+	}
+
+	// An explicit too-low local entry must not mask the ancestor max.
+	setLowLocalEntry(child1, 100)
+	if got := getMax(child1); got != 1000 {
+		t.Errorf("child with explicit local max 100: got %d, want 1000\n", got)
+	}
+
+	// Sibling branch with a higher max.
+	branchReq := fmt.Sprintf("%snode/%s/branch", server.WebAPIPath, uuid)
+	child2 := childUUID(server.TestHTTP(t, "POST", branchReq, bytes.NewBufferString(`{"branch": "side"}`)))
+	postMax(child2, 2000)
+	commit(child1)
+	commit(child2)
+
+	// A merge node must return the max across all parents, not the first found.
+	mergeJSON := fmt.Sprintf(`{"mergeType": "conflict-free", "note": "merge", "parents": [%q, %q]}`, child1, child2)
+	mergeReq := fmt.Sprintf("%srepo/%s/merge", server.WebAPIPath, child1)
+	merged := childUUID(server.TestHTTP(t, "POST", mergeReq, bytes.NewBufferString(mergeJSON)))
+	if got := getMax(merged); got != 2000 {
+		t.Errorf("merge node: got %d, want 2000 (max over both parents)\n", got)
+	}
+	setLowLocalEntry(merged, 50)
+	if got := getMax(merged); got != 2000 {
+		t.Errorf("merge node with explicit local max 50: got %d, want 2000\n", got)
+	}
+
+	// NextLabel-path allocation must track the per-version max, seeded from
+	// the inherited effective max.
+	setNextReq := fmt.Sprintf("%snode/%s/inherit/set-nextlabel/500?admintoken=testadmin", server.WebAPIPath, merged)
+	server.TestHTTP(t, "POST", setNextReq, nil)
+	allocReq := fmt.Sprintf("%snode/%s/inherit/nextlabel/5", server.WebAPIPath, merged)
+	respData := server.TestHTTP(t, "POST", allocReq, nil)
+	allocResp := struct {
+		Start uint64 `json:"start"`
+		End   uint64 `json:"end"`
+	}{}
+	if err := json.Unmarshal(respData, &allocResp); err != nil {
+		t.Fatalf("expected 'start'/'end' JSON response, got %s\n", string(respData))
+	}
+	if allocResp.Start != 501 || allocResp.End != 505 {
+		t.Errorf("nextlabel allocation: got [%d, %d], want [501, 505]\n", allocResp.Start, allocResp.End)
+	}
+	if got := getMax(merged); got != 2000 {
+		t.Errorf("merge node after nextlabel allocation: got %d, want 2000\n", got)
+	}
+	mergedV, err := datastore.VersionFromUUID(merged)
+	if err != nil {
+		t.Fatalf("can't get version id for %s: %v\n", merged, err)
+	}
+	lbls.mlMu.RLock()
+	entry, found := lbls.MaxLabel[mergedV]
+	lbls.mlMu.RUnlock()
+	if !found || entry != 2000 {
+		t.Errorf("nextlabel allocation should seed local entry to 2000, got %d (found %t)\n", entry, found)
+	}
+
+	// Zero-count allocation must error.
+	server.TestBadHTTP(t, "POST", fmt.Sprintf("%snode/%s/inherit/nextlabel/0", server.WebAPIPath, merged), nil)
+}
+
+// TestMaxLabelsLoad checks load-time counter handling: corrupt per-version
+// entries are skipped rather than given a huge sentinel, the repo-wide max
+// never decreases at load, and the load path performs no store writes.
+func TestMaxLabelsLoad(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, rootV := initTestRepo()
+	lbls := newDataInstance(uuid, t, "loadmax")
+
+	if _, err := lbls.updateMaxLabel(rootV, 1000); err != nil {
+		t.Fatalf("updateMaxLabel: %v\n", err)
+	}
+	apiStr := fmt.Sprintf("%snode/%s/commit", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(`{"note": "commit"}`))
+	versionReq := fmt.Sprintf("%snode/%s/newversion", server.WebAPIPath, uuid)
+	respData := server.TestHTTP(t, "POST", versionReq, nil)
+	resp := struct {
+		Child dvid.UUID `json:"child"`
+	}{}
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		t.Fatalf("expected 'child' JSON response, got %s\n", string(respData))
+	}
+	child := resp.Child
+	childV, err := datastore.VersionFromUUID(child)
+	if err != nil {
+		t.Fatalf("can't get version id for %s: %v\n", child, err)
+	}
+
+	store, err := datastore.GetOrderedKeyValueDB(lbls)
+	if err != nil {
+		t.Fatalf("can't get store: %v\n", err)
+	}
+
+	// Simulate a corrupt per-version max entry for the child and an inflated
+	// repo-wide max, as observed on legacy stores.
+	corrupt := []byte{1, 2, 3}
+	childCtx := datastore.NewVersionedCtx(lbls, childV)
+	if err := store.Put(childCtx, maxLabelTKey, corrupt); err != nil {
+		t.Fatalf("can't put corrupt max label: %v\n", err)
+	}
+	const inflated = uint64(53373772488)
+	inflatedBuf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(inflatedBuf, inflated)
+	dataCtx := storage.NewDataContext(lbls, 0)
+	if err := store.Put(dataCtx, maxRepoLabelTKey, inflatedBuf); err != nil {
+		t.Fatalf("can't put inflated repo max label: %v\n", err)
+	}
+
+	// Reload counters as at server startup.
+	saveRequired, err := lbls.LoadMutable(rootV, 0, 0)
+	if err != nil {
+		t.Fatalf("LoadMutable: %v\n", err)
+	}
+	if saveRequired {
+		t.Errorf("LoadMutable should not require a save\n")
+	}
+
+	lbls.mlMu.RLock()
+	_, found := lbls.MaxLabel[childV]
+	rootMax := lbls.MaxLabel[rootV]
+	repoMax := lbls.MaxRepoLabel
+	lbls.mlMu.RUnlock()
+	if found {
+		t.Errorf("corrupt per-version max entry should be skipped at load\n")
+	}
+	if rootMax != 1000 {
+		t.Errorf("root max after load: got %d, want 1000\n", rootMax)
+	}
+	if repoMax != inflated {
+		t.Errorf("repo-wide max lowered at load: got %d, want %d\n", repoMax, inflated)
+	}
+
+	// The corrupt entry must not surface in GET /maxlabel; the child inherits
+	// the parent max instead of the old 10B sentinel.
+	apiStr = fmt.Sprintf("%snode/%s/loadmax/maxlabel", server.WebAPIPath, child)
+	respData = server.TestHTTP(t, "GET", apiStr, nil)
+	maxResp := struct {
+		MaxLabel uint64 `json:"maxlabel"`
+	}{}
+	if err := json.Unmarshal(respData, &maxResp); err != nil {
+		t.Fatalf("expected 'maxlabel' JSON response, got %s\n", string(respData))
+	}
+	if maxResp.MaxLabel != 1000 {
+		t.Errorf("child maxlabel after load with corrupt entry: got %d, want inherited 1000\n", maxResp.MaxLabel)
+	}
+
+	// The load path must be strictly read-only.
+	if v, err := store.Get(childCtx, maxLabelTKey); err != nil || !bytes.Equal(v, corrupt) {
+		t.Errorf("load path rewrote corrupt per-version max: got %v (err %v)\n", v, err)
+	}
+	if v, err := store.Get(dataCtx, maxRepoLabelTKey); err != nil || !bytes.Equal(v, inflatedBuf) {
+		t.Errorf("load path rewrote repo-wide max: got %v (err %v)\n", v, err)
+	}
+
+	// With the repo-wide key corrupt as well, load keeps a conservative floor
+	// rather than recomputing a possibly too-low value, and stays read-only.
+	if err := store.Put(dataCtx, maxRepoLabelTKey, corrupt); err != nil {
+		t.Fatalf("can't put corrupt repo max label: %v\n", err)
+	}
+	if _, err := lbls.LoadMutable(rootV, 0, 0); err != nil {
+		t.Fatalf("LoadMutable: %v\n", err)
+	}
+	lbls.mlMu.RLock()
+	repoMax = lbls.MaxRepoLabel
+	lbls.mlMu.RUnlock()
+	if repoMax != veryLargeLabel {
+		t.Errorf("repo-wide max with corrupt key: got %d, want conservative floor %d\n", repoMax, uint64(veryLargeLabel))
+	}
+	if v, err := store.Get(dataCtx, maxRepoLabelTKey); err != nil || !bytes.Equal(v, corrupt) {
+		t.Errorf("load path rewrote corrupt repo-wide max: got %v (err %v)\n", v, err)
 	}
 }

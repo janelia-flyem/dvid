@@ -1584,7 +1584,7 @@ func (d *Data) handleMaxlabel(ctx *datastore.VersionedCtx, w http.ResponseWriter
 	switch strings.ToLower(r.Method) {
 	case "get":
 		w.Header().Set("Content-Type", "application/json")
-		maxlabel, ok := d.MaxLabel[ctx.VersionID()]
+		maxlabel, ok := d.EffectiveMaxLabel(ctx.VersionID())
 		if !ok {
 			server.BadRequest(w, r, "No maximum label found for %s version %d\n", d.DataName(), ctx.VersionID())
 			return
