@@ -2552,6 +2552,11 @@ func (d *Data) LoadMutable(root dvid.VersionID, storedVersion, expectedVersion u
 
 const veryLargeLabel = 10000000000 // 10 billion
 
+// maxPostedMaxLabel caps admin POST /maxlabel values.  It is a garbage guard
+// against far-out values (corrupted parses, 2^63-class numbers), not a
+// defense against plausible-but-wrong IDs, which the admin gate handles.
+const maxPostedMaxLabel = uint64(1) << 48
+
 func (d *Data) loadLabelIDs(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 	ctx := storage.NewDataContext(d, 0)
 	var repoMax uint64

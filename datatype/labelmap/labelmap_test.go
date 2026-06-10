@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -3047,12 +3048,92 @@ func TestNextLabels(t *testing.T) {
 		t.Errorf("Expected next label to be %d, got %d\n", expectedLabel, n)
 	}
 
-	resp := server.TestHTTPResponse(t, "POST", fmt.Sprintf("%snode/%s/mylabels/set-nextlabel/42", server.WebAPIPath, uuid), nil)
+	server.SetAdminToken("testadmin")
+	defer server.SetAdminToken("")
+	resp := server.TestHTTPResponse(t, "POST", fmt.Sprintf("%snode/%s/mylabels/set-nextlabel/42?admintoken=testadmin", server.WebAPIPath, uuid), nil)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("bad status code on set-nextlabel: %d\n", resp.Code)
 	}
 	if lbls.NextLabel != 42 {
 		t.Fatalf("Expected next label to be 42, got %d\n", lbls.NextLabel)
+	}
+}
+
+type dsgAuthMock struct {
+	adminBearer string // Authorization header value that maps to a DSG admin
+}
+
+func (m dsgAuthMock) RoundTrip(r *http.Request) (*http.Response, error) {
+	admin := r.Header.Get("Authorization") == m.adminBearer
+	body := fmt.Sprintf(`{"email": "user@example.org", "admin": %t}`, admin)
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}, nil
+}
+
+// TestCounterOverrideAdminGates checks that POST /maxlabel and
+// POST /set-nextlabel are admin-gated: rejected without credentials,
+// accepted with either admintoken or a DSG admin user, and that
+// POST /maxlabel rejects garbage values even for admins, while
+// POST /nextlabel/<count> stays open to regular writers.
+func TestCounterOverrideAdminGates(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+	server.SetAdminToken("gatekeeper")
+	defer server.SetAdminToken("")
+
+	uuid, _ := initTestRepo()
+	newDataInstance(uuid, t, "gated")
+
+	// No credentials: rejected.
+	server.TestBadHTTP(t, "POST", fmt.Sprintf("%snode/%s/gated/maxlabel/1000", server.WebAPIPath, uuid), nil)
+	server.TestBadHTTP(t, "POST", fmt.Sprintf("%snode/%s/gated/set-nextlabel/100", server.WebAPIPath, uuid), nil)
+
+	// Wrong admintoken: rejected.
+	server.TestBadHTTP(t, "POST", fmt.Sprintf("%snode/%s/gated/maxlabel/1000?admintoken=wrong", server.WebAPIPath, uuid), nil)
+
+	// Regular writers can still batch-allocate via POST /nextlabel.
+	server.TestHTTP(t, "POST", fmt.Sprintf("%snode/%s/gated/nextlabel/3", server.WebAPIPath, uuid), nil)
+
+	// admintoken: accepted.
+	server.TestHTTP(t, "POST", fmt.Sprintf("%snode/%s/gated/maxlabel/1000?admintoken=gatekeeper", server.WebAPIPath, uuid), nil)
+	server.TestHTTP(t, "POST", fmt.Sprintf("%snode/%s/gated/set-nextlabel/100?admintoken=gatekeeper", server.WebAPIPath, uuid), nil)
+
+	// The garbage cap and label 0 are rejected even with admin privilege.
+	server.TestBadHTTP(t, "POST", fmt.Sprintf("%snode/%s/gated/maxlabel/%d?admintoken=gatekeeper", server.WebAPIPath, uuid, uint64(1)<<50), nil)
+	server.TestBadHTTP(t, "POST", fmt.Sprintf("%snode/%s/gated/maxlabel/0?admintoken=gatekeeper", server.WebAPIPath, uuid), nil)
+
+	// DSG admin: accepted; DSG non-admin: rejected.  Clear the admintoken so
+	// only the DSG path can grant admin privilege.
+	server.SetAdminToken("")
+	restore := server.SetTestDSGAuth(dsgAuthMock{adminBearer: "Bearer dsg-admin-token"})
+	defer restore()
+
+	dsgPost := func(urlStr, bearer string) *httptest.ResponseRecorder {
+		req, err := http.NewRequest("POST", urlStr, nil)
+		if err != nil {
+			t.Fatalf("can't create request for %q: %v\n", urlStr, err)
+		}
+		req.Header.Set("Authorization", bearer)
+		w := httptest.NewRecorder()
+		server.ServeSingleHTTP(w, req)
+		return w
+	}
+	if w := dsgPost(fmt.Sprintf("%snode/%s/gated/maxlabel/2000", server.WebAPIPath, uuid), "Bearer dsg-admin-token"); w.Code != http.StatusOK {
+		t.Errorf("POST /maxlabel by DSG admin failed (%d): %s\n", w.Code, w.Body.String())
+	}
+	if w := dsgPost(fmt.Sprintf("%snode/%s/gated/set-nextlabel/200", server.WebAPIPath, uuid), "Bearer dsg-admin-token"); w.Code != http.StatusOK {
+		t.Errorf("POST /set-nextlabel by DSG admin failed (%d): %s\n", w.Code, w.Body.String())
+	}
+	if w := dsgPost(fmt.Sprintf("%snode/%s/gated/maxlabel/3000", server.WebAPIPath, uuid), "Bearer dsg-user-token"); w.Code == http.StatusOK {
+		t.Errorf("POST /maxlabel by non-admin DSG user should be rejected\n")
+	}
+	if w := dsgPost(fmt.Sprintf("%snode/%s/gated/set-nextlabel/300", server.WebAPIPath, uuid), "Bearer dsg-user-token"); w.Code == http.StatusOK {
+		t.Errorf("POST /set-nextlabel by non-admin DSG user should be rejected\n")
 	}
 }
 

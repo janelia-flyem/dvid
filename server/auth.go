@@ -522,6 +522,55 @@ func isInternalRequest(r *http.Request) bool {
 	return false
 }
 
+// adminPrivileged is the single admin predicate for all server gates: a
+// request has admin privileges iff it carries a valid admintoken or comes
+// from an authenticated DSG admin user.  It derives everything from the
+// request itself so it can be evaluated by middleware that runs before
+// authentication (adminPrivHandler precedes repoRawSelector and isAuthorized)
+// and by datatype handlers that never see the middleware env.  It is
+// deliberately not requestAccessScope().full, which is also true for every
+// request when enforce=none.
+func adminPrivileged(r *http.Request) bool {
+	return adminTokenPrivileged(r) || dsgAdminPrivileged(r)
+}
+
+// adminTokenPrivileged returns true if the request carries the configured
+// admintoken.  Every grant is audit-logged with client info since the token
+// carries no identity.
+func adminTokenPrivileged(r *http.Request) bool {
+	if len(adminToken) == 0 || r.URL.Query().Get("admintoken") != adminToken {
+		return false
+	}
+	dvid.Infof("admin privilege granted via admintoken to %s for %s %s\n", r.RemoteAddr, r.Method, r.URL.Path)
+	return true
+}
+
+// dsgAdminPrivileged returns true if the request carries a token that
+// validates to a DSG admin user.  Only consulted when a DSG auth mode is
+// configured so legacy-JWT bearer tokens never trigger DSG service lookups.
+func dsgAdminPrivileged(r *http.Request) bool {
+	if authMode() != "dsg" && strings.ToLower(tc.Auth.EnforceInternal) != "dsg" {
+		return false
+	}
+	token := extractDSGToken(r)
+	if token == "" {
+		return false
+	}
+	user, err := getDSGUser(token)
+	if err != nil {
+		return false
+	}
+	return user.Admin
+}
+
+// AdminPrivileged returns true if the request has admin privileges: a valid
+// admintoken or an authenticated DSG admin user.  Datatype handlers should
+// use this to gate admin-only endpoints since they don't have access to the
+// server middleware environment.
+func AdminPrivileged(r *http.Request) bool {
+	return adminPrivileged(r)
+}
+
 type accessScope struct {
 	internal  bool
 	adminPriv bool

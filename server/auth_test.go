@@ -143,6 +143,96 @@ func (fn roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return fn(r)
 }
 
+// dsgUserRoundTrip returns a DSG auth service mock that reports a user as
+// admin iff the request bears the given Authorization header value.
+func dsgUserRoundTrip(t *testing.T, adminBearer string) roundTripFunc {
+	return func(r *http.Request) (*http.Response, error) {
+		body, err := json.Marshal(&dsgUserCache{
+			Email: "user@example.org",
+			Admin: r.Header.Get("Authorization") == adminBearer,
+		})
+		if err != nil {
+			t.Fatalf("could not encode DSG response: %v", err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(bytes.NewReader(body)),
+		}, nil
+	}
+}
+
+func TestAdminPrivileged(t *testing.T) {
+	origAuth := tc.Auth
+	origClient := dsgHTTPClient
+	origToken := adminToken
+	defer func() {
+		tc.Auth = origAuth
+		dsgHTTPClient = origClient
+		adminToken = origToken
+		clearDSGUserCache()
+	}()
+	clearDSGUserCache()
+
+	// With no admintoken configured and no DSG mode, nothing grants admin,
+	// even though enforce=none makes requestAccessScope().full true for
+	// every request.
+	adminToken = ""
+	tc.Auth = authConfig{}
+	req := httptest.NewRequest(http.MethodPost, "/api/repos", nil)
+	if adminPrivileged(req) {
+		t.Fatalf("expected no admin privilege without credentials")
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/repos?admintoken=", nil)
+	if adminPrivileged(req) {
+		t.Fatalf("expected empty admintoken to never grant admin")
+	}
+
+	// A valid admintoken grants admin; a wrong one does not.
+	adminToken = "secret"
+	req = httptest.NewRequest(http.MethodPost, "/api/repos?admintoken=secret", nil)
+	if !adminPrivileged(req) {
+		t.Fatalf("expected valid admintoken to grant admin")
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/repos?admintoken=wrong", nil)
+	if adminPrivileged(req) {
+		t.Fatalf("expected wrong admintoken to be rejected")
+	}
+
+	// A DSG admin grants admin in dsg mode; a non-admin DSG user does not.
+	adminToken = ""
+	tc.Auth.Enforce = "dsg"
+	tc.Auth.DSGAddress = "https://auth.example.org"
+	tc.Auth.DSGCacheTTL = 300
+	dsgHTTPClient = &http.Client{Transport: dsgUserRoundTrip(t, "Bearer admin-token")}
+	req = httptest.NewRequest(http.MethodPost, "/api/repos", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	if !adminPrivileged(req) {
+		t.Fatalf("expected DSG admin to be granted admin privilege")
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/repos", nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	if adminPrivileged(req) {
+		t.Fatalf("expected non-admin DSG user to be denied admin privilege")
+	}
+
+	// Outside DSG modes, bearer tokens never trigger DSG lookups.
+	clearDSGUserCache()
+	tc.Auth.Enforce = "token"
+	tc.Auth.EnforceInternal = ""
+	dsgHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			t.Fatalf("DSG service should not be contacted outside dsg modes")
+			return nil, nil
+		}),
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/repos", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	if adminPrivileged(req) {
+		t.Fatalf("expected no DSG admin grant outside dsg modes")
+	}
+}
+
 func TestEffectiveEnforceInternal(t *testing.T) {
 	origAuth := tc.Auth
 	origTrustedProxyNets := trustedProxyNets

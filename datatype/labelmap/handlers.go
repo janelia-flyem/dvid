@@ -1592,6 +1592,10 @@ func (d *Data) handleMaxlabel(ctx *datastore.VersionedCtx, w http.ResponseWriter
 		fmt.Fprintf(w, "{%q: %d}", "maxlabel", maxlabel)
 
 	case "post":
+		if !server.AdminPrivileged(r) {
+			server.BadRequest(w, r, "POST /maxlabel requires admin privileges (admintoken or DSG admin)")
+			return
+		}
 		if len(parts) < 5 {
 			server.BadRequest(w, r, "DVID requires max label ID to follow POST /maxlabel")
 			return
@@ -1601,6 +1605,14 @@ func (d *Data) handleMaxlabel(ctx *datastore.VersionedCtx, w http.ResponseWriter
 			server.BadRequest(w, r, err)
 			return
 		}
+		if maxlabel == 0 {
+			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as max label.\n")
+			return
+		}
+		if maxlabel > maxPostedMaxLabel {
+			server.BadRequest(w, r, "Posted max label %d exceeds allowed cap %d", maxlabel, maxPostedMaxLabel)
+			return
+		}
 		changed, err := d.updateMaxLabel(ctx.VersionID(), maxlabel)
 		if err != nil {
 			server.BadRequest(w, r, err)
@@ -1608,6 +1620,8 @@ func (d *Data) handleMaxlabel(ctx *datastore.VersionedCtx, w http.ResponseWriter
 		}
 		if changed {
 			versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
+			dvid.Infof("admin POST /maxlabel raised max label of data %q version %s to %d (client %s, user %q)\n",
+				d.DataName(), versionuuid, maxlabel, r.RemoteAddr, ctx.User)
 			msginfo := map[string]interface{}{
 				"Action":    "post-maxlabel",
 				"MaxLabel":  maxlabel,
@@ -1680,6 +1694,10 @@ func (d *Data) handleSetNextlabel(ctx *datastore.VersionedCtx, w http.ResponseWr
 	timedLog := dvid.NewTimeLog()
 	switch strings.ToLower(r.Method) {
 	case "post":
+		if !server.AdminPrivileged(r) {
+			server.BadRequest(w, r, "POST /set-nextlabel requires admin privileges (admintoken or DSG admin)")
+			return
+		}
 		if len(parts) < 5 {
 			server.BadRequest(w, r, "DVID requires a label ID to follow POST /set-nextlabel")
 			return

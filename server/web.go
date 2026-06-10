@@ -1118,15 +1118,12 @@ func corsValidator(origin string) bool {
 
 // ---- Middleware -------------
 
-// checks if environment variable
+// adminPrivHandler computes the unified admin predicate -- valid admintoken
+// or authenticated DSG admin -- once per request and stores it in
+// c.Env["adminPriv"] for downstream middleware and handlers.
 func adminPrivHandler(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
-		var adminPriv bool
-		if len(adminToken) != 0 {
-			queryAdminToken := r.URL.Query().Get("admintoken")
-			adminPriv = (queryAdminToken == adminToken)
-		}
-		c.Env["adminPriv"] = adminPriv
+		c.Env["adminPriv"] = adminPrivileged(r)
 		h.ServeHTTP(w, r)
 	}
 	return http.HandlerFunc(fn)
@@ -1548,7 +1545,7 @@ func serverNoteHandler(w http.ResponseWriter, r *http.Request) {
 func requireAdminPriv(c web.C, w http.ResponseWriter, r *http.Request, action string) bool {
 	adminPriv, ok := c.Env["adminPriv"].(bool)
 	if !ok || !adminPriv {
-		BadRequest(w, r, "%s requires admin privileges (admintoken)", action)
+		BadRequest(w, r, "%s requires admin privileges (admintoken or DSG admin)", action)
 		return false
 	}
 	return true
@@ -1735,7 +1732,7 @@ func reposInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 func reposPostHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	adminPriv := c.Env["adminPriv"].(bool)
 	if !adminPriv || readonly {
-		BadRequest(w, r, "Creating a repo requires admin privileges (admintoken) on a server that is not read-only")
+		BadRequest(w, r, "Creating a repo requires admin privileges (admintoken or DSG admin) on a server that is not read-only")
 		return
 	}
 	config := dvid.NewConfig()

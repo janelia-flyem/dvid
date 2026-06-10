@@ -86,6 +86,24 @@ func TestBadHTTP(t *testing.T, method, urlStr string, payload io.Reader) {
 	}
 }
 
+// SetTestDSGAuth configures DSG auth mode for tests with the given transport
+// standing in for the DSG auth service, and returns a restore function.  It
+// lets tests in external packages exercise DSG-admin-gated endpoints.
+func SetTestDSGAuth(rt http.RoundTripper) (restore func()) {
+	origAuth := tc.Auth
+	origClient := dsgHTTPClient
+	tc.Auth.Enforce = "dsg"
+	tc.Auth.DSGAddress = "https://dsg-auth.test"
+	tc.Auth.DSGCacheTTL = 300
+	dsgHTTPClient = &http.Client{Transport: rt}
+	clearDSGUserCache()
+	return func() {
+		tc.Auth = origAuth
+		dsgHTTPClient = origClient
+		clearDSGUserCache()
+	}
+}
+
 // CreateTestInstance posts a new data instance for testing.
 func CreateTestInstance(t *testing.T, uuid dvid.UUID, typename, name string, config dvid.Config) {
 	config.Set("typename", typename)

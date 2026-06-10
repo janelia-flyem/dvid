@@ -597,7 +597,9 @@ func TestSparseVolumes(t *testing.T) {
 		t.Errorf("bad response to maxlabel endpoint: %s\n", string(maxLabelResp))
 	}
 
-	server.TestHTTP(t, "POST", fmt.Sprintf("%snode/%s/labels/maxlabel/8", server.WebAPIPath, uuid), nil)
+	server.SetAdminToken("testadmin")
+	defer server.SetAdminToken("")
+	server.TestHTTP(t, "POST", fmt.Sprintf("%snode/%s/labels/maxlabel/8?admintoken=testadmin", server.WebAPIPath, uuid), nil)
 	maxLabelResp = server.TestHTTP(t, "GET", fmt.Sprintf("%snode/%s/labels/maxlabel", server.WebAPIPath, uuid), nil)
 	if string(maxLabelResp) != `{"maxlabel": 8}` {
 		t.Errorf("bad response to maxlabel endpoint: %s\n", string(maxLabelResp))

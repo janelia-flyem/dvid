@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"strconv"
 	"sync"
@@ -132,6 +134,92 @@ func TestHTTPCreate(t *testing.T) {
 	}
 	if uuidStr != "28841c8277e044a7b187dda03e18da13" {
 		t.Fatalf("Got bad root: %s\n", uuidStr)
+	}
+}
+
+// TestAdminGatesAcceptDSGAdmin checks that the pre-existing admin gates
+// accept an authenticated DSG admin in addition to admintoken, and still
+// reject requests with no admin credential or a non-admin DSG user.
+func TestAdminGatesAcceptDSGAdmin(t *testing.T) {
+	origToken := adminToken
+	defer func() {
+		SetAdminToken(origToken)
+		clearDSGUserCache()
+	}()
+	SetAdminToken("")
+
+	if err := OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer CloseTest()
+
+	// OpenTest resets the toml config, so DSG auth is configured afterward.
+	origAuth := tc.Auth
+	origClient := dsgHTTPClient
+	defer func() {
+		tc.Auth = origAuth
+		dsgHTTPClient = origClient
+	}()
+	tc.Auth.Enforce = "dsg"
+	tc.Auth.DSGAddress = "https://auth.example.org"
+	tc.Auth.DSGCacheTTL = 300
+	dsgHTTPClient = &http.Client{Transport: dsgUserRoundTrip(t, "Bearer admin-token")}
+	clearDSGUserCache()
+
+	dsgRequest := func(method, urlStr, bearer string, payload *bytes.Buffer) *httptest.ResponseRecorder {
+		var req *http.Request
+		var err error
+		if payload != nil {
+			req, err = http.NewRequest(method, urlStr, payload)
+		} else {
+			req, err = http.NewRequest(method, urlStr, nil)
+		}
+		if err != nil {
+			t.Fatalf("can't create request for %q: %v\n", urlStr, err)
+		}
+		if bearer != "" {
+			req.Header.Set("Authorization", bearer)
+		}
+		w := httptest.NewRecorder()
+		ServeSingleHTTP(w, req)
+		return w
+	}
+
+	// Repo creation: no credential and non-admin DSG user rejected, DSG
+	// admin accepted.
+	reposURL := fmt.Sprintf("%srepos", WebAPIPath)
+	if w := dsgRequest("POST", reposURL, "", nil); w.Code == http.StatusOK {
+		t.Errorf("repo creation without credentials should be rejected")
+	}
+	if w := dsgRequest("POST", reposURL, "Bearer user-token", nil); w.Code == http.StatusOK {
+		t.Errorf("repo creation by non-admin DSG user should be rejected")
+	}
+	if w := dsgRequest("POST", reposURL, "Bearer admin-token", nil); w.Code != http.StatusOK {
+		t.Errorf("repo creation by DSG admin failed (%d): %s\n", w.Code, w.Body.String())
+	}
+
+	// requireAdminPriv-based gates: /api/server/config and /api/server/settings.
+	configURL := fmt.Sprintf("%sserver/config", WebAPIPath)
+	if w := dsgRequest("GET", configURL, "", nil); w.Code == http.StatusOK {
+		t.Errorf("GET /api/server/config without credentials should be rejected")
+	}
+	if w := dsgRequest("GET", configURL, "Bearer admin-token", nil); w.Code != http.StatusOK {
+		t.Errorf("GET /api/server/config by DSG admin failed (%d): %s\n", w.Code, w.Body.String())
+	}
+	settingsURL := fmt.Sprintf("%sserver/settings", WebAPIPath)
+	if w := dsgRequest("POST", settingsURL, "Bearer admin-token", bytes.NewBufferString(`{"gc": "100"}`)); w.Code != http.StatusOK {
+		t.Errorf("POST /api/server/settings by DSG admin failed (%d): %s\n", w.Code, w.Body.String())
+	}
+
+	// /api/storage is gated on adminPriv directly.  Only the rejection path
+	// is exercised here: the accept path spawns an async storage summary
+	// that could outlive the test server.
+	storageURL := fmt.Sprintf("%sstorage", WebAPIPath)
+	if w := dsgRequest("GET", storageURL, "", nil); w.Code == http.StatusOK {
+		t.Errorf("GET /api/storage without credentials should be rejected")
+	}
+	if w := dsgRequest("GET", storageURL, "Bearer user-token", nil); w.Code == http.StatusOK {
+		t.Errorf("GET /api/storage by non-admin DSG user should be rejected")
 	}
 }
 
