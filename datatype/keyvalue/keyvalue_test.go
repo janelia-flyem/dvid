@@ -256,6 +256,148 @@ func TestKeyvalueRequests(t *testing.T) {
 	testRequest(t, uuid, versionID, "mykeyvalue")
 }
 
+func TestKeyvalueRangeReads(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := initTestRepo()
+	config := dvid.NewConfig()
+	dataservice, err := datastore.NewData(uuid, kvtype, "rangekv", config)
+	if err != nil {
+		t.Fatalf("Error creating new keyvalue instance: %v\n", err)
+	}
+	data, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("Returned new data instance is not keyvalue.Data\n")
+	}
+
+	postKey := func(key, value string) string {
+		req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), key)
+		server.TestHTTP(t, "POST", req, strings.NewReader(value))
+		return req
+	}
+
+	plainKey := "plain"
+	plainValue := "abcdefghijklmnopqrstuvwxyz"
+	plainReq := postKey(plainKey, plainValue)
+	jsonKey := "json"
+	jsonReq := postKey(jsonKey, "1234567890")
+	jsonFullKey := "json-full"
+	postKey(jsonFullKey, `{"ok":true}`)
+	fullKey := "full"
+	fullValue := "full value"
+	postKey(fullKey, fullValue)
+
+	returnValue := server.TestHTTP(t, "GET", plainReq+"?byte_start=2&byte_end=5", nil)
+	if string(returnValue) != "cdef" {
+		t.Fatalf("expected /key range read to return %q, got %q", "cdef", string(returnValue))
+	}
+	if returnValue = server.TestHTTP(t, "GET", plainReq+"?byte_start=0&byte_end=0", nil); string(returnValue) != "a" {
+		t.Fatalf("expected /key single-byte range read to return %q, got %q", "a", string(returnValue))
+	}
+	server.TestBadHTTP(t, "GET", plainReq+"?byte_start=2", nil)
+	server.TestBadHTTP(t, "GET", plainReq+"?byte_start=5&byte_end=2", nil)
+	server.TestBadHTTP(t, "GET", plainReq+"?byte_start=0&byte_end=100", nil)
+	server.TestBadHTTP(t, "GET", plainReq+"?byte_start=-1&byte_end=2", nil)
+
+	getJSON := fmt.Sprintf("%snode/%s/%s/keyvalues?json=true", server.WebAPIPath, uuid, data.DataName())
+	jsonRequests := `[{"key":"` + jsonKey + `","byte_start":2,"byte_end":5},{"key":"` + jsonFullKey + `"},{"key":"missing","byte_start":0,"byte_end":2}]`
+	returnValue = server.TestHTTP(t, "GET", getJSON, strings.NewReader(jsonRequests))
+	expectedJSON := fmt.Sprintf(`{%q:3456,%q:{"ok":true},"missing":{}}`, jsonKey, jsonFullKey)
+	if string(returnValue) != expectedJSON {
+		t.Fatalf("expected ranged JSON /keyvalues response %s, got %s", expectedJSON, string(returnValue))
+	}
+
+	server.TestBadHTTP(t, "GET", getJSON, strings.NewReader(`[{"key":"json","byte_start":2}]`))
+	server.TestBadHTTP(t, "GET", getJSON, strings.NewReader(`[{"key":"json","byte_start":0,"byte_end":100}]`))
+	server.TestBadHTTP(t, "GET", getJSON, strings.NewReader(`[{"key":"plain","byte_start":2,"byte_end":5}]`))
+
+	getTar := fmt.Sprintf("%snode/%s/%s/keyvalues?jsontar=true", server.WebAPIPath, uuid, data.DataName())
+	tarRequests := `[{"key":"` + plainKey + `","byte_start":4,"byte_end":7},{"key":"missing","byte_start":0,"byte_end":2}]`
+	tardata := server.TestHTTP(t, "GET", getTar, strings.NewReader(tarRequests))
+	tr := tar.NewReader(bytes.NewReader(tardata))
+	expectedTar := []struct {
+		key   string
+		value string
+	}{
+		{plainKey, "efgh"},
+		{"missing", ""},
+	}
+	for i, expected := range expectedTar {
+		hdr, err := tr.Next()
+		if err != nil {
+			t.Fatalf("error reading tar entry %d: %v", i, err)
+		}
+		if hdr.Name != expected.key {
+			t.Fatalf("expected tar entry %d key %q, got %q", i, expected.key, hdr.Name)
+		}
+		var val bytes.Buffer
+		if _, err := io.Copy(&val, tr); err != nil {
+			t.Fatalf("error reading tar value for %q: %v", hdr.Name, err)
+		}
+		if val.String() != expected.value {
+			t.Fatalf("expected tar value for %q to be %q, got %q", hdr.Name, expected.value, val.String())
+		}
+	}
+	if _, err := tr.Next(); err != io.EOF {
+		t.Fatalf("expected end of tar data, got %v", err)
+	}
+	server.TestBadHTTP(t, "GET", getTar, strings.NewReader(`[{"key":"plain","byte_start":0,"byte_end":100}]`))
+
+	getProtobuf := fmt.Sprintf("%snode/%s/%s/keyvalues", server.WebAPIPath, uuid, data.DataName())
+	keys := proto.Keys{
+		Keys: []string{fullKey},
+		KeyRanges: []*proto.KeyRange{
+			{Key: plainKey, ByteStart: 1, ByteEnd: 3},
+			{Key: "missing", ByteStart: 0, ByteEnd: 1},
+		},
+	}
+	keysSerialization, err := pb.Marshal(&keys)
+	if err != nil {
+		t.Fatalf("couldn't serialize ranged protobuf keys: %v", err)
+	}
+	keyvaluesSerialization := server.TestHTTP(t, "GET", getProtobuf, bytes.NewReader(keysSerialization))
+	var pbKVs proto.KeyValues
+	if err := pb.Unmarshal(keyvaluesSerialization, &pbKVs); err != nil {
+		t.Fatalf("couldn't unmarshal ranged keyvalues protobuf: %v", err)
+	}
+	if len(pbKVs.Kvs) != 3 {
+		t.Fatalf("expected 3 ranged protobuf kv pairs returned, got %d", len(pbKVs.Kvs))
+	}
+	expectedProto := []struct {
+		key   string
+		value string
+	}{
+		{fullKey, fullValue},
+		{plainKey, "bcd"},
+		{"missing", ""},
+	}
+	for i, expected := range expectedProto {
+		if pbKVs.Kvs[i].Key != expected.key {
+			t.Fatalf("expected protobuf kv %d key %q, got %q", i, expected.key, pbKVs.Kvs[i].Key)
+		}
+		if string(pbKVs.Kvs[i].Value) != expected.value {
+			t.Fatalf("expected protobuf kv %d value %q, got %q", i, expected.value, string(pbKVs.Kvs[i].Value))
+		}
+	}
+
+	badKeys := proto.Keys{
+		KeyRanges: []*proto.KeyRange{{Key: plainKey, ByteStart: 10, ByteEnd: 5}},
+	}
+	badKeysSerialization, err := pb.Marshal(&badKeys)
+	if err != nil {
+		t.Fatalf("couldn't serialize bad ranged protobuf keys: %v", err)
+	}
+	server.TestBadHTTP(t, "GET", getProtobuf, bytes.NewReader(badKeysSerialization))
+
+	returnValue = server.TestHTTP(t, "GET", jsonReq+"?byte_start=2&byte_end=5", nil)
+	if string(returnValue) != "3456" {
+		t.Fatalf("expected /key range read on JSON value to return %q, got %q", "3456", string(returnValue))
+	}
+}
+
 type resolveResp struct {
 	Child dvid.UUID `json:"child"`
 }

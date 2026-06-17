@@ -187,9 +187,16 @@ HEAD <api URL>/node/<UUID>/<data name>/key/<key>
 	The "Content-type" of the HTTP response (and usually the request) are
 	"application/octet-stream" for arbitrary binary data.
 
+	GET Query-string Options:
+
+	byte_start  Inclusive start byte offset to return. Must be used with byte_end.
+	byte_end    Inclusive end byte offset to return. Must be used with byte_start.
+	            Ranges use strict bounds and are applied after DVID has read and
+	            deserialized the stored value; they reduce response size, not backend I/O.
+
 	For HEAD returns:
-	200 (OK) if a sparse volume of the given label exists within any optional bounds.
-	404 (File not Found) if there is no sparse volume for the given label within any optional bounds.
+	200 (OK) if the given key exists.
+	404 (File not Found) if the given key does not exist.
 
 	Arguments:
 
@@ -217,8 +224,15 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 			bytes value = 2;
 		}
 
+		message KeyRange {
+			string key = 1;
+			uint64 byte_start = 2;
+			uint64 byte_end = 3;
+		}
+
 		message Keys {
 			repeated string keys = 1;
+			repeated KeyRange key_ranges = 2;
 		}
 		
 		message KeyValues {
@@ -226,7 +240,23 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 		}
 	
 	For GET, the query body must include a Keys serialization and a KeyValues serialization is
-	returned.  If a key is not found, it is included in return but with nil value (0 bytes or "{}").
+	returned.  The "keys" field requests full values.  The "key_ranges" field requests
+	the inclusive byte_start to byte_end range for each specified key.  If a key is not
+	found, it is included in return but with nil value (0 bytes or "{}").
+	When both protobuf fields are used, response values are ordered by all "keys" entries
+	first followed by all "key_ranges" entries.
+
+	For JSON and tar GET responses, the query body may be either a JSON array of string keys
+	for full values or a JSON array of key-specific range objects:
+	[
+		{"key": "key1", "byte_start": 5, "byte_end": 12},
+		{"key": "key2"}
+	]
+	If only one of byte_start or byte_end is provided, the request fails.
+	Range reads are applied after DVID has read and deserialized the full stored value; they
+	reduce response size, not backend I/O.  For json=true responses, ranged values must
+	themselves be valid JSON values after slicing.  Use tar, protobuf, or /key for arbitrary
+	binary byte ranges.
 
 	For POST, the query body must include a KeyValues serialization.
 	
@@ -333,4 +363,3 @@ GET <api URL>/node/<UUID>/<data name>/mutations-range/<beg>/<end>?rangefmt=<form
 		"mutids":  The range is in the form of mutation IDs (uint64).
 
 		"timestamps":  The range is in the form of RFC 3339 timestamps.
-

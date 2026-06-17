@@ -8,8 +8,15 @@ message KeyValue {
 	bytes value = 2;
 }
 
+message KeyRange {
+	string key = 1;
+	uint64 byte_start = 2;
+	uint64 byte_end = 3;
+}
+
 message Keys {
 	repeated string keys = 1;
+	repeated KeyRange key_ranges = 2;
 }
 
 message KeyValues {

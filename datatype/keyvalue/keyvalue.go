@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -218,9 +219,16 @@ HEAD <api URL>/node/<UUID>/<data name>/key/<key>
 	The "Content-type" of the HTTP response (and usually the request) are
 	"application/octet-stream" for arbitrary binary data.
 
+	GET Query-string Options:
+
+	byte_start  Inclusive start byte offset to return. Must be used with byte_end.
+	byte_end    Inclusive end byte offset to return. Must be used with byte_start.
+	            Ranges use strict bounds and are applied after DVID has read and
+	            deserialized the stored value; they reduce response size, not backend I/O.
+
 	For HEAD returns:
-	200 (OK) if a sparse volume of the given label exists within any optional bounds.
-	404 (File not Found) if there is no sparse volume for the given label within any optional bounds.
+	200 (OK) if the given key exists.
+	404 (File not Found) if the given key does not exist.
 
 	Arguments:
 
@@ -248,8 +256,15 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 			bytes value = 2;
 		}
 
+		message KeyRange {
+			string key = 1;
+			uint64 byte_start = 2;
+			uint64 byte_end = 3;
+		}
+
 		message Keys {
 			repeated string keys = 1;
+			repeated KeyRange key_ranges = 2;
 		}
 		
 		message KeyValues {
@@ -257,7 +272,23 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 		}
 	
 	For GET, the query body must include a Keys serialization and a KeyValues serialization is
-	returned.  If a key is not found, it is included in return but with nil value (0 bytes or "{}").
+	returned.  The "keys" field requests full values.  The "key_ranges" field requests
+	the inclusive byte_start to byte_end range for each specified key.  If a key is not
+	found, it is included in return but with nil value (0 bytes or "{}").
+	When both protobuf fields are used, response values are ordered by all "keys" entries
+	first followed by all "key_ranges" entries.
+
+	For JSON and tar GET responses, the query body may be either a JSON array of string keys
+	for full values or a JSON array of key-specific range objects:
+	[
+		{"key": "key1", "byte_start": 5, "byte_end": 12},
+		{"key": "key2"}
+	]
+	If only one of byte_start or byte_end is provided, the request fails.
+	Range reads are applied after DVID has read and deserialized the full stored value; they
+	reduce response size, not backend I/O.  For json=true responses, ranged values must
+	themselves be valid JSON values after slicing.  Use tar, protobuf, or /key for arbitrary
+	binary byte ranges.
 
 	For POST, the query body must include a KeyValues serialization.
 	
@@ -608,6 +639,176 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	}
 }
 
+type byteRange struct {
+	start uint64
+	end   uint64
+}
+
+type keyReadRequest struct {
+	key       string
+	byteRange *byteRange
+	value     []byte
+	found     bool
+	cached    bool
+}
+
+type jsonKeyReadRequest struct {
+	Key       string  `json:"key"`
+	ByteStart *uint64 `json:"byte_start,omitempty"`
+	ByteEnd   *uint64 `json:"byte_end,omitempty"`
+}
+
+func parseByteRangeValue(name, value string) (uint64, error) {
+	parsed, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an unsigned integer, got %q", name, value)
+	}
+	return parsed, nil
+}
+
+func newByteRange(key string, start, end uint64) (*byteRange, error) {
+	if start > end {
+		return nil, fmt.Errorf("byte_start %d must be <= byte_end %d for key %q", start, end, key)
+	}
+	return &byteRange{start: start, end: end}, nil
+}
+
+func parseByteRangeQuery(r *http.Request, key string) (*byteRange, error) {
+	query := r.URL.Query()
+	startValues, hasStart := query["byte_start"]
+	endValues, hasEnd := query["byte_end"]
+	if !hasStart && !hasEnd {
+		return nil, nil
+	}
+	if !hasStart || !hasEnd {
+		return nil, fmt.Errorf("range read for key %q requires both byte_start and byte_end", key)
+	}
+	start, err := parseByteRangeValue("byte_start", startValues[0])
+	if err != nil {
+		return nil, err
+	}
+	end, err := parseByteRangeValue("byte_end", endValues[0])
+	if err != nil {
+		return nil, err
+	}
+	return newByteRange(key, start, end)
+}
+
+func sliceValueByRange(key string, value []byte, valueRange *byteRange) ([]byte, error) {
+	if valueRange == nil || value == nil {
+		return value, nil
+	}
+	valueLen := uint64(len(value))
+	if valueRange.start >= valueLen {
+		return nil, fmt.Errorf("byte_start %d is outside value for key %q with %d bytes", valueRange.start, key, valueLen)
+	}
+	if valueRange.end >= valueLen {
+		return nil, fmt.Errorf("byte_end %d is outside value for key %q with %d bytes", valueRange.end, key, valueLen)
+	}
+	return value[int(valueRange.start) : int(valueRange.end)+1], nil
+}
+
+func keyReadRequestsFromKeys(keys []string) []keyReadRequest {
+	requests := make([]keyReadRequest, len(keys))
+	for i, key := range keys {
+		requests[i] = keyReadRequest{key: key}
+	}
+	return requests
+}
+
+func keyReadRequestsFromJSON(data []byte) ([]keyReadRequest, error) {
+	var keys []string
+	if err := json.Unmarshal(data, &keys); err == nil {
+		return keyReadRequestsFromKeys(keys), nil
+	}
+
+	var jsonRequests []jsonKeyReadRequest
+	if err := json.Unmarshal(data, &jsonRequests); err != nil {
+		return nil, err
+	}
+	requests := make([]keyReadRequest, len(jsonRequests))
+	for i, jsonRequest := range jsonRequests {
+		requests[i].key = jsonRequest.Key
+		if jsonRequest.ByteStart == nil && jsonRequest.ByteEnd == nil {
+			continue
+		}
+		if jsonRequest.ByteStart == nil || jsonRequest.ByteEnd == nil {
+			return nil, fmt.Errorf("range read for key %q requires both byte_start and byte_end", jsonRequest.Key)
+		}
+		byteRange, err := newByteRange(jsonRequest.Key, *jsonRequest.ByteStart, *jsonRequest.ByteEnd)
+		if err != nil {
+			return nil, err
+		}
+		requests[i].byteRange = byteRange
+	}
+	return requests, nil
+}
+
+func keyReadRequestsFromProto(keys proto.Keys) ([]keyReadRequest, error) {
+	requests := keyReadRequestsFromKeys(keys.Keys)
+	for _, keyRange := range keys.KeyRanges {
+		if keyRange == nil {
+			return nil, fmt.Errorf("nil key range request")
+		}
+		byteRange, err := newByteRange(keyRange.Key, keyRange.ByteStart, keyRange.ByteEnd)
+		if err != nil {
+			return nil, err
+		}
+		requests = append(requests, keyReadRequest{
+			key:       keyRange.Key,
+			byteRange: byteRange,
+		})
+	}
+	return requests, nil
+}
+
+func (d *Data) getKeyReadValue(ctx *datastore.VersionedCtx, request keyReadRequest) ([]byte, bool, error) {
+	if request.cached {
+		return request.value, request.found, nil
+	}
+	val, found, err := d.GetData(ctx, request.key)
+	if err != nil {
+		return nil, false, err
+	}
+	if !found {
+		return nil, false, nil
+	}
+	val, err = sliceValueByRange(request.key, val, request.byteRange)
+	if err != nil {
+		return nil, false, err
+	}
+	return val, true, nil
+}
+
+func (d *Data) validateKeyReadRanges(ctx *datastore.VersionedCtx, requests []keyReadRequest, validateJSON bool) error {
+	for i := range requests {
+		request := &requests[i]
+		if request.byteRange == nil {
+			continue
+		}
+		val, found, err := d.GetData(ctx, request.key)
+		if err != nil {
+			return err
+		}
+		if !found {
+			request.cached = true
+			request.found = false
+			continue
+		}
+		val, err = sliceValueByRange(request.key, val, request.byteRange)
+		if err != nil {
+			return err
+		}
+		if validateJSON && len(val) > 0 && !json.Valid(val) {
+			return fmt.Errorf("bad JSON for key %q after byte range", request.key)
+		}
+		request.value = val
+		request.found = true
+		request.cached = true
+	}
+	return nil
+}
+
 // ServeHTTP handles all incoming HTTP requests for this data.
 func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) (activity map[string]interface{}) {
 	timedLog := dvid.NewTimeLog()
@@ -773,13 +974,23 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				http.Error(w, fmt.Sprintf("Key %q not found", keyStr), http.StatusNotFound)
 				return
 			}
-			if value != nil || len(value) > 0 {
+			valueRange, err := parseByteRangeQuery(r, keyStr)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			value, err = sliceValueByRange(keyStr, value, valueRange)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/octet-stream")
+			if len(value) > 0 {
 				_, err = w.Write(value)
 				if err != nil {
 					server.BadRequest(w, r, err)
 					return
 				}
-				w.Header().Set("Content-Type", "application/octet-stream")
 			}
 			comment = fmt.Sprintf("HTTP GET key %q of keyvalue %q: %d bytes (%s)", keyStr, d.DataName(), len(value), url)
 
@@ -1010,14 +1221,15 @@ func (d *Data) sendJSONValuesInRange(w http.ResponseWriter, r *http.Request, ctx
 	return
 }
 
-func (d *Data) sendJSONKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, keys []string, checkVal bool) (writtenBytes int, err error) {
+func (d *Data) sendJSONKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, requests []keyReadRequest, checkVal bool) (writtenBytes int, err error) {
 	w.Header().Set("Content-type", "application/json")
 	if writtenBytes, err = w.Write([]byte("{")); err != nil {
 		return
 	}
 	var n int
 	var wroteVal bool
-	for _, key := range keys {
+	for _, request := range requests {
+		key := request.key
 		if wroteVal {
 			if n, err = w.Write([]byte(",")); err != nil {
 				return
@@ -1026,7 +1238,7 @@ func (d *Data) sendJSONKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, ke
 		}
 		var val []byte
 		var found bool
-		if val, found, err = d.GetData(ctx, key); err != nil {
+		if val, found, err = d.getKeyReadValue(ctx, request); err != nil {
 			return
 		}
 		if !found {
@@ -1034,7 +1246,7 @@ func (d *Data) sendJSONKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, ke
 		}
 		if len(val) == 0 {
 			val = []byte("{}")
-		} else if checkVal && !json.Valid(val) {
+		} else if (checkVal || request.byteRange != nil) && !json.Valid(val) {
 			err = fmt.Errorf("bad JSON for key %q", key)
 			return
 		}
@@ -1053,14 +1265,15 @@ func (d *Data) sendJSONKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, ke
 	return
 }
 
-func (d *Data) sendTarKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, keys []string) (writtenBytes int, err error) {
+func (d *Data) sendTarKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, requests []keyReadRequest) (writtenBytes int, err error) {
 	var n int
 	w.Header().Set("Content-type", "application/tar")
 	tw := tar.NewWriter(w)
-	for _, key := range keys {
+	for _, request := range requests {
+		key := request.key
 		var val []byte
 		var found bool
-		if val, found, err = d.GetData(ctx, key); err != nil {
+		if val, found, err = d.getKeyReadValue(ctx, request); err != nil {
 			return
 		}
 		if !found {
@@ -1083,13 +1296,14 @@ func (d *Data) sendTarKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, key
 	return
 }
 
-func (d *Data) sendProtobufKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, keys proto.Keys) (writtenBytes int, err error) {
+func (d *Data) sendProtobufKV(w http.ResponseWriter, ctx *datastore.VersionedCtx, requests []keyReadRequest) (writtenBytes int, err error) {
 	var kvs proto.KeyValues
-	kvs.Kvs = make([]*proto.KeyValue, len(keys.Keys))
-	for i, key := range keys.Keys {
+	kvs.Kvs = make([]*proto.KeyValue, len(requests))
+	for i, request := range requests {
+		key := request.key
 		var val []byte
 		var found bool
-		if val, found, err = d.GetData(ctx, key); err != nil {
+		if val, found, err = d.getKeyReadValue(ctx, request); err != nil {
 			return
 		}
 		if !found {
@@ -1129,26 +1343,37 @@ func (d *Data) handleKeyValues(w http.ResponseWriter, r *http.Request, uuid dvid
 	}
 	switch {
 	case tarOut:
-		var keys []string
-		if err = json.Unmarshal(data, &keys); err != nil {
+		var requests []keyReadRequest
+		if requests, err = keyReadRequestsFromJSON(data); err != nil {
 			return
 		}
-		numKeys = len(keys)
-		writtenBytes, err = d.sendTarKV(w, ctx, keys)
+		if err = d.validateKeyReadRanges(ctx, requests, false); err != nil {
+			return
+		}
+		numKeys = len(requests)
+		writtenBytes, err = d.sendTarKV(w, ctx, requests)
 	case jsonOut:
-		var keys []string
-		if err = json.Unmarshal(data, &keys); err != nil {
+		var requests []keyReadRequest
+		if requests, err = keyReadRequestsFromJSON(data); err != nil {
 			return
 		}
-		numKeys = len(keys)
-		writtenBytes, err = d.sendJSONKV(w, ctx, keys, checkVal)
+		if err = d.validateKeyReadRanges(ctx, requests, true); err != nil {
+			return
+		}
+		numKeys = len(requests)
+		writtenBytes, err = d.sendJSONKV(w, ctx, requests, checkVal)
 	default:
 		var keys proto.Keys
 		if err = pb.Unmarshal(data, &keys); err != nil {
 			return
 		}
-		numKeys = len(keys.Keys)
-		writtenBytes, err = d.sendProtobufKV(w, ctx, keys)
+		var requests []keyReadRequest
+		requests, err = keyReadRequestsFromProto(keys)
+		if err != nil {
+			return
+		}
+		numKeys = len(requests)
+		writtenBytes, err = d.sendProtobufKV(w, ctx, requests)
 	}
 	return
 }
