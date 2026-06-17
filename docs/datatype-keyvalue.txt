@@ -194,6 +194,18 @@ HEAD <api URL>/node/<UUID>/<data name>/key/<key>
 	            Ranges use strict bounds and are applied after DVID has read and
 	            deserialized the stored value; they reduce response size, not backend I/O.
 
+	HTTP Request Headers:
+
+	Range       A single standard byte range for GET, e.g. "bytes=0-1023",
+	            "bytes=1024-", or "bytes=-1024".  This returns 206 Partial
+	            Content with Content-Range and Content-Length headers.  A
+	            satisfiable range whose end is beyond the value length is clamped
+	            to the value end.  Multiple ranges are not supported.  Do not
+	            combine Range with byte_start/byte_end query parameters.
+	            Unsupported or malformed Range headers are ignored and return the
+	            full value.  Prefer this header for single-key range reads when
+	            the client can use standard HTTP Range requests.
+
 	For HEAD returns:
 	200 (OK) if the given key exists.
 	404 (File not Found) if the given key does not exist.
@@ -257,6 +269,8 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 	reduce response size, not backend I/O.  For json=true responses, ranged values must
 	themselves be valid JSON values after slicing.  Use tar, protobuf, or /key for arbitrary
 	binary byte ranges.
+	HTTP Range headers are not used for per-key ranges on /keyvalues because a single
+	HTTP range applies to the serialized batch response, not to individual key values.
 
 	For POST, the query body must include a KeyValues serialization.
 	

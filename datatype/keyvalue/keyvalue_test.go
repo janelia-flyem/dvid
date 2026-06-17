@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -256,6 +257,17 @@ func TestKeyvalueRequests(t *testing.T) {
 	testRequest(t, uuid, versionID, "mykeyvalue")
 }
 
+func testHTTPRange(t *testing.T, urlStr, rangeHeader string) *httptest.ResponseRecorder {
+	req, err := http.NewRequest("GET", urlStr, nil)
+	if err != nil {
+		t.Fatalf("couldn't create range request %q: %v", urlStr, err)
+	}
+	req.Header.Set("Range", rangeHeader)
+	resp := httptest.NewRecorder()
+	server.ServeSingleHTTP(resp, req)
+	return resp
+}
+
 func TestKeyvalueRangeReads(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
@@ -301,6 +313,78 @@ func TestKeyvalueRangeReads(t *testing.T) {
 	server.TestBadHTTP(t, "GET", plainReq+"?byte_start=5&byte_end=2", nil)
 	server.TestBadHTTP(t, "GET", plainReq+"?byte_start=0&byte_end=100", nil)
 	server.TestBadHTTP(t, "GET", plainReq+"?byte_start=-1&byte_end=2", nil)
+
+	resp := server.TestHTTPResponse(t, "HEAD", plainReq, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected HEAD status %d, got %d", http.StatusOK, resp.Code)
+	}
+	if got := resp.Header().Get("Accept-Ranges"); got != "bytes" {
+		t.Fatalf("expected HEAD Accept-Ranges %q, got %q", "bytes", got)
+	}
+
+	resp = testHTTPRange(t, plainReq, "bytes=2-5")
+	if resp.Code != http.StatusPartialContent {
+		t.Fatalf("expected HTTP Range status %d, got %d", http.StatusPartialContent, resp.Code)
+	}
+	if resp.Body.String() != "cdef" {
+		t.Fatalf("expected HTTP Range body %q, got %q", "cdef", resp.Body.String())
+	}
+	if got := resp.Header().Get("Content-Range"); got != "bytes 2-5/26" {
+		t.Fatalf("expected Content-Range %q, got %q", "bytes 2-5/26", got)
+	}
+	if got := resp.Header().Get("Content-Length"); got != "4" {
+		t.Fatalf("expected Content-Length %q, got %q", "4", got)
+	}
+	if got := resp.Header().Get("Accept-Ranges"); got != "bytes" {
+		t.Fatalf("expected Accept-Ranges %q, got %q", "bytes", got)
+	}
+
+	resp = testHTTPRange(t, plainReq, "bytes=24-")
+	if resp.Code != http.StatusPartialContent || resp.Body.String() != "yz" {
+		t.Fatalf("expected open-ended HTTP Range response 206 with %q, got %d with %q", "yz", resp.Code, resp.Body.String())
+	}
+	if got := resp.Header().Get("Content-Range"); got != "bytes 24-25/26" {
+		t.Fatalf("expected open-ended Content-Range %q, got %q", "bytes 24-25/26", got)
+	}
+
+	resp = testHTTPRange(t, plainReq, "bytes=-3")
+	if resp.Code != http.StatusPartialContent || resp.Body.String() != "xyz" {
+		t.Fatalf("expected suffix HTTP Range response 206 with %q, got %d with %q", "xyz", resp.Code, resp.Body.String())
+	}
+	if got := resp.Header().Get("Content-Range"); got != "bytes 23-25/26" {
+		t.Fatalf("expected suffix Content-Range %q, got %q", "bytes 23-25/26", got)
+	}
+
+	resp = testHTTPRange(t, plainReq, "bytes=24-100")
+	if resp.Code != http.StatusPartialContent || resp.Body.String() != "yz" {
+		t.Fatalf("expected clamped HTTP Range response 206 with %q, got %d with %q", "yz", resp.Code, resp.Body.String())
+	}
+	if got := resp.Header().Get("Content-Range"); got != "bytes 24-25/26" {
+		t.Fatalf("expected clamped Content-Range %q, got %q", "bytes 24-25/26", got)
+	}
+
+	resp = testHTTPRange(t, plainReq, "bytes=26-30")
+	if resp.Code != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("expected unsatisfiable HTTP Range status %d, got %d", http.StatusRequestedRangeNotSatisfiable, resp.Code)
+	}
+	if got := resp.Header().Get("Content-Range"); got != "bytes */26" {
+		t.Fatalf("expected unsatisfiable Content-Range %q, got %q", "bytes */26", got)
+	}
+
+	for _, rangeHeader := range []string{"bytes=0-1,4-5", "bytes=5-2", "bytes=abc", "items=0-5"} {
+		resp = testHTTPRange(t, plainReq, rangeHeader)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("expected unsupported or malformed Range %q to return status %d, got %d", rangeHeader, http.StatusOK, resp.Code)
+		}
+		if resp.Body.String() != plainValue {
+			t.Fatalf("expected unsupported or malformed Range %q to return full body %q, got %q", rangeHeader, plainValue, resp.Body.String())
+		}
+	}
+
+	resp = testHTTPRange(t, plainReq+"?byte_start=0&byte_end=1", "bytes=2-5")
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("expected combined query/header range status %d, got %d", http.StatusBadRequest, resp.Code)
+	}
 
 	getJSON := fmt.Sprintf("%snode/%s/%s/keyvalues?json=true", server.WebAPIPath, uuid, data.DataName())
 	jsonRequests := `[{"key":"` + jsonKey + `","byte_start":2,"byte_end":5},{"key":"` + jsonFullKey + `"},{"key":"missing","byte_start":0,"byte_end":2}]`

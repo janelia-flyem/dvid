@@ -226,6 +226,18 @@ HEAD <api URL>/node/<UUID>/<data name>/key/<key>
 	            Ranges use strict bounds and are applied after DVID has read and
 	            deserialized the stored value; they reduce response size, not backend I/O.
 
+	HTTP Request Headers:
+
+	Range       A single standard byte range for GET, e.g. "bytes=0-1023",
+	            "bytes=1024-", or "bytes=-1024".  This returns 206 Partial
+	            Content with Content-Range and Content-Length headers.  A
+	            satisfiable range whose end is beyond the value length is clamped
+	            to the value end.  Multiple ranges are not supported.  Do not
+	            combine Range with byte_start/byte_end query parameters.
+	            Unsupported or malformed Range headers are ignored and return the
+	            full value.  Prefer this header for single-key range reads when
+	            the client can use standard HTTP Range requests.
+
 	For HEAD returns:
 	200 (OK) if the given key exists.
 	404 (File not Found) if the given key does not exist.
@@ -289,6 +301,8 @@ POST <api URL>/node/<UUID>/<data name>/keyvalues
 	reduce response size, not backend I/O.  For json=true responses, ranged values must
 	themselves be valid JSON values after slicing.  Use tar, protobuf, or /key for arbitrary
 	binary byte ranges.
+	HTTP Range headers are not used for per-key ranges on /keyvalues because a single
+	HTTP range applies to the serialized batch response, not to individual key values.
 
 	For POST, the query body must include a KeyValues serialization.
 	
@@ -694,6 +708,73 @@ func parseByteRangeQuery(r *http.Request, key string) (*byteRange, error) {
 	return newByteRange(key, start, end)
 }
 
+func parseHTTPRangeHeader(rangeHeader string, valueLen uint64) (*byteRange, bool, error) {
+	if rangeHeader == "" {
+		return nil, false, nil
+	}
+	if !strings.HasPrefix(rangeHeader, "bytes=") {
+		return nil, false, nil
+	}
+	rangeSpec := strings.TrimSpace(strings.TrimPrefix(rangeHeader, "bytes="))
+	if rangeSpec == "" || strings.Contains(rangeSpec, ",") {
+		return nil, false, nil
+	}
+	parts := strings.SplitN(rangeSpec, "-", 2)
+	if len(parts) != 2 {
+		return nil, false, nil
+	}
+	startText := strings.TrimSpace(parts[0])
+	endText := strings.TrimSpace(parts[1])
+	if startText == "" && endText == "" {
+		return nil, false, nil
+	}
+	if valueLen == 0 {
+		return nil, true, fmt.Errorf("Range %q is not satisfiable for an empty value", rangeHeader)
+	}
+
+	if startText == "" {
+		suffixLen, err := parseByteRangeValue("Range suffix length", endText)
+		if err != nil {
+			return nil, false, nil
+		}
+		if suffixLen == 0 {
+			return nil, true, fmt.Errorf("Range %q is not satisfiable", rangeHeader)
+		}
+		start := uint64(0)
+		if suffixLen < valueLen {
+			start = valueLen - suffixLen
+		}
+		return &byteRange{start: start, end: valueLen - 1}, true, nil
+	}
+
+	start, err := parseByteRangeValue("Range start", startText)
+	if err != nil {
+		return nil, false, nil
+	}
+	if start >= valueLen {
+		return nil, true, fmt.Errorf("Range start %d is outside value with %d bytes", start, valueLen)
+	}
+	if endText == "" {
+		return &byteRange{start: start, end: valueLen - 1}, true, nil
+	}
+	end, err := parseByteRangeValue("Range end", endText)
+	if err != nil {
+		return nil, false, nil
+	}
+	if start > end {
+		return nil, false, nil
+	}
+	if end >= valueLen {
+		end = valueLen - 1
+	}
+	return &byteRange{start: start, end: end}, true, nil
+}
+
+func writeRangeNotSatisfiable(w http.ResponseWriter, valueLen int, err error) {
+	w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", valueLen))
+	http.Error(w, err.Error(), http.StatusRequestedRangeNotSatisfiable)
+}
+
 func sliceValueByRange(key string, value []byte, valueRange *byteRange) ([]byte, error) {
 	if valueRange == nil || value == nil {
 		return value, nil
@@ -957,6 +1038,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				return
 			}
 			if found {
+				w.Header().Set("Accept-Ranges", "bytes")
 				w.WriteHeader(http.StatusOK)
 			} else {
 				w.WriteHeader(http.StatusNotFound)
@@ -979,12 +1061,35 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				server.BadRequest(w, r, err)
 				return
 			}
+			valueLen := len(value)
+			rangeHeader := r.Header.Get("Range")
+			if rangeHeader != "" && valueRange != nil {
+				server.BadRequest(w, r, "cannot combine Range header with byte_start/byte_end query parameters")
+				return
+			}
+			var partialContent bool
+			if rangeHeader != "" {
+				var useHTTPRange bool
+				valueRange, useHTTPRange, err = parseHTTPRangeHeader(rangeHeader, uint64(valueLen))
+				if err != nil {
+					writeRangeNotSatisfiable(w, len(value), err)
+					return
+				}
+				partialContent = useHTTPRange
+			}
+			contentRange := valueRange
 			value, err = sliceValueByRange(keyStr, value, valueRange)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
 			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Header().Set("Accept-Ranges", "bytes")
+			w.Header().Set("Content-Length", strconv.Itoa(len(value)))
+			if partialContent {
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", contentRange.start, contentRange.end, valueLen))
+				w.WriteHeader(http.StatusPartialContent)
+			}
 			if len(value) > 0 {
 				_, err = w.Write(value)
 				if err != nil {
