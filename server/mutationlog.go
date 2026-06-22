@@ -211,7 +211,13 @@ func sendVersionMutations(ch chan []byte, uuid, dataID dvid.UUID) (numMutations 
 		if typeID != jsonMsgTypeID {
 			dvid.Criticalf("Unknown message type in mutation log: %s\n", string(jsondata))
 		} else {
-			ch <- jsondata
+			// protolog.Reader.Next() returns a slice into a reused internal
+			// buffer, so we must copy before handing it to the channel; the
+			// producer's next Next() call would otherwise overwrite the bytes
+			// before the consumer drains them.
+			buf := make([]byte, len(jsondata))
+			copy(buf, jsondata)
+			ch <- buf
 		}
 		numMutations++
 	}
