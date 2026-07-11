@@ -993,7 +993,7 @@ func activityLogHandler(c *web.C, h http.Handler) http.Handler {
 		myw := wrapResponseWriter(w)
 		h.ServeHTTP(myw, r)
 		if KafkaAvailable() {
-			user := r.URL.Query().Get("u")
+			user := requestUser(r)
 			app := r.URL.Query().Get("app")
 			t := time.Since(t0)
 			activity := map[string]interface{}{
@@ -1020,7 +1020,7 @@ func latencyHandler(c *web.C, h http.Handler) http.Handler {
 		t0 := time.Now()
 		myw := wrapResponseWriter(w)
 		h.ServeHTTP(myw, r)
-		user := r.URL.Query().Get("u")
+		user := requestUser(r)
 		if user != "" {
 			t := time.Since(t0)
 			ms := int64(t.Seconds() * 1000.0)
@@ -1654,7 +1654,7 @@ func serverReloadAuthHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, "unable to reload auth file: %v", err)
 		return
 	}
-	clearDSGUserCache()
+	clearDSGCaches()
 	w.Header().Set("Content-Type", "text/plain")
 	fmt.Fprintf(w, "Reloaded authorizations from file %q.\n", tc.Auth.AuthFile)
 }
@@ -1678,7 +1678,7 @@ func blobstoreHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope := requestAccessScope(c, r)
-	if !scope.full && scope.user == nil {
+	if !scope.full && scope.identity == nil {
 		BadRequest(w, r, "GET /api/server/blobstore requires authenticated access")
 		return
 	}
@@ -1716,8 +1716,18 @@ func blobstoreHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 
 func reposInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	scope := requestAccessScope(c, r)
+	roots, err := datastore.RepoRootVersions()
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	visibilities, err := scope.repoVisibilities(roots)
+	if err != nil {
+		writeAuthError(w, r, err)
+		return
+	}
 	jsonBytes, err := datastore.MarshalJSONFiltered(func(rootUUID dvid.UUID) datastore.RepoVisibility {
-		return scope.repoVisibility(rootUUID, r.Method)
+		return visibilities[rootUUID]
 	})
 	if err != nil {
 		BadRequest(w, r, err)
@@ -1798,7 +1808,7 @@ func repoInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	scope := requestAccessScope(c, r)
 	vis, err := scope.repoVisibilityForUUID(uuid, r.Method)
 	if err != nil {
-		BadRequest(w, r, err)
+		writeAuthError(w, r, err)
 		return
 	}
 	jsonStr, err := datastore.GetRepoJSONFiltered(uuid, vis)
@@ -1860,7 +1870,7 @@ func repoBranchVersionsHandler(c web.C, w http.ResponseWriter, r *http.Request) 
 	scope := requestAccessScope(c, r)
 	vis, err := scope.repoVisibilityForUUID(uuid, r.Method)
 	if err != nil {
-		BadRequest(w, r, err)
+		writeAuthError(w, r, err)
 		return
 	}
 	jsonStr, err := datastore.GetBranchVersionsJSONFiltered(uuid, name, vis)
@@ -1935,7 +1945,7 @@ func getRepoLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	scope := requestAccessScope(c, r)
 	vis, err := scope.repoVisibilityForUUID(uuid, r.Method)
 	if err != nil {
-		BadRequest(w, r, err)
+		writeAuthError(w, r, err)
 		return
 	}
 	var logdata []string

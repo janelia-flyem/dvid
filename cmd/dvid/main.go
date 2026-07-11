@@ -317,7 +317,7 @@ func DoServe(cmd dvid.Command) error {
 	if err := datastore.Initialize(initMetadata, server.DatastoreConfig()); err != nil {
 		return fmt.Errorf("unable to initialize datastore: %v", err)
 	}
-	if err := server.PublishPublicVersions(); err != nil {
+	if err := server.StartDSGPublicVersionSeeding(); err != nil {
 		return err
 	}
 

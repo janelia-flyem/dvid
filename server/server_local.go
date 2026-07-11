@@ -495,8 +495,12 @@ func LoadConfig(filename string) error {
 	if filename == "" {
 		return fmt.Errorf("no server TOML configuration file provided")
 	}
-	if _, err := toml.DecodeFile(filename, &tc); err != nil {
+	metadata, err := toml.DecodeFile(filename, &tc)
+	if err != nil {
 		return fmt.Errorf("could not decode TOML config: %v", err)
+	}
+	if !metadata.IsDefined("auth", "dsg_public_refresh") {
+		tc.Auth.DSGPublicRefresh = 3600
 	}
 	tcLocation = filename
 

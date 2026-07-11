@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +16,114 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/zenazn/goji/web"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return fn(r)
+}
+
+func jsonHTTPResponse(status int, value interface{}) *http.Response {
+	body, _ := json.Marshal(value)
+	return &http.Response{
+		StatusCode: status,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	}
+}
+
+func rawHTTPResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(bytes.NewBufferString(body)),
+	}
+}
+
+func stringPointer(value string) *string { return &value }
+
+func identityFor(email string, admin bool) dsgIdentity {
+	return dsgIdentity{Email: stringPointer(email), Name: email, Admin: admin}
+}
+
+type fakeDSG struct {
+	mu sync.Mutex
+
+	identities map[string]dsgIdentity
+	authorize  func([]dsgAuthorizeEntry) (int, interface{})
+
+	identityCalls  int
+	authorizeCalls int
+	requests       []string
+}
+
+func (fake *fakeDSG) RoundTrip(r *http.Request) (*http.Response, error) {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	fake.requests = append(fake.requests, r.Method+" "+r.URL.Path)
+	token := extractBearerToken(r.Header.Get("Authorization"))
+	switch r.URL.Path {
+	case "/api/dsg/v1/user":
+		fake.identityCalls++
+		identity, found := fake.identities[token]
+		if !found {
+			return jsonHTTPResponse(http.StatusUnauthorized, map[string]string{"error": "invalid token"}), nil
+		}
+		return jsonHTTPResponse(http.StatusOK, identity), nil
+	case "/api/dsg/v1/authorize":
+		fake.authorizeCalls++
+		var request struct {
+			Service string              `json:"service"`
+			Entries []dsgAuthorizeEntry `json:"entries"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			return rawHTTPResponse(http.StatusBadRequest, `{"error":"bad request"}`), nil
+		}
+		if fake.authorize == nil {
+			return jsonHTTPResponse(http.StatusOK, map[string]interface{}{"entries": []interface{}{}}), nil
+		}
+		status, response := fake.authorize(request.Entries)
+		return jsonHTTPResponse(status, response), nil
+	default:
+		return jsonHTTPResponse(http.StatusNotFound, map[string]string{"error": "not found"}), nil
+	}
+}
+
+func echoedDecision(entry dsgAuthorizeEntry, decision string, roles []string) dsgDecisionResponse {
+	return dsgDecisionResponse{
+		Name: stringPointer(entry.Name), Branch: stringPointer(entry.Branch),
+		Version: stringPointer(entry.Version), Decision: decision, Roles: roles,
+	}
+}
+
+func authorizeEnvelope(entries ...dsgDecisionResponse) map[string]interface{} {
+	return map[string]interface{}{"entries": entries}
+}
+
+func withTestDSG(t *testing.T, fake http.RoundTripper) {
+	t.Helper()
+	origAuth := tc.Auth
+	origClient := dsgHTTPClient
+	t.Cleanup(func() {
+		tc.Auth = origAuth
+		dsgHTTPClient = origClient
+		clearDSGCaches()
+	})
+	tc.Auth.Enforce = "dsg"
+	tc.Auth.DSGAddress = "https://auth.example.org"
+	tc.Auth.DSGService = "dvid"
+	tc.Auth.DSGCacheTTL = 300
+	dsgHTTPClient = &http.Client{Transport: fake}
+	clearDSGCaches()
+}
+
+func requireAuthStatus(t *testing.T, err error, status int) {
+	t.Helper()
+	var authErr *authError
+	if !errors.As(err, &authErr) || authErr.status != status {
+		t.Fatalf("got error %v, want auth status %d", err, status)
+	}
+}
 
 func TestExtractDSGToken(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/repo/uuid/info", nil)
@@ -30,206 +140,387 @@ func TestExtractDSGToken(t *testing.T) {
 	}
 }
 
-func TestGetDSGUserUsesCache(t *testing.T) {
-	origAuth := tc.Auth
-	origClient := dsgHTTPClient
-	defer func() {
-		tc.Auth = origAuth
-		dsgHTTPClient = origClient
-		clearDSGUserCache()
-	}()
+func TestGetDSGIdentityUsesCacheAndSupportsServiceAccounts(t *testing.T) {
+	fake := &fakeDSG{identities: map[string]dsgIdentity{
+		"human": identityFor("user@example.org", false),
+		"sa":    {Email: nil, Name: "mesh-writer", ServiceAccount: true},
+	}}
+	withTestDSG(t, fake)
 
-	var requests int
-	dsgHTTPClient = &http.Client{
-		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			requests++
-			if got := r.Header.Get("Authorization"); got != "Bearer good-token" {
-				t.Fatalf("expected bearer auth header, got %q", got)
-			}
-			body, err := json.Marshal(&dsgUserCache{
-				Email:         "user@example.org",
-				PermissionsV2: map[string][]string{"vnc": {"view"}},
-			})
-			if err != nil {
-				t.Fatalf("could not encode DSG response: %v", err)
-			}
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(bytes.NewReader(body)),
-			}, nil
-		}),
-	}
-
-	tc.Auth.DSGAddress = "https://auth.example.org"
-	tc.Auth.DSGCacheTTL = 300
-	clearDSGUserCache()
-
-	user, err := getDSGUser("good-token")
+	identity, err := getDSGIdentity("human")
 	if err != nil {
-		t.Fatalf("unexpected DSG auth error: %v", err)
+		t.Fatalf("unexpected identity error: %v", err)
 	}
-	if user.Email != "user@example.org" {
-		t.Fatalf("unexpected user email %q", user.Email)
+	if user, _ := identity.userName(); user != "user@example.org" {
+		t.Fatalf("human attribution = %q", user)
 	}
-	user, err = getDSGUser("good-token")
+	if _, err := getDSGIdentity("human"); err != nil {
+		t.Fatalf("unexpected cached identity error: %v", err)
+	}
+	identity, err = getDSGIdentity("sa")
 	if err != nil {
-		t.Fatalf("unexpected cached DSG auth error: %v", err)
+		t.Fatalf("unexpected service-account identity error: %v", err)
 	}
-	if user.Email != "user@example.org" {
-		t.Fatalf("unexpected cached user email %q", user.Email)
+	if user, _ := identity.userName(); user != "mesh-writer" {
+		t.Fatalf("service-account attribution = %q", user)
 	}
-	if requests != 1 {
-		t.Fatalf("expected one DSG request due to caching, got %d", requests)
-	}
-}
-
-func TestGetDSGUserErrorStatuses(t *testing.T) {
-	origAuth := tc.Auth
-	origClient := dsgHTTPClient
-	defer func() {
-		tc.Auth = origAuth
-		dsgHTTPClient = origClient
-		clearDSGUserCache()
-	}()
-
-	tc.Auth.DSGAddress = "https://auth.example.org"
-
-	if _, err := getDSGUser(""); err == nil {
-		t.Fatalf("expected missing token error")
-	} else {
-		var authErr *authError
-		if !errors.As(err, &authErr) || authErr.status != http.StatusUnauthorized {
-			t.Fatalf("expected unauthorized auth error, got %v", err)
-		}
-	}
-
-	dsgHTTPClient = &http.Client{
-		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			return &http.Response{
-				StatusCode: http.StatusForbidden,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(bytes.NewReader(nil)),
-			}, nil
-		}),
-	}
-	if _, err := getDSGUser("bad-token"); err == nil {
-		t.Fatalf("expected invalid token error")
-	} else {
-		var authErr *authError
-		if !errors.As(err, &authErr) || authErr.status != http.StatusUnauthorized {
-			t.Fatalf("expected unauthorized auth error, got %v", err)
-		}
-	}
-
-	dsgHTTPClient = &http.Client{
-		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			return nil, io.EOF
-		}),
-	}
-	if _, err := getDSGUser("network-fail"); err == nil {
-		t.Fatalf("expected DSG upstream error")
-	} else {
-		var authErr *authError
-		if !errors.As(err, &authErr) || authErr.status != http.StatusBadGateway {
-			t.Fatalf("expected bad gateway auth error, got %v", err)
-		}
+	if fake.identityCalls != 2 {
+		t.Fatalf("identity calls = %d, want 2", fake.identityCalls)
 	}
 }
 
-type roundTripFunc func(*http.Request) (*http.Response, error)
+func TestGetDSGIdentityErrorsAndExpiry(t *testing.T) {
+	fake := &fakeDSG{identities: map[string]dsgIdentity{
+		"empty": {},
+		"good":  identityFor("user@example.org", false),
+	}}
+	withTestDSG(t, fake)
 
-func (fn roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
-	return fn(r)
+	_, err := getDSGIdentity("")
+	requireAuthStatus(t, err, http.StatusUnauthorized)
+	_, err = getDSGIdentity("bad")
+	requireAuthStatus(t, err, http.StatusUnauthorized)
+	_, err = getDSGIdentity("empty")
+	requireAuthStatus(t, err, http.StatusUnauthorized)
+
+	tc.Auth.DSGCacheTTL = 1
+	if _, err := getDSGIdentity("good"); err != nil {
+		t.Fatalf("could not cache good identity: %v", err)
+	}
+	authorizations.Lock()
+	entry := authorizations.dsgUsers["good"]
+	entry.fetchedAt = time.Now().Add(-2 * time.Second)
+	authorizations.dsgUsers["good"] = entry
+	authorizations.Unlock()
+	if identity := cachedDSGIdentityForToken("good"); identity != nil {
+		t.Fatalf("expected cached identity to expire")
+	}
 }
 
-// dsgUserRoundTrip returns a DSG auth service mock that reports a user as
-// admin iff the request bears the given Authorization header value.
-func dsgUserRoundTrip(t *testing.T, adminBearer string) roundTripFunc {
-	return func(r *http.Request) (*http.Response, error) {
-		body, err := json.Marshal(&dsgUserCache{
-			Email: "user@example.org",
-			Admin: r.Header.Get("Authorization") == adminBearer,
-		})
+func TestGetDSGIdentityUpstreamErrors(t *testing.T) {
+	withTestDSG(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return nil, io.EOF
+	}))
+	_, err := getDSGIdentity("network-fail")
+	requireAuthStatus(t, err, http.StatusBadGateway)
+
+	dsgHTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return rawHTTPResponse(http.StatusOK, "not-json"), nil
+	})}
+	_, err = getDSGIdentity("malformed")
+	requireAuthStatus(t, err, http.StatusBadGateway)
+}
+
+func TestDSGDecisionCacheSeparatesPermissionsBothOrderings(t *testing.T) {
+	entry := dsgAuthorizeEntry{Name: "root", Branch: "master", Version: "1"}
+	fake := &fakeDSG{identities: map[string]dsgIdentity{}}
+	fake.authorize = func(entries []dsgAuthorizeEntry) (int, interface{}) {
+		responses := make([]dsgDecisionResponse, len(entries))
+		for i, request := range entries {
+			if request.Permission == "view" {
+				responses[i] = echoedDecision(request, "allow", []string{"view"})
+			} else {
+				responses[i] = echoedDecision(request, "deny", nil)
+			}
+		}
+		return http.StatusOK, authorizeEnvelope(responses...)
+	}
+	withTestDSG(t, fake)
+
+	for _, first := range []string{"edit", "view"} {
+		clearDSGCaches()
+		fake.authorizeCalls = 0
+		entry.Permission = first
+		firstDecision, err := getDSGDecisions("token", []dsgAuthorizeEntry{entry})
 		if err != nil {
-			t.Fatalf("could not encode DSG response: %v", err)
+			t.Fatalf("%s-first request failed: %v", first, err)
 		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(bytes.NewReader(body)),
-		}, nil
+		second := "view"
+		if first == "view" {
+			second = "edit"
+		}
+		entry.Permission = second
+		secondDecision, err := getDSGDecisions("token", []dsgAuthorizeEntry{entry})
+		if err != nil {
+			t.Fatalf("%s-second request failed: %v", second, err)
+		}
+		if firstDecision[0].Decision == secondDecision[0].Decision {
+			t.Fatalf("permission decisions were conflated: %s then %s", first, second)
+		}
+		if fake.authorizeCalls != 2 {
+			t.Fatalf("%s/%s calls = %d, want 2", first, second, fake.authorizeCalls)
+		}
 	}
 }
 
-func TestAdminPrivileged(t *testing.T) {
-	origAuth := tc.Auth
-	origClient := dsgHTTPClient
+func TestDSGAuthorizeFailuresCacheNothing(t *testing.T) {
+	entry := dsgAuthorizeEntry{Name: "root", Branch: "master", Version: "1", Permission: "view"}
+	t.Run("invalid-token", func(t *testing.T) {
+		withTestDSG(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return rawHTTPResponse(http.StatusForbidden, "forbidden"), nil
+		}))
+		_, err := getDSGDecisions("token", []dsgAuthorizeEntry{entry})
+		requireAuthStatus(t, err, http.StatusUnauthorized)
+	})
+	cases := map[string]roundTripFunc{
+		"400": func(r *http.Request) (*http.Response, error) {
+			return rawHTTPResponse(http.StatusBadRequest, `{"error":"entries must be a list"}`), nil
+		},
+		"500": func(r *http.Request) (*http.Response, error) {
+			return rawHTTPResponse(http.StatusInternalServerError, "failed"), nil
+		},
+		"invalid-json": func(r *http.Request) (*http.Response, error) {
+			return rawHTTPResponse(http.StatusOK, "not-json"), nil
+		},
+		"missing-entries": func(r *http.Request) (*http.Response, error) {
+			return rawHTTPResponse(http.StatusOK, `{}`), nil
+		},
+		"non-list-entries": func(r *http.Request) (*http.Response, error) {
+			return rawHTTPResponse(http.StatusOK, `{"entries": {}}`), nil
+		},
+	}
+	for name, transport := range cases {
+		t.Run(name, func(t *testing.T) {
+			withTestDSG(t, transport)
+			_, err := getDSGDecisions("token", []dsgAuthorizeEntry{entry})
+			requireAuthStatus(t, err, http.StatusBadGateway)
+			authorizations.RLock()
+			cached := len(authorizations.dsgDecisions)
+			authorizations.RUnlock()
+			if cached != 0 {
+				t.Fatalf("failure cached %d decisions", cached)
+			}
+		})
+	}
+}
+
+func TestDSGAuthorizeCorrelationFailures(t *testing.T) {
+	entry := dsgAuthorizeEntry{Name: "root", Branch: "master", Version: "1", Permission: "view"}
+	t.Run("echo", func(t *testing.T) {
+		fake := &fakeDSG{identities: map[string]dsgIdentity{}}
+		fake.authorize = func(entries []dsgAuthorizeEntry) (int, interface{}) {
+			response := echoedDecision(entries[0], "allow", []string{"view"})
+			response.Version = stringPointer("2")
+			return http.StatusOK, authorizeEnvelope(response)
+		}
+		withTestDSG(t, fake)
+		_, err := getDSGDecisions("token", []dsgAuthorizeEntry{entry})
+		requireAuthStatus(t, err, http.StatusBadGateway)
+	})
+	t.Run("length", func(t *testing.T) {
+		fake := &fakeDSG{identities: map[string]dsgIdentity{}}
+		fake.authorize = func(entries []dsgAuthorizeEntry) (int, interface{}) {
+			return http.StatusOK, authorizeEnvelope()
+		}
+		withTestDSG(t, fake)
+		_, err := getDSGDecisions("token", []dsgAuthorizeEntry{entry})
+		requireAuthStatus(t, err, http.StatusBadGateway)
+	})
+}
+
+func TestDSGTOSDecisionIsNeverCached(t *testing.T) {
+	entry := dsgAuthorizeEntry{Name: "root", Branch: "master", Version: "1", Permission: "view"}
+	state := "tos_required"
+	fake := &fakeDSG{identities: map[string]dsgIdentity{}}
+	fake.authorize = func(entries []dsgAuthorizeEntry) (int, interface{}) {
+		response := echoedDecision(entries[0], state, []string{"view"})
+		response.TOSURL = "https://dsg.example.org/tos/opaque"
+		return http.StatusOK, authorizeEnvelope(response)
+	}
+	withTestDSG(t, fake)
+
+	decisions, err := getDSGDecisions("token", []dsgAuthorizeEntry{entry})
+	if err != nil || decisions[0].Decision != "tos_required" {
+		t.Fatalf("first TOS decision = %+v, %v", decisions, err)
+	}
+	state = "allow"
+	decisions, err = getDSGDecisions("token", []dsgAuthorizeEntry{entry})
+	if err != nil || decisions[0].Decision != "allow" {
+		t.Fatalf("immediate post-TOS decision = %+v, %v", decisions, err)
+	}
+	if fake.authorizeCalls != 2 {
+		t.Fatalf("TOS flip calls = %d, want 2", fake.authorizeCalls)
+	}
+}
+
+func TestDecisionRolesMatrix(t *testing.T) {
+	cases := []struct {
+		roles      []string
+		permission string
+		allow      bool
+	}{
+		{[]string{"view"}, "view", true},
+		{[]string{"view"}, "edit", false},
+		{[]string{"edit"}, "edit", true},
+		{[]string{"manage"}, "edit", true},
+		{[]string{"admin"}, "edit", true},
+		{[]string{"custom"}, "view", false},
+	}
+	for _, tc := range cases {
+		if got := decisionRolesAllow(tc.roles, tc.permission); got != tc.allow {
+			t.Errorf("roles %v permission %s = %t, want %t", tc.roles, tc.permission, got, tc.allow)
+		}
+	}
+	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodOptions} {
+		if permission := dsgPermissionForMethod(method); permission != "view" {
+			t.Errorf("%s permission = %q, want view", method, permission)
+		}
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
+		if permission := dsgPermissionForMethod(method); permission != "edit" {
+			t.Errorf("%s permission = %q, want edit", method, permission)
+		}
+	}
+}
+
+func TestEvaluateDSGAnchorsDAGMatrix(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	root, _ := datastore.NewTestRepo()
+	if err := datastore.Commit(root, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	left, err := datastore.NewVersion(root, "", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := datastore.Commit(left, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	right, err := datastore.NewVersion(root, "", "right", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := datastore.Commit(right, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	rootV, _ := datastore.VersionFromUUID(root)
+	leftV, _ := datastore.VersionFromUUID(left)
+	rightV, _ := datastore.VersionFromUUID(right)
+
+	entry := dsgAuthorizeEntry{Name: string(root), Branch: "master", Version: strconv.FormatUint(uint64(rootV), 10), Permission: "view"}
+	decision, err := evaluateDSGAnchors(entry, []dsgAnchor{{Branch: "master", Version: int64(leftV), Roles: []string{"view"}}})
+	if err != nil || decision.Decision != "allow" {
+		t.Fatalf("pre-fork history should be covered: %+v, %v", decision, err)
+	}
+	entry.Version = strconv.FormatUint(uint64(rightV), 10)
+	decision, err = evaluateDSGAnchors(entry, []dsgAnchor{{Branch: "master", Version: int64(leftV), Roles: []string{"view"}}})
+	if err != nil || decision.Decision != "deny" {
+		t.Fatalf("sibling branch should be denied: %+v, %v", decision, err)
+	}
+	entry.Version = strconv.FormatUint(uint64(rootV), 10)
+	decision, err = evaluateDSGAnchors(entry, []dsgAnchor{{Version: int64(^uint32(0)), Roles: []string{"view"}}})
+	if err != nil || decision.Decision != "deny" {
+		t.Fatalf("unknown anchor should be skipped: %+v, %v", decision, err)
+	}
+	entry.Version = strconv.FormatUint(uint64(leftV), 10)
+	decision, err = evaluateDSGAnchors(entry, []dsgAnchor{{Version: int64(rootV), Roles: []string{"view"}}})
+	if err != nil || decision.Decision != "deny" {
+		t.Fatalf("ordinal pre-filter should deny newer request: %+v, %v", decision, err)
+	}
+}
+
+// dsgUserRoundTrip is used by web tests for DSG-admin gates.
+func dsgUserRoundTrip(t *testing.T, adminBearer string) roundTripFunc {
+	t.Helper()
+	return func(r *http.Request) (*http.Response, error) {
+		identity := identityFor("user@example.org", r.Header.Get("Authorization") == adminBearer)
+		return jsonHTTPResponse(http.StatusOK, identity), nil
+	}
+}
+
+func TestAdminPrivilegedAndAuthorizeShortCircuit(t *testing.T) {
 	origToken := adminToken
-	defer func() {
-		tc.Auth = origAuth
-		dsgHTTPClient = origClient
-		adminToken = origToken
-		clearDSGUserCache()
-	}()
-	clearDSGUserCache()
-
-	// With no admintoken configured and no DSG mode, nothing grants admin,
-	// even though enforce=none makes requestAccessScope().full true for
-	// every request.
-	adminToken = ""
-	tc.Auth = authConfig{}
-	req := httptest.NewRequest(http.MethodPost, "/api/repos", nil)
-	if adminPrivileged(req) {
-		t.Fatalf("expected no admin privilege without credentials")
-	}
-	req = httptest.NewRequest(http.MethodPost, "/api/repos?admintoken=", nil)
-	if adminPrivileged(req) {
-		t.Fatalf("expected empty admintoken to never grant admin")
-	}
-
-	// A valid admintoken grants admin; a wrong one does not.
+	t.Cleanup(func() { adminToken = origToken })
 	adminToken = "secret"
-	req = httptest.NewRequest(http.MethodPost, "/api/repos?admintoken=secret", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/repos?admintoken=secret", nil)
 	if !adminPrivileged(req) {
-		t.Fatalf("expected valid admintoken to grant admin")
-	}
-	req = httptest.NewRequest(http.MethodPost, "/api/repos?admintoken=wrong", nil)
-	if adminPrivileged(req) {
-		t.Fatalf("expected wrong admintoken to be rejected")
+		t.Fatalf("valid admintoken should grant admin")
 	}
 
-	// A DSG admin grants admin in dsg mode; a non-admin DSG user does not.
-	adminToken = ""
-	tc.Auth.Enforce = "dsg"
-	tc.Auth.DSGAddress = "https://auth.example.org"
-	tc.Auth.DSGCacheTTL = 300
-	dsgHTTPClient = &http.Client{Transport: dsgUserRoundTrip(t, "Bearer admin-token")}
-	req = httptest.NewRequest(http.MethodPost, "/api/repos", nil)
-	req.Header.Set("Authorization", "Bearer admin-token")
-	if !adminPrivileged(req) {
-		t.Fatalf("expected DSG admin to be granted admin privilege")
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+	root, _ := datastore.NewTestRepo()
+	fake := &fakeDSG{identities: map[string]dsgIdentity{"admin": identityFor("admin@example.org", true)}}
+	fake.authorize = func(entries []dsgAuthorizeEntry) (int, interface{}) {
+		t.Fatalf("admin short-circuit must not call authorize")
+		return 0, nil
 	}
-	req = httptest.NewRequest(http.MethodPost, "/api/repos", nil)
-	req.Header.Set("Authorization", "Bearer user-token")
-	if adminPrivileged(req) {
-		t.Fatalf("expected non-admin DSG user to be denied admin privilege")
+	withTestDSG(t, fake)
+
+	c := web.C{Env: map[interface{}]interface{}{"uuid": root}}
+	handler := isAuthorized(&c, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req = httptest.NewRequest(http.MethodPut, "/api/node/"+string(root)+"/data/key", nil)
+	req.Header.Set("Authorization", "Bearer admin")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("DSG admin on unregistered repo got %d: %s", w.Code, w.Body.String())
+	}
+	if fake.authorizeCalls != 0 {
+		t.Fatalf("admin short-circuit made %d authorize calls", fake.authorizeCalls)
+	}
+}
+
+func TestAuthorizedIdentityOverridesQueryUserAndTOSMessage(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+	root, _ := datastore.NewTestRepo()
+
+	state := "allow"
+	fake := &fakeDSG{identities: map[string]dsgIdentity{
+		"sa":    {Name: "mesh-writer", ServiceAccount: true},
+		"human": identityFor("human@example.org", false),
+	}}
+	fake.authorize = func(entries []dsgAuthorizeEntry) (int, interface{}) {
+		response := echoedDecision(entries[0], state, []string{"edit"})
+		response.TOSURL = "https://dsg.example.org/tos/opaque"
+		return http.StatusOK, authorizeEnvelope(response)
+	}
+	withTestDSG(t, fake)
+
+	c := web.C{Env: map[interface{}]interface{}{"uuid": root}}
+	expectedUser := "mesh-writer"
+	handler := isAuthorized(&c, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := requestUser(r); got != expectedUser {
+			t.Errorf("authenticated user = %q, want %q", got, expectedUser)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/api/node/"+string(root)+"/data/key?u=spoofed", nil)
+	req.Header.Set("Authorization", "Bearer sa")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("authorized service account got %d: %s", w.Code, w.Body.String())
+	}
+	mutation := httpMutationRecord(req)
+	if got := mutation["User"]; got != "mesh-writer" {
+		t.Fatalf("HTTP mutation user = %v, want service-account slug", got)
+	}
+	clearDSGCaches()
+	expectedUser = "human@example.org"
+	humanReq := httptest.NewRequest(http.MethodPost, "/api/node/"+string(root)+"/data/key?u=spoofed", nil)
+	humanReq.Header.Set("Authorization", "Bearer human")
+	humanW := httptest.NewRecorder()
+	handler.ServeHTTP(humanW, humanReq)
+	if humanW.Code != http.StatusNoContent {
+		t.Fatalf("authorized human got %d: %s", humanW.Code, humanW.Body.String())
+	}
+	if got := httpMutationRecord(humanReq)["User"]; got != "human@example.org" {
+		t.Fatalf("HTTP mutation user = %v, want human email", got)
 	}
 
-	// Outside DSG modes, bearer tokens never trigger DSG lookups.
-	clearDSGUserCache()
-	tc.Auth.Enforce = "token"
-	tc.Auth.EnforceInternal = ""
-	dsgHTTPClient = &http.Client{
-		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			t.Fatalf("DSG service should not be contacted outside dsg modes")
-			return nil, nil
-		}),
-	}
-	req = httptest.NewRequest(http.MethodPost, "/api/repos", nil)
-	req.Header.Set("Authorization", "Bearer admin-token")
-	if adminPrivileged(req) {
-		t.Fatalf("expected no DSG admin grant outside dsg modes")
+	clearDSGCaches()
+	expectedUser = "human@example.org"
+	state = "tos_required"
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, humanReq)
+	if w.Code != http.StatusForbidden || !bytes.Contains(w.Body.Bytes(), []byte("https://dsg.example.org/tos/opaque")) {
+		t.Fatalf("TOS response = %d %q", w.Code, w.Body.String())
 	}
 }
 
@@ -245,168 +536,184 @@ func TestEffectiveEnforceInternal(t *testing.T) {
 	tc.Auth.EnforceInternal = "none"
 	tc.Auth.TrustedProxies = []string{"10.0.0.0/8"}
 	if err := configureTrustedProxies(); err != nil {
-		t.Fatalf("could not configure trusted proxies: %v", err)
+		t.Fatal(err)
 	}
-
 	req := httptest.NewRequest(http.MethodGet, "/api/repo/uuid/info", nil)
 	req.Header.Set(internalHeader, "true")
 	req.RemoteAddr = "10.2.3.4:5555"
 	if got := effectiveEnforce(req); got != "none" {
-		t.Fatalf("expected internal request to bypass auth, got %q", got)
+		t.Fatalf("trusted internal request enforce = %q", got)
 	}
-
-	req = httptest.NewRequest(http.MethodGet, "/api/repo/uuid/info", nil)
 	req.RemoteAddr = "35.1.2.3:5555"
-	req.Header.Set(internalHeader, "true")
 	if got := effectiveEnforce(req); got != "dsg" {
-		t.Fatalf("expected external request to use dsg auth, got %q", got)
-	}
-
-	tc.Auth.TrustedProxies = nil
-	if err := configureTrustedProxies(); err != nil {
-		t.Fatalf("could not clear trusted proxies: %v", err)
-	}
-	req = httptest.NewRequest(http.MethodGet, "/api/repo/uuid/info", nil)
-	req.Header.Set(internalHeader, "true")
-	req.RemoteAddr = "35.1.2.3:5555"
-	if got := effectiveEnforce(req); got != "none" {
-		t.Fatalf("expected header to be trusted without trusted_proxies, got %q", got)
-	}
-
-	req = httptest.NewRequest(http.MethodGet, "/api/repo/uuid/info", nil)
-	req.RemoteAddr = "10.2.3.4:5555"
-	if got := effectiveEnforce(req); got != "dsg" {
-		t.Fatalf("expected request without internal header to use dsg auth, got %q", got)
+		t.Fatalf("external request enforce = %q", got)
 	}
 }
 
-func TestRequestAccessScope(t *testing.T) {
-	origAuth := tc.Auth
-	origClient := dsgHTTPClient
-	origTrustedProxyNets := trustedProxyNets
-	defer func() {
-		tc.Auth = origAuth
-		dsgHTTPClient = origClient
-		trustedProxyNets = origTrustedProxyNets
-		clearDSGUserCache()
-	}()
-
-	rootUUID := dvid.UUID("0123456789abcdef0123456789abcdef")
-	tc.Auth.Enforce = "dsg"
-	tc.Auth.EnforceInternal = "dsg"
-	tc.Auth.DSGAddress = "https://auth.example.org"
-	tc.Auth.DSGCacheTTL = 300
-	tc.Auth.DatasetMap = map[string]string{string(rootUUID): "vnc"}
-	tc.Auth.TrustedProxies = nil
-	if err := configureTrustedProxies(); err != nil {
-		t.Fatalf("could not configure trusted proxies: %v", err)
+func TestRequestAccessScopeUsesRootProbe(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+	root, _ := datastore.NewTestRepo()
+	if err := datastore.Commit(root, "", nil); err != nil {
+		t.Fatal(err)
 	}
-	clearDSGUserCache()
+	anchor, err := datastore.NewVersion(root, "", "release", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := datastore.Commit(anchor, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	anchorV, _ := datastore.VersionFromUUID(anchor)
+
+	decision := "service_eval"
+	fake := &fakeDSG{identities: map[string]dsgIdentity{"viewer": identityFor("viewer@example.org", false)}}
+	fake.authorize = func(entries []dsgAuthorizeEntry) (int, interface{}) {
+		response := echoedDecision(entries[0], decision, []string{"view"})
+		if decision == "service_eval" {
+			response.Anchors = []dsgAnchor{{Branch: "release", Version: int64(anchorV), Roles: []string{"view"}}}
+		}
+		return http.StatusOK, authorizeEnvelope(response)
+	}
+	withTestDSG(t, fake)
 
 	c := web.C{Env: map[interface{}]interface{}{"adminPriv": false}}
-	req := httptest.NewRequest(http.MethodGet, "/api/repo/uuid/info", nil)
-	req.Header.Set(internalHeader, "true")
+	req := httptest.NewRequest(http.MethodGet, "/api/repo/"+string(root)+"/info", nil)
+	req.Header.Set("Authorization", "Bearer viewer")
 	scope := requestAccessScope(c, req)
-	if scope.full || scope.user != nil {
-		t.Fatalf("internal request with enforce_internal=dsg and no token should be public-only: %+v", scope)
+	visibility, err := scope.repoVisibility(root, http.MethodGet)
+	if err != nil || visibility != datastore.RepoFullView {
+		t.Fatalf("version-grain root probe visibility = %v, %v", visibility, err)
 	}
-	if got := scope.repoVisibility(rootUUID, http.MethodGet); got != datastore.RepoPublicOnly {
-		t.Fatalf("expected public-only visibility without token, got %v", got)
-	}
-
-	tc.Auth.EnforceInternal = "none"
-	scope = requestAccessScope(c, req)
-	if !scope.full {
-		t.Fatalf("internal request with enforce_internal=none should get full scope")
+	if fake.authorizeCalls != 1 {
+		t.Fatalf("root probe authorize calls = %d, want 1", fake.authorizeCalls)
 	}
 
-	tc.Auth.EnforceInternal = "dsg"
-	c = web.C{Env: map[interface{}]interface{}{"adminPriv": true}}
+	clearDSGCaches()
+	decision = "deny"
 	scope = requestAccessScope(c, req)
-	if !scope.full {
-		t.Fatalf("admintoken should grant full scope")
+	visibility, err = scope.repoVisibility(root, http.MethodGet)
+	if err != nil || visibility != datastore.RepoPublicOnly {
+		t.Fatalf("denied root visibility = %v, %v", visibility, err)
 	}
 
-	c = web.C{Env: map[interface{}]interface{}{"adminPriv": false}}
-	dsgHTTPClient = &http.Client{
-		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			body, err := json.Marshal(&dsgUserCache{
-				Email:         "viewer@example.org",
-				PermissionsV2: map[string][]string{"vnc": {"view"}},
-			})
-			if err != nil {
-				t.Fatalf("could not encode DSG response: %v", err)
-			}
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(bytes.NewReader(body)),
-			}, nil
-		}),
-	}
-	req = httptest.NewRequest(http.MethodGet, "/api/repo/uuid/info", nil)
-	req.Header.Set("Authorization", "Bearer viewer-token")
+	clearDSGCaches()
+	decision = "tos_required"
 	scope = requestAccessScope(c, req)
-	if scope.full || scope.user == nil {
-		t.Fatalf("non-admin DSG viewer should be scoped, not full: %+v", scope)
-	}
-	if got := scope.repoVisibility(rootUUID, http.MethodGet); got != datastore.RepoFullView {
-		t.Fatalf("viewer should get full repo metadata for GET, got %v", got)
-	}
-	if got := scope.repoVisibility(rootUUID, http.MethodPost); got != datastore.RepoPublicOnly {
-		t.Fatalf("viewer should not get full repo metadata for write intent, got %v", got)
+	visibility, err = scope.repoVisibility(root, http.MethodGet)
+	if err != nil || visibility != datastore.RepoPublicOnly {
+		t.Fatalf("TOS-pending root visibility = %v, %v", visibility, err)
 	}
 }
 
-func TestDSGDatasetForRootUUID(t *testing.T) {
-	origAuth := tc.Auth
-	defer func() {
-		tc.Auth = origAuth
-	}()
-
-	rootUUID := dvid.UUID("0123456789abcdef0123456789abcdef")
-	tc.Auth.DatasetMap = map[string]string{string(rootUUID): "vnc"}
-
-	got, err := dsgDatasetForRootUUID(rootUUID)
+func TestRefreshDSGPublicVersionsSeedsCommittedClosure(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+	root, rootV := datastore.NewTestRepo()
+	if err := datastore.Commit(root, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	publicHead, err := datastore.NewVersion(root, "", "", nil)
 	if err != nil {
-		t.Fatalf("unexpected dataset map error: %v", err)
+		t.Fatal(err)
 	}
-	if got != "vnc" {
-		t.Fatalf("expected mapped dataset vnc, got %q", got)
+	if err := datastore.Commit(publicHead, "", nil); err != nil {
+		t.Fatal(err)
 	}
+	publicV, _ := datastore.VersionFromUUID(publicHead)
+	unlocked, err := datastore.NewVersion(publicHead, "", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlockedV, _ := datastore.VersionFromUUID(unlocked)
+	otherRoot, _ := datastore.NewTestRepo()
+	if err := datastore.Commit(otherRoot, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	otherV, _ := datastore.VersionFromUUID(otherRoot)
 
-	tc.Auth.DatasetMap = map[string]string{}
-	if _, err := dsgDatasetForRootUUID(rootUUID); err == nil {
-		t.Fatalf("expected missing mapping error")
-	} else {
-		var authErr *authError
-		if !errors.As(err, &authErr) || authErr.status != http.StatusForbidden {
-			t.Fatalf("expected forbidden auth error, got %v", err)
+	t.Setenv(DSGTokenVarName, "seed-token")
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if got := r.Header.Get("Authorization"); got != "Bearer seed-token" {
+			t.Fatalf("metadata Authorization = %q", got)
 		}
+		if got := r.URL.Query().Get("service"); got != "dvid" {
+			t.Fatalf("metadata service = %q", got)
+		}
+		switch r.URL.Path {
+		case "/api/dsg/v1/datasets":
+			publicKey := "has_" + "public" + "_versions"
+			return jsonHTTPResponse(http.StatusOK, []map[string]interface{}{
+				{"name": string(root), publicKey: true},
+				{"name": "not-a-local-root", publicKey: true},
+			}), nil
+		case "/api/dsg/v1/datasets/" + string(root) + "/versions":
+			nullOrdinal := (*int64)(nil)
+			return jsonHTTPResponse(http.StatusOK, []dsgVersionMetadata{
+				{Ordinal: int64Pointer(int64(publicV)), IsPublic: true},
+				{Ordinal: int64Pointer(int64(unlockedV)), IsPublic: true},
+				{Ordinal: nullOrdinal, IsPublic: true},
+				{Ordinal: int64Pointer(int64(otherV)), IsPublic: true},
+				{Ordinal: int64Pointer(int64(rootV)), IsPublic: false},
+			}), nil
+		default:
+			return jsonHTTPResponse(http.StatusNotFound, map[string]string{"error": "not found"}), nil
+		}
+	})
+	withTestDSG(t, transport)
+
+	if err := refreshDSGPublicVersions(); err != nil {
+		t.Fatalf("public metadata refresh failed: %v", err)
+	}
+	if !datastore.IsPublic(root) || !datastore.IsPublic(publicHead) {
+		t.Fatalf("public seed did not publish release closure")
+	}
+	if datastore.IsPublic(unlocked) || datastore.IsPublic(otherRoot) {
+		t.Fatalf("public seed included unlocked or cross-repo version")
 	}
 }
 
-func TestCachedDSGUserExpires(t *testing.T) {
-	origAuth := tc.Auth
-	defer func() {
-		tc.Auth = origAuth
-		clearDSGUserCache()
-	}()
+func int64Pointer(value int64) *int64 { return &value }
 
-	tc.Auth.DSGCacheTTL = 1
-	clearDSGUserCache()
-	cacheDSGUser("token", &dsgUserCache{Email: "user@example.org"})
-	if user := cachedDSGUserForToken("token"); user == nil {
-		t.Fatalf("expected cached user before expiry")
+func TestDSGPublicVersionSeedingStartupFailsClosedRefreshKeepsLastGood(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+	root, rootV := datastore.NewTestRepo()
+	if err := datastore.Commit(root, "", nil); err != nil {
+		t.Fatal(err)
 	}
+	if err := datastore.SetPublicVersionsFromSeeds([]dvid.VersionID{rootV}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(DSGTokenVarName, "seed-token")
+	withTestDSG(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return nil, io.EOF
+	}))
+	tc.Auth.DSGPublicRefresh = 0
 
-	authorizations.Lock()
-	entry := authorizations.dsgUsers["token"]
-	entry.fetchedAt = time.Now().Add(-2 * time.Second)
-	authorizations.dsgUsers["token"] = entry
-	authorizations.Unlock()
+	if err := refreshDSGPublicVersions(); err == nil {
+		t.Fatalf("expected periodic refresh failure")
+	}
+	if !datastore.IsPublic(root) {
+		t.Fatalf("periodic refresh failure replaced last-good set")
+	}
+	if err := StartDSGPublicVersionSeeding(); err != nil {
+		t.Fatalf("startup fail-closed returned error: %v", err)
+	}
+	if datastore.IsPublic(root) {
+		t.Fatalf("startup refresh failure did not publish empty set")
+	}
+}
 
-	if user := cachedDSGUserForToken("token"); user != nil {
-		t.Fatalf("expected cached user to expire")
+func TestValidateAuthModesRejectsRetiredKeys(t *testing.T) {
+	origAuth := tc.Auth
+	defer func() { tc.Auth = origAuth }()
+	tc.Auth = authConfig{Enforce: "dsg", DatasetMap: map[string]string{"root": "dataset"}}
+	if err := validateAuthModes(); err == nil || !bytes.Contains([]byte(err.Error()), []byte("is retired")) {
+		t.Fatalf("dataset map tombstone error = %v", err)
+	}
+	tc.Auth = authConfig{Enforce: "dsg", PublicVersions: []string{"uuid"}}
+	if err := validateAuthModes(); err == nil || !bytes.Contains([]byte(err.Error()), []byte("is retired")) {
+		t.Fatalf("public versions tombstone error = %v", err)
 	}
 }

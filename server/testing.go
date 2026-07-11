@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -92,15 +93,24 @@ func TestBadHTTP(t *testing.T, method, urlStr string, payload io.Reader) {
 func SetTestDSGAuth(rt http.RoundTripper) (restore func()) {
 	origAuth := tc.Auth
 	origClient := dsgHTTPClient
+	origSeedToken, hadSeedToken := os.LookupEnv(DSGTokenVarName)
 	tc.Auth.Enforce = "dsg"
 	tc.Auth.DSGAddress = "https://dsg-auth.test"
 	tc.Auth.DSGCacheTTL = 300
+	tc.Auth.DSGService = "dvid"
+	tc.Auth.DSGPublicRefresh = 0
 	dsgHTTPClient = &http.Client{Transport: rt}
-	clearDSGUserCache()
+	_ = os.Setenv(DSGTokenVarName, "test-dvid-seed-token")
+	clearDSGCaches()
 	return func() {
 		tc.Auth = origAuth
 		dsgHTTPClient = origClient
-		clearDSGUserCache()
+		if hadSeedToken {
+			_ = os.Setenv(DSGTokenVarName, origSeedToken)
+		} else {
+			_ = os.Unsetenv(DSGTokenVarName)
+		}
+		clearDSGCaches()
 	}
 }
 
