@@ -501,6 +501,11 @@ func TestAuthorizedIdentityOverridesQueryUserAndTOSMessage(t *testing.T) {
 	if got := mutation["User"]; got != "mesh-writer" {
 		t.Fatalf("HTTP mutation user = %v, want service-account slug", got)
 	}
+	versionedCtx := &datastore.VersionedCtx{}
+	setVersionedCtxUser(versionedCtx, req)
+	if versionedCtx.User != "mesh-writer" {
+		t.Fatalf("VersionedCtx user = %q, want service-account slug", versionedCtx.User)
+	}
 	clearDSGCaches()
 	expectedUser = "human@example.org"
 	humanReq := httptest.NewRequest(http.MethodPost, "/api/node/"+string(root)+"/data/key?u=spoofed", nil)

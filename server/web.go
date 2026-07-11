@@ -1301,9 +1301,9 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 		ctx := datastore.NewVersionedCtx(data, v)
 
 		// Attach user/app to context.
-		user := r.URL.Query().Get("u")
+		setVersionedCtxUser(ctx, r)
+		user := ctx.User
 		app := r.URL.Query().Get("app")
-		ctx.User = user
 		ctx.App = app
 
 		// Also set the web request information in case logging needs it downstream.
@@ -1373,6 +1373,10 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 		}
 	}
 	return http.HandlerFunc(fn)
+}
+
+func setVersionedCtxUser(ctx *datastore.VersionedCtx, r *http.Request) {
+	ctx.User = requestUser(r)
 }
 
 // ---- Function types that fulfill http.Handler.  How can a bare function satisfy an interface?
