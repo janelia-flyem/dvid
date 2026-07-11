@@ -58,10 +58,10 @@ func decodeRepoJSONForPublicTest(t *testing.T, jsonStr string) repoJSONForPublic
 func TestSetPublicVersionsEmptyWithoutManager(t *testing.T) {
 	Shutdown()
 	if err := SetPublicVersions(nil); err != nil {
-		t.Fatalf("empty public_versions should not require initialized manager: %v", err)
+		t.Fatalf("empty public release set should not require initialized manager: %v", err)
 	}
 	if IsPublic(dvid.UUID("0123456789abcdef0123456789abcdef")) {
-		t.Fatalf("empty public_versions should not mark any UUID public")
+		t.Fatalf("empty public release set should not mark any UUID public")
 	}
 }
 
@@ -110,11 +110,105 @@ func TestSetPublicVersionsValidationAndClosure(t *testing.T) {
 		string(private),
 	} {
 		if err := SetPublicVersions([]string{bad}); err == nil {
-			t.Fatalf("expected public_versions entry %q to be rejected", bad)
+			t.Fatalf("expected public release entry %q to be rejected", bad)
 		}
 	}
 	if !IsPublic(merge) || IsPublic(private) {
 		t.Fatalf("failed SetPublicVersions call should not replace prior public set")
+	}
+}
+
+func TestSetPublicVersionsFromSeeds(t *testing.T) {
+	OpenTest()
+	defer CloseTest()
+
+	root, rootV := NewTestRepo()
+	mustCommit(t, root)
+	left := mustNewVersion(t, root, "")
+	mustCommit(t, left)
+	right := mustNewVersion(t, root, "right")
+	mustCommit(t, right)
+	merge, err := Merge([]dvid.UUID{left, right}, "merge", MergeConflictFree)
+	if err != nil {
+		t.Fatalf("could not merge public seed parents: %v", err)
+	}
+	mustCommit(t, merge)
+	private := mustNewVersion(t, merge, "")
+
+	if err := SetPublicVersionsFromSeeds([]dvid.VersionID{mustVersion(t, merge)}); err != nil {
+		t.Fatalf("could not publish seed-based public set: %v", err)
+	}
+	for _, uuid := range []dvid.UUID{root, left, right, merge} {
+		if !IsPublic(uuid) {
+			t.Fatalf("expected seed closure to include %s", uuid)
+		}
+	}
+	if IsPublic(private) {
+		t.Fatalf("seed closure should not include private descendant %s", private)
+	}
+
+	// An unlocked seed is ignored and the resulting empty set is published.
+	if err := SetPublicVersionsFromSeeds([]dvid.VersionID{mustVersion(t, private)}); err != nil {
+		t.Fatalf("unlocked seed should be skipped: %v", err)
+	}
+	if IsPublicVersion(rootV) {
+		t.Fatalf("skipped unlocked seed should publish an empty set")
+	}
+
+	// A failed rebuild must not replace the last successfully published set.
+	if err := SetPublicVersionsFromSeeds([]dvid.VersionID{rootV}); err != nil {
+		t.Fatalf("could not restore root-only public set: %v", err)
+	}
+	if err := SetPublicVersionsFromSeeds([]dvid.VersionID{dvid.VersionID(^uint32(0))}); err == nil {
+		t.Fatalf("expected unknown public seed to fail")
+	}
+	if !IsPublic(root) {
+		t.Fatalf("failed seed rebuild replaced the last-good public set")
+	}
+
+	if err := SetPublicVersionsFromSeeds(nil); err != nil {
+		t.Fatalf("could not publish empty seed set: %v", err)
+	}
+	if IsPublic(root) {
+		t.Fatalf("empty seeds should clear the public set")
+	}
+}
+
+func TestVersionGraphHelpers(t *testing.T) {
+	OpenTest()
+	defer CloseTest()
+
+	root, rootV := NewTestRepo()
+	mustCommit(t, root)
+	master := mustNewVersion(t, root, "")
+	mustCommit(t, master)
+	sibling := mustNewVersion(t, root, "sibling")
+	mustCommit(t, sibling)
+
+	branch, err := GetNodeBranch(root)
+	if err != nil || branch != "" {
+		t.Fatalf("default branch = %q, %v; want stored empty branch", branch, err)
+	}
+	branch, err = GetNodeBranch(sibling)
+	if err != nil || branch != "sibling" {
+		t.Fatalf("sibling branch = %q, %v; want sibling", branch, err)
+	}
+
+	roots, err := RepoRootVersions()
+	if err != nil {
+		t.Fatalf("could not enumerate repo roots: %v", err)
+	}
+	if got := roots[root]; got != rootV {
+		t.Fatalf("root version = %d, want %d", got, rootV)
+	}
+
+	precedes, err := VersionPrecedesOrEquals(rootV, mustVersion(t, master))
+	if err != nil || !precedes {
+		t.Fatalf("root should precede master child: %t, %v", precedes, err)
+	}
+	precedes, err = VersionPrecedesOrEquals(mustVersion(t, sibling), mustVersion(t, master))
+	if err != nil || precedes {
+		t.Fatalf("sibling should not precede master child: %t, %v", precedes, err)
 	}
 }
 

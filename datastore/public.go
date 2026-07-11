@@ -33,36 +33,72 @@ func SetPublicVersions(configured []string) error {
 }
 
 func (m *repoManager) setPublicVersions(configured []string) error {
-	ps := &publicSet{
-		uuids:    make(map[dvid.UUID]struct{}),
-		versions: make(map[dvid.VersionID]struct{}),
-	}
+	seeds := make([]dvid.VersionID, 0, len(configured))
 	for _, raw := range configured {
-		releaseUUID, releaseV, err := m.validatePublicReleaseUUID(raw)
+		_, releaseV, err := m.validatePublicReleaseUUID(raw)
 		if err != nil {
 			return err
 		}
 		locked, err := m.lockedVersion(releaseV)
 		if err != nil {
-			return fmt.Errorf("public_versions UUID %q lock check failed: %v", raw, err)
+			return fmt.Errorf("public release UUID %q lock check failed: %v", raw, err)
 		}
 		if !locked {
-			return fmt.Errorf("public_versions UUID %q must be committed/locked", raw)
+			return fmt.Errorf("public release UUID %q must be committed/locked", raw)
 		}
-		closure, err := m.ancestorsClosure(releaseV)
+		seeds = append(seeds, releaseV)
+	}
+	return m.publishPublicVersions(seeds)
+}
+
+// SetPublicVersionsFromSeeds expands committed release versions over all
+// transitive ancestors and atomically publishes the resulting public set.
+// Uncommitted seeds are ignored so incomplete releases cannot become public.
+func SetPublicVersionsFromSeeds(seeds []dvid.VersionID) error {
+	if len(seeds) == 0 {
+		publicVersions.Store(&publicSet{
+			uuids:    make(map[dvid.UUID]struct{}),
+			versions: make(map[dvid.VersionID]struct{}),
+		})
+		return nil
+	}
+	m := getManager()
+	if m == nil {
+		return ErrManagerNotInitialized
+	}
+	committed := make([]dvid.VersionID, 0, len(seeds))
+	for _, seed := range seeds {
+		locked, err := m.lockedVersion(seed)
 		if err != nil {
-			return fmt.Errorf("public_versions UUID %q ancestry check failed: %v", raw, err)
+			return fmt.Errorf("public seed version %d lock check failed: %v", seed, err)
+		}
+		if !locked {
+			dvid.Warningf("Skipping uncommitted public seed version %d\n", seed)
+			continue
+		}
+		committed = append(committed, seed)
+	}
+	return m.publishPublicVersions(committed)
+}
+
+func (m *repoManager) publishPublicVersions(seeds []dvid.VersionID) error {
+	ps := &publicSet{
+		uuids:    make(map[dvid.UUID]struct{}),
+		versions: make(map[dvid.VersionID]struct{}),
+	}
+	for _, seed := range seeds {
+		closure, err := m.ancestorsClosure(seed)
+		if err != nil {
+			return fmt.Errorf("public seed version %d ancestry check failed: %v", seed, err)
 		}
 		for v := range closure {
 			uuid, err := m.uuidFromVersion(v)
 			if err != nil {
-				return fmt.Errorf("public_versions UUID %q has invalid ancestor version %d: %v", raw, v, err)
+				return fmt.Errorf("public seed version %d has invalid ancestor version %d: %v", seed, v, err)
 			}
 			ps.versions[v] = struct{}{}
 			ps.uuids[uuid] = struct{}{}
 		}
-		ps.versions[releaseV] = struct{}{}
-		ps.uuids[releaseUUID] = struct{}{}
 	}
 	publicVersions.Store(ps)
 	return nil
@@ -70,25 +106,25 @@ func (m *repoManager) setPublicVersions(configured []string) error {
 
 func (m *repoManager) validatePublicReleaseUUID(raw string) (dvid.UUID, dvid.VersionID, error) {
 	if strings.Contains(raw, ":") {
-		return dvid.NilUUID, 0, fmt.Errorf("public_versions entry %q must be a committed UUID, not a branch selector", raw)
+		return dvid.NilUUID, 0, fmt.Errorf("public release entry %q must be a committed UUID, not a branch selector", raw)
 	}
 	if raw != strings.ToLower(raw) {
-		return dvid.NilUUID, 0, fmt.Errorf("public_versions entry %q must be a lowercase canonical UUID", raw)
+		return dvid.NilUUID, 0, fmt.Errorf("public release entry %q must be a lowercase canonical UUID", raw)
 	}
 	uuid, err := dvid.StringToUUID(raw)
 	if err != nil {
-		return dvid.NilUUID, 0, fmt.Errorf("public_versions entry %q must be a full canonical UUID: %v", raw, err)
+		return dvid.NilUUID, 0, fmt.Errorf("public release entry %q must be a full canonical UUID: %v", raw, err)
 	}
 	v, err := m.versionFromUUID(uuid)
 	if err != nil {
-		return dvid.NilUUID, 0, fmt.Errorf("public_versions entry %q is unknown: %v", raw, err)
+		return dvid.NilUUID, 0, fmt.Errorf("public release entry %q is unknown: %v", raw, err)
 	}
 	resolved, err := m.uuidFromVersion(v)
 	if err != nil {
-		return dvid.NilUUID, 0, fmt.Errorf("public_versions entry %q resolved to invalid version %d: %v", raw, v, err)
+		return dvid.NilUUID, 0, fmt.Errorf("public release entry %q resolved to invalid version %d: %v", raw, v, err)
 	}
 	if resolved != uuid || string(resolved) != raw {
-		return dvid.NilUUID, 0, fmt.Errorf("public_versions entry %q resolved to %q; full exact UUIDs are required", raw, resolved)
+		return dvid.NilUUID, 0, fmt.Errorf("public release entry %q resolved to %q; full exact UUIDs are required", raw, resolved)
 	}
 	return uuid, v, nil
 }
@@ -113,6 +149,21 @@ func (m *repoManager) ancestorsClosure(v dvid.VersionID) (map[dvid.VersionID]str
 		return nil
 	}
 	return seen, walk(v)
+}
+
+// VersionPrecedesOrEquals reports whether requested is the same version as,
+// or an ancestor of, anchor.
+func VersionPrecedesOrEquals(requested, anchor dvid.VersionID) (bool, error) {
+	m := getManager()
+	if m == nil {
+		return false, ErrManagerNotInitialized
+	}
+	closure, err := m.ancestorsClosure(anchor)
+	if err != nil {
+		return false, err
+	}
+	_, found := closure[requested]
+	return found, nil
 }
 
 // IsPublic reports whether a resolved UUID is public. It fails closed when no
