@@ -142,6 +142,9 @@ func TestParseConfig(t *testing.T) {
 	if datacfg.MutationStart != 1000100000 {
 		t.Errorf("Bad mutation id start retrieval in configuration: %v\n", datacfg)
 	}
+	if tc.Auth.DSGPublicRefresh != 3600 {
+		t.Errorf("default DSG public refresh = %d, want 3600", tc.Auth.DSGPublicRefresh)
+	}
 
 	logCfg := tc.Logging
 	if logCfg.Logfile != "/demo/logs/dvid.log" || logCfg.MaxSize != 500 || logCfg.MaxAge != 30 {
