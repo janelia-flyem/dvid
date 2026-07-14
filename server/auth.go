@@ -990,12 +990,19 @@ func dsgPermissionForMethod(method string) string {
 	return "edit"
 }
 
+func dsgPermissionForDataRequest(method string, isMutation bool) string {
+	if method == http.MethodPost && !isMutation {
+		return "view"
+	}
+	return dsgPermissionForMethod(method)
+}
+
 // dsgPermissionForRequest honors datatype declarations for immutable POST
 // endpoints, such as neuronjson /query, while failing closed to the normal
 // method-based permission for routes that cannot be resolved here.
 func dsgPermissionForRequest(c *web.C, r *http.Request) string {
 	permission := dsgPermissionForMethod(r.Method)
-	if permission == "view" || c == nil {
+	if permission == "view" || r.Method != http.MethodPost || c == nil {
 		return permission
 	}
 	uuid, ok := c.Env["uuid"].(dvid.UUID)
@@ -1010,10 +1017,9 @@ func dsgPermissionForRequest(c *web.C, r *http.Request) string {
 	if err != nil {
 		return permission
 	}
-	if !data.IsMutationRequest(r.Method, c.URLParams["keyword"]) {
-		return "view"
-	}
-	return permission
+	return dsgPermissionForDataRequest(
+		r.Method, data.IsMutationRequest(r.Method, c.URLParams["keyword"]),
+	)
 }
 
 func decisionRolesAllow(roles []string, permission string) bool {

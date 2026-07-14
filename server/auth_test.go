@@ -537,6 +537,22 @@ func TestDecisionRolesMatrix(t *testing.T) {
 			t.Errorf("%s permission = %q, want edit", method, permission)
 		}
 	}
+	for name, test := range map[string]struct {
+		method     string
+		isMutation bool
+		permission string
+	}{
+		"immutable-post": {http.MethodPost, false, "view"},
+		"mutation-post":  {http.MethodPost, true, "edit"},
+		"get":            {http.MethodGet, false, "view"},
+		"patch":          {http.MethodPatch, false, "edit"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := dsgPermissionForDataRequest(test.method, test.isMutation); got != test.permission {
+				t.Errorf("permission = %q, want %q", got, test.permission)
+			}
+		})
+	}
 }
 
 func TestEvaluateDSGAnchorsDAGMatrix(t *testing.T) {
@@ -762,6 +778,20 @@ func TestClioAuthBrokerMintsCapabilityAndPreservesTOSURL(t *testing.T) {
 	}
 
 	clearDSGCaches()
+	state = "deny"
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/clio/"+string(root), strings.NewReader(requestBody))
+	req.Header.Set("Authorization", "Bearer viewer")
+	w = httptest.NewRecorder()
+	clioAuthHandler(c, w, req)
+	response = clioAuthResponse{}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Decision != "deny" || response.Capability != "" || response.TOSURL != "" {
+		t.Fatalf("broker deny response = %+v", response)
+	}
+
+	clearDSGCaches()
 	beforeAdmin := fake.authorizeCalls
 	req = httptest.NewRequest(http.MethodPost, "/api/auth/clio/"+string(root), strings.NewReader(`{"permission":"edit"}`))
 	req.Header.Set("Authorization", "Bearer admin")
@@ -776,6 +806,15 @@ func TestClioAuthBrokerMintsCapabilityAndPreservesTOSURL(t *testing.T) {
 	}
 	if _, err := verifyDVIDCapability(response.Capability, root, "edit", time.Now()); err != nil {
 		t.Fatalf("admin edit capability failed: %v", err)
+	}
+
+	clearDSGCaches()
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/clio/"+string(root), strings.NewReader(requestBody))
+	req.Header.Set("Authorization", "Bearer invalid")
+	w = httptest.NewRecorder()
+	clioAuthHandler(c, w, req)
+	if w.Code != http.StatusUnauthorized || bytes.Contains(w.Body.Bytes(), []byte("capability")) {
+		t.Fatalf("invalid-token broker response = %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -871,6 +910,43 @@ func TestDVIDCapabilityPrecedesPublicAndInternalBypasses(t *testing.T) {
 	run("invalid-public-internal", dvidCapabilityScheme+" tampered", true, http.StatusUnauthorized, "")
 	run("no-capability-public", "", false, http.StatusNoContent, "query-user")
 	run("no-capability-internal", "", true, http.StatusNoContent, "query-user")
+}
+
+func TestDVIDCapabilityReplayPreservesMutationPrincipal(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+	root, _ := datastore.NewTestRepo()
+	withTestDSG(t, &fakeDSG{identities: map[string]dsgIdentity{}})
+	t.Setenv(DVIDCapabilitySecretVarName, "replay-secret")
+	capability, err := mintDVIDCapability(root, "edit", "original@example.org", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := web.C{Env: map[interface{}]interface{}{"uuid": root}}
+	handler := isAuthorized(&c, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := requestUser(r); got != "original@example.org" {
+			t.Errorf("request user = %q", got)
+		}
+		if got := httpMutationRecord(r)["User"]; got != "original@example.org" {
+			t.Errorf("mutation user = %v", got)
+		}
+		ctx := &datastore.VersionedCtx{}
+		setVersionedCtxUser(ctx, r)
+		if ctx.User != "original@example.org" {
+			t.Errorf("VersionedCtx user = %q", ctx.User)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	for replay := 0; replay < 2; replay++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/node/"+string(root)+"/data/key?u=spoofed", nil)
+		req.Header.Set("Authorization", dvidCapabilityScheme+" "+capability)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("replay %d status = %d: %s", replay, w.Code, w.Body.String())
+		}
+	}
 }
 
 func TestEffectiveEnforceInternal(t *testing.T) {
