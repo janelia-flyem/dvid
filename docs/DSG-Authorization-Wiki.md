@@ -37,6 +37,15 @@ Set DVID's metadata credential in the service environment, not in TOML:
 DVID_DSG_TOKEN=<dedicated-service-account-token>
 ```
 
+Clio-backed deployments also set the capability signing secret in the DVID
+process environment:
+
+```text
+DVID_CAPABILITY_SECRET=<high-entropy-shared-secret>
+# During a rolling rotation only:
+DVID_CAPABILITY_PREVIOUS_SECRET=<previous-secret>
+```
+
 Fields:
 
 - `enforce = "dsg"` enables native DSG authentication and authorization.
@@ -54,6 +63,10 @@ Fields:
 - `DVID_DSG_TOKEN` authenticates DVID's own metadata requests. A dedicated
   service account with no grants is sufficient because public datasets remain
   visible to that principal.
+- `DVID_CAPABILITY_SECRET` enables the Clio broker and signs its short-lived
+  capabilities. It is independent of DSG user tokens and legacy DVID JWTs.
+- `DVID_CAPABILITY_PREVIOUS_SECRET` is verification-only and should be set only
+  during a rolling secret rotation.
 
 The `dataset_map` and `public_versions` settings are retired. Configuring
 either causes a pointed startup error: dataset aliases, version anchors, and
@@ -101,7 +114,8 @@ For each non-public UUID-scoped request, DVID sends an authorize entry with:
 - `branch`: the node's branch (`master` for the default branch)
 - `version`: the node's raw decimal `VersionID`
 - `permission`: `view` for `GET`, `HEAD`, and `OPTIONS`; `edit` for mutation
-  methods
+  methods. A datatype may declare an immutable POST endpoint, such as
+  neuronjson `/query`; that endpoint also uses `view`.
 
 An `allow` decision still must carry an applicable role. `view` is read-only;
 `edit`, `manage`, and `admin` permit reads and writes. Unknown roles do not
@@ -116,6 +130,60 @@ by token, root UUID, branch, version, and requested permission.
 DSG administrators short-circuit before the authorize call. This deliberately
 preserves administrator access to local repositories that have not yet been
 registered in DSG.
+
+## Clio Authorization Broker
+
+`POST /api/auth/clio/:uuid` is a narrow, authenticated decision broker for
+clio-store. It is available only when top-level `enforce = "dsg"`,
+`dsg_address`, and `DVID_CAPABILITY_SECRET` are configured. The request carries
+a DSG Bearer token and this JSON body:
+
+```json
+{"permission": "view", "return_url": "https://clio.example.org/"}
+```
+
+`permission` must be `view` or `edit`; `return_url` is optional. DVID uniquely
+resolves the path UUID, derives its root, branch, and raw decimal `VersionID`,
+and submits that target to DSG with the service fixed to `clio`. The caller
+cannot provide a branch, ordinal, canonical dataset name, or service. DVID uses
+the same local-DAG evaluation as direct DSG authorization for any
+`service_eval` anchors. A DSG global administrator is still authenticated, but
+can receive a scoped capability without an alias-backed decision.
+
+An `allow` response contains the decision roles and an opaque capability. A
+`tos_required` response contains only its opaque `tos_url`; deny and all error
+responses contain no capability. Broker responses do not expose the resolved
+root, branch, ordinal, canonical dataset, or anchors.
+
+clio-store presents the allow value only as:
+
+```text
+Authorization: DVID-Capability <opaque>
+```
+
+The HMAC-authenticated value binds `service=clio`, the full node UUID, root,
+raw `VersionID`, `view|edit` permission, original authenticated principal,
+issue and expiry times, and a random nonce. Its lifetime is 60 seconds with at
+most five seconds of verifier clock skew. It is intentionally replayable within
+that window for the same node and permission: it is neither path-, body-, nor
+one-use-bound. Every replay retains the original principal for request context,
+activity, and mutation attribution. A view capability cannot authorize a
+mutation; an edit capability covers reads and writes.
+
+Capability verification runs before public-read, internal-header, and DSG-token
+authorization. Any presented malformed, tampered, expired, cross-node, or
+wrong-permission capability fails closed and never falls through. When the
+scheme is absent, the existing public, DSG Bearer, and `X-DVID-Internal` flows
+are unchanged.
+
+For a rolling signing-secret rotation, first deploy the new value as
+`DVID_CAPABILITY_SECRET` and the old value as
+`DVID_CAPABILITY_PREVIOUS_SECRET` to every DVID broker/data-serving process.
+After all processes mint with the new active key, wait more than one full
+60-second lifetime plus the five-second skew allowance, then remove the
+previous key. DVID always mints with the active key and verifies against active
+then previous. An unset active key disables only the broker/capability path
+with HTTP 503; unrelated authorization modes continue to operate.
 
 ## Terms of Service
 
@@ -191,12 +259,24 @@ mode.
 
 1. Deploy the native DSG API and authorization ledger.
 2. Register the DVID service, root aliases, anchor versions, per-anchor aliases,
-   public flags, grants, and Terms-of-Service documents.
-3. Provision `DVID_DSG_TOKEN` and writer service-account tokens.
+   public flags, grants, and Terms-of-Service documents. Ensure the existing
+   `clio` service uses DAG evaluation; for each Clio-backed repository add the
+   full root UUID as a name alias and add a `(root UUID, decimal VersionID)`
+   alias for every published anchor. Retain Firestore-id aliases used by Clio
+   listing and `/dataset-access`. Inspect metadata listings for the known wart
+   where alphabetic aliases can be omitted even though direct resolution works.
+3. Provision `DVID_DSG_TOKEN`, writer service-account tokens, and the same
+   active/previous capability secrets on every DVID process that brokers or
+   serves Clio requests.
 4. Remove retired settings, configure the native DSG fields, rebuild DVID, and
-   redeploy.
-5. Verify anonymous public/private reads; same- and cross-branch grants;
+   deploy it before clio-store. Keep top-level `enforce = "dsg"`; Clio does not
+   depend on `enforce_internal`.
+5. No Firestore `dvid` URL, nginx, dual-horizon DNS, or internal-header change is
+   required. The legacy `X-DVID-Internal` path remains available to other
+   clients, but Clio sends neither that header nor a DSG token to data routes.
+6. Verify anonymous public/private reads; same- and cross-branch grants;
    sibling-branch denial; TOS acceptance and immediate retry; dedicated-service-
    account write attribution; view-only write denial; administrator access to
-   an unregistered repository; filtered repo metadata; and a downstream client
-   smoke test.
+   an unregistered repository; filtered repo metadata; Clio dataset- and
+   version-grain grants; read-only POST query; deny/admin behavior; capability
+   tampering, expiry, and cross-node reuse; and a downstream Clio smoke test.

@@ -80,6 +80,10 @@ enforce = "none" # "none" = no auth, "token" requires valid legacy DVID JWT (dep
 # dsg_public_refresh = 3600   # public metadata refresh seconds; 0 means startup only
 # trusted_proxies = ["127.0.0.1/32", "10.10.1.0/24"]  # optional CIDRs of nginx peers allowed to set X-DVID-Internal
 # Set DVID_DSG_TOKEN in the service environment for authenticated public-metadata seeding.
+# Clio broker/data processes also need the same DVID_CAPABILITY_SECRET. During a
+# rolling rotation, set DVID_CAPABILITY_PREVIOUS_SECRET to the old value for at
+# least one 60-second capability TTL plus the five-second verifier skew after
+# every process begins minting with the new active value.
 # dataset_map and public_versions are retired; configuring either now fails startup.
 
 # This legacy proxy/JWT method is deprecated and won't be used by DSG deployments.

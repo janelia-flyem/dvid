@@ -2,12 +2,14 @@ package server
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -49,12 +51,15 @@ func identityFor(email string, admin bool) dsgIdentity {
 type fakeDSG struct {
 	mu sync.Mutex
 
-	identities map[string]dsgIdentity
-	authorize  func([]dsgAuthorizeEntry) (int, interface{})
+	identities          map[string]dsgIdentity
+	authorize           func([]dsgAuthorizeEntry) (int, interface{})
+	authorizeForService func(string, string, []dsgAuthorizeEntry) (int, interface{})
 
 	identityCalls  int
 	authorizeCalls int
 	requests       []string
+	services       []string
+	returnURLs     []string
 }
 
 func (fake *fakeDSG) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -73,11 +78,18 @@ func (fake *fakeDSG) RoundTrip(r *http.Request) (*http.Response, error) {
 	case "/api/dsg/v1/authorize":
 		fake.authorizeCalls++
 		var request struct {
-			Service string              `json:"service"`
-			Entries []dsgAuthorizeEntry `json:"entries"`
+			Service   string              `json:"service"`
+			ReturnURL string              `json:"return_url"`
+			Entries   []dsgAuthorizeEntry `json:"entries"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			return rawHTTPResponse(http.StatusBadRequest, `{"error":"bad request"}`), nil
+		}
+		fake.services = append(fake.services, request.Service)
+		fake.returnURLs = append(fake.returnURLs, request.ReturnURL)
+		if fake.authorizeForService != nil {
+			status, response := fake.authorizeForService(request.Service, request.ReturnURL, request.Entries)
+			return jsonHTTPResponse(status, response), nil
 		}
 		if fake.authorize == nil {
 			return jsonHTTPResponse(http.StatusOK, map[string]interface{}{"entries": []interface{}{}}), nil
@@ -343,6 +355,160 @@ func TestDSGTOSDecisionIsNeverCached(t *testing.T) {
 	}
 }
 
+func TestDSGDecisionCacheSeparatesServicesAndTOSReturnURLs(t *testing.T) {
+	entry := dsgAuthorizeEntry{Name: "root", Branch: "master", Version: "1", Permission: "view"}
+	fake := &fakeDSG{identities: map[string]dsgIdentity{}}
+	fake.authorizeForService = func(service, returnURL string, entries []dsgAuthorizeEntry) (int, interface{}) {
+		response := echoedDecision(entries[0], "deny", nil)
+		if service == "clio" {
+			response.Decision = "allow"
+			response.Roles = []string{"view"}
+		}
+		return http.StatusOK, authorizeEnvelope(response)
+	}
+	withTestDSG(t, fake)
+
+	dvidDecision, err := getDSGDecisionsForService("token", "dvid", "", []dsgAuthorizeEntry{entry})
+	if err != nil || dvidDecision[0].Decision != "deny" {
+		t.Fatalf("dvid decision = %+v, %v", dvidDecision, err)
+	}
+	clioDecision, err := getDSGDecisionsForService("token", "clio", "", []dsgAuthorizeEntry{entry})
+	if err != nil || clioDecision[0].Decision != "allow" {
+		t.Fatalf("clio decision = %+v, %v", clioDecision, err)
+	}
+	if fake.authorizeCalls != 2 {
+		t.Fatalf("service-separated calls = %d, want 2", fake.authorizeCalls)
+	}
+	if _, err := getDSGDecisionsForService("token", "dvid", "", []dsgAuthorizeEntry{entry}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := getDSGDecisionsForService("token", "clio", "", []dsgAuthorizeEntry{entry}); err != nil {
+		t.Fatal(err)
+	}
+	if fake.authorizeCalls != 2 {
+		t.Fatalf("cached service-separated calls = %d, want 2", fake.authorizeCalls)
+	}
+
+	clearDSGCaches()
+	fake.authorizeForService = func(service, returnURL string, entries []dsgAuthorizeEntry) (int, interface{}) {
+		response := echoedDecision(entries[0], "tos_required", []string{"view"})
+		response.TOSURL = returnURL + "/opaque"
+		return http.StatusOK, authorizeEnvelope(response)
+	}
+	first, err := getDSGDecisionsForService("token", "clio", "https://one.example", []dsgAuthorizeEntry{entry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := getDSGDecisionsForService("token", "clio", "https://two.example", []dsgAuthorizeEntry{entry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first[0].TOSURL != "https://one.example/opaque" || second[0].TOSURL != "https://two.example/opaque" {
+		t.Fatalf("TOS URLs crossed: %q, %q", first[0].TOSURL, second[0].TOSURL)
+	}
+	if fake.authorizeCalls != 4 {
+		t.Fatalf("TOS requests should not cache: calls = %d, want 4", fake.authorizeCalls)
+	}
+}
+
+func resignDVIDCapability(t *testing.T, token, secret string, mutate func(*dvidCapabilityClaims)) string {
+	t.Helper()
+	parts := strings.Split(token, ".")
+	if len(parts) != 2 {
+		t.Fatalf("bad test capability %q", token)
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claims dvidCapabilityClaims
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatal(err)
+	}
+	mutate(&claims)
+	payload, err = json.Marshal(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(payload)
+	signature := dvidCapabilitySignature([]byte(encoded), secret)
+	return encoded + "." + base64.RawURLEncoding.EncodeToString(signature)
+}
+
+func TestDVIDCapabilityVerificationMatrixAndRotation(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+	root, _ := datastore.NewTestRepo()
+	other, _ := datastore.NewTestRepo()
+	now := time.Unix(2_000_000_000, 0)
+	t.Setenv(DVIDCapabilitySecretVarName, "secret-a")
+	t.Setenv(DVIDCapabilityPreviousSecretVarName, "")
+
+	editCapability, err := mintDVIDCapability(root, "edit", "editor@example.org", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, permission := range []string{"view", "edit"} {
+		principal, err := verifyDVIDCapability(editCapability, root, permission, now)
+		if err != nil || principal != "editor@example.org" {
+			t.Fatalf("edit capability for %s = %q, %v", permission, principal, err)
+		}
+	}
+	viewCapability, err := mintDVIDCapability(root, "view", "viewer@example.org", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyDVIDCapability(viewCapability, root, "edit", now); err == nil {
+		t.Fatal("view capability authorized a mutation")
+	}
+	if _, err := verifyDVIDCapability(editCapability, other, "view", now); err == nil {
+		t.Fatal("capability authorized another node")
+	}
+	replacement := "A"
+	if strings.HasSuffix(editCapability, replacement) {
+		replacement = "B"
+	}
+	tampered := editCapability[:len(editCapability)-1] + replacement
+	if _, err := verifyDVIDCapability(tampered, root, "view", now); err == nil {
+		t.Fatal("tampered capability was accepted")
+	}
+
+	for name, mutate := range map[string]func(*dvidCapabilityClaims){
+		"service": func(claims *dvidCapabilityClaims) { claims.Service = "dvid" },
+		"root":    func(claims *dvidCapabilityClaims) { claims.Root = string(other) },
+		"version": func(claims *dvidCapabilityClaims) { claims.Version++ },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := resignDVIDCapability(t, editCapability, "secret-a", mutate)
+			if _, err := verifyDVIDCapability(changed, root, "view", now); err == nil {
+				t.Fatalf("capability with wrong %s was accepted", name)
+			}
+		})
+	}
+
+	if _, err := verifyDVIDCapability(editCapability, root, "view", now.Add(dvidCapabilityTTL+dvidCapabilityClockSkew)); err != nil {
+		t.Fatalf("capability at skew boundary failed: %v", err)
+	}
+	if _, err := verifyDVIDCapability(editCapability, root, "view", now.Add(dvidCapabilityTTL+dvidCapabilityClockSkew+time.Second)); err == nil {
+		t.Fatal("expired capability beyond skew was accepted")
+	}
+	if _, err := verifyDVIDCapability(editCapability, root, "view", now.Add(-dvidCapabilityClockSkew)); err != nil {
+		t.Fatalf("capability at future-clock skew boundary failed: %v", err)
+	}
+	if _, err := verifyDVIDCapability(editCapability, root, "view", now.Add(-dvidCapabilityClockSkew-time.Second)); err == nil {
+		t.Fatal("not-yet-valid capability beyond skew was accepted")
+	}
+
+	t.Setenv(DVIDCapabilitySecretVarName, "secret-b")
+	if _, err := verifyDVIDCapability(editCapability, root, "view", now); err == nil {
+		t.Fatal("capability signed by unrelated secret was accepted")
+	}
+	t.Setenv(DVIDCapabilityPreviousSecretVarName, "secret-a")
+	if principal, err := verifyDVIDCapability(editCapability, root, "view", now); err != nil || principal != "editor@example.org" {
+		t.Fatalf("previous-secret verification = %q, %v", principal, err)
+	}
+}
+
 func TestDecisionRolesMatrix(t *testing.T) {
 	cases := []struct {
 		roles      []string
@@ -527,6 +693,184 @@ func TestAuthorizedIdentityOverridesQueryUserAndTOSMessage(t *testing.T) {
 	if w.Code != http.StatusForbidden || !bytes.Contains(w.Body.Bytes(), []byte("https://dsg.example.org/tos/opaque")) {
 		t.Fatalf("TOS response = %d %q", w.Code, w.Body.String())
 	}
+}
+
+func TestClioAuthBrokerMintsCapabilityAndPreservesTOSURL(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+	root, rootVersion := datastore.NewTestRepo()
+	state := "allow"
+	fake := &fakeDSG{identities: map[string]dsgIdentity{
+		"viewer": identityFor("viewer@example.org", false),
+		"admin":  identityFor("admin@example.org", true),
+	}}
+	fake.authorizeForService = func(service, returnURL string, entries []dsgAuthorizeEntry) (int, interface{}) {
+		if service != dvidCapabilityService {
+			t.Fatalf("broker service = %q", service)
+		}
+		entry := entries[0]
+		if entry.Name != string(root) || entry.Branch != "master" ||
+			entry.Version != strconv.FormatUint(uint64(rootVersion), 10) || entry.Permission != "view" {
+			t.Fatalf("broker entry = %+v", entry)
+		}
+		response := echoedDecision(entry, state, []string{"view", "named-role"})
+		if state == "tos_required" {
+			response.TOSURL = returnURL + "?opaque=1"
+		}
+		return http.StatusOK, authorizeEnvelope(response)
+	}
+	withTestDSG(t, fake)
+	t.Setenv(DVIDCapabilitySecretVarName, "broker-secret")
+	t.Setenv(DVIDCapabilityPreviousSecretVarName, "")
+	c := web.C{Env: map[interface{}]interface{}{"uuid": root}}
+
+	requestBody := `{"permission":"view","return_url":"https://clio.example.org/return"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/clio/"+string(root), strings.NewReader(requestBody))
+	req.Header.Set("Authorization", "Bearer viewer")
+	w := httptest.NewRecorder()
+	clioAuthHandler(c, w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("broker allow = %d: %s", w.Code, w.Body.String())
+	}
+	var response clioAuthResponse
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Decision != "allow" || response.Capability == "" || len(response.Roles) != 2 {
+		t.Fatalf("broker allow response = %+v", response)
+	}
+	principal, err := verifyDVIDCapability(response.Capability, root, "view", time.Now())
+	if err != nil || principal != "viewer@example.org" {
+		t.Fatalf("minted capability principal = %q, %v", principal, err)
+	}
+	if len(fake.returnURLs) != 1 || fake.returnURLs[0] != "https://clio.example.org/return" {
+		t.Fatalf("broker return URLs = %v", fake.returnURLs)
+	}
+
+	clearDSGCaches()
+	state = "tos_required"
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/clio/"+string(root), strings.NewReader(requestBody))
+	req.Header.Set("Authorization", "Bearer viewer")
+	w = httptest.NewRecorder()
+	clioAuthHandler(c, w, req)
+	response = clioAuthResponse{}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Decision != "tos_required" || response.Capability != "" || response.TOSURL != "https://clio.example.org/return?opaque=1" {
+		t.Fatalf("broker TOS response = %+v", response)
+	}
+
+	clearDSGCaches()
+	beforeAdmin := fake.authorizeCalls
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/clio/"+string(root), strings.NewReader(`{"permission":"edit"}`))
+	req.Header.Set("Authorization", "Bearer admin")
+	w = httptest.NewRecorder()
+	clioAuthHandler(c, w, req)
+	response = clioAuthResponse{}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Decision != "allow" || response.Capability == "" || fake.authorizeCalls != beforeAdmin {
+		t.Fatalf("broker admin response = %+v, authorize calls %d -> %d", response, beforeAdmin, fake.authorizeCalls)
+	}
+	if _, err := verifyDVIDCapability(response.Capability, root, "edit", time.Now()); err != nil {
+		t.Fatalf("admin edit capability failed: %v", err)
+	}
+}
+
+func TestClioAuthBrokerConfigurationFailsClosed(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+	root, _ := datastore.NewTestRepo()
+	withTestDSG(t, &fakeDSG{identities: map[string]dsgIdentity{}})
+	t.Setenv(DVIDCapabilitySecretVarName, "configured-secret")
+	c := web.C{Env: map[interface{}]interface{}{"uuid": root}}
+
+	request := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/clio/"+string(root), strings.NewReader(`{"permission":"view"}`))
+		req.Header.Set("Authorization", "Bearer user")
+		w := httptest.NewRecorder()
+		clioAuthHandler(c, w, req)
+		return w
+	}
+
+	tc.Auth.Enforce = "none"
+	if w := request(); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("broker without top-level DSG enforcement = %d: %s", w.Code, w.Body.String())
+	}
+	tc.Auth.Enforce = "dsg"
+	tc.Auth.DSGAddress = ""
+	if w := request(); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("broker without DSG address = %d: %s", w.Code, w.Body.String())
+	}
+	tc.Auth.DSGAddress = "https://auth.example.org"
+	t.Setenv(DVIDCapabilitySecretVarName, "")
+	if w := request(); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("broker without capability secret = %d: %s", w.Code, w.Body.String())
+	}
+
+	tc.Auth.EnforceInternal = "none"
+	handler := isAuthorized(&c, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/node/"+string(root)+"/data/key", nil)
+	req.Header.Set(internalHeader, "true")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("missing capability secret affected no-capability legacy request: %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDVIDCapabilityPrecedesPublicAndInternalBypasses(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+	root, rootVersion := datastore.NewTestRepo()
+	if err := datastore.Commit(root, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := datastore.SetPublicVersionsFromSeeds([]dvid.VersionID{rootVersion}); err != nil {
+		t.Fatal(err)
+	}
+	withTestDSG(t, &fakeDSG{identities: map[string]dsgIdentity{}})
+	tc.Auth.EnforceInternal = "none"
+	t.Setenv(DVIDCapabilitySecretVarName, "precedence-secret")
+	t.Setenv(DVIDCapabilityPreviousSecretVarName, "")
+	capability, err := mintDVIDCapability(root, "view", "capability-user@example.org", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := web.C{Env: map[interface{}]interface{}{"uuid": root}}
+
+	run := func(name, authorization string, internal bool, wantStatus int, wantUser string) {
+		t.Helper()
+		t.Run(name, func(t *testing.T) {
+			handler := isAuthorized(&c, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got := requestUser(r); got != wantUser {
+					t.Errorf("request user = %q, want %q", got, wantUser)
+				}
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			req := httptest.NewRequest(http.MethodGet, "/api/node/"+string(root)+"/data/key?u=query-user", nil)
+			if authorization != "" {
+				req.Header.Set("Authorization", authorization)
+			}
+			if internal {
+				req.Header.Set(internalHeader, "true")
+			}
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+			if w.Code != wantStatus {
+				t.Fatalf("status = %d, want %d: %s", w.Code, wantStatus, w.Body.String())
+			}
+		})
+	}
+
+	run("valid-public-internal", dvidCapabilityScheme+" "+capability, true, http.StatusNoContent, "capability-user@example.org")
+	run("invalid-public-internal", dvidCapabilityScheme+" tampered", true, http.StatusUnauthorized, "")
+	run("no-capability-public", "", false, http.StatusNoContent, "query-user")
+	run("no-capability-internal", "", true, http.StatusNoContent, "query-user")
 }
 
 func TestEffectiveEnforceInternal(t *testing.T) {

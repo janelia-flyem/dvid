@@ -790,6 +790,14 @@ func initRoutes() {
 	serverMux.Post("/api/server/reload-blocklist", serverReloadBlocklistHandler)
 	serverMux.Post("/api/server/reload-blocklist/", serverReloadBlocklistHandler)
 
+	// -- service-specific authorization broker
+
+	clioAuthMux := web.New()
+	mainMux.Handle("/api/auth/clio/:uuid", clioAuthMux)
+	clioAuthMux.Use(activityLogHandler)
+	clioAuthMux.Use(repoRawSelector)
+	clioAuthMux.Post("/api/auth/clio/:uuid", clioAuthHandler)
+
 	// -- repos API
 
 	mainMux.Post("/api/repos", reposPostHandler)

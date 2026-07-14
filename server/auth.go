@@ -3,7 +3,11 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,7 +42,21 @@ const SecretKeyVarName = "DVID_JWT_SECRET_KEY"
 // DSGTokenVarName holds DVID's own DSG credential for public metadata seeding.
 const DSGTokenVarName = "DVID_DSG_TOKEN"
 
-const internalHeader = "X-DVID-Internal"
+// DVIDCapabilitySecretVarName holds the active secret for Clio capability signing.
+const DVIDCapabilitySecretVarName = "DVID_CAPABILITY_SECRET"
+
+// DVIDCapabilityPreviousSecretVarName optionally holds the previous signing secret during rotation.
+const DVIDCapabilityPreviousSecretVarName = "DVID_CAPABILITY_PREVIOUS_SECRET"
+
+const (
+	internalHeader              = "X-DVID-Internal"
+	dvidCapabilityScheme        = "DVID-Capability"
+	dvidCapabilityService       = "clio"
+	dvidCapabilityFormatVersion = 1
+	dvidCapabilityNonceBytes    = 16
+	dvidCapabilityTTL           = 60 * time.Second
+	dvidCapabilityClockSkew     = 5 * time.Second
+)
 
 func init() {
 	jwtSecretKey = os.Getenv(SecretKeyVarName)
@@ -80,6 +98,7 @@ func (identity *dsgIdentity) userName() (string, error) {
 
 type dsgDecisionCacheKey struct {
 	Token      string
+	Service    string
 	Name       string
 	Branch     string
 	Version    string
@@ -123,6 +142,31 @@ type dsgAnchor struct {
 type authError struct {
 	status  int
 	message string
+}
+
+type dvidCapabilityClaims struct {
+	FormatVersion int    `json:"v"`
+	Service       string `json:"svc"`
+	Node          string `json:"node"`
+	Root          string `json:"root"`
+	Version       uint64 `json:"version"`
+	Permission    string `json:"permission"`
+	Principal     string `json:"principal"`
+	IssuedAt      int64  `json:"iat"`
+	ExpiresAt     int64  `json:"exp"`
+	Nonce         string `json:"nonce"`
+}
+
+type clioAuthRequest struct {
+	Permission string `json:"permission"`
+	ReturnURL  string `json:"return_url,omitempty"`
+}
+
+type clioAuthResponse struct {
+	Decision   string   `json:"decision"`
+	Roles      []string `json:"roles,omitempty"`
+	Capability string   `json:"capability,omitempty"`
+	TOSURL     string   `json:"tos_url,omitempty"`
 }
 
 func (e *authError) Error() string {
@@ -455,11 +499,251 @@ func isPublicRead(r *http.Request, envUUID interface{}) bool {
 	return false
 }
 
+func extractDVIDCapability(authHeader string) (token string, present bool) {
+	fields := strings.Fields(authHeader)
+	if len(fields) == 0 || !strings.EqualFold(fields[0], dvidCapabilityScheme) {
+		return "", false
+	}
+	if len(fields) != 2 || fields[1] == "" {
+		return "", true
+	}
+	return fields[1], true
+}
+
+func dvidCapabilityError() error {
+	return &authError{status: http.StatusUnauthorized, message: "invalid DVID capability"}
+}
+
+func dvidCapabilityConfigurationError(message string) error {
+	return &authError{status: http.StatusServiceUnavailable, message: message}
+}
+
+func dvidCapabilitySignature(payload []byte, secret string) []byte {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(payload)
+	return mac.Sum(nil)
+}
+
+func mintDVIDCapability(uuid dvid.UUID, permission, principal string, now time.Time) (string, error) {
+	secret := os.Getenv(DVIDCapabilitySecretVarName)
+	if secret == "" {
+		return "", dvidCapabilityConfigurationError(DVIDCapabilitySecretVarName + " is unset")
+	}
+	if permission != "view" && permission != "edit" || principal == "" {
+		return "", fmt.Errorf("invalid DVID capability subject")
+	}
+	root, err := datastore.GetRepoRoot(uuid)
+	if err != nil {
+		return "", fmt.Errorf("could not determine capability root for %s: %v", uuid, err)
+	}
+	version, err := datastore.VersionFromUUID(uuid)
+	if err != nil {
+		return "", fmt.Errorf("could not determine capability version for %s: %v", uuid, err)
+	}
+	nonceBytes := make([]byte, dvidCapabilityNonceBytes)
+	if _, err := io.ReadFull(rand.Reader, nonceBytes); err != nil {
+		return "", fmt.Errorf("could not create DVID capability nonce: %v", err)
+	}
+	issuedAt := now.Unix()
+	claims := dvidCapabilityClaims{
+		FormatVersion: dvidCapabilityFormatVersion,
+		Service:       dvidCapabilityService,
+		Node:          string(uuid),
+		Root:          string(root),
+		Version:       uint64(version),
+		Permission:    permission,
+		Principal:     principal,
+		IssuedAt:      issuedAt,
+		ExpiresAt:     issuedAt + int64(dvidCapabilityTTL/time.Second),
+		Nonce:         base64.RawURLEncoding.EncodeToString(nonceBytes),
+	}
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		return "", fmt.Errorf("could not encode DVID capability: %v", err)
+	}
+	encodedPayload := base64.RawURLEncoding.EncodeToString(payload)
+	signature := dvidCapabilitySignature([]byte(encodedPayload), secret)
+	return encodedPayload + "." + base64.RawURLEncoding.EncodeToString(signature), nil
+}
+
+func dvidCapabilityPermissionAllows(granted, required string) bool {
+	return granted == "edit" || granted == "view" && required == "view"
+}
+
+func verifyDVIDCapability(token string, uuid dvid.UUID, requiredPermission string, now time.Time) (string, error) {
+	activeSecret := os.Getenv(DVIDCapabilitySecretVarName)
+	if activeSecret == "" {
+		return "", dvidCapabilityConfigurationError(DVIDCapabilitySecretVarName + " is unset")
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", dvidCapabilityError()
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", dvidCapabilityError()
+	}
+	activeMatch := hmac.Equal(signature, dvidCapabilitySignature([]byte(parts[0]), activeSecret))
+	previousSecret := os.Getenv(DVIDCapabilityPreviousSecretVarName)
+	previousMatch := false
+	if previousSecret != "" {
+		previousMatch = hmac.Equal(signature, dvidCapabilitySignature([]byte(parts[0]), previousSecret))
+	}
+	if !activeMatch && !previousMatch {
+		return "", dvidCapabilityError()
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return "", dvidCapabilityError()
+	}
+	var claims dvidCapabilityClaims
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&claims); err != nil {
+		return "", dvidCapabilityError()
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return "", dvidCapabilityError()
+	}
+	if claims.FormatVersion != dvidCapabilityFormatVersion || claims.Service != dvidCapabilityService ||
+		claims.Node != string(uuid) || claims.Principal == "" || claims.Nonce == "" ||
+		(claims.Permission != "view" && claims.Permission != "edit") ||
+		claims.ExpiresAt-claims.IssuedAt != int64(dvidCapabilityTTL/time.Second) {
+		return "", dvidCapabilityError()
+	}
+	nonce, err := base64.RawURLEncoding.DecodeString(claims.Nonce)
+	if err != nil || len(nonce) != dvidCapabilityNonceBytes {
+		return "", dvidCapabilityError()
+	}
+	root, err := datastore.GetRepoRoot(uuid)
+	if err != nil || claims.Root != string(root) {
+		return "", dvidCapabilityError()
+	}
+	version, err := datastore.VersionFromUUID(uuid)
+	if err != nil || claims.Version != uint64(version) {
+		return "", dvidCapabilityError()
+	}
+	nowUnix := now.Unix()
+	skewSeconds := int64(dvidCapabilityClockSkew / time.Second)
+	if nowUnix < claims.IssuedAt-skewSeconds || nowUnix > claims.ExpiresAt+skewSeconds {
+		return "", dvidCapabilityError()
+	}
+	if !dvidCapabilityPermissionAllows(claims.Permission, requiredPermission) {
+		return "", dvidCapabilityError()
+	}
+	return claims.Principal, nil
+}
+
+func validClioReturnURL(value string) bool {
+	if value == "" {
+		return true
+	}
+	parsed, err := url.Parse(value)
+	return err == nil && parsed.Host != "" && parsed.User == nil &&
+		(parsed.Scheme == "https" || parsed.Scheme == "http")
+}
+
+func writeClioAuthResponse(w http.ResponseWriter, response clioAuthResponse) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		dvid.Errorf("unable to encode Clio authorization response: %v\n", err)
+	}
+}
+
+func clioAuthHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	if authMode() != "dsg" || tc.Auth.DSGAddress == "" {
+		writeAuthError(w, r, dvidCapabilityConfigurationError("Clio authorization broker requires top-level DSG enforcement and auth.dsg_address"))
+		return
+	}
+	if os.Getenv(DVIDCapabilitySecretVarName) == "" {
+		writeAuthError(w, r, dvidCapabilityConfigurationError(DVIDCapabilitySecretVarName+" is unset"))
+		return
+	}
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 64*1024))
+	decoder.DisallowUnknownFields()
+	var request clioAuthRequest
+	if err := decoder.Decode(&request); err != nil {
+		BadRequest(w, r, "malformed Clio authorization request: %v", err)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		BadRequest(w, r, "Clio authorization request must contain one JSON object")
+		return
+	}
+	if request.Permission != "view" && request.Permission != "edit" {
+		BadRequest(w, r, "Clio authorization permission must be view or edit")
+		return
+	}
+	if !validClioReturnURL(request.ReturnURL) {
+		BadRequest(w, r, "Clio authorization return_url must be an absolute HTTP(S) URL")
+		return
+	}
+	token := extractBearerToken(r.Header.Get("Authorization"))
+	identity, err := getDSGIdentity(token)
+	if err != nil {
+		writeAuthError(w, r, err)
+		return
+	}
+	principal, err := identity.userName()
+	if err != nil {
+		writeAuthError(w, r, err)
+		return
+	}
+	uuid, ok := c.Env["uuid"].(dvid.UUID)
+	if !ok {
+		BadRequest(w, r, "could not determine request UUID for Clio authorization")
+		return
+	}
+	entry, err := dsgEntryForUUIDPermission(uuid, request.Permission)
+	if err != nil {
+		writeAuthError(w, r, err)
+		return
+	}
+	decision := dsgDecision{Decision: "allow", Roles: []string{"admin"}}
+	if !identity.Admin {
+		decisions, err := getDSGDecisionsForService(token, dvidCapabilityService, request.ReturnURL, []dsgAuthorizeEntry{entry})
+		if err != nil {
+			writeAuthError(w, r, err)
+			return
+		}
+		decision = decisions[0]
+	}
+	response := clioAuthResponse{Decision: decision.Decision, Roles: decision.Roles}
+	if decision.Decision == "tos_required" {
+		response.TOSURL = decision.TOSURL
+	}
+	if decision.Decision == "allow" {
+		response.Capability, err = mintDVIDCapability(uuid, request.Permission, principal, time.Now())
+		if err != nil {
+			writeAuthError(w, r, err)
+			return
+		}
+	}
+	writeClioAuthResponse(w, response)
+}
+
 // isAuthorized authenticates a request and sets c.Env["user"] to the authenticated user.
 // Note that the repoRawSelector middleware must be used beforehand so that
 // c.Env["uuid"] is properly set for proper handling of public versions.
 func isAuthorized(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
+		if capability, present := extractDVIDCapability(r.Header.Get("Authorization")); present {
+			uuid, ok := c.Env["uuid"].(dvid.UUID)
+			if !ok {
+				writeAuthError(w, r, dvidCapabilityError())
+				return
+			}
+			requiredPermission := dsgPermissionForRequest(c, r)
+			principal, err := verifyDVIDCapability(capability, uuid, requiredPermission, time.Now())
+			if err != nil {
+				writeAuthError(w, r, err)
+				return
+			}
+			c.Env["user"] = principal
+			setAuthenticatedUser(r, principal)
+			h.ServeHTTP(w, r)
+			return
+		}
 		if isPublicRead(r, c.Env["uuid"]) {
 			h.ServeHTTP(w, r)
 			return
@@ -494,7 +778,7 @@ func isAuthorized(c *web.C, h http.Handler) http.Handler {
 				writeAuthError(w, r, fmt.Errorf("could not determine request UUID for DSG auth"))
 				return
 			}
-			entry, err := dsgEntryForUUID(uuid, r.Method)
+			entry, err := dsgEntryForUUIDPermission(uuid, dsgPermissionForRequest(c, r))
 			if err != nil {
 				writeAuthError(w, r, err)
 				return
@@ -706,6 +990,32 @@ func dsgPermissionForMethod(method string) string {
 	return "edit"
 }
 
+// dsgPermissionForRequest honors datatype declarations for immutable POST
+// endpoints, such as neuronjson /query, while failing closed to the normal
+// method-based permission for routes that cannot be resolved here.
+func dsgPermissionForRequest(c *web.C, r *http.Request) string {
+	permission := dsgPermissionForMethod(r.Method)
+	if permission == "view" || c == nil {
+		return permission
+	}
+	uuid, ok := c.Env["uuid"].(dvid.UUID)
+	if !ok {
+		return permission
+	}
+	dataname, ok := c.URLParams["dataname"]
+	if !ok || dataname == "" {
+		return permission
+	}
+	data, err := datastore.GetDataByUUIDName(uuid, dvid.InstanceName(dataname))
+	if err != nil {
+		return permission
+	}
+	if !data.IsMutationRequest(r.Method, c.URLParams["keyword"]) {
+		return "view"
+	}
+	return permission
+}
+
 func decisionRolesAllow(roles []string, permission string) bool {
 	for _, role := range roles {
 		switch role {
@@ -729,15 +1039,15 @@ func requestNeedsOnlyView(method string) bool {
 	}
 }
 
-func dsgDecisionKey(token string, entry dsgAuthorizeEntry) dsgDecisionCacheKey {
+func dsgDecisionKey(token, service string, entry dsgAuthorizeEntry) dsgDecisionCacheKey {
 	return dsgDecisionCacheKey{
-		Token: token, Name: entry.Name, Branch: entry.Branch,
+		Token: token, Service: service, Name: entry.Name, Branch: entry.Branch,
 		Version: entry.Version, Permission: entry.Permission,
 	}
 }
 
-func cachedDSGDecisionForEntry(token string, entry dsgAuthorizeEntry) (dsgDecision, bool) {
-	key := dsgDecisionKey(token, entry)
+func cachedDSGDecisionForEntry(token, service string, entry dsgAuthorizeEntry) (dsgDecision, bool) {
+	key := dsgDecisionKey(token, service, entry)
 	ttl := dsgCacheTTL()
 	authorizations.RLock()
 	cached, found := authorizations.dsgDecisions[key]
@@ -754,7 +1064,7 @@ func cachedDSGDecisionForEntry(token string, entry dsgAuthorizeEntry) (dsgDecisi
 	return cached.decision, true
 }
 
-func cacheDSGDecisions(token string, entries []dsgAuthorizeEntry, decisions []dsgDecision) {
+func cacheDSGDecisions(token, service string, entries []dsgAuthorizeEntry, decisions []dsgDecision) {
 	now := time.Now()
 	authorizations.Lock()
 	if authorizations.dsgDecisions == nil {
@@ -764,7 +1074,7 @@ func cacheDSGDecisions(token string, entries []dsgAuthorizeEntry, decisions []ds
 		if decision.Decision == "tos_required" {
 			continue
 		}
-		authorizations.dsgDecisions[dsgDecisionKey(token, entries[i])] = cachedDSGDecision{
+		authorizations.dsgDecisions[dsgDecisionKey(token, service, entries[i])] = cachedDSGDecision{
 			decision: decision, fetchedAt: now,
 		}
 	}
@@ -772,6 +1082,10 @@ func cacheDSGDecisions(token string, entries []dsgAuthorizeEntry, decisions []ds
 }
 
 func getDSGDecisions(token string, entries []dsgAuthorizeEntry) ([]dsgDecision, error) {
+	return getDSGDecisionsForService(token, dsgServiceName(), "", entries)
+}
+
+func getDSGDecisionsForService(token, service, returnURL string, entries []dsgAuthorizeEntry) ([]dsgDecision, error) {
 	if token == "" {
 		return nil, &authError{
 			status:  http.StatusUnauthorized,
@@ -781,6 +1095,9 @@ func getDSGDecisions(token string, entries []dsgAuthorizeEntry) ([]dsgDecision, 
 	if len(entries) == 0 {
 		return []dsgDecision{}, nil
 	}
+	if service == "" {
+		return nil, fmt.Errorf("dsg authorization service must not be empty")
+	}
 	if tc.Auth.DSGAddress == "" {
 		return nil, fmt.Errorf("dsg auth requires auth.dsg_address to be configured")
 	}
@@ -789,7 +1106,7 @@ func getDSGDecisions(token string, entries []dsgAuthorizeEntry) ([]dsgDecision, 
 	missingEntries := make([]dsgAuthorizeEntry, 0, len(entries))
 	missingIndexes := make([]int, 0, len(entries))
 	for i, entry := range entries {
-		if decision, found := cachedDSGDecisionForEntry(token, entry); found {
+		if decision, found := cachedDSGDecisionForEntry(token, service, entry); found {
 			decisions[i] = decision
 			continue
 		}
@@ -801,9 +1118,10 @@ func getDSGDecisions(token string, entries []dsgAuthorizeEntry) ([]dsgDecision, 
 	}
 
 	payload, err := json.Marshal(struct {
-		Service string              `json:"service"`
-		Entries []dsgAuthorizeEntry `json:"entries"`
-	}{Service: dsgServiceName(), Entries: missingEntries})
+		Service   string              `json:"service"`
+		ReturnURL string              `json:"return_url,omitempty"`
+		Entries   []dsgAuthorizeEntry `json:"entries"`
+	}{Service: service, ReturnURL: returnURL, Entries: missingEntries})
 	if err != nil {
 		return nil, fmt.Errorf("unable to encode DSG authorize request: %v", err)
 	}
@@ -882,7 +1200,7 @@ func getDSGDecisions(token string, entries []dsgAuthorizeEntry) ([]dsgDecision, 
 		}
 		fetched[i] = decision
 	}
-	cacheDSGDecisions(token, missingEntries, fetched)
+	cacheDSGDecisions(token, service, missingEntries, fetched)
 	for i, decision := range fetched {
 		decisions[missingIndexes[i]] = decision
 	}
@@ -958,6 +1276,13 @@ func evaluateDSGAnchors(entry dsgAuthorizeEntry, anchors []dsgAnchor) (dsgDecisi
 }
 
 func dsgEntryForUUID(uuid dvid.UUID, method string) (dsgAuthorizeEntry, error) {
+	return dsgEntryForUUIDPermission(uuid, dsgPermissionForMethod(method))
+}
+
+func dsgEntryForUUIDPermission(uuid dvid.UUID, permission string) (dsgAuthorizeEntry, error) {
+	if permission != "view" && permission != "edit" {
+		return dsgAuthorizeEntry{}, fmt.Errorf("invalid DSG permission %q", permission)
+	}
 	root, err := datastore.GetRepoRoot(uuid)
 	if err != nil {
 		return dsgAuthorizeEntry{}, fmt.Errorf("could not determine root UUID for %s: %v", uuid, err)
@@ -977,7 +1302,7 @@ func dsgEntryForUUID(uuid dvid.UUID, method string) (dsgAuthorizeEntry, error) {
 		Name:       string(root),
 		Branch:     branch,
 		Version:    strconv.FormatUint(uint64(version), 10),
-		Permission: dsgPermissionForMethod(method),
+		Permission: permission,
 	}, nil
 }
 
