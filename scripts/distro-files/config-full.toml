@@ -56,19 +56,16 @@ instance_id_start = 100  # new ids start at least from this.
 
 min_mutation_id_start = 1000100000  # mutation id will start from this or higher
 
-# Auth supports legacy DVID JWT-based modes as well as direct DatasetGateway-backed
-# authentication.  In DSG mode, clients send their DSG token directly to DVID via
-# Authorization: Bearer or a dsg_token cookie; DVID validates it against DSG's
-# /api/v1/user/cache endpoint and caches the returned user info locally for a short TTL.
+# Auth supports the DSG-native API plus deprecated DVID JWT modes. In DSG mode,
+# clients send a DSG token via Authorization: Bearer or a dsg_token cookie. DVID
+# resolves identity and node-grain decisions through /api/dsg/v1 and caches them.
 [auth]
 enforce = "none" # "none" = no auth, "token" requires valid legacy DVID JWT (deprecated),
                  # "authfile" requires deprecated legacy DVID JWT user to be in auth_file,
                  # "dsg" validates incoming DSG tokens directly.
 # File containing authorized emails in JSON format of style {"email":"priv", ...} 
 # where email could be "*" for wildcard and priv can be "read", "write", or "readwrite".
-#auth_file = "/demo/auth.txt" 
-
-public_versions = []  # Full committed release UUIDs; each UUID and all ancestors are public for reads.
+#auth_file = "/demo/auth.txt"
 
 # DSG-specific settings
 # Internal clients are identified by trusted nginx, not by client IP:
@@ -78,9 +75,16 @@ public_versions = []  # Full committed release UUIDs; each UUID and all ancestor
 # block /api/server/ POSTs, GET /api/server/config, and /api/server/blobstore/*.
 # enforce_internal = "none"   # optional policy for requests with X-DVID-Internal: true
 # dsg_address = "https://auth.janelia.org"
-# dsg_cache_ttl = 300         # seconds to cache DSG user info in DVID
+# dsg_service = "dvid"        # DSG service vocabulary used for aliases and decisions
+# dsg_cache_ttl = 300         # seconds to cache DSG identities and evaluated decisions
+# dsg_public_refresh = 3600   # public metadata refresh seconds; 0 means startup only
 # trusted_proxies = ["127.0.0.1/32", "10.10.1.0/24"]  # optional CIDRs of nginx peers allowed to set X-DVID-Internal
-# dataset_map = { "2f4ac91325c9452a9c1a499e1c5c1c4f" = "vnc", "7b91c8e3a64f4e6bb2d5f0a9e8d7c6b5" = "manc" } # root UUID -> DSG dataset
+# Set DVID_DSG_TOKEN in the service environment for authenticated public-metadata seeding.
+# Clio broker/data processes also need the same DVID_CAPABILITY_SECRET. During a
+# rolling rotation, set DVID_CAPABILITY_PREVIOUS_SECRET to the old value for at
+# least one 60-second capability TTL plus the five-second verifier skew after
+# every process begins minting with the new active value.
+# dataset_map and public_versions are retired; configuring either now fails startup.
 
 # This legacy proxy/JWT method is deprecated and won't be used by DSG deployments.
 # proxy_address = "http://some-flyem-services"  # URL to running github.com/janelia-flyem/flyem-services

@@ -15,6 +15,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/zenazn/goji/web"
 )
 
 func testLog(t *testing.T, got, expect string) {
@@ -144,7 +145,7 @@ func TestAdminGatesAcceptDSGAdmin(t *testing.T) {
 	origToken := adminToken
 	defer func() {
 		SetAdminToken(origToken)
-		clearDSGUserCache()
+		clearDSGCaches()
 	}()
 	SetAdminToken("")
 
@@ -164,7 +165,7 @@ func TestAdminGatesAcceptDSGAdmin(t *testing.T) {
 	tc.Auth.DSGAddress = "https://auth.example.org"
 	tc.Auth.DSGCacheTTL = 300
 	dsgHTTPClient = &http.Client{Transport: dsgUserRoundTrip(t, "Bearer admin-token")}
-	clearDSGUserCache()
+	clearDSGCaches()
 
 	dsgRequest := func(method, urlStr, bearer string, payload *bytes.Buffer) *httptest.ResponseRecorder {
 		var req *http.Request
@@ -244,6 +245,88 @@ func TestAdminGatesAcceptDSGAdmin(t *testing.T) {
 	}
 	if w := dsgRequest("GET", storageURL, "Bearer user-token", nil); w.Code == http.StatusOK {
 		t.Errorf("GET /api/storage by non-admin DSG user should be rejected")
+	}
+}
+
+func TestNativeDSGMetadataFilteringAndReposInfoBatch(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+	datasetRoot, _ := datastore.NewTestRepo()
+	if err := datastore.Commit(datasetRoot, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	publicRoot, publicV := datastore.NewTestRepo()
+	if err := datastore.Commit(publicRoot, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := datastore.AddToRepoLog(datasetRoot, []string{"full-only"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := datastore.AddToRepoLog(publicRoot, []string{"must-be-filtered"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := datastore.SetPublicVersionsFromSeeds([]dvid.VersionID{publicV}); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := &fakeDSG{identities: map[string]dsgIdentity{
+		"viewer": identityFor("viewer@example.org", false),
+	}}
+	fake.authorize = func(entries []dsgAuthorizeEntry) (int, interface{}) {
+		responses := make([]dsgDecisionResponse, len(entries))
+		for i, entry := range entries {
+			if entry.Name == string(datasetRoot) {
+				responses[i] = echoedDecision(entry, "allow", []string{"view"})
+			} else {
+				responses[i] = echoedDecision(entry, "deny", nil)
+			}
+		}
+		return http.StatusOK, authorizeEnvelope(responses...)
+	}
+	withTestDSG(t, fake)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/repos/info", nil)
+	req.Header.Set("Authorization", "Bearer viewer")
+	c := web.C{Env: map[interface{}]interface{}{"adminPriv": false}}
+	w := httptest.NewRecorder()
+	reposInfoHandler(c, w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("repos info status = %d: %s", w.Code, w.Body.String())
+	}
+	var repos map[string]struct {
+		Log []string
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &repos); err != nil {
+		t.Fatalf("could not decode repos info: %v", err)
+	}
+	if len(repos[string(datasetRoot)].Log) == 0 {
+		t.Fatalf("authorized repo lost full metadata")
+	}
+	if len(repos[string(publicRoot)].Log) != 0 {
+		t.Fatalf("public-only repo leaked log: %v", repos[string(publicRoot)].Log)
+	}
+	if fake.authorizeCalls != 1 {
+		t.Fatalf("repos info made %d authorize calls for %d repos", fake.authorizeCalls, len(repos))
+	}
+
+	// Singular metadata routes reuse the same root-probe verdict and preserve
+	// public-only filtering for the denied repo.
+	c.Env["uuid"] = publicRoot
+	w = httptest.NewRecorder()
+	repoInfoHandler(c, w, req)
+	if w.Code != http.StatusOK || bytes.Contains(w.Body.Bytes(), []byte("must-be-filtered")) {
+		t.Fatalf("public repo info leaked full metadata: %d %s", w.Code, w.Body.String())
+	}
+	c.Env["name"] = "master"
+	w = httptest.NewRecorder()
+	repoBranchVersionsHandler(c, w, req)
+	if w.Code != http.StatusOK || !bytes.Contains(w.Body.Bytes(), []byte(string(publicRoot))) {
+		t.Fatalf("public branch versions response: %d %s", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	getRepoLogHandler(c, w, req)
+	if w.Code != http.StatusOK || bytes.Contains(w.Body.Bytes(), []byte("must-be-filtered")) {
+		t.Fatalf("public repo log leaked: %d %s", w.Code, w.Body.String())
 	}
 }
 

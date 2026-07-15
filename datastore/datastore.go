@@ -120,6 +120,49 @@ func VersionFromUUID(uuid dvid.UUID) (dvid.VersionID, error) {
 	return m.versionFromUUID(uuid)
 }
 
+// GetNodeBranch returns the stored branch name for a resolved node UUID.  The
+// default branch is stored as an empty string; callers that expose it should
+// render it as "master".
+func GetNodeBranch(uuid dvid.UUID) (string, error) {
+	m := getManager()
+	if m == nil {
+		return "", ErrManagerNotInitialized
+	}
+	v, err := m.versionFromUUID(uuid)
+	if err != nil {
+		return "", err
+	}
+	node, err := m.getNodeByVersion(v)
+	if err != nil {
+		return "", err
+	}
+	node.RLock()
+	branch := node.branch
+	node.RUnlock()
+	return branch, nil
+}
+
+// RepoRootVersions returns a snapshot of every local repository root UUID and
+// its root VersionID.
+func RepoRootVersions() (map[dvid.UUID]dvid.VersionID, error) {
+	m := getManager()
+	if m == nil {
+		return nil, ErrManagerNotInitialized
+	}
+	m.idMutex.RLock()
+	roots := make(map[dvid.UUID]dvid.VersionID, len(m.repoToUUID))
+	for _, root := range m.repoToUUID {
+		v, found := m.uuidToVersion[root]
+		if !found {
+			m.idMutex.RUnlock()
+			return nil, fmt.Errorf("repo root UUID %s has no version mapping", root)
+		}
+		roots[root] = v
+	}
+	m.idMutex.RUnlock()
+	return roots, nil
+}
+
 // MatchingUUID returns a local version ID and the full UUID from a potentially shortened UUID
 // string. Partial matches are accepted as long as they are unique for a datastore.  So if
 // a datastore has nodes with UUID strings 3FA22... (root), 7CD11..., and 836EE... (leaf),

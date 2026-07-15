@@ -249,13 +249,7 @@ func LogHTTPMutation(versionID, dataID dvid.UUID, r *http.Request, data []byte) 
 	if tc.Mutations.Blobstore == "" || tc.Mutations.Httpstore == "" {
 		return nil
 	}
-	mutation := map[string]interface{}{
-		"TimeUnix":    time.Now().Unix(),
-		"Method":      r.Method,
-		"URI":         r.RequestURI,
-		"RemoteAddr":  r.RemoteAddr,
-		"ContentType": r.Header.Get("Content-Type"),
-	}
+	mutation := httpMutationRecord(r)
 	if dataID != "" {
 		mutation["DataUUID"] = dataID
 	}
@@ -307,4 +301,15 @@ func LogHTTPMutation(versionID, dataID dvid.UUID, r *http.Request, data []byte) 
 		return fmt.Errorf("unknown store %q in logstore specification %q", store, tc.Mutations.Httpstore)
 	}
 	return nil
+}
+
+func httpMutationRecord(r *http.Request) map[string]interface{} {
+	return map[string]interface{}{
+		"TimeUnix":    time.Now().Unix(),
+		"Method":      r.Method,
+		"URI":         r.RequestURI,
+		"RemoteAddr":  r.RemoteAddr,
+		"ContentType": r.Header.Get("Content-Type"),
+		"User":        requestUser(r),
+	}
 }
