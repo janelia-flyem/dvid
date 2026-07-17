@@ -106,6 +106,71 @@ service accounts have no email and are attributed by their DSG slug name. The
 authenticated value overrides a client-provided `?u=` value in activity
 records, datatype request contexts, and HTTP mutation records.
 
+## Making DSG-Authenticated Requests
+
+Obtain a long-lived API token or service-account token from DSG for an identity
+whose grants cover the requested dataset version. Send that caller token to
+DVID; do not send `DVID_DSG_TOKEN`, which is DVID's server-side credential for
+public-release metadata seeding.
+
+For example, define the DVID endpoint, a UUID (or DVID UUID selector), and the
+caller's DSG token:
+
+```bash
+export DVID_URL="https://dvid.example.org"
+export DVID_UUID="<uuid-or-selector>"
+export DSG_TOKEN="<caller-dsg-token>"
+```
+
+An HTTPie read request is:
+
+```bash
+http GET \
+  "$DVID_URL/api/node/$DVID_UUID/segmentation/info" \
+  "Authorization:Bearer $DSG_TOKEN"
+```
+
+The equivalent curl request is:
+
+```bash
+curl --fail-with-body \
+  --header "Authorization: Bearer $DSG_TOKEN" \
+  "$DVID_URL/api/node/$DVID_UUID/segmentation/info"
+```
+
+Mutation requests use the same header. For example, this HTTPie request writes
+a JSON value to an existing `keyvalue` instance and therefore requires an
+applicable `edit`, `manage`, or `admin` role:
+
+```bash
+export DATA_NAME="<keyvalue-instance>"
+export KEY="<key>"
+
+http --ignore-stdin POST \
+  "$DVID_URL/api/node/$DVID_UUID/$DATA_NAME/key/$KEY" \
+  "Authorization:Bearer $DSG_TOKEN" \
+  example:=true
+```
+
+Browser-oriented clients may send the same token as a cookie instead:
+
+```bash
+http GET \
+  "$DVID_URL/api/node/$DVID_UUID/segmentation/info" \
+  "Cookie:dsg_token=$DSG_TOKEN"
+```
+
+Do not place the token in the URL query string. DVID accepts DSG credentials
+only from the Bearer header or `dsg_token` cookie, with the header taking
+precedence when both are present. Keep real tokens out of shell history,
+scripts, logs, and source control.
+
+To test DSG authorization itself, use a non-public UUID through a DVID endpoint
+that does not inject `X-DVID-Internal: true`. Public UUIDs and trusted internal
+bypass endpoints can succeed without validating the caller token. See
+[Status Codes](#status-codes) for the expected authentication and authorization
+failures.
+
 ## Node-Grain Authorization
 
 For each non-public UUID-scoped request, DVID sends an authorize entry with:
