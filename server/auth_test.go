@@ -155,7 +155,11 @@ func TestExtractDSGToken(t *testing.T) {
 func TestGetDSGIdentityUsesCacheAndSupportsServiceAccounts(t *testing.T) {
 	fake := &fakeDSG{identities: map[string]dsgIdentity{
 		"human": identityFor("user@example.org", false),
-		"sa":    {Email: nil, Name: "mesh-writer", ServiceAccount: true},
+		"sa": {
+			Email:          stringPointer("mesh-writer@service-account.dsg.local"),
+			Name:           "mesh-writer",
+			ServiceAccount: true,
+		},
 	}}
 	withTestDSG(t, fake)
 
@@ -173,7 +177,7 @@ func TestGetDSGIdentityUsesCacheAndSupportsServiceAccounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected service-account identity error: %v", err)
 	}
-	if user, _ := identity.userName(); user != "mesh-writer" {
+	if user, _ := identity.userName(); user != "mesh-writer@service-account.dsg.local" {
 		t.Fatalf("service-account attribution = %q", user)
 	}
 	if fake.identityCalls != 2 {
@@ -654,7 +658,11 @@ func TestAuthorizedIdentityOverridesQueryUserAndTOSMessage(t *testing.T) {
 
 	state := "allow"
 	fake := &fakeDSG{identities: map[string]dsgIdentity{
-		"sa":    {Name: "mesh-writer", ServiceAccount: true},
+		"sa": {
+			Email:          stringPointer("mesh-writer@service-account.dsg.local"),
+			Name:           "mesh-writer",
+			ServiceAccount: true,
+		},
 		"human": identityFor("human@example.org", false),
 	}}
 	fake.authorize = func(entries []dsgAuthorizeEntry) (int, interface{}) {
@@ -665,7 +673,9 @@ func TestAuthorizedIdentityOverridesQueryUserAndTOSMessage(t *testing.T) {
 	withTestDSG(t, fake)
 
 	c := web.C{Env: map[interface{}]interface{}{"uuid": root}}
-	expectedUser := "mesh-writer"
+	// DSG's canonical synthetic email is now the service account's provenance
+	// label in request contexts, capability claims, and mutation records.
+	expectedUser := "mesh-writer@service-account.dsg.local"
 	handler := isAuthorized(&c, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := requestUser(r); got != expectedUser {
 			t.Errorf("authenticated user = %q, want %q", got, expectedUser)
@@ -680,13 +690,13 @@ func TestAuthorizedIdentityOverridesQueryUserAndTOSMessage(t *testing.T) {
 		t.Fatalf("authorized service account got %d: %s", w.Code, w.Body.String())
 	}
 	mutation := httpMutationRecord(req)
-	if got := mutation["User"]; got != "mesh-writer" {
-		t.Fatalf("HTTP mutation user = %v, want service-account slug", got)
+	if got := mutation["User"]; got != expectedUser {
+		t.Fatalf("HTTP mutation user = %v, want service-account email", got)
 	}
 	versionedCtx := &datastore.VersionedCtx{}
 	setVersionedCtxUser(versionedCtx, req)
-	if versionedCtx.User != "mesh-writer" {
-		t.Fatalf("VersionedCtx user = %q, want service-account slug", versionedCtx.User)
+	if versionedCtx.User != expectedUser {
+		t.Fatalf("VersionedCtx user = %q, want service-account email", versionedCtx.User)
 	}
 	clearDSGCaches()
 	expectedUser = "human@example.org"
