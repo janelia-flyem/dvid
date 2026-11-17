@@ -723,6 +723,19 @@ func (e ElementNR) Copy() *ElementNR {
 	return c
 }
 
+// fillEmptyFields replaces nil Tags and Prop with empty values so they are
+// stored and returned as [] and {} rather than null.  Elements posted without
+// these fields would otherwise be serialized with nulls, which some clients
+// (e.g., neuroglancer) reject.
+func (e *ElementNR) fillEmptyFields() {
+	if e.Tags == nil {
+		e.Tags = Tags{}
+	}
+	if e.Prop == nil {
+		e.Prop = map[string]string{}
+	}
+}
+
 // Element describes a synaptic element's properties, including Relationships.
 type Element struct {
 	ElementNR
@@ -735,6 +748,15 @@ func (e Element) Copy() *Element {
 	c.Rels = make(Relationships, len(e.Rels))
 	copy(c.Rels, e.Rels)
 	return c
+}
+
+// fillEmptyFields replaces nil Tags, Prop, and Rels with empty values so they
+// are stored and returned as [] and {} rather than null.
+func (e *Element) fillEmptyFields() {
+	e.ElementNR.fillEmptyFields()
+	if e.Rels == nil {
+		e.Rels = Relationships{}
+	}
 }
 
 // VerboseElement describes a synaptic element's properties, including verbose relationships
@@ -770,6 +792,13 @@ func (elems ElementsNR) Normalize() ElementsNR {
 	// Sort all elements based on their position.
 	sort.Sort(out)
 	return out
+}
+
+// fillEmptyFields replaces nil Tags and Prop of each element with empty values.
+func (elems ElementsNR) fillEmptyFields() {
+	for i := range elems {
+		elems[i].fillEmptyFields()
+	}
 }
 
 // --- Sort interface
@@ -970,6 +999,13 @@ func (elems *Elements) move(from, to dvid.Point3d, deleteElement bool) (moved *E
 	return
 }
 
+// fillEmptyFields replaces nil Tags, Prop, and Rels of each element with empty values.
+func (elems Elements) fillEmptyFields() {
+	for i := range elems {
+		elems[i].fillEmptyFields()
+	}
+}
+
 // --- Sort interface
 
 func (elems Elements) Len() int {
@@ -1046,6 +1082,7 @@ func getElements(ctx *datastore.VersionedCtx, tk storage.TKey) (Elements, error)
 	if err := json.Unmarshal(val, &elems); err != nil {
 		return nil, err
 	}
+	elems.fillEmptyFields() // in case stored data predates fillEmptyFields at ingestion
 	return elems, nil
 }
 
@@ -1066,6 +1103,7 @@ func getElementsNR(ctx *datastore.VersionedCtx, tk storage.TKey) (ElementsNR, er
 	if err := json.Unmarshal(val, &elems); err != nil {
 		return nil, err
 	}
+	elems.fillEmptyFields() // in case stored data predates fillEmptyFields at ingestion
 	return elems, nil
 }
 
@@ -2266,6 +2304,7 @@ func (d *Data) GetRegionSynapses(ctx *datastore.VersionedCtx, ext *dvid.Extents3
 				if err := json.Unmarshal(chunk.V, &blockElems); err != nil {
 					return err
 				}
+				blockElems.fillEmptyFields()
 				// Iterate through elements, screening on extents before adding to region elements.
 				for _, elem := range blockElems {
 					if ext.VoxelWithin(elem.Pos) {
@@ -2318,6 +2357,7 @@ func (d *Data) GetROISynapses(ctx *datastore.VersionedCtx, roiSpec storage.Filte
 			if err := json.Unmarshal(chunk.V, &blockElems); err != nil {
 				return err
 			}
+			blockElems.fillEmptyFields()
 			elements = append(elements, blockElems...)
 			return nil
 		})
@@ -2364,6 +2404,7 @@ func (d *Data) StoreBlocks(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff bo
 		}
 		blockCoord := dvid.ChunkPoint3d{blockX, blockY, blockZ}
 		tk := NewBlockTKey(blockCoord)
+		elems.fillEmptyFields()
 		if err := putBatchElements(batch, tk, elems); err != nil {
 			return 0, err
 		}
@@ -2408,6 +2449,7 @@ func (d *Data) StoreElements(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff 
 	if err := json.Unmarshal(jsonBytes, &elems); err != nil {
 		return err
 	}
+	elems.fillEmptyFields()
 
 	// d.Lock()
 	// defer d.Unlock()

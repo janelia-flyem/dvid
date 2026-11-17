@@ -176,6 +176,7 @@ func (d *Data) resyncInMemory(ctx *datastore.VersionedCtx, check bool) {
 		if len(elems) == 0 {
 			return nil
 		}
+		elems.fillEmptyFields()
 
 		blockSize := d.blockSize()
 		for _, elem := range elems {
@@ -418,6 +419,7 @@ func (d *Data) resyncLowMemory(ctx *datastore.VersionedCtx) {
 		if len(elems) == 0 {
 			return nil
 		}
+		elems.fillEmptyFields()
 		numBlocks++
 
 		// Iterate through elements, organizing them into blocks and tags.

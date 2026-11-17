@@ -994,13 +994,13 @@ func TestPostLabels(t *testing.T) {
 		if err := json.Unmarshal(ret, &got); err != nil {
 			t.Fatal(err)
 		}
-		if !reflect.DeepEqual(expected, got) {
+		if !reflect.DeepEqual(expected.Normalize(), got.Normalize()) {
 			t.Errorf("Expected:\n%v\nGot:\n%v\n", expected, got)
 		}
 	}
 }
 
-var testBlocksReturn = `{"1,1,1":[{"Pos":[65,70,75],"Kind":"PostSyn","Tags":["Synapse1"],"Prop":null,"Rels":[{"Rel":"PostSynTo","To":[129,130,131]}]}],"2,2,2":[{"Pos":[129,130,131],"Kind":"PreSyn","Tags":["Synapse1"],"Prop":{"I'm not a PSD":"not really","Im a T-Bar":"no","i'm not really special":"at all"},"Rels":[{"Rel":"PreSynTo","To":[129,130,131]},{"Rel":"PreSynTo","To":[65,70,75]}]},{"Pos":[130,131,132],"Kind":"PostSyn","Tags":["Synapse1"],"Prop":null,"Rels":[{"Rel":"PostSynTo","To":[129,130,131]}]}]}`
+var testBlocksReturn = `{"1,1,1":[{"Pos":[65,70,75],"Kind":"PostSyn","Tags":["Synapse1"],"Prop":{},"Rels":[{"Rel":"PostSynTo","To":[129,130,131]}]}],"2,2,2":[{"Pos":[129,130,131],"Kind":"PreSyn","Tags":["Synapse1"],"Prop":{"I'm not a PSD":"not really","Im a T-Bar":"no","i'm not really special":"at all"},"Rels":[{"Rel":"PreSynTo","To":[129,130,131]},{"Rel":"PreSynTo","To":[65,70,75]}]},{"Pos":[130,131,132],"Kind":"PostSyn","Tags":["Synapse1"],"Prop":{},"Rels":[{"Rel":"PostSynTo","To":[129,130,131]}]}]}`
 
 func TestPostBlocksAndAll(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
@@ -2325,6 +2325,65 @@ func TestLabelarrayReload(t *testing.T) {
 func TestLabelmapReload(t *testing.T) {
 	testLabelReload(t, "labelmap", true)
 	testLabelReload(t, "labelmap", false)
+}
+
+// Elements posted without Tags or Prop must be returned with [] and {} rather than
+// null from every endpoint, both before and after a reload of the denormalizations.
+func TestOmittedTagsAndPropNotNull(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, v := initTestRepo()
+	var config dvid.Config
+	config.Set("BlockSize", "64,64,64")
+	server.CreateTestInstance(t, uuid, "labelmap", "labels", config)
+	_ = createLabelTestVolume(t, uuid, "labels")
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+	server.CreateTestInstance(t, uuid, "annotation", "mysynapses", config)
+	server.CreateTestSync(t, uuid, "mysynapses", "labels")
+
+	checkNoNulls := func(desc string) {
+		urls := []string{
+			fmt.Sprintf("%snode/%s/mysynapses/label/1", server.WebAPIPath, uuid),
+			fmt.Sprintf("%snode/%s/mysynapses/elements/64_64_64/0_0_0", server.WebAPIPath, uuid),
+			fmt.Sprintf("%snode/%s/mysynapses/blocks/64_64_64/0_0_0", server.WebAPIPath, uuid),
+		}
+		for _, url := range urls {
+			ret := string(server.TestHTTP(t, "GET", url, nil))
+			if !strings.Contains(ret, `"Pos":[15,27,35]`) {
+				t.Errorf("%s: expected element at (15,27,35) from %s, got: %s\n", desc, url, ret)
+			}
+			if strings.Contains(ret, "null") {
+				t.Errorf("%s: got null field from %s: %s\n", desc, url, ret)
+			}
+		}
+	}
+
+	// Initial post of an element (in label 1) without Tags or Prop.
+	elementsURL := fmt.Sprintf("%snode/%s/mysynapses/elements", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", elementsURL, strings.NewReader(`[{"Pos":[15,27,35],"Kind":"Note"}]`))
+	checkNoNulls("after initial POST")
+
+	// Re-post at the same position, which replaces rather than appends the stored element.
+	server.TestHTTP(t, "POST", elementsURL, strings.NewReader(`[{"Pos":[15,27,35],"Kind":"Note","Tags":null,"Prop":null}]`))
+	checkNoNulls("after replacement POST")
+
+	// Pre-existing label denormalizations with nulls should be fixed up on read.
+	labelsURL := fmt.Sprintf("%snode/%s/mysynapses/labels", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", labelsURL, strings.NewReader(`{"1":"[{\"Pos\":[15,27,35],\"Kind\":\"Note\",\"Tags\":null,\"Prop\":null}]"}`))
+	checkNoNulls("after POST /labels with nulls")
+
+	// Rebuilt label denormalizations must also have no nulls.
+	d, err := GetByUUIDName(uuid, "mysynapses")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.resyncInMemory(datastore.NewVersionedCtx(d, v), false)
+	checkNoNulls("after reload")
 }
 
 // A single label block within the volume
