@@ -43,6 +43,22 @@ func rawURL(uuid dvid.UUID, name string) string {
 		readMethodsVolSize, readMethodsVolSize, readMethodsVolSize)
 }
 
+// scale1URL reads the volume at downsampled scale 1, half the size on each axis.
+func scale1URL(uuid dvid.UUID, name string) string {
+	n := readMethodsVolSize / 2
+	return fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/0_0_0?scale=1", server.WebAPIPath, uuid, name, n, n, n)
+}
+
+// uniformLabelsAtScale1 is uniformLabels downsampled once.
+func uniformLabelsAtScale1(label uint64) []byte {
+	n := readMethodsVolSize / 2
+	buf := make([]byte, n*n*n*8)
+	for i := 0; i < n*n*n; i++ {
+		binary.LittleEndian.PutUint64(buf[i*8:i*8+8], label)
+	}
+	return buf
+}
+
 // blocksURL reads blocks as gzipped DVID label blocks, the format POST /blocks and
 // /ingest-supervoxels take.
 func blocksURL(uuid dvid.UUID, name string) string {
@@ -95,12 +111,18 @@ func newReadMethodsFixture(t *testing.T) *readMethodsFixture {
 
 	// Instances whose write branches are tested, each holding label 1, and
 	// source instances holding label 2 whose blocks become write payloads.
+	// The labelmap and labelarray instances keep one downsampled scale, so a
+	// write that reached the downres code would show in the stored state.
 	for _, inst := range []struct{ typename, name string }{
 		{"labelmap", "lmap"}, {"labelmap", "lmapsrc"},
 		{"labelarray", "larr"}, {"labelarray", "larrsrc"},
 		{"labelblk", "lblk"},
 	} {
-		server.CreateTestInstance(t, uuid, inst.typename, inst.name, dvid.Config{})
+		config := dvid.NewConfig()
+		if inst.typename != "labelblk" {
+			config.Set("MaxDownresLevel", "1")
+		}
+		server.CreateTestInstance(t, uuid, inst.typename, inst.name, config)
 		f.instances = append(f.instances, dvid.InstanceName(inst.name))
 	}
 	// A synced subscriber: an annotation on the labelmap, with a synapse inside
@@ -116,6 +138,19 @@ func newReadMethodsFixture(t *testing.T) *readMethodsFixture {
 		server.TestHTTP(t, "POST", rawURL(uuid, name), bytes.NewReader(uniformLabels(2)))
 	}
 	f.waitForUpdates(t, uuid)
+	// POST /raw stores only scale 0, so write each block back with downres to
+	// compute scale 1, and check that scale.
+	for _, name := range []string{"lmap", "larr"} {
+		blocks := server.TestHTTP(t, "GET", blocksURL(uuid, name), nil)
+		server.TestHTTP(t, "POST", fmt.Sprintf("%snode/%s/%s/blocks?downres=true", server.WebAPIPath, uuid, name),
+			bytes.NewReader(blocks))
+	}
+	f.waitForUpdates(t, uuid)
+	for _, name := range []string{"lmap", "larr"} {
+		if got := server.TestHTTP(t, "GET", scale1URL(uuid, name), nil); !bytes.Equal(got, uniformLabelsAtScale1(1)) {
+			t.Fatalf("%s holds no downsampled label 1 at scale 1", name)
+		}
+	}
 	synapse := `[{"Pos":[10,10,10],"Kind":"PostSyn","Tags":[],"Prop":{}}]`
 	server.TestHTTP(t, "POST", fmt.Sprintf("%snode/%s/synapses/elements", server.WebAPIPath, uuid),
 		strings.NewReader(synapse))
@@ -128,15 +163,18 @@ func newReadMethodsFixture(t *testing.T) *readMethodsFixture {
 	extents := []byte(`{"MinPoint": [1, 2, 3], "MaxPoint": [40, 50, 60]}`)
 	rawEndpoint := fmt.Sprintf("raw/0_1_2/%d_%d_%d/0_0_0", readMethodsVolSize, readMethodsVolSize, readMethodsVolSize)
 
-	// The nine branches in dvid-0007's table.
+	// The nine branches in dvid-0007's table, with blocks also sent the way a
+	// downres write is.
 	f.branches = []writeBranch{
 		{"labelmap extents", "extents", "lmap", extents, false},
 		{"labelmap resolution", "resolution", "lmap", resolution, false},
 		{"labelmap ingest-supervoxels", "ingest-supervoxels", "lmap", lmapBlocks, false},
 		{"labelmap blocks", "blocks", "lmap", lmapBlocks, true},
+		{"labelmap blocks with downres", "blocks?downres=true", "lmap", lmapBlocks, true},
 		{"labelmap raw", rawEndpoint, "lmap", rawPayload, true},
 		{"labelarray resolution", "resolution", "larr", resolution, false},
 		{"labelarray blocks", "blocks", "larr", larrBlocks, true},
+		{"labelarray blocks with downres", "blocks?downres=true", "larr", larrBlocks, true},
 		{"labelarray raw", rawEndpoint, "larr", rawPayload, true},
 		{"labelblk resolution", "resolution", "lblk", resolution, false},
 	}
@@ -162,7 +200,11 @@ func (f *readMethodsFixture) send(t *testing.T, uuid dvid.UUID, who caller, meth
 		body = bytes.NewReader(payload)
 	}
 	if who.query != "" {
-		url += "?" + who.query
+		if strings.Contains(url, "?") {
+			url += "&" + who.query
+		} else {
+			url += "?" + who.query
+		}
 	}
 	req, err := http.NewRequest(method, url, body)
 	if err != nil {
@@ -272,10 +314,18 @@ func TestReadMethodsNeverWrite(t *testing.T) {
 		if diff == "" {
 			t.Errorf("POST %s changed no stored state", b.name)
 		}
+		// A downres write stores the source's label 2 at scale 1 too.  Check it
+		// now, since the raw POST that follows recomputes scale 1.
+		if strings.Contains(b.endpoint, "downres=true") {
+			got := server.TestHTTP(t, "GET", scale1URL(child.Child, b.instance), nil)
+			if !bytes.Equal(got, uniformLabelsAtScale1(2)) {
+				t.Errorf("POST %s did not write scale 1: %v", b.name, labelCounts(got))
+			}
+		}
 	}
 	got := server.TestHTTP(t, "GET", rawURL(child.Child, "lmap"), nil)
 	if !bytes.Equal(got, uniformLabels(3)) {
-		t.Errorf("labelmap POST raw on the child did not store its labels")
+		t.Errorf("labelmap POST raw on the child did not store its labels: %v", labelCounts(got))
 	}
 }
 
@@ -495,4 +545,13 @@ func TestImmutablePostsOnLockedNode(t *testing.T) {
 			t.Errorf("%s: GET %s counted as a mutation", name, endpoint)
 		}
 	}
+}
+
+// labelCounts counts the voxels of each label in raw uint64 voxels.
+func labelCounts(data []byte) map[uint64]int {
+	counts := make(map[uint64]int)
+	for i := 0; i+8 <= len(data); i += 8 {
+		counts[binary.LittleEndian.Uint64(data[i:i+8])]++
+	}
+	return counts
 }

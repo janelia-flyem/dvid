@@ -330,7 +330,12 @@ func DoServe(cmd dvid.Command) error {
 	// listen on port 6060 (pick a port) for profiling.  This listener serves the
 	// default mux, which also holds the DVID API once the web server starts, so it
 	// gets the same request guard as the main listener.
-	go http.ListenAndServe(":6060", server.RequestGuard(http.DefaultServeMux))
+	profileServer := &http.Server{
+		Addr:                         ":6060",
+		Handler:                      server.RequestGuard(http.DefaultServeMux),
+		DisableGeneralOptionsHandler: true,
+	}
+	go profileServer.ListenAndServe()
 
 	// Serve HTTP and RPC
 	server.Serve()

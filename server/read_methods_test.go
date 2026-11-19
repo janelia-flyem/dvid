@@ -184,7 +184,9 @@ func TestRequestGuardOnRealListener(t *testing.T) {
 	}
 	defer CloseTest()
 	registerDefaultMuxTestRoute()
-	srv := httptest.NewServer(OutermostHandler())
+	srv := httptest.NewUnstartedServer(OutermostHandler())
+	srv.Config.DisableGeneralOptionsHandler = true // as serveHTTP sets it
+	srv.Start()
 	defer srv.Close()
 
 	send := func(raw string) int {
@@ -216,6 +218,15 @@ func TestRequestGuardOnRealListener(t *testing.T) {
 		if code := send(withLength); code != http.StatusBadRequest {
 			t.Errorf("%s with a Content-Length body: expected 400, got %d", method, code)
 		}
+	}
+	// "OPTIONS *" reaches the guard: refused with a body, answered without.
+	starWithBody := fmt.Sprintf("OPTIONS * HTTP/1.1\r\nHost: %s\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx", host)
+	if code := send(starWithBody); code != http.StatusBadRequest {
+		t.Errorf("OPTIONS * with a body: expected 400, got %d", code)
+	}
+	star := fmt.Sprintf("OPTIONS * HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", host)
+	if code := send(star); code != http.StatusOK {
+		t.Errorf("bodiless OPTIONS *: expected 200, got %d", code)
 	}
 	if defaultMuxHits.Load() != hits {
 		t.Errorf("a refused request reached the default mux handler")

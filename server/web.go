@@ -692,6 +692,9 @@ const supportedMethods = "GET, HEAD, OPTIONS, POST, PUT, DELETE"
 //   - a HEAD or OPTIONS request that carries a body gets 400.  Any declared
 //     length or transfer encoding counts as a body, so a chunked body that
 //     turns out to be empty is refused too.  A CORS preflight has no body.
+//   - a bodiless "OPTIONS *" gets 200 with no body, the answer net/http gives
+//     it by default.  Listeners set DisableGeneralOptionsHandler so that
+//     "OPTIONS *" reaches this guard.
 //
 // Together with the datatype handlers' method checks, this keeps GET, HEAD, and
 // OPTIONS from ever writing data.
@@ -703,6 +706,11 @@ func RequestGuard(h http.Handler) http.Handler {
 			if r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
 				dvid.Infof("Refused %s %q with a request body\n", r.Method, r.URL.Path)
 				http.Error(w, fmt.Sprintf("DVID refuses a request body on %s", r.Method), http.StatusBadRequest)
+				return
+			}
+			if r.Method == http.MethodOptions && r.RequestURI == "*" {
+				w.Header().Set("Content-Length", "0")
+				w.WriteHeader(http.StatusOK)
 				return
 			}
 		default:
@@ -741,6 +749,8 @@ func serveHTTP() {
 		Handler:      OutermostHandler(),
 		WriteTimeout: WriteTimeout,
 		ReadTimeout:  ReadTimeout,
+		// Send "OPTIONS *" through the guard too; RequestGuard answers it.
+		DisableGeneralOptionsHandler: true,
 	}
 	log.Fatal(s.ListenAndServe())
 
