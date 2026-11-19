@@ -10,6 +10,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,10 +20,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/zenazn/goji/web"
+	"github.com/zenazn/goji/web/middleware"
 )
 
-// TestHTTPResponse returns a response from a test run of the DVID server.
+// TestHTTPResponse returns a response from a test run of the DVID server.  The
+// request goes through OutermostHandler, as a production request does.
 // Use TestHTTP if you just want the response body bytes.
 func TestHTTPResponse(t *testing.T, method, urlStr string, payload io.Reader) *httptest.ResponseRecorder {
 	req, err := http.NewRequest(method, urlStr, payload)
@@ -30,7 +35,7 @@ func TestHTTPResponse(t *testing.T, method, urlStr string, payload io.Reader) *h
 		t.Fatalf("Unsuccessful %s on %q: %v\n", method, urlStr, err)
 	}
 	resp := httptest.NewRecorder()
-	ServeSingleHTTP(resp, req)
+	OutermostHandler().ServeHTTP(resp, req)
 	return resp
 }
 
@@ -80,7 +85,7 @@ func TestBadHTTP(t *testing.T, method, urlStr string, payload io.Reader) {
 		t.Fatalf("Unsuccessful %s on %q: %v [%s:%d]\n", method, urlStr, err, fn, line)
 	}
 	w := httptest.NewRecorder()
-	ServeSingleHTTP(w, req)
+	OutermostHandler().ServeHTTP(w, req)
 	if w.Code == http.StatusOK {
 		_, fn, line, _ := runtime.Caller(1)
 		t.Fatalf("Expected bad server response to %s on %q, got %d instead. [%s:%d]\n", method, urlStr, w.Code, fn, line)
@@ -138,4 +143,113 @@ func CreateTestReplaceSync(t *testing.T, uuid dvid.UUID, name string, syncs ...s
 	url := fmt.Sprintf("%snode/%s/%s/sync?replace=true", WebAPIPath, uuid, name)
 	msg := fmt.Sprintf(`{"sync": "%s"}`, strings.Join(syncs, ","))
 	TestHTTP(t, "POST", url, strings.NewReader(msg))
+}
+
+// ResetTestRoutes discards DVID's web routes, so the next request rebuilds them
+// under the current configuration.  Routing decides once whether requests pass
+// through the auth middleware, so a test that turns auth on or off resets the
+// routes after doing so.  Do not call it while requests are in flight.
+func ResetTestRoutes() {
+	webMuxMu.Lock()
+	webMux.Mux = web.New()
+	webMux.Use(middleware.RequestID)
+	webMux.routesSetup = false
+	webMuxMu.Unlock()
+}
+
+// SetTestRWMode sets read-only and full-write modes for testing, and returns a
+// function that restores the previous modes.
+func SetTestRWMode(readOnly, fullWrite bool) (restore func()) {
+	origReadOnly, origFullWrite := readonly, fullwrite
+	readonly, fullwrite = readOnly, fullWrite
+	return func() { readonly, fullwrite = origReadOnly, origFullWrite }
+}
+
+// SetTestMutationJSONStore points the JSON mutation logs at a directory for
+// testing, and returns a function that restores the previous setting.
+func SetTestMutationJSONStore(dir string) (restore func()) {
+	orig := tc.Mutations.Jsonstore
+	tc.Mutations.Jsonstore = dir
+	return func() { tc.Mutations.Jsonstore = orig }
+}
+
+// TestStoredState is what a request could change: every stored key-value pair,
+// the repo's mutation ID counter, and the files in the JSON mutation log
+// directory with their sizes.
+type TestStoredState struct {
+	KV         map[string]string
+	MutationID uint64
+	LogFiles   map[string]int64
+}
+
+// CaptureTestState returns the stored state of the repo holding uuid.
+func CaptureTestState(t *testing.T, uuid dvid.UUID) TestStoredState {
+	t.Helper()
+	var state TestStoredState
+	var err error
+	if state.KV, err = datastore.SnapshotTestStores(); err != nil {
+		t.Fatalf("unable to snapshot stores: %v", err)
+	}
+	repoJSON, err := datastore.GetRepoJSON(uuid)
+	if err != nil {
+		t.Fatalf("unable to get repo JSON for %s: %v", uuid, err)
+	}
+	var repo struct{ MutationID uint64 }
+	if err := json.Unmarshal([]byte(repoJSON), &repo); err != nil {
+		t.Fatalf("unable to parse repo JSON for %s: %v", uuid, err)
+	}
+	state.MutationID = repo.MutationID
+	state.LogFiles = make(map[string]int64)
+	if dir := tc.Mutations.Jsonstore; dir != "" {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("unable to read mutation log directory %q: %v", dir, err)
+		}
+		for _, entry := range entries {
+			info, err := entry.Info()
+			if err != nil {
+				t.Fatalf("unable to stat mutation log %q: %v", entry.Name(), err)
+			}
+			state.LogFiles[entry.Name()] = info.Size()
+		}
+	}
+	return state
+}
+
+// Diff describes how other differs from s, or returns "" if they are equal.
+func (s TestStoredState) Diff(other TestStoredState) string {
+	var diffs []string
+	if s.MutationID != other.MutationID {
+		diffs = append(diffs, fmt.Sprintf("mutation ID %d -> %d", s.MutationID, other.MutationID))
+	}
+	var added, removed, changed int
+	for k, v := range s.KV {
+		v2, found := other.KV[k]
+		if !found {
+			removed++
+		} else if v != v2 {
+			changed++
+		}
+	}
+	for k := range other.KV {
+		if _, found := s.KV[k]; !found {
+			added++
+		}
+	}
+	if added+removed+changed != 0 {
+		diffs = append(diffs, fmt.Sprintf("stored keys: %d added, %d removed, %d changed", added, removed, changed))
+	}
+	for name, size := range s.LogFiles {
+		if size2, found := other.LogFiles[name]; !found {
+			diffs = append(diffs, fmt.Sprintf("mutation log %s removed", name))
+		} else if size != size2 {
+			diffs = append(diffs, fmt.Sprintf("mutation log %s size %d -> %d", name, size, size2))
+		}
+	}
+	for name := range other.LogFiles {
+		if _, found := s.LogFiles[name]; !found {
+			diffs = append(diffs, fmt.Sprintf("mutation log %s created", name))
+		}
+	}
+	return strings.Join(diffs, "; ")
 }

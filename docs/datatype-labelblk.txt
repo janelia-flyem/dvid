@@ -105,7 +105,8 @@ POST <api URL>/node/<UUID>/<data name>/info
 
 POST  <api URL>/node/<UUID>/<data name>/resolution
   
-  	Sets the resolution for the image volume. 
+  	Sets the resolution for the image volume.  Only POST is accepted; any other method
+  	gets a 400 and changes nothing.
   
   	Extents should be in JSON in the following format:
   	[8,8,8]

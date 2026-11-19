@@ -207,7 +207,8 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 	downscale := queryStrings.Get("downres") == "true"
 	supervoxels := queryStrings.Get("supervoxels") == "true"
 
-	if strings.ToLower(r.Method) == "get" {
+	switch strings.ToLower(r.Method) {
+	case "get":
 		if len(parts) < 6 {
 			server.BadRequest(w, r, "must specify size and offset with GET /blocks endpoint")
 			return
@@ -233,7 +234,7 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 			server.BadRequest(w, r, err)
 		}
 		timedLog.Infof("HTTP GET blocks at size %s, offset %s (%s)", parts[4], parts[5], r.URL)
-	} else {
+	case "post":
 		var indexing bool
 		if queryStrings.Get("noindexing") != "true" {
 			indexing = true
@@ -242,6 +243,8 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 			server.BadRequest(w, r, err)
 		}
 		timedLog.Infof("HTTP POST blocks, indexing = %t, downscale = %t (%s)", indexing, downscale, r.URL)
+	default:
+		server.BadRequest(w, r, "only GET or POST available for endpoint /blocks")
 	}
 }
 
@@ -249,6 +252,10 @@ func (d *Data) handleIngest(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 	// POST <api URL>/node/<UUID>/<data name>/ingest-supervoxels[?scale=...]
 	timedLog := dvid.NewTimeLog()
 
+	if strings.ToLower(r.Method) != "post" {
+		server.BadRequest(w, r, "only POST available for endpoint /ingest-supervoxels")
+		return
+	}
 	queryStrings := r.URL.Query()
 	scale, err := getScale(queryStrings)
 	if err != nil {
@@ -992,7 +999,8 @@ func (d *Data) handleDataRequest(ctx *datastore.VersionedCtx, w http.ResponseWri
 			server.BadRequest(w, r, err)
 			return
 		}
-		if strings.ToLower(r.Method) == "get" {
+		switch strings.ToLower(r.Method) {
+		case "get":
 			done, err := d.writeBlockToHTTP(ctx, w, subvol, compression, supervoxels, scale, roiname)
 			if err != nil {
 				server.BadRequest(w, r, err)
@@ -1015,7 +1023,7 @@ func (d *Data) handleDataRequest(ctx *datastore.VersionedCtx, w http.ResponseWri
 					return
 				}
 			}
-		} else {
+		case "post":
 			if isotropic {
 				server.BadRequest(w, r, "can only POST 'raw' not 'isotropic' images")
 				return
@@ -1031,6 +1039,9 @@ func (d *Data) handleDataRequest(ctx *datastore.VersionedCtx, w http.ResponseWri
 				server.BadRequest(w, r, err)
 				return
 			}
+		default:
+			server.BadRequest(w, r, "only GET or POST available for 3d endpoint /%s", parts[3])
+			return
 		}
 	default:
 		server.BadRequest(w, r, "DVID currently supports shapes of only 2 and 3 dimensions")

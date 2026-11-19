@@ -892,15 +892,16 @@ func (d *Data) Checksum() dvid.Checksum {
 
 // --- DataService implementation -----
 
-// IsMutationRequest is the default definition of mutation requests.
-// All POST, PUT, and DELETE actions return true, while others return false.
+// IsMutationRequest is the default definition of mutation requests.  It fails
+// closed: every action except GET, HEAD, and OPTIONS is a mutation, so a method
+// this code does not know is refused on a locked node.  Datatypes override it
+// to mark specific POST endpoints, such as queries, as immutable.
 func (d *Data) IsMutationRequest(action, endpoint string) bool {
-	lc := strings.ToLower(action)
-	switch lc {
-	case "post", "put", "delete":
-		return true
-	default:
+	switch strings.ToLower(action) {
+	case "get", "head", "options":
 		return false
+	default:
+		return true
 	}
 }
 

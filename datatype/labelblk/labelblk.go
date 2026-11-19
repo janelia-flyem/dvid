@@ -142,7 +142,8 @@ POST <api URL>/node/<UUID>/<data name>/info
 
 POST  <api URL>/node/<UUID>/<data name>/resolution
   
-  	Sets the resolution for the image volume. 
+  	Sets the resolution for the image volume.  Only POST is accepted; any other method
+  	gets a 400 and changes nothing.
   
   	Extents should be in JSON in the following format:
   	[8,8,8]
@@ -1323,6 +1324,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		fmt.Fprintln(w, jsonStr)
 
 	case "resolution":
+		if action != "post" {
+			server.BadRequest(w, r, "only POST available for endpoint /resolution")
+			return
+		}
 		jsonBytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			server.BadRequest(w, r, err)

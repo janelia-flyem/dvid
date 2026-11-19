@@ -59,20 +59,31 @@ func logMutationPayload(data []byte) (ref string, err error) {
 	return blobstore.PutBlob(data)
 }
 
-func getJSONLogFile(versionID, dataID dvid.UUID) (lf *logFile, err error) {
+// getJSONLogFile returns the open mutation log for the data and version.  With
+// create, a missing log file is created, as writers need.  Without create, as
+// readers need, a missing log file returns a nil logFile and no error, so a read
+// never creates a file.
+func getJSONLogFile(versionID, dataID dvid.UUID, create bool) (lf *logFile, err error) {
 	fname := path.Join(tc.Mutations.Jsonstore, string(dataID)+"-"+string(versionID)+".plog")
 	jsonLogFilesMux.Lock()
 	defer jsonLogFilesMux.Unlock()
 	var found bool
 	lf, found = jsonLogFiles[fname]
 	if !found {
+		flags := os.O_APPEND | os.O_RDWR | os.O_SYNC
+		if create {
+			flags |= os.O_CREATE
+		}
 		var f *os.File
-		f, err = os.OpenFile(fname, os.O_APPEND|os.O_CREATE|os.O_RDWR|os.O_SYNC, 0755)
+		f, err = os.OpenFile(fname, flags, 0755)
 		if err != nil {
-			dvid.Errorf("Could not open new JSON mutation log: %v\n", err)
+			if !create && os.IsNotExist(err) {
+				return nil, nil
+			}
+			dvid.Errorf("Could not open JSON mutation log: %v\n", err)
 			return nil, err
 		}
-		dvid.Infof("Created mutation JSON log for data %s, version %s\n", dataID, versionID)
+		dvid.Infof("Opened mutation JSON log for data %s, version %s\n", dataID, versionID)
 		lf = &logFile{f: f}
 		jsonLogFiles[fname] = lf
 	}
@@ -85,7 +96,7 @@ func LogJSONMutation(versionID, dataID dvid.UUID, jsondata []byte) error {
 		dvid.Errorf("Cannot write JSON mutation log with non-existent Jsonstore config: %s\n", string(jsondata))
 		return nil
 	}
-	lf, err := getJSONLogFile(versionID, dataID)
+	lf, err := getJSONLogFile(versionID, dataID, true)
 	if err != nil {
 		return err
 	}
@@ -108,12 +119,13 @@ func StreamMutationsForVersion(w io.Writer, versionID, dataID dvid.UUID) error {
 	if tc.Mutations.Jsonstore == "" {
 		return fmt.Errorf("no jsonstore configured in [mutations] section of TOML config")
 	}
-	lf, err := getJSONLogFile(versionID, dataID)
+	lf, err := getJSONLogFile(versionID, dataID, false)
 	if err != nil {
 		return err
 	}
-	if lf == nil {
-		return fmt.Errorf("got nil mutation log for data %s, version %s", dataID, versionID)
+	if lf == nil { // no log file, so no mutations
+		_, err = w.Write([]byte("[]"))
+		return err
 	}
 	lf.RLock()
 	defer func() {
@@ -184,12 +196,12 @@ func StreamMutationsForSequence(w io.Writer, dataID dvid.UUID, sequence []dvid.U
 
 // sends JSON mutation records from one UUID to the channel.
 func sendVersionMutations(ch chan []byte, uuid, dataID dvid.UUID) (numMutations int, err error) {
-	lf, err := getJSONLogFile(uuid, dataID)
+	lf, err := getJSONLogFile(uuid, dataID, false)
 	if err != nil {
 		return 0, err
 	}
-	if lf == nil {
-		return 0, fmt.Errorf("got nil mutation log for data %s, version %s", dataID, uuid)
+	if lf == nil { // no log file, so no mutations
+		return 0, nil
 	}
 	lf.RLock()
 	defer func() {

@@ -74,7 +74,12 @@ const webHelp = `
 /serverhost:someport/api/...
 		</pre>
 		The online documentation doesn't show the server host prefixed to the "/api/..." URL,
-		but it is required.
+		but it is required.</p>
+
+		<p>DVID accepts only the GET, HEAD, OPTIONS, POST, PUT and DELETE methods, spelled exactly
+		so; any other method gets a 405.  A HEAD or OPTIONS request that carries a body, or
+		declares one with Content-Length or Transfer-Encoding, gets a 400.  GET, HEAD and
+		OPTIONS never change stored data.</p>
 
 		<h4>General commands</h4>
 
@@ -653,6 +658,64 @@ func ServeSingleHTTP(w http.ResponseWriter, r *http.Request) {
 	webMux.ServeHTTP(w, r)
 }
 
+var installWebMuxOnce sync.Once
+
+// OutermostHandler returns the handler that serves every DVID HTTP request: the
+// standard net/http default mux, with webMux installed at its root, behind
+// RequestGuard.  The default mux also holds handlers that other packages
+// register, such as the profiler's, so the guard covers those too.  Every
+// listener that serves the default mux should use this handler.
+func OutermostHandler() http.Handler {
+	if !webMux.routesSetup {
+		initRoutes()
+	}
+	// Install our handler at the root of the standard net/http default mux.
+	// This allows packages like expvar to continue working as expected.  (From goji.go)
+	// The installed function reads webMux on each request, so routes that tests
+	// rebuild with ResetTestRoutes take effect.
+	installWebMuxOnce.Do(func() {
+		http.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			webMux.ServeHTTP(w, r)
+		}))
+	})
+	return RequestGuard(http.DefaultServeMux)
+}
+
+// supportedMethods lists the only HTTP methods DVID serves, in the form used by
+// the Allow header.
+const supportedMethods = "GET, HEAD, OPTIONS, POST, PUT, DELETE"
+
+// RequestGuard refuses requests that no DVID handler should see, before any
+// routing:
+//   - a method other than GET, HEAD, OPTIONS, POST, PUT, or DELETE gets 405.
+//     Methods are compared exactly, as HTTP requires, so "Head" is refused.
+//   - a HEAD or OPTIONS request that carries a body gets 400.  Any declared
+//     length or transfer encoding counts as a body, so a chunked body that
+//     turns out to be empty is refused too.  A CORS preflight has no body.
+//
+// Together with the datatype handlers' method checks, this keeps GET, HEAD, and
+// OPTIONS from ever writing data.
+func RequestGuard(h http.Handler) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete:
+		case http.MethodHead, http.MethodOptions:
+			if r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
+				dvid.Infof("Refused %s %q with a request body\n", r.Method, r.URL.Path)
+				http.Error(w, fmt.Sprintf("DVID refuses a request body on %s", r.Method), http.StatusBadRequest)
+				return
+			}
+		default:
+			dvid.Infof("Refused unsupported method %q on %q\n", r.Method, r.URL.Path)
+			w.Header().Set("Allow", supportedMethods)
+			http.Error(w, fmt.Sprintf("DVID does not support method %q", r.Method), http.StatusMethodNotAllowed)
+			return
+		}
+		h.ServeHTTP(w, r)
+	}
+	return http.HandlerFunc(fn)
+}
+
 // Listen and serve HTTP requests using address and don't let stay-alive
 // connections hog goroutines for more than an hour.
 // See for discussion:
@@ -669,16 +732,13 @@ func serveHTTP() {
 		initRoutes()
 	}
 
-	// Install our handler at the root of the standard net/http default mux.
-	// This allows packages like expvar to continue working as expected.  (From goji.go)
-	http.Handle("/", webMux)
-
 	// TODO: Could have used "graceful" goji package but doesn't allow tailoring of timeouts
 	// unless package is modified.  Not sure graceful features needed whereas tailoring
 	// of server is more important.
 
 	s := &http.Server{
 		Addr:         HTTPAddress(),
+		Handler:      OutermostHandler(),
 		WriteTimeout: WriteTimeout,
 		ReadTimeout:  ReadTimeout,
 	}
@@ -950,11 +1010,13 @@ func wildcardAccessHandler(c *web.C, h http.Handler) http.Handler {
 	return http.HandlerFunc(fn)
 }
 
-// Middleware that logs all mutations to any configured mutation log
+// Middleware that logs all mutations to any configured mutation log.  GET, HEAD,
+// and OPTIONS never mutate, so they are not logged; every other method is,
+// including immutable POSTs such as neuronjson /query.
 func mutationsHandler(c *web.C, h http.Handler) http.Handler {
 	mutConfig := MutationLogSpec()
 	fn := func(w http.ResponseWriter, r *http.Request) {
-		if mutConfig.Httpstore != "" {
+		if mutConfig.Httpstore != "" && !isReadMethod(r.Method) {
 			buf, err := io.ReadAll(r.Body)
 			if err != nil {
 				BadRequest(w, r, "unable to read POST for mirroring: %v", err)
@@ -992,6 +1054,17 @@ func mutationsHandler(c *web.C, h http.Handler) http.Handler {
 		h.ServeHTTP(w, r)
 	}
 	return http.HandlerFunc(fn)
+}
+
+// isReadMethod reports whether an HTTP method only reads.  It compares exactly,
+// as RequestGuard does.
+func isReadMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	default:
+		return false
+	}
 }
 
 // Middleware that logs activity to kafka if available.

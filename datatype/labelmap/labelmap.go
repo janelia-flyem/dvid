@@ -337,7 +337,8 @@ POST <api URL>/node/<UUID>/<data name>/info
 POST <api URL>/node/<UUID>/<data name>/extents
   
 	Sets the extents for the image volume.  This is primarily used when POSTing from multiple
-  	DVID servers not sharing common metadata to a shared backend.
+  	DVID servers not sharing common metadata to a shared backend.  Only POST is accepted;
+	any other method gets a 400 and changes nothing.
 
 	Extents should be in JSON in the following format:
 	{
@@ -347,7 +348,8 @@ POST <api URL>/node/<UUID>/<data name>/extents
 
 POST  <api URL>/node/<UUID>/<data name>/resolution
   
-  	Sets the resolution for the image volume. 
+  	Sets the resolution for the image volume.  Only POST is accepted; any other method
+  	gets a 400 and changes nothing.
   
   	Extents should be in JSON in the following format:
   	[8,8,8]
@@ -554,6 +556,8 @@ POST <api URL>/node/<UUID>/<data name>/raw/0_1_2/<size>/<offset>[?queryopts]
 
     Ingests block-aligned supervoxel data using the block sizes defined for this data instance.  
 	For example, if the BlockSize = 32, offset and size must be multiples of 32.
+	The 3d "raw" endpoint accepts only GET to read and POST to write; any other method
+	gets a 400 and changes nothing.
 	The POST body should be a packed array of voxel values (little-endian uint64 per voxel) in ZYX order 
 	(X iterates most rapidly).
 
@@ -764,6 +768,8 @@ POST <api URL>/node/<UUID>/<data name>/blocks[?queryopts]
 
     Puts properly-sized supervoxel block data.  This is the most server-efficient way of
     storing labelmap data if you want DVID to also handle indexing and downres computation.
+	The "blocks" endpoint accepts only GET to read and POST to write; any other method
+	gets a 400 and changes nothing.
 	If you are calculating indices and downres supervoxel blocks offline for ingesting into
 	DVID, use the "POST /ingest-supervoxels" endpoint, since it is even faster.
 
@@ -856,7 +862,8 @@ POST <api URL>/node/<UUID>/<data name>/blocks[?queryopts]
 POST <api URL>/node/<UUID>/<data name>/ingest-supervoxels[?queryopts]
 
     Ingests properly-sized supervoxel block data under the assumption that parallel calls to this 
-	endpoint do not use overlapping blocks.  This is the most server-efficient way of storing labelmap data, 
+	endpoint do not use overlapping blocks.  Only POST is accepted; any other method gets a 400
+	and changes nothing.  This is the most server-efficient way of storing labelmap data, 
 	where data read from the HTTP stream is written directly to the underlying storage.  The default 
 	(and currently only supported) compression is gzip on compressed DVID label Block serialization.
 	Unlike the "POST /blocks" endpoint, this endpoint assumes that the following operations will be done separately:
@@ -3362,6 +3369,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		fmt.Fprintln(w, jsonStr)
 
 	case "extents":
+		if action != "post" {
+			server.BadRequest(w, r, "only POST available for endpoint /extents")
+			return
+		}
 		jsonBytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			server.BadRequest(w, r, err)
@@ -3373,6 +3384,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 
 	case "resolution":
+		if action != "post" {
+			server.BadRequest(w, r, "only POST available for endpoint /resolution")
+			return
+		}
 		jsonBytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			server.BadRequest(w, r, err)

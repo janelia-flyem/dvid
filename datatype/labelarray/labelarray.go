@@ -164,7 +164,8 @@ POST <api URL>/node/<UUID>/<data name>/info
 
 POST  <api URL>/node/<UUID>/<data name>/resolution
   
-  	Sets the resolution for the image volume. 
+  	Sets the resolution for the image volume.  Only POST is accepted; any other method
+  	gets a 400 and changes nothing.
   
   	Extents should be in JSON in the following format:
   	[8,8,8]
@@ -353,6 +354,8 @@ POST <api URL>/node/<UUID>/<data name>/raw/0_1_2/<size>/<offset>[?queryopts]
 
     Puts block-aligned voxel data using the block sizes defined for  this data instance.  
     For example, if the BlockSize = 32, offset and size must be multiples of 32.
+    The 3d "raw" endpoint accepts only GET to read and POST to write; any other method
+    gets a 400 and changes nothing.
 
     Example: 
 
@@ -509,7 +512,8 @@ POST <api URL>/node/<UUID>/<data name>/blocks[?queryopts]
     Puts properly-sized blocks for this data instance.  This is the most server-efficient way of
     storing labelarray data, where data read from the HTTP stream is written directly to the 
 	underlying storage.  The default (and currently only supported) compression is gzip on compressed 
-	DVID label Block serialization.
+	DVID label Block serialization.  The "blocks" endpoint accepts only GET to read and POST to
+	write; any other method gets a 400 and changes nothing.
 
 	Note that maximum label and extents are automatically handled during these calls.
 
@@ -2693,6 +2697,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		fmt.Fprintln(w, jsonStr)
 
 	case "resolution":
+		if action != "post" {
+			server.BadRequest(w, r, "only POST available for endpoint /resolution")
+			return
+		}
 		jsonBytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			server.BadRequest(w, r, err)
@@ -2902,7 +2910,8 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 
 	compression := queryStrings.Get("compression")
 	downscale := queryStrings.Get("downres") == "true"
-	if strings.ToLower(r.Method) == "get" {
+	switch strings.ToLower(r.Method) {
+	case "get":
 		if len(parts) < 6 {
 			server.BadRequest(w, r, "must specify size and offset with GET /blocks endpoint")
 			return
@@ -2928,11 +2937,13 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 			server.BadRequest(w, r, err)
 		}
 		timedLog.Infof("HTTP GET blocks at size %s, offset %s (%s)", parts[4], parts[5], r.URL)
-	} else {
+	case "post":
 		if err := d.ReceiveBlocks(ctx, r.Body, scale, downscale, compression); err != nil {
 			server.BadRequest(w, r, err)
 		}
 		timedLog.Infof("HTTP POST blocks (%s)", r.URL)
+	default:
+		server.BadRequest(w, r, "only GET or POST available for endpoint /blocks")
 	}
 }
 
@@ -3082,7 +3093,8 @@ func (d *Data) handleDataRequest(ctx *datastore.VersionedCtx, w http.ResponseWri
 			server.BadRequest(w, r, err)
 			return
 		}
-		if strings.ToLower(r.Method) == "get" {
+		switch strings.ToLower(r.Method) {
+		case "get":
 			lbl, err := d.NewLabels(subvol, nil)
 			if err != nil {
 				server.BadRequest(w, r, err)
@@ -3097,7 +3109,7 @@ func (d *Data) handleDataRequest(ctx *datastore.VersionedCtx, w http.ResponseWri
 				server.BadRequest(w, r, err)
 				return
 			}
-		} else {
+		case "post":
 			if isotropic {
 				server.BadRequest(w, r, "can only POST 'raw' not 'isotropic' images")
 				return
@@ -3113,6 +3125,9 @@ func (d *Data) handleDataRequest(ctx *datastore.VersionedCtx, w http.ResponseWri
 				server.BadRequest(w, r, err)
 				return
 			}
+		default:
+			server.BadRequest(w, r, "only GET or POST available for 3d endpoint /%s", parts[3])
+			return
 		}
 	default:
 		server.BadRequest(w, r, "DVID currently supports shapes of only 2 and 3 dimensions")

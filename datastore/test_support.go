@@ -3,6 +3,7 @@
 package datastore
 
 import (
+	"fmt"
 	"log"
 	"sync"
 
@@ -93,4 +94,43 @@ func CloseTest() {
 		dvid.Infof("Deleted test engine %q with backend %q\n", engine, storeConfig)
 	}
 	testStore.Unlock()
+}
+
+// SnapshotTestStores returns every key-value pair in every ordered store that
+// is open, keyed by store alias and full key.  Tests compare two snapshots to
+// check that a request changed no stored data.
+func SnapshotTestStores() (map[string]string, error) {
+	stores, err := storage.AllStores()
+	if err != nil {
+		return nil, err
+	}
+	maxKey := make(storage.Key, 1024)
+	for i := range maxKey {
+		maxKey[i] = 0xff
+	}
+	snapshot := make(map[string]string)
+	for alias, store := range stores {
+		db, ok := store.(storage.OrderedKeyValueGetter)
+		if !ok {
+			continue
+		}
+		ch := make(chan *storage.KeyValue, 100)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for kv := range ch {
+				if kv == nil || kv.K == nil {
+					return
+				}
+				snapshot[string(alias)+"\x00"+string(kv.K)] = string(kv.V)
+			}
+		}()
+		err := db.RawRangeQuery(storage.Key{}, maxKey, false, ch, nil)
+		close(ch)
+		<-done
+		if err != nil {
+			return nil, fmt.Errorf("snapshot of store %q: %v", alias, err)
+		}
+	}
+	return snapshot, nil
 }

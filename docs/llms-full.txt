@@ -35,6 +35,10 @@ slash-separated parameters. Many endpoints also have query strings for specifyin
 
 In general, LLMs should only perform reads and not use the POST method.
 
+DVID accepts only the GET, HEAD, OPTIONS, POST, PUT and DELETE methods, spelled exactly so;
+any other method gets a 405. A HEAD or OPTIONS request that carries a body gets a 400.
+GET, HEAD and OPTIONS never change stored data.
+
 ## Datatypes Reference
 
 DVID provides pluggable data types. Each datatype package's main Go file contains a

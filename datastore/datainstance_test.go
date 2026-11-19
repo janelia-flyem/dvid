@@ -115,3 +115,17 @@ func TestDataGobEncoding(t *testing.T) {
 		t.Errorf("Bad Gob roundtrip:\nOriginal: %v\nReturned: %v\n", data.Data, data2.Data)
 	}
 }
+
+func TestIsMutationRequestFailsClosed(t *testing.T) {
+	var d Data
+	for _, method := range []string{"GET", "HEAD", "OPTIONS", "get", "head", "options"} {
+		if d.IsMutationRequest(method, "info") {
+			t.Errorf("%s counted as a mutation", method)
+		}
+	}
+	for _, method := range []string{"POST", "PUT", "DELETE", "PATCH", "FOO", "post"} {
+		if !d.IsMutationRequest(method, "info") {
+			t.Errorf("%s not counted as a mutation", method)
+		}
+	}
+}
