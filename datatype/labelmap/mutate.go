@@ -674,7 +674,7 @@ func (d *Data) splitPass2(ctx *datastore.VersionedCtx, downresMut *downres.Mutat
 		}
 	}
 	if err != nil {
-		return fmt.Errorf("had %d errors in splitting data %q blocks, last one: %v", numErr, len(blockSplits), err)
+		return fmt.Errorf("had %d errors in splitting data %q (%d split blocks), last one: %v", numErr, d.DataName(), len(blockSplits), err)
 	}
 	timedLog.Infof("split pass 2 completed: %d blocks (max queue %d/%d): %d header changes, %d voxel relabels\n", numHeaderMod+numVoxelMod, maxQueue, len(idx.Blocks), numHeaderMod, numVoxelMod)
 	return nil
