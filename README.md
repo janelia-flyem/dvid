@@ -51,7 +51,7 @@ Developers can build DVID directly from a normal Go module checkout. The default
 Developer prerequisites:
 
 ```
-Go 1.25 or newer
+Go 1.26 or newer
 CGO enabled
 a working C compiler
 python3, or set PYTHON=/path/to/python when running make

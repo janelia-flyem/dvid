@@ -116,7 +116,7 @@ stores. See the "Legacy Basho LevelDB Build" section of GUIDE.md.
 
 The default build requires CGO because DVID uses an embedded C LZ4
 implementation for performance and stored-data compatibility. Conda is optional
-for normal development: a system Go 1.25+ toolchain, CGO enabled, and a working
+for normal development: a system Go 1.26+ toolchain, CGO enabled, and a working
 C compiler are sufficient for the default build.
 
 If a `dvid` conda environment is used, it includes `go-cgo`, which may depend
